@@ -81,11 +81,23 @@ ON DUPLICATE KEY UPDATE StoreName=VALUES(StoreName);
 
 INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points) VALUES
 ('uefa01', 'uefa01', 'คุณ ยูฟ่า (ลูกค้า VIP)', 'Customer', NULL, 250),
-('staff01', 'staff01', 'สมชาย หน้าร้าน (ร้านแกง)', 'Front Staff', 1, 0),
-('kitchen01', 'kitchen01', 'เชฟปอนด์ ห้องครัว (ร้านแกง)', 'Kitchen Staff', 1, 0),
-('owner01', 'owner01', 'เสี่ยโต้ง เจ้าของร้านแกง', 'Shop Owner', 1, 0),
-('account01', 'account01', 'คุณอัญชลี ฝ่ายบัญชี', 'Accountant', NULL, 0),
-('exec01', 'exec01', 'ท่านอธิการ ผู้บริหารสูงสุด', 'Executive', NULL, 0)
+
+-- ร้านที่ 1: ร้านข้าวแกงวิศวะเดือด
+('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน (ร้านแกง)', 'Front Staff', 1, 0),
+('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว (ร้านแกง)', 'Kitchen Staff', 1, 0),
+('owner01', 'owner01', 'เสี่ยฟลุ้ค เจ้าของร้านแกง', 'Shop Owner', 1, 0),
+
+-- ร้านที่ 2: ชาไทยสถาบัน KMITL
+('staff02', 'staff02', 'พนักงานยูฟ่า หน้าร้าน (ชาไทย)', 'Front Staff', 2, 0),
+('kitchen02', 'kitchen02', 'เชฟยูฟ่า ห้องครัว (ชาไทย)', 'Kitchen Staff', 2, 0),
+
+-- ร้านที่ 3: ก๋วยเตี๋ยวเรือตึกพระเทพ
+('staff03', 'staff03', 'พนักงานโฟโต้ หน้าร้าน (ก๋วยเตี๋ยวเรือ)', 'Front Staff', 3, 0),
+('kitchen03', 'kitchen03', 'เชฟโฟโต้ ห้องครัว (ก๋วยเตี๋ยวเรือ)', 'Kitchen Staff', 3, 0),
+
+-- ฝ่ายบริหาร / บัญชี
+('account01', 'account01', 'คุณปัด ฝ่ายบัญชี', 'Accountant', NULL, 0),
+('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0)
 ON DUPLICATE KEY UPDATE FullName=VALUES(FullName);
 
 INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock) VALUES 

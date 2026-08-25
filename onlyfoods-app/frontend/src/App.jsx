@@ -23,12 +23,22 @@ const INITIAL_PRODUCTS = [
 ];
 
 const INITIAL_USERS = [
-  { id: 1, username: 'uefa01', password: '123', role: 'Customer', name: 'คุณยูฟ่า (ลูกค้า)' },
-  { id: 2, username: 'kitchen01', password: '123', role: 'Kitchen', name: 'เชฟสมศักดิ์ (ครัว)', storeId: 1 },
-  { id: 3, username: 'front01', password: '123', role: 'Front', name: 'ผู้จัดการฟร้อนท์ 01', storeId: 1 },
-  { id: 4, username: 'owner01', password: '123', role: 'Owner', name: 'เจ้าของร้านกะเพราถาด', storeId: 1 },
-  { id: 5, username: 'acc01', password: '123', role: 'Accountant', name: 'เจ้าหน้าที่บัญชี' },
-  { id: 6, username: 'exec01', password: '123', role: 'Executive', name: 'ผู้บริหารศูนย์อาหาร' }
+  { id: 1, username: 'uefa01', password: 'uefa01', role: 'Customer', name: 'คุณ ยูฟ่า (ลูกค้า VIP)' },
+  
+  // ร้านที่ 1: ร้านแกง
+  { id: 2, username: 'staff01', password: 'staff01', role: 'Front', name: 'ฟลุ้ค หน้าร้าน (ร้านแกง)', storeId: 1 },
+  { id: 3, username: 'kitchen01', password: 'kitchen01', role: 'Kitchen', name: 'เชฟฟลุ้ค ห้องครัว (ร้านแกง)', storeId: 1 },
+  
+  // ร้านที่ 2: ชาไทย
+  { id: 4, username: 'staff02', password: 'staff02', role: 'Front', name: 'ยูฟ่า หน้าร้าน (ชาไทย)', storeId: 2 },
+  { id: 5, username: 'kitchen02', password: 'kitchen02', role: 'Kitchen', name: 'เชฟยูฟ่า ห้องครัว (ชาไทย)', storeId: 2 },
+  
+  // ร้านที่ 3: ก๋วยเตี๋ยวเรือ
+  { id: 6, username: 'staff03', password: 'staff03', role: 'Front', name: 'พนักงานโฟโต้ หน้าร้าน (ก๋วยเตี๋ยวเรือ)', storeId: 3 },
+  { id: 7, username: 'kitchen03', password: 'kitchen03', role: 'Kitchen', name: 'เชฟโฟโต้ ห้องครัว (ก๋วยเตี๋ยวเรือ)', storeId: 3 },
+  
+  { id: 8, username: 'account01', password: 'account01', role: 'Accountant', name: 'คุณปัด ฝ่ายบัญชี' },
+  { id: 9, username: 'exec01', password: 'exec01', role: 'Executive', name: 'ท่านกัปตัน ผู้บริหารสูงสุด' }
 ];
 
 export default function App() {
@@ -113,7 +123,18 @@ export default function App() {
   };
 
   return (
-    <div style={{ fontFamily: 'sans-serif', maxWidth: '1000px', margin: '0 auto', padding: '15px', background: '#f4f6f9', minHeight: '100vh' }}>
+      <div
+        style={{
+          fontFamily: 'sans-serif',
+          width: '100%',
+          maxWidth: 'none',
+          margin: 0,
+          padding: '15px',
+          background: '#f4f6f9',
+          minHeight: '100vh',
+          boxSizing: 'border-box'
+        }}
+      >
       {/* Central Announcement Banner */}
       {announcement && (
         <div style={{ background: '#fff3cd', border: '1px solid #ffeeba', color: '#856404', padding: '10px 15px', borderRadius: '6px', marginBottom: '15px', fontWeight: 'bold' }}>

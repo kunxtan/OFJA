@@ -74,6 +74,13 @@ class StatusUpdateSchema(BaseModel):
     user_role: str
     cancel_reason: Optional[str] = None
 
+# เพิ่ม
+class StoreCreateSchema(BaseModel):
+    store_name: str
+
+class StoreUpdateSchema(BaseModel):
+    store_name: str
+
 @app.post("/api/login")
 def login(data: LoginSchema, db=Depends(get_db)):
     with db.cursor() as cur:
@@ -95,6 +102,92 @@ def get_stores(db=Depends(get_db)):
         cur.execute("SELECT * FROM Store")
         return cur.fetchall()
 
+# เพิ่ม
+@app.post("/api/stores", status_code=201)
+def create_store(data: StoreCreateSchema, db=Depends(get_db)):
+    store_name = data.store_name.strip()
+    if not store_name:
+        raise HTTPException(status_code=400, detail="กรุณากรอกชื่อร้านค้า")
+
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT StoreId FROM Store WHERE StoreName = %s",
+                (store_name,)
+            )
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=400,
+                    detail="มีชื่อร้านค้านี้อยู่แล้ว"
+                )
+
+            cur.execute("""
+                INSERT INTO Store (StoreName, IsOpen, IsSuspended)
+                VALUES (%s, 1, 0)
+            """, (store_name,))
+            store_id = cur.lastrowid
+            db.commit()
+
+            return {
+                "success": True,
+                "store_id": store_id,
+                "message": "เพิ่มร้านค้าเรียบร้อยแล้ว"
+            }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(error))
+
+@app.put("/api/stores/{store_id}")
+def update_store(
+    store_id: int,
+    data: StoreUpdateSchema,
+    db=Depends(get_db)
+):
+    store_name = data.store_name.strip()
+    if not store_name:
+        raise HTTPException(status_code=400, detail="กรุณากรอกชื่อร้านค้า")
+
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT StoreId FROM Store WHERE StoreId = %s",
+                (store_id,)
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
+
+            cur.execute("""
+                SELECT StoreId FROM Store
+                WHERE StoreName = %s AND StoreId != %s
+            """, (store_name, store_id))
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=400,
+                    detail="มีชื่อร้านค้านี้อยู่แล้ว"
+                )
+
+            cur.execute("""
+                UPDATE Store
+                SET StoreName = %s
+                WHERE StoreId = %s
+            """, (store_name, store_id))
+            db.commit()
+
+            return {
+                "success": True,
+                "message": "แก้ไขชื่อร้านเรียบร้อยแล้ว"
+            }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(error))
+
+# จบเพิ่มอันบน
 @app.post("/api/orders")
 def create_order(data: CreateOrderSchema, db=Depends(get_db)):
     try:
@@ -251,6 +344,63 @@ def suspend_store(store_id: int, db=Depends(get_db)):
         db.commit()
         return {"success": True}
 
+# เพิ่ม
+def ensure_food_court_setting(db):
+    with db.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS FoodCourtSetting (
+                SettingId TINYINT PRIMARY KEY,
+                IsOpen TINYINT(1) NOT NULL DEFAULT 1,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+            INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen)
+            VALUES (1, 1)
+        """)
+    db.commit()
+
+@app.get("/api/food-court/status")
+def get_food_court_status(db=Depends(get_db)):
+    ensure_food_court_setting(db)
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1
+        """)
+        result = cur.fetchone()
+        return {"is_open": bool(result["IsOpen"])}
+
+@app.put("/api/food-court/toggle")
+def toggle_food_court(db=Depends(get_db)):
+    ensure_food_court_setting(db)
+    try:
+        with db.cursor() as cur:
+            cur.execute("""
+                UPDATE FoodCourtSetting
+                SET IsOpen = NOT IsOpen
+                WHERE SettingId = 1
+            """)
+            cur.execute("""
+                SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1
+            """)
+            result = cur.fetchone()
+            is_open = bool(result["IsOpen"])
+            db.commit()
+
+            return {
+                "success": True,
+                "is_open": is_open,
+                "message": (
+                    "เปิดศูนย์อาหารเรียบร้อยแล้ว"
+                    if is_open
+                    else "ปิดศูนย์อาหารเรียบร้อยแล้ว"
+                )
+            }
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(error))
+
 @app.get("/api/reports/dashboard")
 def get_dashboard(store_id: Optional[int] = None, db=Depends(get_db)):
     with db.cursor() as cur:
@@ -280,30 +430,3 @@ def get_logs(db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM AuditLog ORDER BY LogID DESC LIMIT 50")
         return cur.fetchall()
-
-
-# เพิ่ม Schema สำหรับสมัครสมาชิก
-class RegisterSchema(BaseModel):
-    username: str
-    password: str
-    name: str
-
-# เพิ่ม API สำหรับสมัครสมาชิกลง Database จริง
-@app.post("/api/register")
-def register_user(data: RegisterSchema, db=Depends(get_db)):
-    with db.cursor() as cur:
-        # เช็กว่ามี Username นี้ในระบบหรือยัง
-        cur.execute("SELECT * FROM Users WHERE Username=%s", (data.username,))
-        if cur.fetchone():
-            raise HTTPException(status_code=400, detail="ชื่อผู้ใช้นี้มีอยู่ในระบบแล้ว")
-        
-        # บันทึกผู้ใช้ใหม่ลงฐานข้อมูล
-        cur.execute(
-            "INSERT INTO Users (Username, Password, FullName, Role, Points) VALUES (%s, %s, %s, 'Customer', 0)",
-            (data.username, data.password, data.name)
-        )
-        db.commit()
-        
-        # ดึงข้อมูลผู้ใช้ที่เพิ่งสร้างส่งกลับไปให้หน้าเว็บล็อกอินอัตโนมัติ
-        cur.execute("SELECT * FROM Users WHERE UserId=%s", (cur.lastrowid,))
-        return cur.fetchone()
