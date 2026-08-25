@@ -3,12 +3,15 @@ import React, { useState, useEffect, useCallback } from 'react';
 export default function KitchenView({ user, apiBase = "http://localhost:8000" }) {
   const [orders, setOrders] = useState([]);
   const [summary, setSummary] = useState([]);
+  
+  // --- เพิ่ม State ใหม่ ---
+  const [isStoreOpen, setIsStoreOpen] = useState(true);
 
   // ดึงข้อมูลออเดอร์และสรุปวัตถุดิบ
   const fetchData = useCallback(() => {
     const storeId = user?.storeId || user?.StoreId || 1;
 
-    // 1. ดึงข้อมูลออเดอร์
+    // 1. ดึงข้อมูลออเดอร์แบบเต็ม (แก้ไขส่วนที่หายไปกลับมา)
     fetch(`${apiBase}/api/orders?store_id=${storeId}`)
       .then(r => r.json())
       .then(data => {
@@ -30,6 +33,16 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
       .then(r => r.json())
       .then(data => setSummary(data))
       .catch(err => console.error("Error fetching summary:", err));
+
+    // 3. เพิ่มการดึงสถานะร้านค้า
+    fetch(`${apiBase}/api/stores`)
+      .then(r => r.json())
+      .then(stores => {
+        const myStore = stores.find(s => s.StoreId === storeId);
+        if (myStore) setIsStoreOpen(myStore.IsOpen === 1 && myStore.IsSuspended === 0);
+      })
+      .catch(err => console.error("Error fetching stores:", err));
+
   }, [user, apiBase]);
 
   useEffect(() => {
@@ -67,9 +80,22 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
           <div style={styles.systemBadge}>OF Kitchen</div>
           <div>
             <h1 style={styles.brandTitle}>ระบบจัดการคำสั่งซื้อห้องครัว</h1>
-            <div style={styles.statusIndicator}>
-              <span style={styles.statusDot} />
-              <span style={styles.statusText}>สถานะห้องครัว: เปิดรับออเดอร์</span>
+            <div style={{
+              ...styles.statusIndicator, 
+              backgroundColor: isStoreOpen ? '#ecfdf5' : '#fef2f2',
+              border: isStoreOpen ? '1px solid #a7f3d0' : '1px solid #fecaca'
+            }}>
+              <span style={{
+                ...styles.statusDot, 
+                backgroundColor: isStoreOpen ? '#10b981' : '#ef4444', 
+                boxShadow: isStoreOpen ? '0 0 8px #10b981' : '0 0 8px #ef4444'
+              }} />
+              <span style={{
+                ...styles.statusText, 
+                color: isStoreOpen ? '#047857' : '#b91c1c'
+              }}>
+                สถานะห้องครัว: {isStoreOpen ? 'เปิดรับออเดอร์' : 'ปิดรับออเดอร์'}
+              </span>
             </div>
           </div>
         </div>
@@ -257,7 +283,7 @@ const styles = {
   },
   topHeader: {
     display: 'flex',
-    justifyContent: 'space-between', // <--- แก้ไขจุดนี้แล้วครับ
+    justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#ffffff',
     padding: '20px 24px',

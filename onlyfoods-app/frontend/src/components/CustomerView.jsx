@@ -25,6 +25,10 @@ export default function CustomerView({ user, apiBase }) {
 
   // Active Tab สำหรับเลือกเมนูฝั่ง Sidebar
   const [activeTab, setActiveTab] = useState('menu');
+  
+  // สถานะศูนย์อาหาร
+  const [foodCourtOpen, setFoodCourtOpen] = useState(true);
+  const fetchFoodCourtStatus = () => fetch(`${apiBase}/api/food-court/status`).then(r => r.json()).then(data => setFoodCourtOpen(data.is_open)).catch(err => console.error(err));
 
   // 🔴 1. State เก็บ Key ของการแจ้งเตือนที่อ่านแล้ว
   const [readNotifIds, setReadNotifIds] = useState([]);
@@ -44,11 +48,13 @@ export default function CustomerView({ user, apiBase }) {
     fetchStores();
     fetchNotifs();
     fetchMyOrders();
+    fetchFoodCourtStatus();
 
     const interval = setInterval(() => {
       fetchStores(); 
       fetchNotifs();
       fetchMyOrders();
+      fetchFoodCourtStatus();
     }, 4000);
 
     return () => clearInterval(interval);
@@ -189,8 +195,10 @@ export default function CustomerView({ user, apiBase }) {
               </h1>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', marginTop: '2px' }}>
                 <span style={{ color: '#64748b' }}>สถานะศูนย์อาหาร:</span>
-                <span style={{ height: '9px', width: '9px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }}></span>
-                <b style={{ color: '#059669', fontWeight: '600' }}>เปิดให้บริการ</b>
+                <span style={{ height: '9px', width: '9px', borderRadius: '50%', background: foodCourtOpen ? '#10b981' : '#ef4444', display: 'inline-block' }}></span>
+                <b style={{ color: foodCourtOpen ? '#059669' : '#dc2626', fontWeight: '600' }}>
+                  {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการชั่วคราว'}
+                </b>
               </div>
             </div>
           </div>
@@ -322,7 +330,11 @@ export default function CustomerView({ user, apiBase }) {
               </div>
             </div>
 
-            {activeStore.IsSuspended ? (
+            {!foodCourtOpen ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #ef4444', color: '#991b1b', padding: '24px', borderRadius: '12px', textAlign: 'center', fontWeight: 'bold' }}>
+                 ⛔ ศูนย์อาหารปิดให้บริการชั่วคราว ร้านค้าทั้งหมดหยุดรับออเดอร์
+              </div>
+            ) : activeStore.IsSuspended ? (
               <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', color: '#991b1b', padding: '24px', borderRadius: '12px', textAlign: 'center', fontWeight: 'bold' }}>
                  ร้านค้านี้ถูกระงับสิทธิ์การจำหน่ายชั่วคราวโดยผู้บริหาร
               </div>

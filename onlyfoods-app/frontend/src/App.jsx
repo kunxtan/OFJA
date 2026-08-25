@@ -53,6 +53,21 @@ export default function App() {
   const [announcement, setAnnouncement] = useState('');
   const [pushNotifications, setPushNotifications] = useState([]);
 
+  // --- โค้ดที่ต้องเพิ่มใหม่ เริ่มต้นตรงนี้ ---
+  useEffect(() => {
+    const fetchFoodCourtStatus = () => {
+      fetch('http://localhost:8000/api/food-court/status')
+        .then(res => res.json())
+        .then(data => setFoodCourtOpen(data.is_open))
+        .catch(err => console.error(err));
+    };
+    
+    fetchFoodCourtStatus();
+    const interval = setInterval(fetchFoodCourtStatus, 4000);
+    return () => clearInterval(interval);
+  }, []);
+  // --- โค้ดที่ต้องเพิ่มใหม่ สิ้นสุดตรงนี้ ---
+
   // Auth Form State
   const [authTab, setAuthTab] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', role: 'Customer', name: '' });

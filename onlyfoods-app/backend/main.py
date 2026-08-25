@@ -187,11 +187,17 @@ def update_store(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(error))
 
-# จบเพิ่มอันบน
 @app.post("/api/orders")
 def create_order(data: CreateOrderSchema, db=Depends(get_db)):
     try:
         with db.cursor() as cur:
+            # --- 1. เช็คสถานะศูนย์อาหารก่อนเป็นอันดับแรก ---
+            cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
+            fc_status = cur.fetchone()
+            if fc_status and int(fc_status['IsOpen']) == 0:
+                raise HTTPException(status_code=400, detail="ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้")
+
+            # --- 2. ค่อยเช็คสถานะรายร้านค้า ---
             cur.execute("SELECT IsOpen, IsSuspended, StoreName FROM Store WHERE StoreId=%s", (data.store_id,))
             st = cur.fetchone()
             if not st:
@@ -204,7 +210,6 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
             total = 0.0
             validated_items = []
             for item in data.items:
-                # แก้ไขจาก Price เป็น UnitPrice ให้ตรงกับฐานข้อมูล
                 cur.execute("SELECT ProductId, UnitPrice, IsOutOfStock FROM Product WHERE ProductId=%s AND StoreId=%s", (item.product_id, data.store_id))
                 prod = cur.fetchone()
                 if not prod:
@@ -212,7 +217,6 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 if prod['IsOutOfStock']:
                     raise HTTPException(status_code=400, detail=f"สินค้า ID {item.product_id} หมด")
                 
-                # แก้ไขการดึงค่าจากดิกชันนารีเป็น UnitPrice
                 real_price = float(prod['UnitPrice'])
                 total += item.qty * real_price
                 validated_items.append((item.product_id, item.qty, real_price, item.item_note))
@@ -344,7 +348,6 @@ def suspend_store(store_id: int, db=Depends(get_db)):
         db.commit()
         return {"success": True}
 
-# เพิ่ม
 def ensure_food_court_setting(db):
     with db.cursor() as cur:
         cur.execute("""
