@@ -14,10 +14,51 @@ const STORE_COLORS = ['#0E7C7B', '#2A5C87', '#C97F1E', '#7C5CBF', '#C4433D', '#2
 
 /* ---------------- Pure helpers (ไม่ผูกกับ state) ---------------- */
 const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-const fmtDateTime = (d) => (d ? String(d).slice(0, 19).replace('T', ' ') : '-');
-const dateOnly = (d) => (d ? String(d).slice(0, 10) : '');
 const colorForStore = (storeId) => STORE_COLORS[Number(storeId) % STORE_COLORS.length];
 const statusLabel = (s) => (s === 'bad' ? 'สูงผิดปกติ' : s === 'warn' ? 'เฝ้าระวัง' : 'ปกติ');
+
+// 1. เพิ่มฟังก์ชัน parseOrderDate ของคุณ (แก้ใส่ backtick ให้แล้ว)
+function parseOrderDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+
+  const normalized = String(value).trim().replace(' ', 'T');
+  const alreadyHasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+
+  // เติม Z เพื่อให้ browser แปลงเป็นเวลาท้องถิ่น
+  const parsed = new Date(
+    alreadyHasTimezone ? normalized : `${normalized}Z` 
+  );
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// 2. ปรับ fmtDateTime ให้เรียกใช้ parseOrderDate
+const fmtDateTime = (d) => {
+  const dt = parseOrderDate(d);
+  if (!dt) return '-';
+  
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const hh = String(dt.getHours()).padStart(2, '0');
+  const min = String(dt.getMinutes()).padStart(2, '0');
+  const ss = String(dt.getSeconds()).padStart(2, '0');
+
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+};
+
+// 3. ปรับ dateOnly ให้เรียกใช้ parseOrderDate
+const dateOnly = (d) => {
+  const dt = parseOrderDate(d);
+  if (!dt) return '';
+
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+
+  return `${yyyy}-${mm}-${dd}`;
+};
 
 function buildStoreSummary(stores, orders) {
   const map = {};
@@ -59,30 +100,36 @@ function buildDailyTrend(orders, days) {
 }
 
 function buildTodayHourlyTrend(orders) {
-  const today = new Date().toISOString().slice(0, 10);
-  // ออเดอร์ทั้งหมดของ "วันนี้" ไม่จำกัดสถานะ ใช้เพื่อหาช่วงเวลาของแท่งแรก-แท่งสุดท้าย
-  const todaysOrders = (orders || []).filter(o => dateOnly(o.CreatedAt) === today);
-  if (todaysOrders.length === 0) return [];
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-  const hourOf = (d) => Number(String(d).slice(11, 13));
-  const hours = todaysOrders.map(o => hourOf(o.CreatedAt)).filter(h => !Number.isNaN(h));
-  if (hours.length === 0) return [];
+  const todaysOrders = (orders || []).filter(o => {
+    // เปลี่ยนมาใช้ parseOrderDate
+    const orderDate = parseOrderDate(o.CreatedAt); 
+    if (!orderDate) return false;
+    
+    const orderDateString = `${orderDate.getFullYear()}-${String(orderDate.getMonth() + 1).padStart(2, '0')}-${String(orderDate.getDate()).padStart(2, '0')}`;
+    return orderDateString === today;
+  });
 
-  const minHour = Math.min(...hours); // ชั่วโมงของออเดอร์แรก
-  const maxHour = Math.max(...hours); // ชั่วโมงของออเดอร์สุดท้าย
-
-  // ยอดขายต่อชั่วโมง นับเฉพาะออเดอร์ที่สำเร็จ (สอดคล้องกับกราฟช่วง 7/14/30 วัน)
   const amountByHour = {};
   todaysOrders.forEach(o => {
     if (o.Status !== 'Completed') return;
-    const h = hourOf(o.CreatedAt);
+    
+    // เปลี่ยนมาใช้ parseOrderDate
+    const h = parseOrderDate(o.CreatedAt).getHours(); 
+    
     amountByHour[h] = (amountByHour[h] || 0) + Number(o.TotalAmount || 0);
   });
 
   const result = [];
-  for (let h = minHour; h <= maxHour; h++) {
-    result.push({ label: `${String(h).padStart(2, '0')}:00`, amount: amountByHour[h] || 0 });
+  for (let h = 0; h <= 23; h++) {
+    result.push({ 
+      label: `${String(h).padStart(2, '0')}:00`, 
+      amount: amountByHour[h] || 0 
+    });
   }
+  
   return result;
 }
 
@@ -139,15 +186,58 @@ function Badge({ tone, children }) {
 }
 function BarChart({ data, color = '#0E7C7B', money = false, perBarColor = false, small = false }) {
   if (!data || data.length === 0) return <div className="avx-empty">ยังไม่มีข้อมูลเพียงพอสำหรับแสดงกราฟ</div>;
-  const max = Math.max(1, ...data.map(d => d.amount));
+  
+  // 1. คำนวณเพดานยอดขายสูงสุด (Max) แบบปัดเศษให้เลขสวยๆ
+  const rawMax = Math.max(1, ...data.map(d => d.amount));
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawMax)));
+  let max = Math.ceil(rawMax / magnitude) * magnitude;
+  if (max < rawMax) max += magnitude; 
+  if (rawMax <= 10) max = 10; 
+
+  // Helper สำหรับแปลงตัวเลขแกน Y ให้สั้นลง (เช่น 15000 -> 15k)
+  const formatAxis = (val) => {
+    if (val === 0) return '0';
+    const num = val >= 1000 ? (val / 1000).toFixed(val % 1000 === 0 ? 0 : 1) + 'k' : Math.round(val);
+    return money ? `฿${num}` : num;
+  };
+
   return (
-    <div className={`avx-bars${small ? ' small' : ''}`}>
-      {data.map((d, i) => (
-        <div className="avx-bar-col" key={i} title={`${d.label}: ${money ? '฿' + fmtMoney(d.amount) : d.amount}`}>
-          <div className="avx-bar" style={{ height: `${Math.max(4, Math.round((d.amount / max) * 100))}%`, background: perBarColor ? (d.color || color) : color }} />
-          <div className="avx-bar-label">{d.label}</div>
+    <div className={`avx-barchart-wrapper${small ? ' small' : ''}`}>
+      {/* 2. แกน Y ทางซ้ายมือ */}
+      <div className="avx-y-axis">
+        <span>{formatAxis(max)}</span>
+        <span>{formatAxis(max * 0.75)}</span>
+        <span>{formatAxis(max * 0.5)}</span>
+        <span>{formatAxis(max * 0.25)}</span>
+        <span>{formatAxis(0)}</span>
+      </div>
+
+      <div className="avx-bars">
+        {/* 3. เส้น Grid แนวนอน */}
+        <div className="avx-grid-lines">
+          <div className="avx-grid-line" />
+          <div className="avx-grid-line" />
+          <div className="avx-grid-line" />
+          <div className="avx-grid-line" />
+          <div className="avx-grid-line" />
         </div>
-      ))}
+
+        {/* 4. แท่งกราฟและแกน X */}
+        {data.map((d, i) => (
+          <div className="avx-bar-col" key={i} title={`${d.label}: ${money ? '฿' + fmtMoney(d.amount) : d.amount}`}>
+            <div className="avx-bar-track">
+              <div 
+                className="avx-bar" 
+                style={{ 
+                  height: `${Math.max(0, (d.amount / max) * 100)}%`, 
+                  background: perBarColor ? (d.color || color) : color 
+                }} 
+              />
+            </div>
+            <div className="avx-bar-label">{d.label}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1153,11 +1243,17 @@ const STYLES = `
 .avx-seg{display:flex;background:var(--bg);border-radius:8px;padding:3px;gap:2px;}
 .avx-seg button{border:none;background:none;font-family:inherit;font-size:11.5px;font-weight:600;color:var(--text-600);padding:5px 10px;border-radius:6px;cursor:pointer;}
 .avx-seg button.active{background:#fff;color:var(--navy-900);box-shadow:0 1px 3px rgba(0,0,0,0.08);}
-.avx-bars{display:flex;align-items:flex-end;gap:6px;height:190px;}
-.avx-bars.small{height:150px;}
-.avx-bar-col{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;height:100%;}
-.avx-bar{width:100%;border-radius:6px 6px 0 0;min-height:4px;transition:height .3s;}
-.avx-bar-label{font-size:9.5px;color:var(--text-400);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* กราฟแท่งใหม่ (มีแกน Y + Grid) */
+.avx-barchart-wrapper { display: flex; gap: 8px; height: 210px; margin-top: 10px; width: 100%; }
+.avx-barchart-wrapper.small { height: 160px; }
+.avx-y-axis { display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 24px; font-size: 10px; color: var(--text-400); text-align: right; min-width: 32px; font-family: 'JetBrains Mono', monospace; }
+.avx-bars { flex: 1; display: flex; gap: 4px; position: relative; min-width: 0; }
+.avx-grid-lines { position: absolute; top: 0; bottom: 24px; left: 0; right: 0; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; z-index: 0; }
+.avx-grid-line { width: 100%; height: 1px; background: var(--border-soft); border-top: 1px dashed var(--border-soft); }
+.avx-bar-col { flex: 1; min-width: 0; display: flex; flex-direction: column; z-index: 1; }
+.avx-bar-track { flex: 1; display: flex; align-items: flex-end; }
+.avx-bar { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height .3s; }
+.avx-bar-label { height: 24px; font-size: 9.5px; color: var(--text-400); display: flex; align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; }
 .avx-legend{display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--text-600);flex-wrap:wrap;}
 .avx-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;}
 .avx-table{width:100%;border-collapse:collapse;font-size:13px;}
