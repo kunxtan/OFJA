@@ -1,17 +1,115 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 
 /* ============================================================
    OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า
-   ใช้ Theme และ Sidebar Navigation แบบเดียวกับ Accountant
    ============================================================ */
 
 const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+// --- Helper Functions สำหรับคำนวณกราฟแบบ Executive ---
+function parseOrderDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const normalized = String(value).trim().replace(' ', 'T');
+  const alreadyHasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  const parsed = new Date(alreadyHasTimezone ? normalized : `${normalized}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getPeriodBounds(days) {
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  end.setDate(end.getDate() + 1);
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+  return { start, end };
+}
+
+function ordersInsidePeriod(orders, days, storeId = null) {
+  const { start, end } = getPeriodBounds(days);
+  return (orders || []).filter(order => {
+    const createdAt = parseOrderDate(order.CreatedAt);
+    const correctStore = storeId === null || String(order.StoreId) === String(storeId);
+    return createdAt && createdAt >= start && createdAt < end && correctStore;
+  });
+}
+
+function orderIs(order, status) {
+  return String(order.Status || '').toLowerCase() === status.toLowerCase();
+}
+
+function buildTrend(completedOrders, days) {
+  const { start } = getPeriodBounds(days);
+  if (days === 1) {
+    return Array.from({ length: 24 }, (_, hour) => {
+      const sales = completedOrders
+        .filter(order => parseOrderDate(order.CreatedAt)?.getHours() === hour)
+        .reduce((sum, order) => sum + Number(order.TotalAmount || 0), 0);
+      return { label: `${String(hour).padStart(2, '0')}:00`, sales };
+    });
+  }
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const day = date.getDate();
+    const sales = completedOrders
+      .filter(order => {
+        const createdAt = parseOrderDate(order.CreatedAt);
+        return createdAt && createdAt.getFullYear() === year &&
+          createdAt.getMonth() === month && createdAt.getDate() === day;
+      })
+      .reduce((sum, order) => sum + Number(order.TotalAmount || 0), 0);
+    return {
+      label: `${String(day).padStart(2, '0')}/${String(month + 1).padStart(2, '0')}`,
+      sales
+    };
+  });
+}
+
+function buildStoreReport(orders, storeId, days) {
+  const periodOrders = ordersInsidePeriod(orders, days, storeId);
+  const completed = periodOrders.filter(order => orderIs(order, 'Completed'));
+  const cancelled = periodOrders.filter(order => orderIs(order, 'Cancelled'));
+  const totalSales = completed.reduce((sum, order) => sum + Number(order.TotalAmount || 0), 0);
+  const finishedCount = completed.length + cancelled.length;
+
+  return {
+    total_sales: totalSales,
+    total_orders: completed.length,
+    total_cancelled: cancelled.length,
+    average_order: completed.length ? totalSales / completed.length : 0,
+    cancellation_rate: finishedCount ? Number(((cancelled.length / finishedCount) * 100).toFixed(1)) : 0,
+    trend: buildTrend(completed, days)
+  };
+}
+
+// ฟังก์ชันแปลงสถานะเป็นภาษาไทย
+const getStatusLabel = (status) => {
+  const statusMap = {
+    'Verifying_Slip': 'รอตรวจสอบสลิป',
+    'Pending': 'รอดำเนินการ',
+    'Cooking': 'กำลังปรุง',
+    'Ready': 'รอรับอาหาร',
+    'Completed': 'สำเร็จ',
+    'Cancelled': 'ยกเลิก'
+  };
+  return statusMap[status] || status;
+};
+
+const getStatusTone = (status) => {
+  if (status === 'Completed') return 'ok';
+  if (status === 'Cancelled') return 'bad';
+  return 'warn';
+};
 
 function Icon({ name, size = 18 }) {
   const paths = {
     dashboard: <><rect x="3" y="3" width="7" height="9" /><rect x="14" y="3" width="7" height="5" /><rect x="14" y="12" width="7" height="9" /><rect x="3" y="16" width="7" height="5" /></>,
     menu: <><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></>,
     cancel: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6l4 2" /></>,
+    history: <><path d="M12 8v4l3 3" /><circle cx="12" cy="12" r="9" /></>, 
     check: <><path d="M20 6 9 17l-5-5" /></>,
     hamburger: <><path d="M4 6h16M4 12h16M4 18h16" /></>,
     power: <><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></>
@@ -19,21 +117,87 @@ function Icon({ name, size = 18 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-function StatCard({ label, value, tone }) {
-  return (
-    <div className="avx-stat-card">
-      <div className="avx-stat-label">{label}</div>
-      <div className={`avx-stat-value${tone ? ' tone-' + tone : ''}`}>{value}</div>
-    </div>
-  );
-}
-
 function Badge({ tone, children }) {
   return <span className={`avx-badge tone-${tone}`}><span className="avx-badge-dot" />{children}</span>;
 }
 
+// --- Component กราฟแบบ Executive ---
+function PeriodButtons({ days, setDays }) {
+  return (
+    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+      {[1, 7, 14, 30].map(value => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => setDays(value)}
+          style={{
+            padding: '7px 12px',
+            border: '1px solid #c7d2fe',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontWeight: 'bold',
+            fontSize: '12.5px',
+            background: days === value ? '#2563eb' : 'white',
+            color: days === value ? 'white' : '#334155'
+          }}
+        >
+          {value === 1 ? 'วันนี้' : `${value} วัน`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DashboardDetail({ label, value }) {
+  return (
+    <div style={{ background: 'white', padding: '14px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', border: '1px solid #e2e8f0' }}>
+      <div style={{ color: '#64748b', fontSize: '12px', fontWeight: '600' }}>{label}</div>
+      <div style={{ marginTop: '6px', fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>{value}</div>
+    </div>
+  );
+}
+
+function OverviewSalesBarChart({ data }) {
+  if (!data || data.length === 0) {
+    return <div style={{ minHeight: '220px', display: 'grid', placeItems: 'center', color: '#64748b' }}>ช่วงเวลานี้ยังไม่มียอดขายสำเร็จ</div>;
+  }
+  const width = 850, height = 250, left = 65, right = 20, top = 30, bottom = 40;
+  const graphWidth = width - left - right, graphHeight = height - top - bottom;
+  const values = data.map(item => Number(item.sales || 0));
+  const maxValue = Math.max(...values, 1);
+  const slotWidth = graphWidth / data.length;
+  const barWidth = Math.min(36, slotWidth * 0.62);
+  const labelStep = Math.max(1, Math.ceil(data.length / 8));
+  const shortNumber = value => value >= 1000000 ? `${(value / 1000000).toFixed(1)}M` : value >= 1000 ? `${Math.round(value / 1000)}K` : Math.round(value).toString();
+
+  return (
+    <div style={{ overflowX: 'auto', marginTop: '12px' }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', minWidth: '600px', display: 'block' }}>
+        {[0, 1, 2, 3, 4].map(line => {
+          const ratio = line / 4, y = top + graphHeight * ratio, amount = maxValue * (1 - ratio);
+          return <g key={line}><line x1={left} x2={width-right} y1={y} y2={y} stroke="#e5e7eb"/><text x={left-10} y={y+4} textAnchor="end" fontSize="11" fill="#64748b">{shortNumber(amount)}</text></g>;
+        })}
+        {data.map((item, index) => {
+          const sales = Number(item.sales || 0), barHeight = (sales / maxValue) * graphHeight;
+          const x = left + index * slotWidth + (slotWidth - barWidth) / 2, y = top + graphHeight - barHeight;
+          const showLabel = index % labelStep === 0 || index === data.length - 1;
+          return (
+            <g key={`${item.label}-${index}`}>
+              <rect x={x} y={y} width={barWidth} height={Math.max(barHeight,2)} rx="4" fill="#C97F1E">
+                <title>{item.label}: {sales.toLocaleString()} บาท</title>
+              </rect>
+              {sales > 0 && <text x={x+barWidth/2} y={Math.max(y-7,12)} textAnchor="middle" fontSize="10" fontWeight="bold" fill="#B4562B">{shortNumber(sales)}</text>}
+              {showLabel && <text x={x+barWidth/2} y={height-12} textAnchor="middle" fontSize="11" fill="#64748b">{item.label}</text>}
+            </g>
+          );
+        })}
+        <line x1={left} x2={width-right} y1={top+graphHeight} y2={top+graphHeight} stroke="#cbd5e1"/>
+      </svg>
+    </div>
+  );
+}
+
 export default function OwnerView({ user, apiBase }) {
-  // โหลดฟอนต์ Sarabun
   useEffect(() => {
     if (!document.getElementById('avx-font-link')) {
       const link = document.createElement('link');
@@ -48,6 +212,11 @@ export default function OwnerView({ user, apiBase }) {
   const [dash, setDash] = useState({});
   const [cancels, setCancels] = useState([]);
   const [products, setProducts] = useState([]);
+  const [history, setHistory] = useState([]); 
+  
+  // States สำหรับ Dashboard กราฟใหม่
+  const [storeDays, setStoreDays] = useState(1);
+  const [storeReport, setStoreReport] = useState(null);
   
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -57,6 +226,7 @@ export default function OwnerView({ user, apiBase }) {
     fetch(`${apiBase}/api/reports/dashboard?store_id=${storeId}`).then(r => r.json()).then(d => setDash(d[0] || {}));
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`).then(r => r.json()).then(setCancels);
     fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => r.json()).then(setProducts);
+    fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => r.json()).then(setHistory).catch(err => console.error(err));
   };
 
   useEffect(() => {
@@ -64,6 +234,13 @@ export default function OwnerView({ user, apiBase }) {
     const interval = setInterval(fetchData, 4000);
     return () => clearInterval(interval);
   }, [storeId, apiBase]);
+
+  // คำนวณ Report เมื่อ History หรือ จำนวนวัน (storeDays) เปลี่ยน
+  useEffect(() => {
+    if (history) {
+      setStoreReport(buildStoreReport(history, storeId, storeDays));
+    }
+  }, [history, storeId, storeDays]);
 
   const showToast = (msg) => {
     setToast({ show: true, msg });
@@ -88,12 +265,14 @@ export default function OwnerView({ user, apiBase }) {
   const navItems = [
     { id: 'dashboard', label: 'ภาพรวมร้านค้า', icon: 'dashboard' },
     { id: 'menu', label: 'จัดการเมนู/สต็อก', icon: 'menu' },
+    { id: 'history', label: 'ประวัติการขาย', icon: 'history' },
     { id: 'cancel', label: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: cancels.length || null },
   ];
 
   const pageTitles = {
     dashboard: ['แดชบอร์ดร้านค้า', 'สรุปยอดขายและสถานะร้านค้าของคุณในวันนี้'],
     menu: ['จัดการสต็อกสินค้า', 'เปิด-ปิด สถานะเมนูอาหารเมื่อวัตถุดิบหมด'],
+    history: ['ประวัติการขาย', 'รายการออเดอร์ที่เข้ามาทั้งหมดของร้านค้า'],
     cancel: ['ประวัติการยกเลิก', 'ตรวจสอบรายการออเดอร์ที่ถูกยกเลิกเพื่อวิเคราะห์ปัญหา'],
   };
 
@@ -162,23 +341,33 @@ export default function OwnerView({ user, apiBase }) {
               )}
             </div>
 
-            {/* ================= DASHBOARD ================= */}
+            {/* ================= DASHBOARD (อัปเกรดเป็นกราฟแบบ Executive) ================= */}
             {page === 'dashboard' && (
-              <>
-                <div className="avx-cards-row">
-                  <StatCard label="ยอดขายรวมสุทธิ" value={`฿${fmtMoney(dash.net_sales)}`} tone="ok" />
-                  <StatCard label="ออเดอร์ที่สำเร็จแล้ว" value={`${dash.total_orders || 0} รายการ`} />
-                  <StatCard label="ออเดอร์ที่ถูกยกเลิก" value={`${cancels.length} รายการ`} tone={cancels.length > 0 ? "bad" : "neutral"} />
-                </div>
-                <div className="avx-panel">
-                  <div className="avx-panel-head"><div><h3>ประสิทธิภาพการขาย</h3><div className="avx-sub">สรุปข้อมูลเบื้องต้นของร้าน {dash.StoreName}</div></div></div>
-                  <div style={{ padding: '20px 0', color: 'var(--text-600)', lineHeight: '1.8' }}>
-                    <p>✨ <b>สถานะปัจจุบัน:</b> ร้านของคุณกำลัง <b>{dash.IsOpen ? 'เปิดรับออเดอร์' : 'ปิดร้านชั่วคราว'}</b></p>
-                    <p>📈 <b>ยอดขายรวมวันนี้:</b> ทำยอดไปได้แล้ว <b>{fmtMoney(dash.net_sales)} บาท</b> จากการขายทั้งหมด <b>{dash.total_orders || 0}</b> ออเดอร์</p>
-                    <p>⚠️ <b>อัตราการยกเลิก:</b> มีลูกค้ายกเลิกหรือสินค้าไม่พร้อมขายทั้งหมด <b>{cancels.length}</b> ออเดอร์ (สามารถดูรายละเอียดได้ที่แท็บ "ประวัติยกเลิกออเดอร์")</p>
+              <div style={{ background: '#fffbeb', padding: '20px', borderRadius: '12px', border: '1px solid #fde68a' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, color: '#92400e', fontSize: '18px' }}>สถิติและแนวโน้มยอดขาย</h3>
+                    <div style={{ color: '#b45309', fontSize: '13px', marginTop: '4px' }}>วิเคราะห์ข้อมูลร้าน {dash.StoreName}</div>
                   </div>
+                  <PeriodButtons days={storeDays} setDays={setStoreDays} />
                 </div>
-              </>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                  <DashboardDetail label={storeDays === 1 ? 'ยอดขายวันนี้' : `ยอดขาย ${storeDays} วัน`} value={`฿${fmtMoney(storeReport?.total_sales || 0)}`} />
+                  <DashboardDetail label={storeDays === 1 ? 'ออเดอร์สำเร็จ' : `ออเดอร์สำเร็จ`} value={`${storeReport?.total_orders || 0} รายการ`} />
+                  <DashboardDetail label="ออเดอร์ยกเลิก" value={`${storeReport?.total_cancelled || 0} รายการ`} />
+                  <DashboardDetail label="ยอดเฉลี่ย/ออเดอร์" value={`฿${fmtMoney(storeReport?.average_order || 0)}`} />
+                  <DashboardDetail label="อัตราการยกเลิก" value={`${storeReport?.cancellation_rate || 0}%`} />
+                </div>
+
+                <div style={{ marginTop: '20px', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '18px', background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
+                  <h4 style={{ margin: '0 0 4px', fontSize: '15px' }}>กราฟยอดขาย</h4>
+                  <div style={{ color: '#64748b', fontSize: '12.5px' }}>
+                    {storeDays === 1 ? 'ยอดขายแยกตามชั่วโมงของวันนี้' : `ยอดขายแยกตามวัน ย้อนหลัง ${storeDays} วัน`}
+                  </div>
+                  <OverviewSalesBarChart data={storeReport?.trend || []} />
+                </div>
+              </div>
             )}
 
             {/* ================= MENU & STOCK ================= */}
@@ -217,17 +406,66 @@ export default function OwnerView({ user, apiBase }) {
               </div>
             )}
 
+            {/* ================= HISTORY ================= */}
+            {page === 'history' && (
+              <div className="avx-panel">
+                <div className="avx-panel-head">
+                  <div><h3>ประวัติการขายทั้งหมด</h3><div className="avx-sub">เรียงจากออเดอร์ล่าสุดไปเก่าสุด</div></div>
+                </div>
+                <div className="avx-scroll-x">
+                  <table className="avx-table">
+                    <thead>
+                      <tr>
+                        <th>วัน-เวลา</th>
+                        <th>หมายเลขคิว</th>
+                        <th>รายการอาหาร</th>
+                        <th>ยอดเงิน</th>
+                        <th>สถานะ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.length === 0 && <tr><td colSpan="5" className="avx-empty-row">ไม่พบประวัติการสั่งซื้อ</td></tr>}
+                      {history.map(h => (
+                        <tr key={h.OrderID}>
+                          <td className="avx-num" style={{ fontSize: '11px', color: 'var(--text-600)' }}>
+                            {h.CreatedAt ? new Date(h.CreatedAt).toLocaleString('th-TH') : '-'}
+                          </td>
+                          <td className="avx-num" style={{ color: 'var(--teal)' }}><b>{h.QueueNo}</b></td>
+                          <td>
+                            {h.items?.map((item, idx) => (
+                              <div key={idx} style={{ fontSize: '12.5px', marginBottom: '2px' }}>
+                                • {item.ProductName} (x{item.Qty})
+                              </div>
+                            ))}
+                          </td>
+                          <td className="avx-num" style={{ fontWeight: 'bold' }}>฿{fmtMoney(h.TotalAmount)}</td>
+                          <td>
+                            <Badge tone={getStatusTone(h.Status)}>
+                              {getStatusLabel(h.Status)}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* ================= CANCELLATIONS ================= */}
             {page === 'cancel' && (
               <div className="avx-panel">
                 <div className="avx-panel-head"><div><h3>ประวัติการยกเลิกออเดอร์</h3><div className="avx-sub">รายการออเดอร์ที่ถูกปฏิเสธหรือลูกค้ายกเลิก</div></div></div>
                 <div className="avx-scroll-x">
                   <table className="avx-table">
-                    <thead><tr><th>หมายเลขคิว</th><th>ยอดเงิน</th><th>เหตุผลที่ยกเลิก</th></tr></thead>
+                    <thead><tr><th>วัน-เวลา</th><th>หมายเลขคิว</th><th>ยอดเงิน</th><th>เหตุผลที่ยกเลิก</th></tr></thead>
                     <tbody>
-                      {cancels.length === 0 && <tr><td colSpan="3" className="avx-empty-row">ไม่พบประวัติการยกเลิก</td></tr>}
+                      {cancels.length === 0 && <tr><td colSpan="4" className="avx-empty-row">ไม่พบประวัติการยกเลิก</td></tr>}
                       {cancels.map(c => (
                         <tr key={c.OrderID}>
+                          <td className="avx-num" style={{ fontSize: '11px', color: 'var(--text-600)' }}>
+                            {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
+                          </td>
                           <td className="avx-num" style={{ color: 'var(--teal)' }}><b>{c.QueueNo}</b></td>
                           <td className="avx-num">฿{fmtMoney(c.TotalAmount)}</td>
                           <td style={{ color: 'var(--red)' }}>{c.CancelReason || '-'}</td>
@@ -304,7 +542,7 @@ const STYLES = `
 .avx-sub{font-size:11.5px;color:var(--text-400);margin-top:2px;}
 .avx-table{width:100%;border-collapse:collapse;font-size:13px;}
 .avx-table thead th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-400);font-weight:700;padding:0 10px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
-.avx-table tbody td{padding:10px;border-bottom:1px solid var(--border-soft);}
+.avx-table tbody td{padding:10px;border-bottom:1px solid var(--border-soft);vertical-align:middle;}
 .avx-table tbody tr:last-child td{border-bottom:none;}
 .avx-empty-row{text-align:center;color:var(--text-400);padding:18px;}
 .avx-num{font-family:'JetBrains Mono',monospace;font-size:12.5px;}
