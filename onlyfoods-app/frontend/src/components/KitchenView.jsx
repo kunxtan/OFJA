@@ -56,12 +56,36 @@ const LogoutIcon = () => (
   </svg>
 );
 
+const SettingsIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+    <path d="M12.22 2a1 1 0 0 1 1 .84v1.27a8.96 8.96 0 0 1 2.3.85l.9-.9a1 1 0 0 1 1.41 0l1.42 1.42a1 1 0 0 1 0 1.41l-.9.9c.4.67.69 1.4.85 2.3h1.27a1 1 0 0 1 .84 1v2a1 1 0 0 1-.84 1h-1.27c-.16.9-.45 1.63-.85 2.3l.9.9a1 1 0 0 1 0 1.41l-1.42 1.42a1 1 0 0 1-1.41 0l-.9-.9a8.96 8.96 0 0 1-2.3.85v1.27a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-.84v-1.27a8.96 8.96 0 0 1-2.3-.85l-.9.9a1 1 0 0 1-1.41 0l-1.42-1.42a1 1 0 0 1 0-1.41l.9-.9A8.96 8.96 0 0 1 3.2 13H1.93a1 1 0 0 1-.84-1v-2a1 1 0 0 1 .84-1h1.27c.16-.9.45-1.63.85-2.3l-.9-.9a1 1 0 0 1 0-1.41L4.8 2.84a1 1 0 0 1 1.41 0l.9.9c.67-.4 1.4-.69 2.3-.85V2.84a1 1 0 0 1 1-1h2Z"/><circle cx="12" cy="12" r="3"/>
+  </svg>
+);
+
+// ฟังก์ชันแปลงชื่อ Role ENUM จากฐานข้อมูลให้เป็นภาษาไทย
+const getRoleLabel = (role) => {
+  const roleMap = {
+    'Kitchen Staff': 'พนักงานครัว',
+    'Front Staff': 'พนักงานหน้าร้าน',
+    'Shop Owner': 'เจ้าของร้าน',
+    'Accountant': 'เจ้าหน้าที่บัญชี',
+    'Executive': 'ผู้บริหาร',
+    'Customer': 'ลูกค้า'
+  };
+  return roleMap[role] || role || 'ผู้ใช้งาน';
+};
+
 export default function KitchenView({ user, apiBase = "http://localhost:8000", onLogout }) {
   const [orders, setOrders] = useState([]);
   const [summary, setSummary] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [isDark, setIsDark] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const isUpdatingRef = useRef(false);
+
+  // ดึงข้อมูลชื่อและสิทธิ์ของผู้ใช้แบบ Dynamic จากวัตถุ `user`
+  const displayName = user?.FullName || user?.Username || 'ผู้ใช้งานระบบ';
+  const displayRole = getRoleLabel(user?.Role);
 
   const theme = {
     pageBg: isDark ? PALETTE.dark : '#F4F5F8',
@@ -78,7 +102,6 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000", o
 
   const fetchData = useCallback(() => {
     if (isUpdatingRef.current) return;
-    // รองรับทั้ง StoreId และ storeId ป้องกันการดึงออเดอร์ผิดร้าน[cite: 2, 3]
     const storeId = user?.StoreId || user?.storeId || 1; 
     
     fetch(`${apiBase}/api/orders?store_id=${storeId}`)
@@ -101,31 +124,28 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000", o
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // ปรับแก้ Logic อัปเดตสถานะ ปลดล็อก Ref ก่อนเรียก fetchData[cite: 3]
   const markAsReady = async (id, e) => {
     if (e) e.stopPropagation();
     isUpdatingRef.current = true;
-
-    // 1. ซ่อนออเดอร์บน UI ชั่วคราวทันที[cite: 3]
     setOrders(prev => prev.filter(o => o.OrderID !== id));
     if (selectedOrder?.OrderID === id) setSelectedOrder(null);
 
     try {
-      // 2. ยิง API อัปเดตสถานะไปยัง Backend[cite: 3]
       const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'Ready', user_role: 'Kitchen Staff', cancel_reason: null })
+        body: JSON.stringify({ 
+          status: 'Ready', 
+          user_role: user?.Role || 'Kitchen Staff', 
+          cancel_reason: null 
+        })
       });
 
-      if (!res.ok) {
-        throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
-      }
+      if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
     } catch (err) {
       console.error("Update status error:", err);
       alert("ไม่สามารถเปลี่ยนสถานะได้ กรุณาตรวจสอบระบบ Backend");
     } finally {
-      // 3. ปลดล็อก Ref และดึงข้อมูลใหม่ทันที[cite: 3]
       isUpdatingRef.current = false;
       fetchData();
     }
@@ -174,8 +194,8 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000", o
           </div>
         </div>
 
-        {/* Right Side: Kitchen Live Stats + Theme Toggle + Logout */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* Right Side: Kitchen Live Stats + Theme Toggle + User Menu (Dynamic) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
           <div style={{ 
             background: isDark ? 'rgba(255,255,255,0.05)' : '#F8FAFC', 
             border: `1px solid ${theme.border}`, 
@@ -225,32 +245,86 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000", o
             {isDark ? 'Light' : 'Dark'}
           </button>
 
-          {/* Logout Button */}
-          {onLogout && (
-            <button
-              onClick={() => {
-                if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
-                  onLogout();
-                }
-              }}
+          {/* User Profile Button (Dynamic Name) */}
+          <button
+            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+            style={{
+              background: isDark ? '#2A2C41' : '#F1F5F9',
+              color: theme.textMain,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '24px',
+              padding: '8px 16px',
+              fontSize: '14px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <span>{displayName}</span>
+            <SettingsIcon />
+          </button>
+
+          {/* Dropdown Menu (Dynamic Name & Role) */}
+          {isDropdownOpen && (
+            <div 
               style={{
-                background: isDark ? 'rgba(239, 68, 68, 0.2)' : '#FEE2E2',
-                color: '#EF4444',
-                border: `1px solid ${isDark ? '#7F1D1D' : '#FCA5A5'}`,
-                borderRadius: '10px',
-                padding: '8px 14px',
-                fontSize: '13px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'all 0.2s ease'
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                right: 0,
+                background: theme.cardBg,
+                border: `1px solid ${theme.border}`,
+                borderRadius: '16px',
+                width: '250px',
+                padding: '16px',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
+                zIndex: 1000,
+                boxSizing: 'border-box'
               }}
             >
-              <LogoutIcon />
-              ออกจากระบบ
-            </button>
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontSize: '15px', fontWeight: '800', color: theme.textMain }}>
+                  Welcome, {displayName}
+                </div>
+                <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '2px' }}>
+                  {displayRole}
+                </div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: `1px solid ${theme.border}`, margin: '12px 0' }} />
+
+              <button
+                onClick={() => {
+                  setIsDropdownOpen(false);
+                  if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
+                    onLogout && onLogout();
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#EF4444',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  textAlign: 'left',
+                  transition: 'background 0.2s'
+                }}
+                onMouseOver={(e) => e.currentTarget.style.background = isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2'}
+                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <LogoutIcon />
+                Logout
+              </button>
+            </div>
           )}
         </div>
 

@@ -64,6 +64,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [viewingCustomer, setViewingCustomer] = useState(null);
   const [toast, setToast] = useState({ show: false, msg: '' });
 
+  // 🔴 Modal ยกเลิกคำสั่งซื้อแบบใหม่
+  const [cancelModal, setCancelModal] = useState(null); // { order, actionType: 'immediate' | 'window' }
+  const [cancelReasonTag, setCancelReasonTag] = useState('วัตถุดิบหมด');
+  const [customReason, setCustomReason] = useState('');
+  const [cancelActionChoice, setCancelActionChoice] = useState('immediate'); // 'immediate' หรือ 'window'
+
   const [nowTick, setNowTick] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 1000);
@@ -135,22 +141,36 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   const printStub = (queueNo) => alert(`🖨️ กำลังพิมพ์ใบตั๋วอาหาร สำหรับคิว: ${queueNo}`);
 
-  const cancelOrderImmediate = (order) => {
-    const reason = prompt(`ระบุเหตุผลการยกเลิกคิว ${order.QueueNo}:`);
-    if (!reason) return;
-    updateStatus(order.OrderID, 'Cancelled', reason);
+  // 🔴 เปิด Modal ยกเลิกคำสั่งซื้อ (แทนการใช้ prompt)
+  const openCancelModal = (order, defaultAction = 'immediate') => {
+    setCancelModal({ order });
+    setCancelActionChoice(defaultAction);
+    setCancelReasonTag(defaultAction === 'window' ? 'วัตถุดิบหมด' : 'ลูกค้าขอยกเลิกเอง');
+    setCustomReason('');
   };
 
-  const requestCancelWithWindow = (order) => {
-    const reason = prompt(`ระบุเหตุผล (เช่น วัตถุดิบหมด) คิว ${order.QueueNo}\nระบบจะแจ้งเตือนลูกค้าให้จัดการภายใน 30 นาที:`);
-    if (!reason) return;
-    fetch(`${apiBase}/api/orders/${order.OrderID}/cancel-request`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason, response_window_minutes: 30 })
-    }).then(() => {
-      showToast(`ส่งแจ้งเตือนคิว ${order.QueueNo} แล้ว (รอ 30 นาที)`);
-      fetchData();
-    });
+  // 🔴 ยืนยันการยกเลิกจาก Modal
+  const handleConfirmCancel = () => {
+    if (!cancelModal) return;
+    const finalReason = customReason.trim() ? `${cancelReasonTag}: ${customReason.trim()}` : cancelReasonTag;
+    const orderId = cancelModal.order.OrderID;
+    const queueNo = cancelModal.order.QueueNo;
+
+    if (cancelActionChoice === 'window') {
+      // เรียก API แจ้งของหมด นับถอยหลัง 30 นาที
+      fetch(`${apiBase}/api/orders/${orderId}/cancel-request`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: finalReason, response_window_minutes: 30 })
+      }).then(() => {
+        showToast(`แจ้งเตือนคิว ${queueNo} แล้ว (รอเปลี่ยนเมนู 30 นาที)`);
+        setCancelModal(null);
+        fetchData();
+      });
+    } else {
+      // ยกเลิกคำสั่งซื้อทันที
+      updateStatus(orderId, 'Cancelled', finalReason);
+      setCancelModal(null);
+    }
   };
 
   const markNoShow = (order) => {
@@ -254,7 +274,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
     return `${Math.max(0, Math.floor((nowTick - new Date(timestamp).getTime()) / 60000))} นาที`;
   };
 
-  // เกณฑ์ 120 นาที (2 ชม.) ตามที่ตกลงกันไว้
   const isOverdue = (timestamp) => timestamp && ((nowTick - new Date(timestamp).getTime()) / 60000 > 120);
 
   const verifyingOrders = orders.filter(o => o.Status === 'Verifying_Slip');
@@ -268,11 +287,20 @@ export default function CounterView({ user, apiBase, onLogout }) {
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
   ];
 
+  const quickReasons = [
+    'วัตถุดิบหมด',
+    'ลูกค้าขอยกเลิกเอง',
+    'ครัวปรุงไม่ทัน / คิวแน่น',
+    'สั่งออเดอร์ซ้ำซ้อน',
+    'ลูกค้าเปลี่ยนใจเปลี่ยนร้าน',
+    'เหตุขัดข้องอื่นๆ'
+  ];
+
   return (
     <div className="cv-root">
       <style>{CV_STYLES}</style>
 
-      {/* ===== TOPBAR (โครงสร้างแบบ OwnerView) ===== */}
+      {/* ===== TOPBAR ===== */}
       <header className="cv-topbar">
         <div className="cv-topbar-left">
           <div className="cv-brand">
@@ -331,7 +359,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
         </div>
       </header>
 
-      {/* ===== BODY (Sidebar + Main Content) ===== */}
+      {/* ===== BODY ===== */}
       <div className="cv-body">
         <aside className={`cv-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
           <nav className="cv-nav">
@@ -360,7 +388,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
           {/* TAB 1: QUEUE & SLIPS */}
           {activeTab === 'orders' && (
             <div className="cv-stack">
-              {/* Stat Quick Cards */}
               <div className="cv-stat-grid">
                 <div className="cv-card cv-bg-coral">
                   <div className="cv-decor-circle-1" />
@@ -489,12 +516,14 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                   )}
                                   <button onClick={() => printStub(o.QueueNo)} className="cv-btn-icon" title="พิมพ์ตั๋วคิว"><Icon name="print" size={16} /></button>
                                   <button onClick={() => viewCustomerProfile(o)} className="cv-btn-icon" title="ข้อมูลลูกค้า"><Icon name="user" size={16} /></button>
+                                  
+                                  {/* 🔴 ปุ่มเรียก Modal ยกเลิก/ของหมด */}
                                   {!isPendingCancel && (
-                                    <button onClick={() => requestCancelWithWindow(o)} className="cv-btn btn-warning-light">
+                                    <button onClick={() => openCancelModal(o, 'window')} className="cv-btn btn-warning-light">
                                       ⚠️ ของหมด
                                     </button>
                                   )}
-                                  <button onClick={() => cancelOrderImmediate(o)} className="cv-btn btn-danger-light">
+                                  <button onClick={() => openCancelModal(o, 'immediate')} className="cv-btn btn-danger-light">
                                     ❌ ยกเลิก
                                   </button>
                                 </div>
@@ -515,7 +544,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
             <div className="cv-card">
               <div className="cv-card-head">
                 <div>
-                  <h3> ออเดอร์ตกค้าง (ลูกค้ายังไม่มารับอาหาร)</h3>
+                  <h3>ออเดอร์ตกค้าง (ลูกค้ายังไม่มารับอาหาร)</h3>
                   <div className="caption">เกณฑ์กำหนด: ปรุงเสร็จแล้ววางทิ้งไว้เกิน 120 นาที (2 ชม.) สามารถตัดจำหน่ายเป็น Food Waste</div>
                 </div>
               </div>
@@ -546,7 +575,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                             </td>
                             <td>
                               <button onClick={() => markNoShow(o)} className="cv-btn btn-danger">
-                                 เคลียร์คิว (ไม่มารับ/ทิ้งอาหาร)
+                                🚫 เคลียร์คิว (ไม่มารับ/ทิ้งอาหาร)
                               </button>
                             </td>
                           </tr>
@@ -588,7 +617,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 </div>
               </div>
 
-              {/* Cart Side */}
               <div className="cv-card cv-cart-card">
                 <div className="cv-card-head">
                   <div>
@@ -678,6 +706,106 @@ export default function CounterView({ user, apiBase, onLogout }) {
         </main>
       </div>
 
+      {/* 🔴 NEW MODAL: CANCEL ORDER (RECEIPT & BILL BREAKDOWN STYLE) */}
+      {cancelModal && (
+        <div className="cv-modal-overlay" onClick={() => setCancelModal(null)}>
+          <div className="cv-modal cv-cancel-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-modal-head">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div className="cancel-icon-badge">❌</div>
+                <div>
+                  <h3 style={{ margin: 0 }}>จัดการยกเลิกคำสั่งซื้อ</h3>
+                  <div className="caption">คิวหมายเลข: <b style={{ color: PALETTE.coral }}>{cancelModal.order.QueueNo}</b></div>
+                </div>
+              </div>
+              <button onClick={() => setCancelModal(null)} className="cv-modal-close">✖</button>
+            </div>
+
+            {/* Receipt Summary Card */}
+            <div className="receipt-summary-card">
+              <div className="receipt-title">สรุปรายการคำสั่งซื้อ</div>
+              <div className="receipt-items">
+                {cancelModal.order.items?.map((it, idx) => (
+                  <div key={idx} className="receipt-item-row">
+                    <span>{it.ProductName} x{it.Qty}</span>
+                    <span className="bold">฿{fmtMoney(it.UnitPrice * it.Qty)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="receipt-divider" />
+              <div className="receipt-total-row">
+                <span>ยอดเงินที่ชำระแล้ว</span>
+                <span className="receipt-total-val">฿{fmtMoney(cancelModal.order.TotalAmount)}</span>
+              </div>
+            </div>
+
+            {/* Action Mode Toggle */}
+            <div className="cancel-action-selector">
+              <label className={`action-opt ${cancelActionChoice === 'window' ? 'active' : ''}`}>
+                <input
+                  type="radio"
+                  name="cancelAction"
+                  checked={cancelActionChoice === 'window'}
+                  onChange={() => setCancelActionChoice('window')}
+                />
+                <div>
+                  <div className="opt-title">⚠️ แจ้งวัตถุดิบหมด (รอเปลี่ยนเมนู 30 นาที)</div>
+                  <div className="opt-desc">ส่งแจ้งเตือนให้ลูกค้าเลือกเปลี่ยนเมนูหรือกดยกเลิกผ่านแอป</div>
+                </div>
+              </label>
+
+              <label className={`action-opt ${cancelActionChoice === 'immediate' ? 'active' : ''}`}>
+                <input
+                  type="radio"
+                  name="cancelAction"
+                  checked={cancelActionChoice === 'immediate'}
+                  onChange={() => setCancelActionChoice('immediate')}
+                />
+                <div>
+                  <div className="opt-title">❌ ขอยกเลิกคำสั่งซื้อทันที</div>
+                  <div className="opt-desc">ตัดคิวออกจากระบบทันที (ติดต่อคืนเงินสดให้ลูกค้า)</div>
+                </div>
+              </label>
+            </div>
+
+            {/* Quick Reason Chips */}
+            <div className="reason-section">
+              <label className="reason-label">เลือกเหตุผลอย่างรวดเร็ว:</label>
+              <div className="reason-chips">
+                {quickReasons.map((r, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`reason-chip ${cancelReasonTag === r ? 'active' : ''}`}
+                    onClick={() => setCancelReasonTag(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+
+              <textarea
+                placeholder="ระบุรายละเอียดเพิ่มเติม (ถ้ามี)..."
+                value={customReason}
+                onChange={e => setCustomReason(e.target.value)}
+                className="cv-textarea"
+                rows={2}
+              />
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="modal-footer-btns">
+              <button onClick={() => setCancelModal(null)} className="cv-btn btn-ghost">
+                ยกเลิก
+              </button>
+              <button onClick={handleConfirmCancel} className="cv-btn btn-danger-solid">
+                {cancelActionChoice === 'window' ? 'ส่งแจ้งเตือนของหมด (30 นาที)' : 'ยืนยันการยกเลิกออเดอร์ทันที'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===== MODAL: SLIP ===== */}
       {viewingSlip && (
         <div className="cv-modal-overlay" onClick={() => setViewingSlip(null)}>
@@ -712,7 +840,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="info-row"><span>เคยสั่งซื้อสำเร็จ:</span> <b>{viewingCustomer.TotalOrders ?? 0} ออเดอร์</b></div>
                 {viewingCustomer.Phone && (
                   <a href={`tel:${viewingCustomer.Phone}`} className="cv-btn btn-coral" style={{ marginTop: '16px', display: 'flex', justifyContent: 'center', textDecoration: 'none' }}>
-                     กดเพื่อโทรหาลูกค้า
+                    กดเพื่อโทรหาลูกค้า
                   </a>
                 )}
               </div>
@@ -732,7 +860,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
 }
 
 /* ============================================================
-   STYLES: Berry Style Structure + Counter Coral/Navy Colors
+   STYLES: Berry Style Structure + Receipt Modal Additions
    ============================================================ */
 const CV_STYLES = `
 ::-webkit-scrollbar { width: 0px; background: transparent; display: none; }
@@ -905,6 +1033,8 @@ const CV_STYLES = `
 .btn-success-light { background: ${PALETTE.greenLight}; color: #065F46; }
 .btn-danger-light { background: ${PALETTE.redLight}; color: #991B1B; }
 .btn-warning-light { background: ${PALETTE.yellowLight}; color: #92400E; }
+.btn-ghost { background: ${PALETTE.bg}; color: ${PALETTE.dark}; }
+.btn-danger-solid { background: ${PALETTE.red}; color: #fff; }
 .btn-del { background: none; border: none; color: ${PALETTE.red}; cursor: pointer; font-size: 14px; }
 
 /* Badges */
@@ -959,18 +1089,65 @@ const CV_STYLES = `
 
 /* Modals */
 .cv-modal-overlay {
-  position: fixed; inset: 0; background: rgba(42,44,65,0.6); backdrop-filter: blur(2px);
+  position: fixed; inset: 0; background: rgba(42,44,65,0.65); backdrop-filter: blur(3px);
   display: flex; align-items: center; justify-content: center; z-index: 10000; padding: 16px;
 }
 .cv-modal {
-  background: #fff; border-radius: 16px; padding: 24px; width: 100%;
-  max-width: 440px; box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+  background: #fff; border-radius: 18px; padding: 24px; width: 100%;
+  max-width: 440px; box-shadow: 0 20px 40px rgba(42,44,65,0.25);
 }
 .cv-modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .cv-modal-head h3 { margin: 0; font-size: 17px; font-weight: 800; }
 .cv-modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: ${PALETTE.textSub}; }
 .slip-full-img { width: 100%; max-height: 55vh; object-fit: contain; border-radius: 10px; border: 1px solid ${PALETTE.border}; }
 .cv-customer-info .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid ${PALETTE.border}; font-size: 13.5px; }
+
+/* 🔴 New Cancel Modal Special Styles (Receipt / Invoice look) */
+.cv-cancel-modal { max-width: 480px; }
+.cancel-icon-badge {
+  width: 38px; height: 38px; border-radius: 10px; background: ${PALETTE.redLight};
+  color: ${PALETTE.red}; display: flex; align-items: center; justify-content: center; font-size: 18px;
+}
+.receipt-summary-card {
+  background: ${PALETTE.bg}; border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+  border: 1px dashed ${PALETTE.border};
+}
+.receipt-title { font-size: 11px; font-weight: 800; color: ${PALETTE.textSub}; text-transform: uppercase; margin-bottom: 8px; }
+.receipt-items { max-height: 90px; overflow-y: auto; font-size: 13px; }
+.receipt-item-row { display: flex; justify-content: space-between; margin-bottom: 4px; color: ${PALETTE.dark}; }
+.receipt-divider { border-top: 1px solid ${PALETTE.border}; margin: 8px 0; }
+.receipt-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 700; }
+.receipt-total-val { font-size: 18px; color: ${PALETTE.coral}; font-weight: 900; }
+
+.cancel-action-selector { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.action-opt {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  border: 1.5px solid ${PALETTE.border}; cursor: pointer; transition: all 0.15s; background: #fff;
+}
+.action-opt input { margin-top: 3px; accent-color: ${PALETTE.coral}; }
+.action-opt.active { border-color: ${PALETTE.coral}; background: ${PALETTE.coralLight}; }
+.opt-title { font-size: 13px; font-weight: 700; color: ${PALETTE.dark}; }
+.opt-desc { font-size: 11.5px; color: ${PALETTE.textSub}; margin-top: 2px; }
+
+.reason-section { margin-bottom: 18px; }
+.reason-label { display: block; font-size: 12px; font-weight: 700; color: ${PALETTE.dark}; margin-bottom: 8px; }
+.reason-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.reason-chip {
+  background: #fff; border: 1px solid ${PALETTE.border}; border-radius: 16px;
+  padding: 5px 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  color: ${PALETTE.dark};
+}
+.reason-chip:hover { border-color: ${PALETTE.coral}; }
+.reason-chip.active { background: ${PALETTE.dark}; color: #fff; border-color: ${PALETTE.dark}; }
+
+.cv-textarea {
+  width: 100%; border: 1px solid ${PALETTE.border}; border-radius: 8px;
+  padding: 8px 10px; font-size: 12.5px; outline: none; resize: none; font-family: inherit;
+}
+.cv-textarea:focus { border-color: ${PALETTE.coral}; }
+
+.modal-footer-btns { display: flex; justify-content: flex-end; gap: 10px; }
+.modal-footer-btns .cv-btn { padding: 10px 18px; font-size: 13px; }
 
 /* Toast */
 .cv-toast {

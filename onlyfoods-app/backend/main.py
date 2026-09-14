@@ -101,20 +101,86 @@ def ensure_store_columns(db):
     db.commit()
     _store_columns_ready = True
 
+# ---------------------------------------------------------------------
+# Additional schema compatibility migrations
+# ---------------------------------------------------------------------
+USER_EXTRA_COLUMNS = {
+    "GoogleId": "VARCHAR(255) NULL",
+    "Email": "VARCHAR(255) NULL",
+    "Phone": "VARCHAR(30) NULL",
+    "ProfileImg": "LONGTEXT NULL",
+}
+
+_product_columns_ready = False
+_user_columns_ready = False
+
+def _ensure_extra_columns(db, table_name, extra_columns):
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+            """,
+            (table_name,),
+        )
+        existing = {row["COLUMN_NAME"] for row in cur.fetchall()}
+        for name, ddl in extra_columns.items():
+            if name not in existing:
+                cur.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{name}` {ddl}")
+    db.commit()
+
+def ensure_user_columns(db):
+    global _user_columns_ready
+    if _user_columns_ready:
+        return
+    _ensure_extra_columns(db, "Users", USER_EXTRA_COLUMNS)
+    _user_columns_ready = True
+
+def ensure_product_columns(db):
+    global _product_columns_ready
+    if _product_columns_ready:
+        return
+    _ensure_extra_columns(db, "Product", {"img": "MEDIUMTEXT NULL"})
+    _product_columns_ready = True
+
 _order_columns_ready = False
 def ensure_order_columns(db):
     global _order_columns_ready
     if _order_columns_ready:
         return
+
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT COLUMN_NAME FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Order' AND COLUMN_NAME = 'ReadyAt'
+            SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Order'
             """
         )
-        if not cur.fetchone():
-            cur.execute("ALTER TABLE `Order` ADD COLUMN ReadyAt DATETIME NULL")
+        columns = {row["COLUMN_NAME"]: row for row in cur.fetchall()}
+
+        extra_columns = {
+            "ReadyAt": "DATETIME NULL",
+            "CancelDeadline": "DATETIME NULL",
+            "PaymentMethod": "VARCHAR(50) NULL",
+            "PickupTime": "VARCHAR(50) NULL",
+            "OrderTime": "VARCHAR(50) NULL",
+            "IsReviewed": "TINYINT(1) NOT NULL DEFAULT 0",
+        }
+
+        for name, ddl in extra_columns.items():
+            if name not in columns:
+                cur.execute(f"ALTER TABLE `Order` ADD COLUMN `{name}` {ddl}")
+
+        # The original schema used ENUM for Status.  New customer/store
+        # workflows need Pending_Cancellation as a valid status, so use a
+        # VARCHAR while keeping every existing status value intact.
+        status_col = columns.get("Status")
+        if status_col and status_col.get("DATA_TYPE") == "enum":
+            cur.execute(
+                "ALTER TABLE `Order` MODIFY COLUMN `Status` VARCHAR(50) NOT NULL DEFAULT 'Pending'"
+            )
+
     db.commit()
     _order_columns_ready = True
 
@@ -274,6 +340,18 @@ class CancelRequestSchema(BaseModel):
 class NotifyOutStockSchema(BaseModel):
     response_window_minutes: int
 
+class CustomerCancelSchema(BaseModel):
+    user_id: int
+    reason: Optional[str] = "ลูกค้ายืนยันยกเลิก เนื่องจากเมนูหมด"
+
+class CustomerChangeItemSchema(BaseModel):
+    user_id: int
+    detail_id: Optional[int] = None
+    product_id: Optional[int] = None
+    new_product_id: int
+    new_product_name: Optional[str] = None
+    unit_price: Optional[float] = None
+
 ALLOWED_STORE_ROLES = ("Shop Owner", "Front Staff", "Kitchen Staff")
 
 # =====================================================================
@@ -282,6 +360,7 @@ ALLOWED_STORE_ROLES = ("Shop Owner", "Front Staff", "Kitchen Staff")
 
 @app.post("/api/login")
 def login(data: LoginSchema, db=Depends(get_db)):
+    ensure_user_columns(db)
     with db.cursor() as cur:
         cur.execute("SELECT * FROM Users WHERE Username=%s AND Password=%s", (data.username, data.password))
         user = cur.fetchone()
@@ -291,6 +370,7 @@ def login(data: LoginSchema, db=Depends(get_db)):
 
 @app.post("/api/register")
 def register(data: RegisterSchema, db=Depends(get_db)):
+    ensure_user_columns(db)
     with db.cursor() as cur:
         cur.execute("SELECT UserId FROM Users WHERE Username=%s", (data.username,))
         if cur.fetchone():
@@ -306,6 +386,7 @@ def register(data: RegisterSchema, db=Depends(get_db)):
 
 @app.post("/api/auth/google")
 def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
+    ensure_user_columns(db)
     with db.cursor() as cur:
         cur.execute("SELECT * FROM Users WHERE GoogleId=%s OR Email=%s", (data.google_id, data.email))
         user = cur.fetchone()
@@ -327,6 +408,7 @@ def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
 
 @app.put("/api/users/complete-profile")
 def complete_profile(data: CompleteProfileSchema, db=Depends(get_db)):
+    ensure_user_columns(db)
     with db.cursor() as cur:
         cur.execute(
             "UPDATE Users SET FullName=%s, Phone=%s, ProfileImg=%s WHERE UserId=%s", 
@@ -338,6 +420,7 @@ def complete_profile(data: CompleteProfileSchema, db=Depends(get_db)):
 
 @app.get("/api/customers/{user_id}")
 def get_customer_profile(user_id: int, db=Depends(get_db)):
+    ensure_user_columns(db)
     with db.cursor() as cur:
         cur.execute("SELECT FullName as CustomerName, Phone, Email FROM Users WHERE UserId = %s", (user_id,))
         user = cur.fetchone()
@@ -812,6 +895,7 @@ def delete_store_account(user_id: int, db=Depends(get_db)):
 
 @app.get("/api/products")
 def get_products(store_id: Optional[int] = None, db=Depends(get_db)):
+    ensure_product_columns(db)
     with db.cursor() as cur:
         if store_id: 
             cur.execute("SELECT * FROM Product WHERE StoreId = %s", (store_id,))
@@ -821,6 +905,7 @@ def get_products(store_id: Optional[int] = None, db=Depends(get_db)):
 
 @app.post("/api/products", status_code=201)
 def add_product(data: ProductCreateSchema, db=Depends(get_db)):
+    ensure_product_columns(db)
     try:
         with db.cursor() as cur:
             cur.execute("""
@@ -836,6 +921,7 @@ def add_product(data: ProductCreateSchema, db=Depends(get_db)):
 
 @app.put("/api/products/{product_id}")
 def edit_product(product_id: int, data: ProductUpdateSchema, db=Depends(get_db)):
+    ensure_product_columns(db)
     try:
         with db.cursor() as cur:
             cur.execute("SELECT ProductId FROM Product WHERE ProductId = %s", (product_id,))
@@ -910,6 +996,8 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema, db=Depen
 
 @app.post("/api/orders")
 def create_order(data: CreateOrderSchema, db=Depends(get_db)):
+    ensure_order_columns(db)
+    ensure_food_court_setting(db)
     try:
         with db.cursor() as cur:
             cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
@@ -995,6 +1083,8 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
 
 @app.get("/api/orders")
 def get_orders(store_id: Optional[int] = None, user_id: Optional[int] = None, db=Depends(get_db)):
+    ensure_order_columns(db)
+    ensure_product_columns(db)
     with db.cursor() as cur:
         query = "SELECT o.*, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE 1=1"
         params = []
@@ -1008,9 +1098,307 @@ def get_orders(store_id: Optional[int] = None, user_id: Optional[int] = None, db
         cur.execute(query, params)
         orders = cur.fetchall()
         for o in orders:
-            cur.execute("SELECT od.*, p.ProductName FROM OrderDetail od JOIN Product p ON od.ProductId = p.ProductId WHERE od.OrderID = %s", (o['OrderID'],))
+            cur.execute("SELECT od.*, p.ProductName, p.IsOutOfStock FROM OrderDetail od JOIN Product p ON od.ProductId = p.ProductId WHERE od.OrderID = %s", (o['OrderID'],))
             o['items'] = cur.fetchall()
         return orders
+
+@app.put("/api/orders/{order_id}/change-item")
+def customer_change_order_item(
+    order_id: int,
+    payload: CustomerChangeItemSchema,
+    db=Depends(get_db)
+):
+    """
+    Customer chooses a replacement menu after the store reports an item
+    as out of stock. Only the owner of the order can perform this action.
+    """
+    ensure_order_columns(db)
+    ensure_product_columns(db)
+
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT OrderID, StoreId, UserId, QueueNo, Status, CancelReason, CancelDeadline
+                FROM `Order`
+                WHERE OrderID=%s
+                """,
+                (order_id,),
+            )
+            order = cur.fetchone()
+
+            if not order:
+                raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อนี้")
+
+            if order["UserId"] is None or int(order["UserId"]) != int(payload.user_id):
+                raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์แก้ไขคำสั่งซื้อนี้")
+
+            if order["Status"] != "Pending_Cancellation":
+                raise HTTPException(
+                    status_code=400,
+                    detail="ออเดอร์นี้ไม่ได้อยู่ในสถานะรอเปลี่ยนเมนู"
+                )
+
+            if order.get("CancelDeadline") and datetime.now() > order["CancelDeadline"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="หมดเวลาสำหรับเปลี่ยนเมนูหรือยกเลิกออเดอร์แล้ว"
+                )
+
+            # If frontend doesn't send a DetailID, find the affected detail
+            # from the out-of-stock product named in CancelReason.
+            detail = None
+            if payload.detail_id:
+                cur.execute(
+                    """
+                    SELECT od.*, p.ProductName, p.IsOutOfStock
+                    FROM OrderDetail od
+                    JOIN Product p ON od.ProductId=p.ProductId
+                    WHERE od.DetailID=%s AND od.OrderID=%s
+                    """,
+                    (payload.detail_id, order_id),
+                )
+                detail = cur.fetchone()
+
+            if not detail and payload.product_id:
+                cur.execute(
+                    """
+                    SELECT od.*, p.ProductName, p.IsOutOfStock
+                    FROM OrderDetail od
+                    JOIN Product p ON od.ProductId=p.ProductId
+                    WHERE od.OrderID=%s AND od.ProductId=%s
+                    ORDER BY od.DetailID
+                    LIMIT 1
+                    """,
+                    (order_id, payload.product_id),
+                )
+                detail = cur.fetchone()
+
+            if not detail:
+                reason = str(order.get("CancelReason") or "")
+                old_name = ""
+                if reason.startswith("วัตถุดิบหมด:"):
+                    old_name = reason.replace("วัตถุดิบหมด:", "", 1).strip()
+
+                if old_name:
+                    cur.execute(
+                        """
+                        SELECT od.*, p.ProductName, p.IsOutOfStock
+                        FROM OrderDetail od
+                        JOIN Product p ON od.ProductId=p.ProductId
+                        WHERE od.OrderID=%s AND p.ProductName=%s
+                        ORDER BY od.DetailID
+                        LIMIT 1
+                        """,
+                        (order_id, old_name),
+                    )
+                    detail = cur.fetchone()
+
+            if not detail:
+                cur.execute(
+                    """
+                    SELECT od.*, p.ProductName, p.IsOutOfStock
+                    FROM OrderDetail od
+                    JOIN Product p ON od.ProductId=p.ProductId
+                    WHERE od.OrderID=%s AND p.IsOutOfStock=1
+                    ORDER BY od.DetailID
+                    LIMIT 1
+                    """,
+                    (order_id,),
+                )
+                detail = cur.fetchone()
+
+            if not detail:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ไม่พบรายการอาหารที่ต้องเปลี่ยนในออเดอร์นี้"
+                )
+
+            cur.execute(
+                """
+                SELECT ProductId, ProductName, UnitPrice, IsOutOfStock
+                FROM Product
+                WHERE ProductId=%s AND StoreId=%s
+                """,
+                (payload.new_product_id, order["StoreId"]),
+            )
+            new_product = cur.fetchone()
+
+            if not new_product:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ไม่พบเมนูใหม่ในร้านเดียวกัน"
+                )
+
+            if int(new_product["IsOutOfStock"] or 0) == 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"เมนู '{new_product['ProductName']}' หมดแล้ว กรุณาเลือกเมนูอื่น"
+                )
+
+            if int(new_product["ProductId"]) == int(detail["ProductId"]):
+                raise HTTPException(
+                    status_code=400,
+                    detail="กรุณาเลือกเมนูที่แตกต่างจากเมนูเดิม"
+                )
+
+            old_name = detail["ProductName"]
+            qty = int(detail["Qty"] or 1)
+
+            cur.execute(
+                """
+                UPDATE OrderDetail
+                SET ProductId=%s, UnitPrice=%s
+                WHERE DetailID=%s AND OrderID=%s
+                """,
+                (
+                    new_product["ProductId"],
+                    new_product["UnitPrice"],
+                    detail["DetailID"],
+                    order_id,
+                ),
+            )
+
+            # Recalculate the whole order using the actual DB prices.
+            cur.execute(
+                """
+                SELECT SUM(Qty * UnitPrice) AS TotalAmount
+                FROM OrderDetail
+                WHERE OrderID=%s
+                """,
+                (order_id,),
+            )
+            total_row = cur.fetchone()
+            new_total = float(total_row["TotalAmount"] or 0)
+
+            cur.execute(
+                """
+                UPDATE `Order`
+                SET TotalAmount=%s,
+                    Status='Pending',
+                    CancelReason=NULL,
+                    CancelDeadline=NULL
+                WHERE OrderID=%s
+                """,
+                (new_total, order_id),
+            )
+
+            send_notif(
+                db,
+                order["UserId"],
+                f"✅ คิว {order['QueueNo']} เปลี่ยนเมนูจาก '{old_name}' "
+                f"เป็น '{new_product['ProductName']}' เรียบร้อยแล้ว"
+            )
+
+            log_audit(
+                db,
+                "CUSTOMER_CHANGE_ITEM",
+                f"User:{payload.user_id}",
+                f"Order {order_id}: {old_name} x{qty} -> {new_product['ProductName']}"
+            )
+
+        db.commit()
+        return {
+            "success": True,
+            "message": f"เปลี่ยนเมนูเป็น {new_product['ProductName']} เรียบร้อยแล้ว",
+            "order_id": order_id,
+            "new_product_id": new_product["ProductId"],
+            "new_product_name": new_product["ProductName"],
+            "new_total": new_total,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/orders/{order_id}/customer-cancel")
+def customer_cancel_order(
+    order_id: int,
+    payload: CustomerCancelSchema,
+    db=Depends(get_db)
+):
+    """
+    Customer confirms cancellation after an out-of-stock notification.
+    This changes the order to Cancelled. Actual money transfer/refund is
+    not automated because this project has no payment/refund gateway.
+    """
+    ensure_order_columns(db)
+
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT OrderID, UserId, QueueNo, Status, CancelDeadline
+                FROM `Order`
+                WHERE OrderID=%s
+                """,
+                (order_id,),
+            )
+            order = cur.fetchone()
+
+            if not order:
+                raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อนี้")
+
+            if order["UserId"] is None or int(order["UserId"]) != int(payload.user_id):
+                raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์ยกเลิกคำสั่งซื้อนี้")
+
+            if order["Status"] != "Pending_Cancellation":
+                raise HTTPException(
+                    status_code=400,
+                    detail="ออเดอร์นี้ไม่อยู่ในสถานะที่สามารถยกเลิกได้"
+                )
+
+            if order.get("CancelDeadline") and datetime.now() > order["CancelDeadline"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="หมดเวลาสำหรับยกเลิกออเดอร์แล้ว"
+                )
+
+            reason = (payload.reason or "ลูกค้ายืนยันยกเลิก เนื่องจากเมนูหมด").strip()
+
+            cur.execute(
+                """
+                UPDATE `Order`
+                SET Status='Cancelled',
+                    CancelReason=%s,
+                    CancelDeadline=NULL
+                WHERE OrderID=%s
+                """,
+                (reason, order_id),
+            )
+
+            send_notif(
+                db,
+                order["UserId"],
+                f"❌ คิว {order['QueueNo']} ถูกยกเลิกตามคำขอของคุณแล้ว "
+                f"(การคืนเงินดำเนินการตามระบบชำระเงินของร้าน)"
+            )
+
+            log_audit(
+                db,
+                "CUSTOMER_CANCEL_ORDER",
+                f"User:{payload.user_id}",
+                f"Order {order_id} ลูกค้ายืนยันยกเลิก: {reason}"
+            )
+
+        db.commit()
+        return {
+            "success": True,
+            "message": "ยกเลิกออเดอร์เรียบร้อยแล้ว",
+            "order_id": order_id,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/orders/kitchen-summary")
 def get_kitchen_summary(store_id: int, db=Depends(get_db)):
@@ -1062,6 +1450,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
 
 @app.put("/api/orders/{order_id}/cancel-request")
 def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_db)):
+    ensure_order_columns(db)
     with db.cursor() as cur:
         deadline = datetime.now() + timedelta(minutes=payload.response_window_minutes)
         cur.execute("""

@@ -596,13 +596,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 
                 <hr className="berry-divider" style={{ margin: '0 0 16px' }} />
 
-                <div className="dropdown-item">
-                  <Icon name="settings" size={18} /> Account Settings
-                </div>
-                <div className="dropdown-item">
-                  <Icon name="user" size={18} /> Social Profile
-                  <span className="dropdown-badge">02</span>
-                </div>
                 <div className="dropdown-item" onClick={handleLogout}>
                   <Icon name="logout" size={18} /> Logout
                 </div>

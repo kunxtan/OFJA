@@ -4,6 +4,7 @@ export default function CustomerView({ user, apiBase }) {
   // USER
   const userId = user?.UserId || user?.id;
   const fullName = user?.FullName || user?.name || "Customer";
+  const points = user?.Points ?? 0;
 
   // PROFILE AVATAR STATE
   const [profileImage, setProfileImage] = useState(user?.ProfileImage || user?.avatar || null);
@@ -13,6 +14,11 @@ export default function CustomerView({ user, apiBase }) {
   const [products, setProducts] = useState([]);
   const [myOrders, setMyOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
+
+  // OUT OF STOCK / ORDER CHANGE STATE
+  const [outOfStockOrder, setOutOfStockOrder] = useState(null);
+  const [isChangeMenuMode, setIsChangeMenuMode] = useState(false);
+  const [newSelectedProduct, setNewSelectedProduct] = useState(null);
 
   // PAGE & NAVIGATION
   const [activeTab, setActiveTab] = useState("menu");
@@ -124,7 +130,7 @@ export default function CustomerView({ user, apiBase }) {
       fetchStores();
       fetchMyOrders();
       fetchNotifs();
-    }, 5000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [userId, apiBase]);
@@ -135,6 +141,20 @@ export default function CustomerView({ user, apiBase }) {
     }
   }, [selectedStore, apiBase]);
 
+  // ดักจับออเดอร์ที่ถูกแจ้งของหมดเพื่ออัปเดต state
+  useEffect(() => {
+    const pendingOutOfStock = myOrders.find(
+      (ord) => ord.Status === "Pending_Cancellation" || ord.Status === "OutOfStock_Pending" || ord.Status === "Item_Unavailable"
+    );
+    if (pendingOutOfStock && !outOfStockOrder) {
+      setOutOfStockOrder(pendingOutOfStock);
+      const storeId = pendingOutOfStock.StoreId || pendingOutOfStock.store_id;
+      if (storeId) {
+        setSelectedStore(storeId);
+      }
+    }
+  }, [myOrders, outOfStockOrder]);
+
   const getNotifKey = (n) => n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
 
   useEffect(() => {
@@ -144,6 +164,147 @@ export default function CustomerView({ user, apiBase }) {
       setIsInitialized(true);
     }
   }, [notifs, isInitialized]);
+
+  // OUT OF STOCK / ORDER CHANGE HANDLERS
+  const getOutOfStockItems = (order) => {
+    const reason = String(order?.CancelReason || "");
+    const reasonName = reason.startsWith("วัตถุดิบหมด:")
+      ? reason.replace("วัตถุดิบหมด:", "").trim()
+      : "";
+
+    const byReason = reasonName
+      ? (order.items || []).filter(item => item.ProductName === reasonName)
+      : [];
+
+    if (byReason.length > 0) return byReason;
+
+    const byStockFlag = (order.items || []).filter(
+      item => Number(item.IsOutOfStock) === 1
+    );
+
+    if (byStockFlag.length > 0) return byStockFlag;
+
+    return order.items || [];
+  };
+
+  const handleCancelOutOfStockOrder = async (orderToCancel) => {
+    const targetOrder = orderToCancel || outOfStockOrder;
+    if (!targetOrder || !userId) return;
+
+    if (!window.confirm(
+      `ยืนยันการยกเลิกออเดอร์คิว #${targetOrder.QueueNo} เพื่อขอคืนเงินใช่หรือไม่?`
+    )) return;
+
+    try {
+      const res = await fetch(
+        `${apiBase}/api/orders/${targetOrder.OrderID}/customer-cancel`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: Number(userId),
+            reason: "ลูกค้ายืนยันยกเลิก เนื่องจากวัตถุดิบหมด"
+          })
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.detail || "ไม่สามารถยกเลิกคำสั่งซื้อได้");
+      }
+
+      alert(
+        data.message ||
+        "ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบบันทึกประวัติการยกเลิกแล้ว"
+      );
+
+      setOutOfStockOrder(null);
+      setIsChangeMenuMode(false);
+      setNewSelectedProduct(null);
+
+      await fetchMyOrders();
+      await fetchNotifs();
+    } catch (error) {
+      console.error("Cancel order error:", error);
+      alert(error.message || "เกิดข้อผิดพลาดในการเชื่อมต่อ Backend");
+    }
+  };
+
+  const handleOpenChangeMenuModal = async (order) => {
+    setOutOfStockOrder(order);
+    setIsChangeMenuMode(true);
+    setNewSelectedProduct(null);
+
+    const storeId = order.StoreId || order.store_id;
+    if (!storeId) return;
+
+    try {
+      const res = await fetch(
+        `${apiBase}/api/products?store_id=${storeId}`
+      );
+      const data = await res.json().catch(() => []);
+
+      if (!res.ok) {
+        throw new Error(data.detail || "โหลดเมนูไม่สำเร็จ");
+      }
+
+      setProducts(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Load replacement menu error:", error);
+      alert(error.message || "ไม่สามารถโหลดเมนูทดแทนได้");
+    }
+  };
+
+  const handleChangeOrderMenu = async () => {
+    if (!outOfStockOrder || !newSelectedProduct || !userId) return;
+
+    const affectedItems = getOutOfStockItems(outOfStockOrder);
+    const affectedDetail = affectedItems[0];
+
+    if (!affectedDetail) {
+      return alert("ไม่พบรายการอาหารที่ต้องเปลี่ยน");
+    }
+
+    try {
+      const res = await fetch(
+        `${apiBase}/api/orders/${outOfStockOrder.OrderID}/change-item`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: Number(userId),
+            detail_id: affectedDetail.DetailID || null,
+            product_id: affectedDetail.ProductId || null,
+            new_product_id: Number(newSelectedProduct.ProductId),
+            new_product_name: String(newSelectedProduct.ProductName),
+            unit_price: Number(newSelectedProduct.UnitPrice || 0)
+          })
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.detail || "ไม่สามารถเปลี่ยนเมนูได้");
+      }
+
+      alert(
+        data.message ||
+        "เปลี่ยนเมนูสำเร็จ! แจ้งเตือนไปยังร้านเรียบร้อยแล้ว"
+      );
+
+      setOutOfStockOrder(null);
+      setIsChangeMenuMode(false);
+      setNewSelectedProduct(null);
+
+      await fetchMyOrders();
+      await fetchNotifs();
+    } catch (error) {
+      console.error("Change menu error:", error);
+      alert(error.message || "เกิดข้อผิดพลาดในการเชื่อมต่อ Backend");
+    }
+  };
 
   const activeStore = stores.find(store => Number(store.StoreId) === Number(selectedStore)) || {};
 
@@ -188,6 +349,7 @@ export default function CustomerView({ user, apiBase }) {
 
   const cartCount = useMemo(() => cart.length, [cart]);
   const totalAmount = useMemo(() => cart.reduce((sum, item) => sum + Number(item.UnitPrice || 0), 0), [cart]);
+
   const totalSpentAmount = useMemo(() => {
     return myOrders.reduce((sum, ord) => sum + Number(ord.TotalAmount || 0), 0);
   }, [myOrders]);
@@ -231,7 +393,6 @@ export default function CustomerView({ user, apiBase }) {
     }
   };
 
-  //  อัปโหลดและย่อขนาดรูปโปรไฟล์
   const handleProfileImageChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -270,14 +431,12 @@ export default function CustomerView({ user, apiBase }) {
     reader.readAsDataURL(file);
   };
 
-  //  ลบรูปโปรไฟล์
   const handleRemoveProfileImage = () => {
     if (window.confirm("คุณต้องการลบรูปโปรไฟล์ใช่หรือไม่?")) {
       setProfileImage(null);
     }
   };
 
-  // ตรวจสอบและเลือกสลิปชำระเงิน
   const handleSlipChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -291,7 +450,6 @@ export default function CustomerView({ user, apiBase }) {
     }
   };
 
-  // ย่อขนาดรูปภาพและบีบอัดก่อนเปลี่ยนเป็น Base64 สำหรับรีวิว
   const handleReviewImageChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -479,7 +637,7 @@ export default function CustomerView({ user, apiBase }) {
         {viewMode === "stores" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ </h2>
+              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ 🏬</h2>
               <span style={{ fontSize: "13px", color: COLORS.gray }}>{filteredStores.length} ร้านค้า</span>
             </div>
 
@@ -544,7 +702,7 @@ export default function CustomerView({ user, apiBase }) {
                   display: "flex", alignItems: "center", gap: "6px"
                 }}
               >
-                ⬅️ เลือกร้านอื่น
+                เลือกร้านอื่น
               </button>
               <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ร้าน: {activeStore.StoreName}</h2>
             </div>
@@ -602,15 +760,12 @@ export default function CustomerView({ user, apiBase }) {
     );
   };
 
-const renderProfile = () => (
+  const renderProfile = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน 👤</h2>
       
-      {/* การ์ดโปรไฟล์ส่วนตัว */}
       <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", maxWidth: "750px", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}` }}>
         <div style={{ textAlign: "center", position: "relative" }}>
-          
-          {/* รูปโปรไฟล์ + สวิตช์อัปโหลด/ลบ */}
           <div style={{ position: "relative", width: "120px", height: "120px", margin: "0 auto 15px" }}>
             {profileImage ? (
               <img
@@ -690,7 +845,6 @@ const renderProfile = () => (
         </div>
       </div>
 
-      {/* ประวัติการสั่งซื้อ (เพิ่มส่วนเรนเดอร์รายการอาหาร) */}
       <div style={{ maxWidth: "750px", margin: "0 auto" }}>
         <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "15px" }}>📜 ประวัติการสั่งซื้อและรีวิวของฉัน</h3>
         
@@ -702,6 +856,8 @@ const renderProfile = () => (
           <div style={{ display: "grid", gap: "15px" }}>
             {myOrders.map((order) => {
               const hasReview = order.IsReviewed || order.review || reviewedOrderIds[order.OrderID];
+              const isCancelled = order.Status === "Cancelled";
+
               return (
                 <div key={order.OrderID} style={{ ...cardStyle, padding: "18px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
@@ -713,8 +869,15 @@ const renderProfile = () => (
                         ({order.StoreName})
                       </span>
                     </div>
-                    <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "4px 12px", borderRadius: "15px", fontSize: "11px", fontWeight: "800" }}>
-                      {order.Status || "Pending"}
+                    <span style={{
+                      background: isCancelled ? "#FFF0ED" : "#FFF0EB",
+                      color: isCancelled ? COLORS.red : COLORS.orange,
+                      padding: "4px 12px",
+                      borderRadius: "15px",
+                      fontSize: "11px",
+                      fontWeight: "800"
+                    }}>
+                      {isCancelled ? " ยกเลิกแล้ว (ขอคืนเงิน)" : order.Status || "Pending"}
                     </span>
                   </div>
 
@@ -722,7 +885,6 @@ const renderProfile = () => (
                     🕐 เวลาสั่งซื้อ: {order.OrderTime || order.order_time || order.CreatedAt || "-"}
                   </div>
 
-                  {/*  ส่วนที่เพิ่ม: แสดงรายการเมนูอาหารพร้อมรายละเอียด/จำนวน */}
                   {order.items && order.items.length > 0 && (
                     <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: `1px dashed ${COLORS.border}` }}>
                       {order.items.map((item, index) => (
@@ -770,6 +932,7 @@ const renderProfile = () => (
       </div>
     </div>
   );
+
   const renderOrders = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน 📋</h2>
@@ -779,54 +942,121 @@ const renderProfile = () => (
         </div>
       ) : (
         <div style={{ display: "grid", gap: "15px" }}>
-          {myOrders.map(order => (
-            <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                <div>
-                  <div style={{ color: COLORS.orange, fontSize: "20px", fontWeight: "900" }}>คิว #{order.QueueNo}</div>
-                  <div style={{ fontSize: "14px", fontWeight: "700", marginTop: "3px" }}>{order.StoreName}</div>
+          {myOrders.map(order => {
+            const isPendingCancel = order.Status === "Pending_Cancellation" || order.Status === "OutOfStock_Pending" || order.Status === "Item_Unavailable";
+            const isCancelled = order.Status === "Cancelled";
+
+            return (
+              <div key={order.OrderID} style={{ ...cardStyle, padding: "20px", border: isPendingCancel ? `2px solid ${COLORS.orange}` : `1px solid ${COLORS.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ color: COLORS.orange, fontSize: "20px", fontWeight: "900" }}>คิว #{order.QueueNo}</div>
+                    <div style={{ fontSize: "14px", fontWeight: "700", marginTop: "3px" }}>{order.StoreName}</div>
+                  </div>
+                  <span style={{
+                    background: isPendingCancel || isCancelled ? "#FFF0ED" : "#FFF0EB",
+                    color: isPendingCancel || isCancelled ? COLORS.red : COLORS.orange,
+                    padding: "7px 14px",
+                    borderRadius: "20px",
+                    fontSize: "12px",
+                    fontWeight: "800"
+                  }}>
+                    {isPendingCancel ? " วัตถุดิบหมด (รอผู้ใช้เลือก)" : isCancelled ? " ยกเลิกแล้ว (ขอคืนเงิน)" : order.Status || "Pending"}
+                  </span>
                 </div>
-                <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: "800" }}>
-                  {order.Status || "Pending"}
-                </span>
-              </div>
-              {(order.OrderTime || order.CreatedAt || order.order_time) && (
-                <div style={{ marginTop: "12px", fontSize: "12px", color: COLORS.gray }}>
-                  🕐 เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}
-                </div>
-              )}
-              {(order.PickupTime || order.pickup_time) && (
-                <div style={{ marginTop: "5px", fontSize: "12px", color: COLORS.gray }}>
-                  🍱 เวลารับอาหาร: {order.PickupTime || order.pickup_time}
-                </div>
-              )}
-              {order.items && order.items.length > 0 && (
-                <div style={{ marginTop: "18px", paddingTop: "15px", borderTop: `1px solid ${COLORS.border}` }}>
-                  {order.items.map((item, index) => (
-                    <div key={item.OrderDetailID || index} style={{ display: "flex", justifyContent: "space-between", gap: "15px", padding: "7px 0", fontSize: "13px" }}>
-                      <div>
-                        <b>{item.ProductName}</b> x{item.Qty}
-                        {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "12px", marginTop: "3px" }}>📝 {item.ItemNote}</div>}
-                      </div>
-                      <span>{(Number(item.UnitPrice) * Number(item.Qty)).toFixed(2)} ฿</span>
+
+                {isPendingCancel && (
+                  <div style={{ marginTop: "15px", background: "#FFF9F5", padding: "14px", borderRadius: "14px", border: `1px solid ${COLORS.orange}` }}>
+                    <div style={{ color: COLORS.red, fontWeight: "800", fontSize: "13px", marginBottom: "8px" }}>
+                       หน้าร้านแจ้งว่าสินค้า/วัตถุดิบหมด กรุณาเลือกทางออกสำหรับออเดอร์นี้:
                     </div>
-                  ))}
+                    {order.CancelReason && (
+                      <div style={{ color: COLORS.gray, fontSize: "12px", marginBottom: "10px" }}>
+                        เหตุผล: {order.CancelReason}
+                      </div>
+                    )}
+                    {order.CancelDeadline && (
+                      <div style={{ color: COLORS.red, fontSize: "12px", marginBottom: "10px", fontWeight: "700" }}>
+                         กรุณาเปลี่ยนเมนูหรือยกเลิกก่อน: {order.CancelDeadline}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                      <button
+                        onClick={() => handleOpenChangeMenuModal(order)}
+                        style={{
+                          flex: 1,
+                          minWidth: "150px",
+                          padding: "10px 14px",
+                          border: "none",
+                          borderRadius: "10px",
+                          background: COLORS.orange,
+                          color: COLORS.white,
+                          fontSize: "13px",
+                          fontWeight: "800",
+                          cursor: "pointer"
+                        }}
+                      >
+                         เลือกเปลี่ยนเมนูใหม่
+                      </button>
+                      <button
+                        onClick={() => handleCancelOutOfStockOrder(order)}
+                        style={{
+                          flex: 1,
+                          minWidth: "150px",
+                          padding: "10px 14px",
+                          border: `1px solid ${COLORS.red}`,
+                          borderRadius: "10px",
+                          background: "#FFF0ED",
+                          color: COLORS.red,
+                          fontSize: "13px",
+                          fontWeight: "800",
+                          cursor: "pointer"
+                        }}
+                      >
+                         ยกเลิกออเดอร์ (ขอคืนเงิน)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {(order.OrderTime || order.CreatedAt || order.order_time) && (
+                  <div style={{ marginTop: "12px", fontSize: "12px", color: COLORS.gray }}>
+                    🕐 เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}
+                  </div>
+                )}
+                {(order.PickupTime || order.pickup_time) && (
+                  <div style={{ marginTop: "5px", fontSize: "12px", color: COLORS.gray }}>
+                    🍱 เวลารับอาหาร: {order.PickupTime || order.pickup_time}
+                  </div>
+                )}
+                {order.items && order.items.length > 0 && (
+                  <div style={{ marginTop: "18px", paddingTop: "15px", borderTop: `1px solid ${COLORS.border}` }}>
+                    {order.items.map((item, index) => (
+                      <div key={item.OrderDetailID || index} style={{ display: "flex", justifyContent: "space-between", gap: "15px", padding: "7px 0", fontSize: "13px" }}>
+                        <div>
+                          <b>{item.ProductName}</b> x{item.Qty}
+                          {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "12px", marginTop: "3px" }}>📝 {item.ItemNote}</div>}
+                        </div>
+                        <span>{(Number(item.UnitPrice) * Number(item.Qty)).toFixed(2)} ฿</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", paddingTop: "12px", borderTop: `1px solid ${COLORS.border}`, fontWeight: "900" }}>
+                  <span>ยอดรวม</span>
+                  <span style={{ color: COLORS.orange, fontSize: "18px" }}>{order.TotalAmount} ฿</span>
                 </div>
-              )}
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", paddingTop: "12px", borderTop: `1px solid ${COLORS.border}`, fontWeight: "900" }}>
-                <span>ยอดรวม</span>
-                <span style={{ color: COLORS.orange, fontSize: "18px" }}>{order.TotalAmount} ฿</span>
+                {order.Status === "Completed" && (
+                  <button
+                    onClick={() => handleOpenReviewModal(order)}
+                    style={{ width: "100%", marginTop: "15px", padding: "11px", border: "none", borderRadius: "12px", background: COLORS.yellow, color: COLORS.navy, fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    ⭐ {order.IsReviewed || order.review || reviewedOrderIds[order.OrderID] ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
+                  </button>
+                )}
               </div>
-              {order.Status === "Completed" && (
-                <button
-                  onClick={() => handleOpenReviewModal(order)}
-                  style={{ width: "100%", marginTop: "15px", padding: "11px", border: "none", borderRadius: "12px", background: COLORS.yellow, color: COLORS.navy, fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
-                >
-                  ⭐ {order.IsReviewed || order.review || reviewedOrderIds[order.OrderID] ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -913,7 +1143,6 @@ const renderProfile = () => (
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>💳 วิธีชำระเงิน</label>
                   <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} style={{ width: "100%", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }}>
                     <option value="PromptPay">สแกน QR Code (PromptPay)</option>
-                    <option value="CreditCard">บัตรเครดิต / เดบิต</option>
                     <option value="TrueMoney">TrueMoney Wallet</option>
                   </select>
                 </div>
@@ -924,7 +1153,7 @@ const renderProfile = () => (
                 </div>
 
                 <button onClick={handleProceedToPayment} style={{ width: "100%", padding: "15px", marginTop: "15px", border: "none", borderRadius: "15px", background: COLORS.orange, color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: "pointer", fontFamily: "inherit" }}>
-                  ถัดไป: ชำระเงิน ➔
+                  ชำระเงิน
                 </button>
               </div>
             </>
@@ -942,7 +1171,7 @@ const renderProfile = () => (
         <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(440px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center" }}>
           
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}>📲 ชำระเงินผ่าน QR Code</h3>
+            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}> ชำระเงินผ่าน QR Code</h3>
             <button onClick={() => setIsPaymentModalOpen(false)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
           </div>
 
@@ -962,7 +1191,7 @@ const renderProfile = () => (
 
           <div style={{ marginTop: "15px", textAlign: "left" }}>
             <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>
-              📎 แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):
+              แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):
             </label>
             <input
               type="file"
@@ -1011,7 +1240,6 @@ const renderProfile = () => (
     );
   };
 
-  // REVIEW MODAL (กดดาวตามความพอใจ)
   const renderReviewModal = () => {
     if (!reviewOrder) return null;
     return (
@@ -1023,7 +1251,6 @@ const renderProfile = () => (
           </div>
           <p style={{ color: COLORS.gray, fontSize: "13px" }}>คิว #{reviewOrder.QueueNo} • {reviewOrder.StoreName}</p>
 
-          {/* STAR RATING INTERFACE */}
           <div style={{ marginTop: "20px", textAlign: "center" }}>
             <label style={{ fontSize: "14px", fontWeight: "800", display: "block", marginBottom: "8px" }}>คะแนนความพึงพอใจ</label>
             {isReadOnlyReview ? (
@@ -1057,7 +1284,6 @@ const renderProfile = () => (
             )}
           </div>
 
-          {/* COMMENT (ไม่บังคับพิมพ์) */}
           <div style={{ marginTop: "18px" }}>
             <label style={{ fontSize: "13px", fontWeight: "800" }}>ความคิดเห็น (ไม่จำเป็นต้องใส่)</label>
             {isReadOnlyReview ? (
@@ -1067,7 +1293,6 @@ const renderProfile = () => (
             )}
           </div>
 
-          {/* PHOTO UPLOAD / PREVIEW */}
           <div style={{ marginTop: "18px" }}>
             <label style={{ fontSize: "13px", fontWeight: "800", display: "block", marginBottom: "6px" }}>📷 แนบรูปภาพรีวิว (ไม่เกิน 5MB)</label>
             {isReadOnlyReview ? (
@@ -1101,12 +1326,88 @@ const renderProfile = () => (
             )}
           </div>
 
-          {/* SUBMIT REVIEW */}
           {!isReadOnlyReview && (
             <button onClick={submitReview} style={{ width: "100%", marginTop: "22px", padding: "13px", border: "none", borderRadius: "13px", background: COLORS.orange, color: COLORS.white, fontWeight: "900", fontSize: "14px", cursor: "pointer", fontFamily: "inherit" }}>
-              ส่งรีวิว ⭐
+              ส่งรีวิว
             </button>
           )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderChangeMenuModal = () => {
+    if (!outOfStockOrder || !isChangeMenuMode) return null;
+
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.75)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }}>
+        <div style={{ background: COLORS.white, width: "min(460px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "900", color: COLORS.navy }}> เลือกเมนูอาหารทดแทน</h3>
+            <button onClick={() => setIsChangeMenuMode(false)} style={{ border: "none", background: COLORS.lightGray, width: "32px", height: "32px", borderRadius: "50%", cursor: "pointer" }}>×</button>
+          </div>
+          <p style={{ color: COLORS.gray, fontSize: "13px", margin: "0 0 15px" }}>
+            คิว #{outOfStockOrder.QueueNo} • เลือกรายการใหม่จากร้าน {outOfStockOrder.StoreName}:
+          </p>
+
+          <div style={{ maxHeight: "250px", overflowY: "auto", display: "grid", gap: "8px", marginBottom: "15px" }}>
+            {products
+              .filter((p) =>
+                !p.IsOutOfStock &&
+                Number(p.ProductId) !== Number(
+                  getOutOfStockItems(outOfStockOrder)[0]?.ProductId
+                )
+              )
+              .map((product) => (
+                <div
+                  key={product.ProductId}
+                  onClick={() => setNewSelectedProduct(product)}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: "12px",
+                    border: `2px solid ${newSelectedProduct?.ProductId === product.ProductId ? COLORS.orange : COLORS.border}`,
+                    background: newSelectedProduct?.ProductId === product.ProductId ? "#FFF9F5" : COLORS.white,
+                    cursor: "pointer",
+                    display: "flex",
+                    justify: "space-between",
+                    alignItems: "center"
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: "800", fontSize: "14px" }}>{product.ProductName}</div>
+                    <div style={{ fontSize: "12px", color: COLORS.gray }}>{product.UnitPrice} ฿</div>
+                  </div>
+                  {newSelectedProduct?.ProductId === product.ProductId && (
+                    <span style={{ color: COLORS.orange, fontWeight: "900" }}>✓ เลือก</span>
+                  )}
+                </div>
+              ))}
+          </div>
+
+          <div style={{ display: "flex", gap: "10px" }}>
+            <button
+              onClick={() => setIsChangeMenuMode(false)}
+              style={{ flex: 1, padding: "12px", border: `1px solid ${COLORS.border}`, borderRadius: "12px", background: COLORS.lightGray, cursor: "pointer", fontWeight: "800" }}
+            >
+              ยกเลิก
+            </button>
+            <button
+              onClick={handleChangeOrderMenu}
+              disabled={!newSelectedProduct}
+              style={{
+                flex: 2,
+                padding: "12px",
+                border: "none",
+                borderRadius: "12px",
+                background: newSelectedProduct ? COLORS.green : "#CCCCCC",
+                color: COLORS.white,
+                fontWeight: "900",
+                cursor: newSelectedProduct ? "pointer" : "not-allowed"
+              }}
+            >
+              ยืนยันเปลี่ยนเมนู
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1180,6 +1481,7 @@ const renderProfile = () => (
       {renderCart()}
       {renderPaymentModal()}
       {renderReviewModal()}
+      {renderChangeMenuModal()}
     </div>
   );
 }
