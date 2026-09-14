@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 /* ============================================================
-   OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า
+   OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า (Berry Theme Style)
    ============================================================ */
 
 const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -85,7 +85,6 @@ function buildStoreReport(orders, storeId, days) {
   };
 }
 
-// ฟังก์ชันแปลงสถานะเป็นภาษาไทย
 const getStatusLabel = (status) => {
   const statusMap = {
     'Verifying_Slip': 'รอตรวจสอบสลิป',
@@ -98,84 +97,84 @@ const getStatusLabel = (status) => {
   return statusMap[status] || status;
 };
 
-const getStatusTone = (status) => {
-  if (status === 'Completed') return 'ok';
-  if (status === 'Cancelled') return 'bad';
-  return 'warn';
-};
-
-function Icon({ name, size = 18 }) {
+// --- Icons ---
+function Icon({ name, size = 20 }) {
   const paths = {
-    dashboard: <><rect x="3" y="3" width="7" height="9" /><rect x="14" y="3" width="7" height="5" /><rect x="14" y="12" width="7" height="9" /><rect x="3" y="16" width="7" height="5" /></>,
-    menu: <><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></>,
-    cancel: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6l4 2" /></>,
-    history: <><path d="M12 8v4l3 3" /><circle cx="12" cy="12" r="9" /></>, 
-    check: <><path d="M20 6 9 17l-5-5" /></>,
-    hamburger: <><path d="M4 6h16M4 12h16M4 18h16" /></>,
-    power: <><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></>
+    dashboard: <><path d="M4 4h6v8H4z" /><path d="M4 16h6v4H4z" /><path d="M14 12h6v8h-6z" /><path d="M14 4h6v4h-6z" /></>,
+    menu: <><path d="M4 6l16 0" /><path d="M4 12l16 0" /><path d="M4 18l16 0" /></>,
+    cancel: <><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M9 12l6 0" /></>,
+    history: <><path d="M12 8l0 4l2 2" /><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" /></>,
+    check: <><path d="M5 12l5 5l10 -10" /></>,
+    power: <><path d="M7 6a7.75 7.75 0 1 0 10 0" /><line x1="12" y1="4" x2="12" y2="12" /></>,
+    settings: <><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0 -2.573-1.066c-1.543 .94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0 -1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543 .826-3.31 2.37-2.37c1 .608 2.296 .07 2.572-1.065z"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></>,
+    bell: <><path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6"/><path d="M9 17v1a3 3 0 0 0 6 0v-1"/></>,
+    user: <><path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" /><path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /></>,
+    logout: <><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>
   };
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
 function Badge({ tone, children }) {
-  return <span className={`avx-badge tone-${tone}`}><span className="avx-badge-dot" />{children}</span>;
+  return <span className={`berry-badge tone-${tone}`}>{children}</span>;
 }
 
-// --- Component กราฟแบบ Executive ---
 function PeriodButtons({ days, setDays }) {
   return (
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', background: 'var(--berry-purple-light)', padding: '4px', borderRadius: '8px' }}>
       {[1, 7, 14, 30].map(value => (
         <button
           key={value}
           type="button"
           onClick={() => setDays(value)}
-          style={{
-            padding: '7px 12px',
-            border: '1px solid #c7d2fe',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontWeight: 'bold',
-            fontSize: '12.5px',
-            background: days === value ? '#2563eb' : 'white',
-            color: days === value ? 'white' : '#334155'
-          }}
+          className={`berry-period-btn ${days === value ? 'active' : ''}`}
         >
-          {value === 1 ? 'วันนี้' : `${value} วัน`}
+          {value === 1 ? 'Today' : `${value} Days`}
         </button>
       ))}
     </div>
   );
 }
 
-function DashboardDetail({ label, value }) {
+function DashboardSmallCard({ label, value, icon, tone }) {
   return (
-    <div style={{ background: 'white', padding: '14px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', border: '1px solid #e2e8f0' }}>
-      <div style={{ color: '#64748b', fontSize: '12px', fontWeight: '600' }}>{label}</div>
-      <div style={{ marginTop: '6px', fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>{value}</div>
+    <div className="berry-card berry-small-card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className={`berry-avatar-box tone-${tone}`}>
+          <Icon name={icon} size={24} />
+        </div>
+        <div>
+          <div style={{ fontSize: '20px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>{value}</div>
+          <div style={{ color: 'var(--berry-text-muted)', fontSize: '13px', marginTop: '2px' }}>{label}</div>
+        </div>
+      </div>
     </div>
   );
 }
 
 function OverviewSalesBarChart({ data }) {
   if (!data || data.length === 0) {
-    return <div style={{ minHeight: '220px', display: 'grid', placeItems: 'center', color: '#64748b' }}>ช่วงเวลานี้ยังไม่มียอดขายสำเร็จ</div>;
+    return <div style={{ minHeight: '300px', display: 'grid', placeItems: 'center', color: 'var(--berry-text-muted)' }}>ช่วงเวลานี้ยังไม่มียอดขายสำเร็จ</div>;
   }
-  const width = 850, height = 250, left = 65, right = 20, top = 30, bottom = 40;
+  const width = 850, height = 300, left = 65, right = 20, top = 30, bottom = 40;
   const graphWidth = width - left - right, graphHeight = height - top - bottom;
   const values = data.map(item => Number(item.sales || 0));
   const maxValue = Math.max(...values, 1);
   const slotWidth = graphWidth / data.length;
-  const barWidth = Math.min(36, slotWidth * 0.62);
-  const labelStep = Math.max(1, Math.ceil(data.length / 8));
+  const barWidth = Math.min(24, slotWidth * 0.5);
+  const labelStep = Math.max(1, Math.ceil(data.length / 10));
   const shortNumber = value => value >= 1000000 ? `${(value / 1000000).toFixed(1)}M` : value >= 1000 ? `${Math.round(value / 1000)}K` : Math.round(value).toString();
 
   return (
-    <div style={{ overflowX: 'auto', marginTop: '12px' }}>
+    <div style={{ overflowX: 'auto', marginTop: '16px' }}>
       <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', minWidth: '600px', display: 'block' }}>
         {[0, 1, 2, 3, 4].map(line => {
           const ratio = line / 4, y = top + graphHeight * ratio, amount = maxValue * (1 - ratio);
-          return <g key={line}><line x1={left} x2={width-right} y1={y} y2={y} stroke="#e5e7eb"/><text x={left-10} y={y+4} textAnchor="end" fontSize="11" fill="#64748b">{shortNumber(amount)}</text></g>;
+          return (
+            <g key={line}>
+              <line x1={left} x2={width-right} y1={y} y2={y} stroke="var(--berry-border)" strokeDasharray="4 4" />
+              <text x={left-10} y={y+4} textAnchor="end" fontSize="12" fill="var(--berry-text-muted)">{shortNumber(amount)}</text>
+            </g>
+          );
         })}
         {data.map((item, index) => {
           const sales = Number(item.sales || 0), barHeight = (sales / maxValue) * graphHeight;
@@ -183,27 +182,27 @@ function OverviewSalesBarChart({ data }) {
           const showLabel = index % labelStep === 0 || index === data.length - 1;
           return (
             <g key={`${item.label}-${index}`}>
-              <rect x={x} y={y} width={barWidth} height={Math.max(barHeight,2)} rx="4" fill="#C97F1E">
+              <rect x={x} y={y} width={barWidth} height={Math.max(barHeight,2)} rx="4" fill="var(--berry-purple)">
                 <title>{item.label}: {sales.toLocaleString()} บาท</title>
               </rect>
-              {sales > 0 && <text x={x+barWidth/2} y={Math.max(y-7,12)} textAnchor="middle" fontSize="10" fontWeight="bold" fill="#B4562B">{shortNumber(sales)}</text>}
-              {showLabel && <text x={x+barWidth/2} y={height-12} textAnchor="middle" fontSize="11" fill="#64748b">{item.label}</text>}
+              {sales > 0 && <text x={x+barWidth/2} y={Math.max(y-8,12)} textAnchor="middle" fontSize="11" fontWeight="600" fill="var(--berry-purple)">{shortNumber(sales)}</text>}
+              {showLabel && <text x={x+barWidth/2} y={height-12} textAnchor="middle" fontSize="12" fill="var(--berry-text-muted)">{item.label}</text>}
             </g>
           );
         })}
-        <line x1={left} x2={width-right} y1={top+graphHeight} y2={top+graphHeight} stroke="#cbd5e1"/>
+        <line x1={left} x2={width-right} y1={top+graphHeight} y2={top+graphHeight} stroke="var(--berry-border)"/>
       </svg>
     </div>
   );
 }
 
-export default function OwnerView({ user, apiBase }) {
+export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
-    if (!document.getElementById('avx-font-link')) {
+    if (!document.getElementById('berry-font-link')) {
       const link = document.createElement('link');
-      link.id = 'avx-font-link';
+      link.id = 'berry-font-link';
       link.rel = 'stylesheet';
-      link.href = 'https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap';
+      link.href = 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Sarabun:wght@400;500;600;700&display=swap';
       document.head.appendChild(link);
     }
   }, []);
@@ -214,17 +213,49 @@ export default function OwnerView({ user, apiBase }) {
   const [products, setProducts] = useState([]);
   const [history, setHistory] = useState([]); 
   
-  // States สำหรับ Dashboard กราฟใหม่
   const [storeDays, setStoreDays] = useState(1);
   const [storeReport, setStoreReport] = useState(null);
   
   const [page, setPage] = useState('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  
+  // ให้ sidebar กางออกโดยเริ่มต้น
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState({ show: false, msg: '' });
+
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef(null);
+
+  // --- ระบบนับจำนวนแจ้งเตือนที่ฉลาดขึ้น ---
+  const [unreadCancels, setUnreadCancels] = useState(0);
+  const [knownCancelsCount, setKnownCancelsCount] = useState(0);
+  const isFirstFetch = useRef(true); // ใช้เช็คว่าเพิ่งเปิดหน้าเว็บครั้งแรกหรือไม่
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (profileRef.current && !profileRef.current.contains(event.target)) {
+        setProfileOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const fetchData = () => {
     fetch(`${apiBase}/api/reports/dashboard?store_id=${storeId}`).then(r => r.json()).then(d => setDash(d[0] || {}));
-    fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`).then(r => r.json()).then(setCancels);
+    
+    // ดึงข้อมูลยกเลิก
+    fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
+      .then(r => r.json())
+      .then(data => {
+        setCancels(data);
+        
+        // ถ้านี่คือการดึงข้อมูลครั้งแรก ให้ระบบ "จำ" ยอดทั้งหมดไว้เลยว่าเป็นของเก่า
+        if (isFirstFetch.current) {
+          setKnownCancelsCount(data.length);
+          isFirstFetch.current = false;
+        }
+      });
+
     fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => r.json()).then(setProducts);
     fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => r.json()).then(setHistory).catch(err => console.error(err));
   };
@@ -235,12 +266,32 @@ export default function OwnerView({ user, apiBase }) {
     return () => clearInterval(interval);
   }, [storeId, apiBase]);
 
-  // คำนวณ Report เมื่อ History หรือ จำนวนวัน (storeDays) เปลี่ยน
   useEffect(() => {
     if (history) {
       setStoreReport(buildStoreReport(history, storeId, storeDays));
     }
   }, [history, storeId, storeDays]);
+
+  // --- อัปเดตแจ้งเตือนเมื่อมีออเดอร์ถูกยกเลิกเพิ่มเข้ามา ---
+  useEffect(() => {
+    // ถ้ายอดแคนเซิลมีเพิ่มขึ้นจากที่เคยรู้ และไม่ใช่การดึงข้อมูลครั้งแรก
+    if (!isFirstFetch.current && cancels.length > knownCancelsCount) {
+      if (page !== 'cancel') {
+        setUnreadCancels(cancels.length - knownCancelsCount);
+      } else {
+        // ถ้าเปิดหน้า Cancel อยู่แล้ว ให้อัปเดตยอดที่รู้เลย โดยไม่ต้องแจ้งเตือน
+        setKnownCancelsCount(cancels.length);
+      }
+    }
+  }, [cancels.length, page, knownCancelsCount]);
+
+  // เมื่อผู้ใช้กดเข้ามาที่หน้า 'cancel' ให้เคลียร์การแจ้งเตือน
+  useEffect(() => {
+    if (page === 'cancel') {
+      setUnreadCancels(0);
+      setKnownCancelsCount(cancels.length);
+    }
+  }, [page, cancels.length]);
 
   const showToast = (msg) => {
     setToast({ show: true, msg });
@@ -262,314 +313,694 @@ export default function OwnerView({ user, apiBase }) {
     });
   };
 
-  const navItems = [
-    { id: 'dashboard', label: 'ภาพรวมร้านค้า', icon: 'dashboard' },
-    { id: 'menu', label: 'จัดการเมนู/สต็อก', icon: 'menu' },
-    { id: 'history', label: 'ประวัติการขาย', icon: 'history' },
-    { id: 'cancel', label: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: cancels.length || null },
-  ];
-
-  const pageTitles = {
-    dashboard: ['แดชบอร์ดร้านค้า', 'สรุปยอดขายและสถานะร้านค้าของคุณในวันนี้'],
-    menu: ['จัดการสต็อกสินค้า', 'เปิด-ปิด สถานะเมนูอาหารเมื่อวัตถุดิบหมด'],
-    history: ['ประวัติการขาย', 'รายการออเดอร์ที่เข้ามาทั้งหมดของร้านค้า'],
-    cancel: ['ประวัติการยกเลิก', 'ตรวจสอบรายการออเดอร์ที่ถูกยกเลิกเพื่อวิเคราะห์ปัญหา'],
+  const handleLogout = () => {
+    if (onLogout) onLogout();
   };
 
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมร้านค้า', icon: 'dashboard' },
+    { id: 'menu', label: 'Manage Menu', caption: 'จัดการเมนู/สต็อก', icon: 'menu' },
+    { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history' },
+    // แสดง Badge ก็ต่อเมื่อมียอดที่ยังไม่อ่าน
+    { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
+  ];
+
   return (
-    <div className="avx-root">
-      <style>{STYLES}</style>
-      <div className="avx-shell">
-        {/* ===== SIDEBAR ===== */}
-        <aside className={`avx-sidebar${sidebarOpen ? ' open' : ''}`}>
-          <div className="avx-brand">
-            <div className="avx-brand-mark" style={{ background: 'linear-gradient(135deg, #C97F1E, #F59E0B)' }}>OF</div>
-            <div>
-              <div className="avx-brand-t1">Shop Owner</div>
-              <div className="avx-brand-t2">แดชบอร์ดเจ้าของร้าน</div>
+    <div className="berry-root">
+      <style>{BERRY_STYLES}</style>
+      
+      {/* ===== TOPBAR (HEADER) ===== */}
+      <header className="berry-topbar">
+        <div className="berry-topbar-left">
+          <div className="berry-brand">
+            <div className="brand-title">
+              <span className="brand-icon">🍽️</span> 
+              <span>Only Foods</span>
+            </div>
+            <div className="brand-subtitle">
+              สถานะศูนย์อาหาร: 
+              <span className="status-dot"></span> 
+              <span className="status-text">เปิดให้บริการ</span>
             </div>
           </div>
-          <nav className="avx-nav">
-            <div className="avx-nav-label">เมนูจัดการร้าน</div>
-            {navItems.map(n => (
-              <div key={n.id} className={`avx-nav-item${page === n.id ? ' active' : ''}`} onClick={() => { setPage(n.id); setSidebarOpen(false); }}>
-                <Icon name={n.icon} size={17} /> {n.label}
-                {n.badge ? <span className="avx-nav-badge">{n.badge}</span> : null}
+
+          <button className="berry-icon-btn purple-light" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <Icon name="menu" size={20} />
+          </button>
+        </div>
+
+        <div className="berry-topbar-right">
+          <button className="berry-icon-btn amber-light"><Icon name="bell" size={20} /></button>
+          
+          {/* Profile Dropdown Area */}
+          <div className="berry-profile-container" ref={profileRef}>
+            
+            <div className="berry-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
+              <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--berry-blue-dark)' }}>
+                {user?.name || 'Shop Owner'}
+              </span>
+              <div style={{ color: 'var(--berry-blue-dark)', display: 'flex', alignItems: 'center' }}>
+                <Icon name="settings" size={18} />
               </div>
-            ))}
-          </nav>
-          <div className="avx-sidebar-foot">
-            ร้านค้าสังกัด<br /><strong>{dash.StoreName || 'กำลังโหลด...'}</strong><br />
-            <span style={{ opacity: .8 }}>ผู้ใช้งาน: {user?.name || user?.FullName || 'Owner'}</span>
+            </div>
+
+            {/* Popup Dropdown */}
+            {profileOpen && (
+              <div className="berry-profile-dropdown">
+                <div className="dropdown-header">
+                  <h4>Good Morning, {user?.name || user?.FullName || 'Owner'}</h4>
+                  <p>Shop Owner (เจ้าของร้าน)</p>
+                </div>
+                
+                <hr className="berry-divider" style={{ margin: '0 0 16px' }} />
+
+                <div className="dropdown-item">
+                  <Icon name="settings" size={18} /> Account Settings
+                </div>
+                <div className="dropdown-item">
+                  <Icon name="user" size={18} /> Social Profile
+                  <span className="dropdown-badge">02</span>
+                </div>
+                <div className="dropdown-item" onClick={handleLogout}>
+                  <Icon name="logout" size={18} /> Logout
+                </div>
+              </div>
+            )}
           </div>
+        </div>
+      </header>
+
+      {/* ===== BODY (Sidebar + Main Content) ===== */}
+      <div className="berry-body">
+        
+        {/* ===== SIDEBAR ===== */}
+        <aside className={`berry-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
+          <nav className="berry-nav">
+            <div className="berry-nav-group">
+              <div className="berry-nav-label hide-on-collapse">Shop Management</div>
+              {navItems.map(n => (
+                <div 
+                  key={n.id} 
+                  className={`berry-nav-item ${page === n.id ? 'active' : ''}`} 
+                  onClick={() => { 
+                    setPage(n.id); 
+                    if (window.innerWidth <= 768) setSidebarOpen(false); 
+                  }}
+                  title={!sidebarOpen ? n.label : ""}
+                >
+                  <div className="berry-nav-icon"><Icon name={n.icon} size={20} /></div>
+                  <div className="berry-nav-text hide-on-collapse">
+                    <div className="title">{n.label}</div>
+                    <div className="caption">{n.caption}</div>
+                  </div>
+                  {n.badge ? <span className="berry-nav-badge hide-on-collapse">{n.badge}</span> : null}
+                </div>
+              ))}
+            </div>
+          </nav>
         </aside>
 
-        {/* ===== MAIN ===== */}
-        <div className="avx-main">
-          <header className="avx-topbar">
-            <button className="avx-hamburger" onClick={() => setSidebarOpen(o => !o)}><Icon name="hamburger" size={20} /></button>
-            <div style={{ flex: 1 }}>
-               <Badge tone={dash.IsOpen ? 'ok' : 'bad'}>
-                 สถานะ: {dash.IsOpen ? '🟢 เปิดให้บริการ' : '🔴 ปิดรับออเดอร์ชั่วคราว'}
-               </Badge>
-            </div>
-            <div className="avx-topbar-right">
-              <div className="avx-user-chip">
-                <div className="avx-user-avatar" style={{ background: 'linear-gradient(135deg, #C97F1E, #F59E0B)' }}>
-                  {(user?.name || user?.FullName || 'OW').slice(0, 2)}
+        {/* ===== MAIN CONTENT ===== */}
+        <main className="berry-content">
+          {page === 'dashboard' && (
+            <div className="berry-dashboard-grid">
+              <div className="berry-stat-row">
+                <div className="berry-card berry-bg-purple">
+                  <div className="berry-decor-circle-1"></div>
+                  <div className="berry-decor-circle-2"></div>
+                  <div className="berry-card-header">
+                    <div className="berry-icon-box dark"><Icon name="dashboard" size={24} /></div>
+                  </div>
+                  <div className="berry-card-body">
+                    <h2>${fmtMoney(storeReport?.total_sales || 0)}.00</h2>
+                    <p>Total Earning</p>
+                  </div>
                 </div>
-                <div>
-                  <div className="avx-user-name">{user?.name || user?.FullName || 'เจ้าของร้าน'}</div>
-                  <div className="avx-user-role">Shop Owner</div>
+
+                <div className="berry-card berry-bg-blue">
+                  <div className="berry-decor-wave">
+                     <svg viewBox="0 0 200 100" preserveAspectRatio="none"><path d="M0 50 C 40 10, 60 90, 100 50 C 140 10, 160 90, 200 50 L 200 100 L 0 100 Z" fill="rgba(255,255,255,0.1)"/></svg>
+                  </div>
+                  <div className="berry-card-header">
+                    <div className="berry-icon-box dark blue"><Icon name="history" size={24} /></div>
+                  </div>
+                  <div className="berry-card-body">
+                    <h2>{storeReport?.total_orders || 0}</h2>
+                    <p>Total Order</p>
+                  </div>
+                </div>
+
+                <div className="berry-stat-col">
+                  <DashboardSmallCard 
+                    label="Avg. Order Value" 
+                    value={`$${fmtMoney(storeReport?.average_order || 0)}`} 
+                    icon="check" 
+                    tone="blue" 
+                  />
+                  <DashboardSmallCard 
+                    label="Total Cancelled" 
+                    value={storeReport?.total_cancelled || 0} 
+                    icon="cancel" 
+                    tone="amber" 
+                  />
                 </div>
               </div>
-            </div>
-          </header>
 
-          <main className="avx-content">
-            <div className="avx-page-head" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '20px' }}>
-              <div><h1>{pageTitles[page][0]}</h1><p>{pageTitles[page][1]}</p></div>
-              {page === 'dashboard' && (
-                <button 
-                  onClick={toggleStore} 
-                  className={`avx-btn ${dash.IsOpen ? 'avx-btn-danger' : 'avx-btn-success'}`}
-                  style={{ gap: '8px' }}
-                >
-                  <Icon name="power" size={16} /> 
-                  {dash.IsOpen ? 'ปิดรับออเดอร์ชั่วคราว' : 'เปิดรับออเดอร์ร้านค้า'}
-                </button>
-              )}
-            </div>
-
-            {/* ================= DASHBOARD (อัปเกรดเป็นกราฟแบบ Executive) ================= */}
-            {page === 'dashboard' && (
-              <div style={{ background: '#fffbeb', padding: '20px', borderRadius: '12px', border: '1px solid #fde68a' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-                  <div>
-                    <h3 style={{ margin: 0, color: '#92400e', fontSize: '18px' }}>สถิติและแนวโน้มยอดขาย</h3>
-                    <div style={{ color: '#b45309', fontSize: '13px', marginTop: '4px' }}>วิเคราะห์ข้อมูลร้าน {dash.StoreName}</div>
-                  </div>
-                  <PeriodButtons days={storeDays} setDays={setStoreDays} />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-                  <DashboardDetail label={storeDays === 1 ? 'ยอดขายวันนี้' : `ยอดขาย ${storeDays} วัน`} value={`฿${fmtMoney(storeReport?.total_sales || 0)}`} />
-                  <DashboardDetail label={storeDays === 1 ? 'ออเดอร์สำเร็จ' : `ออเดอร์สำเร็จ`} value={`${storeReport?.total_orders || 0} รายการ`} />
-                  <DashboardDetail label="ออเดอร์ยกเลิก" value={`${storeReport?.total_cancelled || 0} รายการ`} />
-                  <DashboardDetail label="ยอดเฉลี่ย/ออเดอร์" value={`฿${fmtMoney(storeReport?.average_order || 0)}`} />
-                  <DashboardDetail label="อัตราการยกเลิก" value={`${storeReport?.cancellation_rate || 0}%`} />
-                </div>
-
-                <div style={{ marginTop: '20px', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '18px', background: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
-                  <h4 style={{ margin: '0 0 4px', fontSize: '15px' }}>กราฟยอดขาย</h4>
-                  <div style={{ color: '#64748b', fontSize: '12.5px' }}>
-                    {storeDays === 1 ? 'ยอดขายแยกตามชั่วโมงของวันนี้' : `ยอดขายแยกตามวัน ย้อนหลัง ${storeDays} วัน`}
+              <div className="berry-chart-row">
+                <div className="berry-card" style={{ flex: '2 1 600px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ color: 'var(--berry-text-muted)', fontSize: '14px', fontWeight: '500' }}>Total Growth</div>
+                      <h3 style={{ margin: '8px 0 0', fontSize: '24px', fontWeight: '700' }}>${fmtMoney(storeReport?.total_sales || 0)}.00</h3>
+                    </div>
+                    <PeriodButtons days={storeDays} setDays={setStoreDays} />
                   </div>
                   <OverviewSalesBarChart data={storeReport?.trend || []} />
                 </div>
-              </div>
-            )}
 
-            {/* ================= MENU & STOCK ================= */}
-            {page === 'menu' && (
-              <div className="avx-panel">
-                <div className="avx-panel-head"><div><h3>รายการเมนูอาหาร</h3><div className="avx-sub">คลิกปุ่มเพื่อเปลี่ยนสถานะมีสินค้า/สินค้าหมด</div></div></div>
-                <div className="avx-scroll-x">
-                  <table className="avx-table">
-                    <thead><tr><th>รหัสสินค้า</th><th>ชื่อเมนู</th><th>ราคา</th><th>สถานะปัจจุบัน</th><th>การจัดการ</th></tr></thead>
-                    <tbody>
-                      {products.length === 0 && <tr><td colSpan="5" className="avx-empty-row">ยังไม่มีข้อมูลเมนูอาหารในระบบ</td></tr>}
-                      {products.map(p => (
-                        <tr key={p.ProductId}>
-                          <td className="avx-num">#{p.ProductId}</td>
-                          <td><b>{p.ProductName}</b></td>
-                          <td className="avx-num">฿{fmtMoney(p.UnitPrice)}</td>
-                          <td>
-                            {p.IsOutOfStock 
-                              ? <Badge tone="bad">สินค้าหมด</Badge> 
-                              : <Badge tone="ok">พร้อมขาย</Badge>}
-                          </td>
-                          <td>
-                            <button 
-                              onClick={() => toggleStock(p.ProductId, p.ProductName, p.IsOutOfStock)} 
-                              className={`avx-btn ${p.IsOutOfStock ? 'avx-btn-success' : 'avx-btn-danger'}`}
-                              style={{ padding: '4px 10px', fontSize: '12px' }}
-                            >
-                              {p.IsOutOfStock ? 'ปรับเป็นมีสินค้า' : 'แจ้งสินค้าหมด'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="berry-card" style={{ flex: '1 1 300px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>Store Control</h3>
+                  </div>
+                  
+                  <div className="berry-store-control">
+                    <div className="status-indicator">
+                      <strong>Current Status: </strong>
+                      <span style={{ color: dash.IsOpen ? 'var(--berry-green)' : 'var(--berry-red)', fontWeight: '600' }}>
+                        {dash.IsOpen ? 'Open' : 'Closed'}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={toggleStore} 
+                      className={`berry-btn ${dash.IsOpen ? 'btn-error' : 'btn-primary'}`}
+                      style={{ width: '100%', marginTop: '16px' }}
+                    >
+                      <Icon name="power" size={18} /> 
+                      {dash.IsOpen ? 'Turn Off Orders' : 'Turn On Orders'}
+                    </button>
+                    
+                    <div style={{ marginTop: '32px' }}>
+                      <h4 style={{ margin: '0 0 12px', fontSize: '15px' }}>Quick Stats</h4>
+                      <div className="berry-list-item">
+                        <div>
+                          <div className="title">Cancellation Rate</div>
+                          <div className="caption">Based on {storeDays} days</div>
+                        </div>
+                        <div className="value" style={{ color: 'var(--berry-red)' }}>{storeReport?.cancellation_rate || 0}%</div>
+                      </div>
+                      <hr className="berry-divider" />
+                      <div className="berry-list-item">
+                        <div>
+                          <div className="title">Shop Name</div>
+                          <div className="caption">ID: {storeId}</div>
+                        </div>
+                        <div className="value">{dash.StoreName || 'Loading...'}</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* ================= HISTORY ================= */}
-            {page === 'history' && (
-              <div className="avx-panel">
-                <div className="avx-panel-head">
-                  <div><h3>ประวัติการขายทั้งหมด</h3><div className="avx-sub">เรียงจากออเดอร์ล่าสุดไปเก่าสุด</div></div>
-                </div>
-                <div className="avx-scroll-x">
-                  <table className="avx-table">
-                    <thead>
-                      <tr>
-                        <th>วัน-เวลา</th>
-                        <th>หมายเลขคิว</th>
-                        <th>รายการอาหาร</th>
-                        <th>ยอดเงิน</th>
-                        <th>สถานะ</th>
+          {page === 'menu' && (
+            <div className="berry-card">
+              <div className="berry-card-header-simple">
+                <h3>Menu & Stock Management</h3>
+              </div>
+              <div className="berry-table-container">
+                <table className="berry-table">
+                  <thead>
+                    <tr>
+                      <th>Product ID</th>
+                      <th>Menu Name</th>
+                      <th>Price</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {products.length === 0 && <tr><td colSpan="5" className="empty-state">No products found.</td></tr>}
+                    {products.map(p => (
+                      <tr key={p.ProductId}>
+                        <td className="mono">#{p.ProductId}</td>
+                        <td style={{ fontWeight: '500' }}>{p.ProductName}</td>
+                        <td className="mono">${fmtMoney(p.UnitPrice)}</td>
+                        <td>
+                          <Badge tone={p.IsOutOfStock ? 'danger' : 'success'}>
+                            {p.IsOutOfStock ? 'Out of Stock' : 'In Stock'}
+                          </Badge>
+                        </td>
+                        <td>
+                          <button 
+                            onClick={() => toggleStock(p.ProductId, p.ProductName, p.IsOutOfStock)} 
+                            className={`berry-btn-small ${p.IsOutOfStock ? 'btn-primary-light' : 'btn-error-light'}`}
+                          >
+                            {p.IsOutOfStock ? 'Mark In Stock' : 'Mark Out of Stock'}
+                          </button>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {history.length === 0 && <tr><td colSpan="5" className="avx-empty-row">ไม่พบประวัติการสั่งซื้อ</td></tr>}
-                      {history.map(h => (
-                        <tr key={h.OrderID}>
-                          <td className="avx-num" style={{ fontSize: '11px', color: 'var(--text-600)' }}>
-                            {h.CreatedAt ? new Date(h.CreatedAt).toLocaleString('th-TH') : '-'}
-                          </td>
-                          <td className="avx-num" style={{ color: 'var(--teal)' }}><b>{h.QueueNo}</b></td>
-                          <td>
-                            {h.items?.map((item, idx) => (
-                              <div key={idx} style={{ fontSize: '12.5px', marginBottom: '2px' }}>
-                                • {item.ProductName} (x{item.Qty})
-                              </div>
-                            ))}
-                          </td>
-                          <td className="avx-num" style={{ fontWeight: 'bold' }}>฿{fmtMoney(h.TotalAmount)}</td>
-                          <td>
-                            <Badge tone={getStatusTone(h.Status)}>
-                              {getStatusLabel(h.Status)}
-                            </Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* ================= CANCELLATIONS ================= */}
-            {page === 'cancel' && (
-              <div className="avx-panel">
-                <div className="avx-panel-head"><div><h3>ประวัติการยกเลิกออเดอร์</h3><div className="avx-sub">รายการออเดอร์ที่ถูกปฏิเสธหรือลูกค้ายกเลิก</div></div></div>
-                <div className="avx-scroll-x">
-                  <table className="avx-table">
-                    <thead><tr><th>วัน-เวลา</th><th>หมายเลขคิว</th><th>ยอดเงิน</th><th>เหตุผลที่ยกเลิก</th></tr></thead>
-                    <tbody>
-                      {cancels.length === 0 && <tr><td colSpan="4" className="avx-empty-row">ไม่พบประวัติการยกเลิก</td></tr>}
-                      {cancels.map(c => (
-                        <tr key={c.OrderID}>
-                          <td className="avx-num" style={{ fontSize: '11px', color: 'var(--text-600)' }}>
-                            {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
-                          </td>
-                          <td className="avx-num" style={{ color: 'var(--teal)' }}><b>{c.QueueNo}</b></td>
-                          <td className="avx-num">฿{fmtMoney(c.TotalAmount)}</td>
-                          <td style={{ color: 'var(--red)' }}>{c.CancelReason || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+          {page === 'history' && (
+            <div className="berry-card">
+              <div className="berry-card-header-simple">
+                <h3>Sales History</h3>
               </div>
-            )}
+              <div className="berry-table-container">
+                <table className="berry-table">
+                  <thead>
+                    <tr>
+                      <th>Date / Time</th>
+                      <th>Queue No.</th>
+                      <th>Items</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.length === 0 && <tr><td colSpan="5" className="empty-state">No sales history found.</td></tr>}
+                    {history.map(h => (
+                      <tr key={h.OrderID}>
+                        <td className="mono muted">
+                          {h.CreatedAt ? new Date(h.CreatedAt).toLocaleString('th-TH') : '-'}
+                        </td>
+                        <td className="mono" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{h.QueueNo}</td>
+                        <td>
+                          {h.items?.map((item, idx) => (
+                            <div key={idx} style={{ fontSize: '13px', marginBottom: '4px', color: 'var(--berry-text-dark)' }}>
+                              • {item.ProductName} <span style={{ color: 'var(--berry-text-muted)' }}>(x{item.Qty})</span>
+                            </div>
+                          ))}
+                        </td>
+                        <td className="mono bold">${fmtMoney(h.TotalAmount)}</td>
+                        <td>
+                          <Badge tone={h.Status === 'Completed' ? 'success' : h.Status === 'Cancelled' ? 'danger' : 'warning'}>
+                            {getStatusLabel(h.Status)}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
-          </main>
-        </div>
+          {page === 'cancel' && (
+            <div className="berry-card">
+              <div className="berry-card-header-simple">
+                <h3>Order Cancellations</h3>
+              </div>
+              <div className="berry-table-container">
+                <table className="berry-table">
+                  <thead>
+                    <tr>
+                      <th>Date / Time</th>
+                      <th>Queue No.</th>
+                      <th>Amount</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cancels.length === 0 && <tr><td colSpan="4" className="empty-state">No cancelled orders found.</td></tr>}
+                    {cancels.map(c => (
+                      <tr key={c.OrderID}>
+                        <td className="mono muted">
+                          {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
+                        </td>
+                        <td className="mono" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{c.QueueNo}</td>
+                        <td className="mono bold">${fmtMoney(c.TotalAmount)}</td>
+                        <td style={{ color: 'var(--berry-red)', fontWeight: '500' }}>{c.CancelReason || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+        </main>
       </div>
 
       {/* ===== Toast ===== */}
-      <div className={`avx-toast${toast.show ? ' show' : ''}`}><Icon name="check" size={15} />{toast.msg}</div>
+      <div className={`berry-toast ${toast.show ? 'show' : ''}`}>
+        <div className="icon-wrapper"><Icon name="check" size={16} /></div>
+        {toast.msg}
+      </div>
     </div>
   );
 }
 
 /* ============================================================
-   STYLES — ชุดเดียวกับ Accountant เพื่อให้ Theme เหมือนกัน 100%
+   BERRY CSS STYLES
    ============================================================ */
-const STYLES = `
-.avx-root{
-  --navy-950:#0B1E33; --navy-900:#102943; --bg:#F3F5F8; --card:#FFFFFF;
-  --border:#E2E7EE; --border-soft:#EDF0F4; --text-900:#131C2B; --text-600:#4B5768; --text-400:#8A94A6;
-  --teal:#0E7C7B; --teal-dark:#0A5F5E; --teal-soft:#E4F3F2;
-  --amber:#C97F1E; --amber-soft:#FBF0DD; --red:#C4433D; --red-soft:#FBEAE9; --green:#2F8F62; --green-soft:#E7F5EE;
-  font-family:'Sarabun',-apple-system,sans-serif; color:var(--text-900); background:var(--bg);
-  border-radius:14px; box-shadow:0 1px 3px rgba(11,30,51,0.08);
-  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+const BERRY_STYLES = `
+/* --- ซ่อน SCROLLBAR ทั้งหน้าเว็บ --- */
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+  display: none;
 }
-.avx-root *{box-sizing:border-box;}
-.avx-shell{display:flex; flex: 1; min-height: 0;}
-.avx-sidebar{width:224px;flex-shrink:0;background:linear-gradient(185deg,var(--navy-950),var(--navy-900) 70%);color:#EAF1F8;display:flex;flex-direction:column; overflow-y:auto;}
-.avx-brand{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid rgba(255,255,255,0.08);}
-.avx-brand-mark{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;flex-shrink:0;}
-.avx-brand-t1{font-weight:700;font-size:14px;}
-.avx-brand-t2{font-size:10.5px;color:#9FB1C4;margin-top:1px;}
-.avx-nav{padding:12px 10px;display:flex;flex-direction:column;gap:2px;flex:1;}
-.avx-nav-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#7690A8;padding:8px 10px 4px;font-weight:600;}
-.avx-nav-item{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:8px;color:#C7D5E3;font-size:13.5px;font-weight:500;cursor:pointer;border:1px solid transparent;}
-.avx-nav-item:hover{background:rgba(255,255,255,0.06);color:#fff;}
-.avx-nav-item.active{background:rgba(201,127,30,0.22);color:#fff;border-color:rgba(245,158,11,0.35);}
-.avx-nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px;}
-.avx-sidebar-foot{padding:12px 16px 16px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#9FB1C4;line-height:1.6;}
-.avx-main{flex:1;min-width:0;display:flex;flex-direction:column;}
-.avx-topbar{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border);background:rgba(255,255,255,0.6);}
-.avx-hamburger{display:none;background:none;border:none;cursor:pointer;color:var(--text-900);padding:4px;}
-.avx-topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
-.avx-user-chip{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;background:#fff;border:1px solid var(--border);border-radius:30px;}
-.avx-user-avatar{width:26px;height:26px;border-radius:50%;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;}
-.avx-user-name{font-size:12.5px;font-weight:600;}
-.avx-user-role{font-size:10px;color:var(--text-400);}
-.avx-content{padding:20px 24px 40px;overflow-y:auto;flex:1;}
-.avx-page-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;gap:12px;flex-wrap:wrap;}
-.avx-page-head h1{font-size:19px;margin:0 0 3px;font-weight:700;}
-.avx-page-head p{margin:0;color:var(--text-600);font-size:12.5px;}
-.avx-btn{border:none;border-radius:8px;padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;}
-.avx-btn-success{background:var(--green);color:#fff;}
-.avx-btn-success:hover{background:#23704C;}
-.avx-btn-danger{background:var(--red);color:#fff;}
-.avx-btn-danger:hover{background:#A33530;}
-.avx-cards-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px;}
-.avx-stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;}
-.avx-stat-label{font-size:11.5px;color:var(--text-600);font-weight:500;}
-.avx-stat-value{font-size:20px;font-weight:700;margin-top:6px;}
-.avx-stat-value.tone-bad{color:var(--red);} .avx-stat-value.tone-warn{color:var(--amber);} .avx-stat-value.tone-ok{color:var(--green);}
-.avx-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
-.avx-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap;}
-.avx-panel-head h3{font-size:14px;margin:0;font-weight:700;}
-.avx-sub{font-size:11.5px;color:var(--text-400);margin-top:2px;}
-.avx-table{width:100%;border-collapse:collapse;font-size:13px;}
-.avx-table thead th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-400);font-weight:700;padding:0 10px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
-.avx-table tbody td{padding:10px;border-bottom:1px solid var(--border-soft);vertical-align:middle;}
-.avx-table tbody tr:last-child td{border-bottom:none;}
-.avx-empty-row{text-align:center;color:var(--text-400);padding:18px;}
-.avx-num{font-family:'JetBrains Mono',monospace;font-size:12.5px;}
-.avx-scroll-x{overflow-x:auto;}
-.avx-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}
-.avx-badge.tone-ok{background:var(--green-soft);color:var(--green);}
-.avx-badge.tone-warn{background:var(--amber-soft);color:var(--amber);}
-.avx-badge.tone-bad{background:var(--red-soft);color:var(--red);}
-.avx-badge.tone-neutral{background:var(--teal-soft);color:var(--teal-dark);}
-.avx-badge-dot{width:5px;height:5px;border-radius:50%;background:currentColor;}
-.avx-field{display:flex;flex-direction:column;gap:5px;}
-.avx-field label{font-size:11px;font-weight:600;color:var(--text-600);}
-.avx-field select,.avx-field input{border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-family:inherit;font-size:13px;color:var(--text-900);background:#fff;width:100%;}
-.avx-field select:focus,.avx-field input:focus{outline:2px solid var(--teal);outline-offset:1px;border-color:var(--teal);}
-.avx-toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(16px);background:var(--navy-950);color:#fff;padding:11px 18px;border-radius:9px;font-size:12.5px;font-weight:600;box-shadow:0 12px 30px rgba(0,0,0,0.25);display:flex;align-items:center;gap:8px;z-index:300;opacity:0;pointer-events:none;transition:opacity .25s ease, transform .25s ease;font-family:'Sarabun',sans-serif;}
-.avx-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-.avx-toast svg{color:#4FD6C9;}
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+body, html {
+  overflow: hidden; /* ป้องกันไม่ให้หน้าหลัก (body) เลื่อน */
+  margin: 0;
+  padding: 0;
+}
 
-/* ปรับ UI เพื่อรองรับมือถือ */
-@media (max-width:760px){
-  .avx-sidebar{position:fixed;left:0;top:0;bottom:0;transform:translateX(-100%);z-index:100;height:100%;box-shadow:4px 0 24px rgba(0,0,0,0.2);transition:transform 0.3s ease;}
-  .avx-sidebar.open{transform:translateX(0);}
-  .avx-hamburger{display:flex;}
-  .avx-cards-row{grid-template-columns:1fr;}
-  .avx-content{padding: 16px 12px 30px;}
-  .avx-page-head{flex-direction:column; align-items:flex-start;}
-  .avx-btn{width: 100%; justify-content:center;}
-  .avx-panel-head{flex-direction:column; align-items:flex-start;}
+.berry-root {
+  --berry-bg: #eef2f6;
+  --berry-paper: #ffffff;
+  --berry-purple: #5e35b1;
+  --berry-purple-light: #ede7f6;
+  --berry-purple-dark: #4527a0;
+  --berry-blue: #1e88e5;
+  --berry-blue-light: #e3f2fd;
+  --berry-blue-dark: #1565c0;
+  --berry-text-dark: #121926;
+  --berry-text-muted: #697586;
+  --berry-border: #e3e8ef;
+  --berry-red: #f44336;
+  --berry-red-light: #fbe9e7;
+  --berry-green: #00c853;
+  --berry-green-light: #b9f6ca;
+  --berry-amber: #ffc107;
+  --berry-amber-light: #fff8e1;
+  
+  --radius-lg: 12px;
+  --radius-md: 8px;
+  --shadow-sm: 0px 2px 8px rgba(0,0,0,0.04);
+  
+  font-family: 'Roboto', 'Sarabun', sans-serif;
+  color: var(--berry-text-dark);
+  
+  /* FIXED LAYOUT TO PREVENT PAGE SCROLL */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--berry-bg);
+  z-index: 9999; 
+}
+
+.berry-root * { box-sizing: border-box; }
+
+/* -------------------------------------------
+   Top Header (Topbar)
+   ------------------------------------------- */
+.berry-topbar {
+  height: 80px;
+  background: var(--berry-paper);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--berry-border);
+  flex-shrink: 0;
+  z-index: 110;
+}
+.berry-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Brand Logo Container (Inside Topbar) */
+.berry-brand {
+  width: 236px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  white-space: nowrap;
+}
+.brand-title {
+  font-size: 20px;
+  color: var(--berry-blue);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-subtitle {
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--berry-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--berry-green);
+  display: inline-block;
+}
+.status-text {
+  color: var(--berry-green);
+  font-weight: 600;
+}
+
+/* Topbar Components */
+.berry-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.berry-icon-btn.purple-light { background: var(--berry-purple-light); color: var(--berry-purple); }
+.berry-icon-btn.purple-light:hover { background: var(--berry-purple); color: white; }
+.berry-icon-btn.amber-light { background: var(--berry-amber-light); color: #f59e0b; }
+.berry-icon-btn.amber-light:hover { background: #f59e0b; color: white; }
+
+.berry-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Profile Dropdown */
+.berry-profile-container {
+  position: relative;
+}
+.berry-user-chip {
+  background: var(--berry-blue-light);
+  padding: 6px 12px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.berry-user-chip:hover {
+  background: #d0e8fc;
+}
+.berry-profile-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  background: var(--berry-paper);
+  width: 280px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0px 8px 24px rgba(0,0,0,0.1);
+  border: 1px solid var(--berry-border);
+  padding: 20px;
+  z-index: 1000;
+  animation: slideDown 0.2s ease-out forwards;
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.dropdown-header h4 { margin: 0; font-size: 15px; font-weight: 600; color: var(--berry-text-dark); }
+.dropdown-header p { margin: 4px 0 16px; font-size: 13px; color: var(--berry-text-muted); }
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--berry-text-dark);
+  transition: background 0.2s;
+  margin-bottom: 2px;
+}
+.dropdown-item:hover { background: var(--berry-purple-light); color: var(--berry-purple); }
+.dropdown-badge { margin-left: auto; background: var(--berry-amber-light); color: var(--berry-amber); font-size: 11px; padding: 2px 6px; border-radius: 10px; font-weight: 600; }
+
+/* -------------------------------------------
+   Body (Sidebar + Content Container)
+   ------------------------------------------- */
+.berry-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* -------------------------------------------
+   Sidebar 
+   ------------------------------------------- */
+.berry-sidebar {
+  width: 260px;
+  background: var(--berry-paper);
+  border-right: 1px solid var(--berry-border);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+  overflow-x: hidden;
+  flex-shrink: 0;
+}
+.berry-nav { padding: 16px; flex: 1; overflow-y: auto; overflow-x: hidden; }
+.berry-nav-group { margin-bottom: 24px; }
+.berry-nav-label { font-size: 14px; font-weight: 500; color: var(--berry-text-dark); padding: 12px 16px; margin-bottom: 4px; white-space: nowrap; }
+.berry-nav-item { display: flex; align-items: center; gap: 16px; padding: 10px 16px; margin-bottom: 8px; border-radius: var(--radius-md); cursor: pointer; color: var(--berry-text-dark); transition: all 0.2s ease; white-space: nowrap; }
+.berry-nav-item:hover, .berry-nav-item.active { background: var(--berry-purple-light); color: var(--berry-purple); }
+.berry-nav-icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.berry-nav-text .title { font-size: 14px; font-weight: 500; }
+.berry-nav-text .caption { font-size: 12px; color: var(--berry-text-muted); margin-top: 2px; }
+.berry-nav-item:hover .caption, .berry-nav-item.active .caption { color: var(--berry-purple); opacity: 0.8; }
+.berry-nav-badge { margin-left: auto; background: var(--berry-blue); color: white; font-size: 12px; padding: 2px 8px; border-radius: 12px; font-weight: bold; }
+
+/* -------------------------------------------
+   Sidebar States (Collapsed & Mobile)
+   ------------------------------------------- */
+@media (min-width: 769px) {
+  .berry-sidebar.collapsed { width: 88px; }
+  .berry-sidebar.collapsed .hide-on-collapse { display: none !important; }
+  .berry-sidebar.collapsed .berry-nav-item { justify-content: center; padding: 12px; }
+  .berry-sidebar.collapsed .berry-nav-icon { margin: 0; }
+}
+
+@media (max-width: 768px) {
+  .berry-sidebar {
+    position: fixed;
+    left: 0;
+    top: 80px; /* ยึดไว้ใต้ Topbar */
+    bottom: 0;
+    width: 260px !important;
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+  .berry-sidebar.open {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0,0,0,0.1);
+  }
+  .berry-brand { width: auto; }
+}
+
+/* -------------------------------------------
+   Main Content Area
+   ------------------------------------------- */
+.berry-content {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+/* Dashboard Grid */
+.berry-dashboard-grid { display: flex; flex-direction: column; gap: 24px; }
+.berry-stat-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+.berry-stat-col { display: flex; flex-direction: column; gap: 24px; }
+.berry-chart-row { display: flex; flex-wrap: wrap; gap: 24px; }
+
+/* Cards */
+.berry-card { background: var(--berry-paper); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 24px; position: relative; overflow: hidden; }
+.berry-card-header-simple h3 { margin: 0 0 20px; font-size: 18px; font-weight: 600; }
+.berry-bg-purple { background: var(--berry-purple); color: white; }
+.berry-bg-blue { background: var(--berry-blue); color: white; }
+.berry-decor-circle-1 { position: absolute; width: 210px; height: 210px; background: var(--berry-purple-dark); border-radius: 50%; top: -85px; right: -95px; opacity: 0.5; }
+.berry-decor-circle-2 { position: absolute; width: 210px; height: 210px; background: var(--berry-purple-dark); border-radius: 50%; top: -125px; right: -15px; opacity: 0.5; }
+.berry-decor-wave { position: absolute; bottom: 0; right: 0; width: 100%; height: 100%; pointer-events: none; }
+.berry-decor-wave svg { width: 100%; height: 100%; }
+.berry-icon-box { width: 44px; height: 44px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; position: relative; z-index: 2; }
+.berry-icon-box.dark { background: var(--berry-purple-dark); }
+.berry-icon-box.dark.blue { background: var(--berry-blue-dark); }
+.berry-card-body { position: relative; z-index: 2; }
+.berry-card-body h2 { margin: 0 0 4px; font-size: 30px; font-weight: 500; }
+.berry-card-body p { margin: 0; font-size: 14px; opacity: 0.9; }
+
+/* Small Card */
+.berry-small-card { padding: 20px; display: flex; align-items: center; }
+.berry-avatar-box { width: 48px; height: 48px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; }
+.berry-avatar-box.tone-blue { background: var(--berry-blue-light); color: var(--berry-blue); }
+.berry-avatar-box.tone-amber { background: var(--berry-amber-light); color: var(--berry-amber); }
+
+/* Period Buttons */
+.berry-period-btn { background: transparent; border: none; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--berry-text-muted); cursor: pointer; font-family: inherit; transition: all 0.2s ease; }
+.berry-period-btn:hover { color: var(--berry-text-dark); }
+.berry-period-btn.active { background: #fff; color: var(--berry-text-dark); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+
+/* Lists & Tables */
+.berry-list-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; }
+.berry-list-item .title { font-size: 14px; font-weight: 500; color: var(--berry-text-dark); }
+.berry-list-item .caption { font-size: 12px; color: var(--berry-text-muted); }
+.berry-list-item .value { font-size: 14px; font-weight: 600; }
+.berry-divider { border: none; border-top: 1px solid var(--berry-border); margin: 4px 0; }
+
+.berry-table-container { overflow-x: auto; }
+.berry-table { width: 100%; border-collapse: collapse; }
+.berry-table th { text-align: left; padding: 16px; font-size: 14px; font-weight: 600; color: var(--berry-text-dark); border-bottom: 1px solid var(--berry-border); }
+.berry-table td { padding: 16px; border-bottom: 1px solid var(--berry-border); font-size: 14px; vertical-align: middle; }
+.berry-table tr:last-child td { border-bottom: none; }
+.berry-table .mono { font-family: 'Roboto', monospace; }
+.berry-table .bold { font-weight: 600; }
+.berry-table .muted { color: var(--berry-text-muted); font-size: 13px; }
+.empty-state { text-align: center; color: var(--berry-text-muted); padding: 32px !important; }
+
+/* Buttons */
+.berry-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 20px; border-radius: var(--radius-md); border: none; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.2s ease; }
+.btn-primary { background: var(--berry-purple); color: white; }
+.btn-primary:hover { background: var(--berry-purple-dark); }
+.btn-error { background: var(--berry-red); color: white; }
+.btn-error:hover { opacity: 0.9; }
+
+.berry-btn-small { padding: 6px 12px; border-radius: 6px; border: none; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; }
+.btn-primary-light { background: var(--berry-purple-light); color: var(--berry-purple); }
+.btn-primary-light:hover { background: var(--berry-purple); color: white; }
+.btn-error-light { background: var(--berry-red-light); color: var(--berry-red); }
+.btn-error-light:hover { background: var(--berry-red); color: white; }
+
+/* Badges */
+.berry-badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 16px; font-size: 12px; font-weight: 600; }
+.berry-badge.tone-success { background: var(--berry-green-light); color: var(--berry-green); }
+.berry-badge.tone-danger { background: var(--berry-red-light); color: var(--berry-red); }
+.berry-badge.tone-warning { background: var(--berry-amber-light); color: var(--berry-amber); }
+
+/* Toast */
+.berry-toast { position: fixed; bottom: 24px; right: 24px; background: white; color: var(--berry-text-dark); padding: 12px 20px; border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 12px; z-index: 1000; opacity: 0; transform: translateY(20px); pointer-events: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.berry-toast.show { opacity: 1; transform: translateY(0); }
+.berry-toast .icon-wrapper { background: var(--berry-green-light); color: var(--berry-green); width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+
+/* Responsive Grid */
+@media (max-width: 1024px) {
+  .berry-stat-row { grid-template-columns: 1fr 1fr; }
+  .berry-stat-col { grid-column: span 2; flex-direction: row; }
+  .berry-stat-col > div { flex: 1; }
+}
+
+@media (max-width: 768px) {
+  .berry-stat-row { grid-template-columns: 1fr; }
+  .berry-stat-col { grid-column: span 1; flex-direction: column; }
 }
 `;

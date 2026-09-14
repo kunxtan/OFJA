@@ -53,7 +53,6 @@ export default function App() {
   const [announcement, setAnnouncement] = useState('');
   const [pushNotifications, setPushNotifications] = useState([]);
 
-  // --- โค้ดที่ต้องเพิ่มใหม่ เริ่มต้นตรงนี้ ---
   useEffect(() => {
     const fetchFoodCourtStatus = () => {
       fetch('http://localhost:8000/api/food-court/status')
@@ -66,7 +65,6 @@ export default function App() {
     const interval = setInterval(fetchFoodCourtStatus, 4000);
     return () => clearInterval(interval);
   }, []);
-  // --- โค้ดที่ต้องเพิ่มใหม่ สิ้นสุดตรงนี้ ---
 
   // Auth Form State
   const [authTab, setAuthTab] = useState('login');
@@ -74,7 +72,6 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   // Handle Login & Register
-  // Handle Login & Register (อัปเกรดต่อเชื่อมกับ Database จริง)
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setAuthError('');
@@ -137,6 +134,11 @@ export default function App() {
     setPushNotifications(prev => [{ id: Date.now(), userId, message, time: new Date().toLocaleTimeString() }, ...prev]);
   };
 
+  // ฟังก์ชันเคลียร์ User ออกจากระบบ (ส่งไปให้ OwnerView หรือตัวอื่นๆ ใช้)
+  const handleLogout = () => {
+    setCurrentUser(null);
+  };
+
   return (
       <div
         style={{
@@ -144,7 +146,8 @@ export default function App() {
           width: '100%',
           maxWidth: 'none',
           margin: 0,
-          padding: '15px',
+          // ดึง padding ออกถ้าเป็นหน้า Owner เพื่อให้ Sidebar แสดงเต็มจอสวยงาม
+          padding: currentUser?.role === 'Owner' ? '0' : '15px', 
           background: '#f4f6f9',
           minHeight: '100vh',
           boxSizing: 'border-box'
@@ -157,21 +160,23 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '15px 20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
-        <div>
-          <h2 style={{ margin: 0, color: '#007bff' }}>🍽️ Only Foods KMITL System</h2>
-          <small style={{ color: foodCourtOpen ? 'green' : 'red', fontWeight: 'bold' }}>
-            สถานะศูนย์อาหาร: {foodCourtOpen ? '🟢 เปิดให้บริการ' : '🔴 ปิดให้บริการชั่วคราว'}
-          </small>
-        </div>
-        {currentUser && (
-          <div style={{ textAlign: 'right' }}>
-            <span style={{ marginRight: '10px' }}>👤 {currentUser.name} (<strong>{currentUser.role}</strong>)</span>
-            <button onClick={() => setCurrentUser(null)} style={{ background: '#dc3545', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>ออกจากระบบ</button>
+      {/* Main Header ซ่อนเมื่อ Role เป็น Owner เพื่อไม่ให้ซ้อนกับ Navbar ของ Owner */}
+      {currentUser?.role !== 'Owner' && (
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '15px 20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
+          <div>
+            <h2 style={{ margin: 0, color: '#007bff' }}>🍽️ Only Foods KMITL System</h2>
+            <small style={{ color: foodCourtOpen ? 'green' : 'red', fontWeight: 'bold' }}>
+              สถานะศูนย์อาหาร: {foodCourtOpen ? '🟢 เปิดให้บริการ' : '🔴 ปิดให้บริการชั่วคราว'}
+            </small>
           </div>
-        )}
-      </header>
+          {currentUser && (
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ marginRight: '10px' }}>👤 {currentUser.name} (<strong>{currentUser.role}</strong>)</span>
+              <button onClick={handleLogout} style={{ background: '#dc3545', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>ออกจากระบบ</button>
+            </div>
+          )}
+        </header>
+      )}
 
       {/* Auth Screen */}
       {!currentUser ? (
@@ -211,13 +216,13 @@ export default function App() {
               <li>ลูกค้า: <code>uefa01</code></li>
               <li>ครัว: <code>kitchen01</code> | ฟร้อนท์: <code>front01</code></li>
               <li>เจ้าของร้าน: <code>owner01</code></li>
-              <li>บัญชี: <code>acc01</code> | ผู้บริหาร: <code>exec01</code></li>
+              <li>บัญชี: <code>account01</code> | ผู้บริหาร: <code>exec01</code></li>
             </ul>
           </div>
         </div>
       ) : (
         /* Render Views according to Role */
-        <div>
+        <div style={{ height: currentUser.role === 'Owner' ? '100vh' : 'auto' }}>
           {currentUser.role === 'Customer' && (
             <CustomerView user={currentUser} apiBase="http://localhost:8000" />
           )}
@@ -228,7 +233,11 @@ export default function App() {
             <CounterView user={currentUser} apiBase="http://localhost:8000" />
           )}
           {currentUser.role === 'Owner' && (
-            <OwnerView user={currentUser} apiBase="http://localhost:8000" />
+            <OwnerView 
+              user={currentUser} 
+              apiBase="http://localhost:8000" 
+              onLogout={handleLogout}  /* ส่งฟังก์ชัน Logout ไปให้เมนู Dropdown ในหน้า Owner */
+            />
           )}
           {currentUser.role === 'Accountant' && (
             <AccountantView user={currentUser} apiBase="http://localhost:8000" />
@@ -241,36 +250,6 @@ export default function App() {
     </div>
   );
 }
-
-// ==========================================
-// 1. CUSTOMER VIEW
-// ==========================================
-
-
-// ==========================================
-// 2. KITCHEN STAFF VIEW
-// ==========================================
-
-
-// ==========================================
-// 3. FRONT STAFF MANAGER VIEW
-// ==========================================
-
-
-// ==========================================
-// 4. SHOP OWNER VIEW
-// ==========================================
-
-
-// ==========================================
-// 5. ACCOUNTANT VIEW
-// ==========================================
-
-
-// ==========================================
-// 6. EXECUTIVE VIEW (ปรับแก้ไขเพิ่มฟังก์ชันสร้างร้านและบัญชีพนักงาน)
-// ==========================================
-
 
 // ==========================================
 // HELPER FUNCTIONS
