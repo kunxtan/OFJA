@@ -30,8 +30,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 const ORDER_TIME_IS_UTC = true;
 
 // ขนาดรูปร้านค้าสูงสุดที่ยอมให้อัปโหลด (หน่วย MB)
-// 2 MB พอสำหรับรูปหน้าร้าน และไม่ทำให้ payload ใหญ่จนหลังบ้านรับไม่ไหว
-const MAX_IMAGE_MB = 2;
+// ImageUrl ในฐานข้อมูลเป็น MEDIUMTEXT (รองรับ base64 ได้ราว 16 MB) 5 MB จึงยังไหว
+const MAX_IMAGE_MB = 5;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 // รอบ refresh ข้อมูล (ms)
@@ -56,39 +56,42 @@ const FOOD_CATEGORIES = [
 // ---------------------------------------------------------------------
 // [UX/UI ONLY] ใช้โทนและ visual system เดียวกับ OwnerView (Berry Theme)
 const T = {
-  // --- สีหลัก (ม่วง Berry) ---
-  primary: '#5E35B1',
-  primaryDark: '#4527A0',
-  primarySoft: '#EDE7F6',
-  // --- สีรอง (ฟ้า Berry) ---
-  accent: '#1E88E5',
-  accentSoft: '#E3F2FD',
-  accentDark: '#1565C0',
-  // --- สีประกอบการ์ดเล็ก/ป้ายสถานะ ---
-  amber: '#F9A825',
-  amberSoft: '#FFF8E1',
-  greenSoft: '#E4F5EE',
-  redSoft: '#FDECEC',
-  trackSoft: '#EEF0F7',
+  // --- สีหลัก: ส้ม #FF724C ---
+  primary: '#FF724C',
+  primaryDark: '#E8552D',
+  primarySoft: '#FFEAE3',
+  // --- สีรอง: เหลือง #FDBF50 ---
+  accent: '#FDBF50',
+  accentSoft: '#FFF4DE',
+  accentDark: '#E2A430',
+  // --- สีเข้ม: กรมท่า #2A2C41 (ใช้เป็นการ์ดใหญ่ใบที่สองและตัวหนังสือ) ---
+  deep: '#2A2C41',
+  deepDark: '#1D1F2F',
+  deepSoft: '#EDEEF4',
+  // --- สีประกอบป้ายสถานะ ---
+  amber: '#E2A430',
+  amberSoft: '#FFF4DE',
+  greenSoft: '#E3F6EE',
+  redSoft: '#FDEAE6',
+  trackSoft: '#EDEEF4',
   // --- ตัวหนังสือ / เส้น / พื้นหลัง ---
-  ink: '#121926',
-  text: '#364152',
-  muted: '#697586',
-  line: '#E3E8EF',
-  bg: '#EEF2F6',
+  ink: '#2A2C41',
+  text: '#4B4E66',
+  muted: '#8A8FA6',
+  line: '#E6E8F0',
+  bg: '#F6F7FB',
   surface: '#FFFFFF',
-  up: '#00A854',
-  down: '#F44336',
+  up: '#17A673',
+  down: '#E2452F',
   sideBg: '#FFFFFF',
-  sideText: '#364152',
-  sideActive: '#EDE7F6',
+  sideText: '#4B4E66',
+  sideActive: '#FFEAE3',
   // --- มุมโค้ง / เงา (ใช้ให้เหมือนกันทั้งหน้า) ---
-  radiusLg: '12px',
-  radiusMd: '8px',
-  shadowSm: '0 2px 8px rgba(18,25,38,0.04)',
-  shadowMd: '0 8px 24px rgba(18,25,38,0.08)'
+  radiusLg: '14px',
+  radiusMd: '9px',
+  shadowSm: '0 2px 10px rgba(42,44,65,0.05)',
+  shadowMd: '0 10px 26px rgba(42,44,65,0.10)'
 };
-
 // ความสูงแถบบน (ใช้อ้างอิงทั้งตอนวาง sidebar บนจอแคบ)
 const TOPBAR_H = 80;
 
@@ -559,7 +562,7 @@ function drawReportPage({ title, subtitle, kpis, tableTitle, columns, rows, page
       const row = Math.floor(i / 3);
       const x = M + col * (cardW + 24);
       const cy = y + row * 150;
-      ctx.fillStyle = '#FAFBFF';
+      ctx.fillStyle = '#FAFAFC';
       ctx.strokeStyle = T.line;
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -603,7 +606,7 @@ function drawReportPage({ title, subtitle, kpis, tableTitle, columns, rows, page
       acc += w;
     });
 
-    ctx.fillStyle = '#F2F4FA';
+    ctx.fillStyle = '#F3F3F8';
     ctx.fillRect(M, y, tableW, 46);
     ctx.fillStyle = T.text;
     font(20, 'bold');
@@ -617,7 +620,7 @@ function drawReportPage({ title, subtitle, kpis, tableTitle, columns, rows, page
 
     rows.forEach((row, ri) => {
       if (ri % 2 === 1) {
-        ctx.fillStyle = '#FBFCFF';
+        ctx.fillStyle = '#FAFAFD';
         ctx.fillRect(M, y, tableW, 42);
       }
       ctx.fillStyle = T.text;
@@ -769,13 +772,14 @@ function KpiCard({
   const solid = kind === 'purple' || kind === 'blue';
   const small = size === 'sm';
 
+  // purple = การ์ดสีส้ม (สีหลัก), blue = การ์ดสีกรมท่า — ชื่อ variant คงเดิมไว้ไม่ให้โค้ดที่เรียกใช้พัง
   const solidBg =
     kind === 'purple'
       ? `linear-gradient(135deg, ${T.primary} 0%, ${T.primaryDark} 100%)`
-      : `linear-gradient(135deg, ${T.accent} 0%, ${T.accentDark} 100%)`;
+      : `linear-gradient(135deg, ${T.deep} 0%, ${T.deepDark} 100%)`;
 
   const iconTones = {
-    blue: { bg: T.accentSoft, fg: T.accent },
+    blue: { bg: T.deepSoft, fg: T.deep },
     amber: { bg: T.amberSoft, fg: T.amber },
     purple: { bg: T.primarySoft, fg: T.primary },
     green: { bg: T.greenSoft, fg: T.up }
@@ -788,7 +792,7 @@ function KpiCard({
       style={{
         ...cardStyle,
         padding: small ? '18px 20px' : '22px',
-        minHeight: solid ? '196px' : small ? 0 : '150px',
+        minHeight: solid ? '172px' : small ? '116px' : '150px',
         height: '100%',
         background: solid ? solidBg : T.surface,
         color: solid ? '#FFFFFF' : T.text,
@@ -801,12 +805,13 @@ function KpiCard({
     >
       {kind === 'purple' && <CardDecorCircles color={T.primaryDark} />}
       {kind === 'blue' && <CardDecorWave />}
+      {kind === 'blue' && <CardDecorCircles color={T.deepDark} />}
 
       <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', gap: '14px' }}>
         {solid ? (
           <CardIconBox
             icon={icon}
-            background={kind === 'purple' ? T.primaryDark : T.accentDark}
+            background={kind === 'purple' ? T.primaryDark : T.deepDark}
           />
         ) : (
           <div
@@ -931,11 +936,11 @@ function Button({ variant = 'primary', icon, children, style, ...rest }) {
   // [UX/UI] โทนปุ่มแบบ Berry — ปุ่มหลักม่วง ปุ่มรองพื้นอ่อน
   const variants = {
     primary: { background: T.primary, color: '#FFFFFF', border: `1px solid ${T.primary}` },
-    accent: { background: T.accent, color: '#FFFFFF', border: `1px solid ${T.accent}` },
+    accent: { background: T.accent, color: T.ink, border: `1px solid ${T.accent}` },
     ghost: { background: T.surface, color: T.text, border: `1px solid ${T.line}` },
-    soft: { background: T.primarySoft, color: T.primary, border: `1px solid ${T.primarySoft}` },
+    soft: { background: T.primarySoft, color: T.primaryDark, border: `1px solid ${T.primarySoft}` },
     danger: { background: T.redSoft, color: T.down, border: `1px solid ${T.redSoft}` },
-    dark: { background: T.primarySoft, color: T.primary, border: `1px solid ${T.primarySoft}` }
+    dark: { background: T.deep, color: '#FFFFFF', border: `1px solid ${T.deep}` }
   };
   return (
     <button
@@ -1238,7 +1243,7 @@ function SalesLineChart({ buckets, showStoreDetail = true }) {
             strokeWidth="1"
           />
         )}
-        <line x1={L} x2={W - R} y1={TOP + gh} y2={TOP + gh} stroke="#CFD4E4" />
+        <line x1={L} x2={W - R} y1={TOP + gh} y2={TOP + gh} stroke={T.line} />
       </svg>
 
       {/* tooltip: ยอดรวมของจุดนั้น + ร้านขายดีสุด/น้อยสุดของช่วงเวลานั้น */}
@@ -1317,7 +1322,7 @@ function StoreBarChart({ rows, valueKey = 'sales', suffix = 'บาท' }) {
                   height: '100%',
                   width: `${Math.max((value / maxValue) * 100, value > 0 ? 3 : 0)}%`,
                   borderRadius: '999px',
-                  background: i === 0 ? T.primary : i === list.length - 1 ? T.accent : '#9575CD'
+                  background: i === 0 ? T.primary : i === list.length - 1 ? T.accent : '#FF9E84'
                 }}
               />
             </div>
@@ -1341,7 +1346,7 @@ function StoreDonutChart({ rows }) {
     : top;
   const total = list.reduce((sum, r) => sum + Number(r.sales || 0), 0) || 1;
   // [UX/UI] ชุดสีโทนม่วง–ฟ้าของธีม Berry
-  const COLORS = ['#5E35B1', '#1E88E5', '#9575CD', '#4FC3F7', '#4527A0', '#64B5F6', '#B39DDB', '#0288D1', '#C5CAE9'];
+  const COLORS = ['#FF724C', '#FDBF50', '#2A2C41', '#FF9E84', '#FFD98C', '#585B78', '#E8552D', '#D19A28', '#B9BCCD'];
   const radius = 72;
   const circumference = 2 * Math.PI * radius;
   let offset = 0;
@@ -1819,25 +1824,17 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         button, input, select, textarea { font-family: ${FONT_STACK}; }
         button { transition: transform .15s ease, box-shadow .15s ease, background .15s ease, color .15s ease; }
         table tbody tr { transition: background .15s ease; }
-        table tbody tr:hover { background: #F8FAFC; }
+        table tbody tr:hover { background: #F7F7FB; }
 
         /* ---------- [UX/UI] ธีม Berry ---------- */
         /* ปุ่มทั่วไปมีเงาตอบสนองเวลาชี้เมาส์ */
         button:not(.of-nav-item):not(.of-icon-btn):hover { box-shadow: 0 2px 8px rgba(18,25,38,.10); }
 
-        /* กริดการ์ด KPI: การ์ดสีใหญ่ 2 ใบ + คอลัมน์การ์ดเล็กซ้อนกัน 2 ใบ */
-        .of-kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin-bottom: 24px; align-items: stretch; }
-        .of-kpi-col { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
-        .of-kpi-col > * { flex: 1; min-width: 0; }
-        .of-kpi-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
-        @media (max-width: 1100px) {
-          .of-kpi-row { grid-template-columns: 1fr 1fr; }
-          .of-kpi-col { grid-column: span 2; flex-direction: row; }
-        }
-        @media (max-width: 720px) {
-          .of-kpi-row { grid-template-columns: 1fr; }
-          .of-kpi-col { grid-column: span 1; flex-direction: column; }
-          .of-kpi-row-2 { grid-template-columns: 1fr; }
+        /* กริดการ์ด KPI: แถวบนการ์ดสีใหญ่ 2 ใบเท่ากัน แถวล่างการ์ดเล็กเรียงเท่ากันทุกใบ */
+        .of-kpi-hero { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 22px; align-items: stretch; }
+        .of-kpi-small { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(215px, 100%), 1fr)); gap: 22px; margin-bottom: 22px; align-items: stretch; }
+        @media (max-width: 760px) {
+          .of-kpi-hero { grid-template-columns: 1fr; }
         }
 
         /* การ์ดยกตัวเล็กน้อยเมื่อชี้เมาส์ */
@@ -1853,7 +1850,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         .of-icon-btn.purple:hover svg { stroke: #fff !important; }
         .of-icon-btn.amber:hover { background: ${T.amber} !important; }
         .of-icon-btn.amber:hover svg { stroke: #fff !important; }
-        .of-user-chip:hover { background: #D6E9FB !important; }
+        .of-user-chip:hover { background: #E2E4EE !important; }
         .of-dropdown-item:hover { background: ${T.primarySoft}; color: ${T.primary}; }
         .of-dropdown-item:hover svg { stroke: ${T.primary}; }
 
@@ -1862,7 +1859,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
 
         /* แถบเลื่อนบาง ๆ ให้เข้ากับธีม */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-thumb { background: #D3D9E4; border-radius: 999px; }
+        ::-webkit-scrollbar-thumb { background: #D6D8E4; border-radius: 999px; }
         ::-webkit-scrollbar-track { background: transparent; }
       `}</style>
       <div style={{ ...shellStyle, fontFamily: FONT_STACK }}>
@@ -1877,6 +1874,16 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             gap: isPhone ? '8px' : topbarStyle.gap
           }}
         >
+          <button
+            type="button"
+            className="of-icon-btn purple"
+            onClick={() => setSidebarOpen((v) => !v)}
+            style={iconButtonStyle}
+            aria-label={sidebarOpen ? 'ซ่อนแถบเมนู' : 'แสดงแถบเมนู'}
+          >
+            <Icon name="menu" size={19} color={T.primary} />
+          </button>
+
           <div style={{ ...brandStyle, width: isNarrow ? 'auto' : brandStyle.width }}>
             <div style={brandTitleStyle}>
               <span style={{ fontSize: '20px', lineHeight: 1 }}>🍽️</span>
@@ -1900,16 +1907,6 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
               </div>
             )}
           </div>
-
-          <button
-            type="button"
-            className="of-icon-btn purple"
-            onClick={() => setSidebarOpen((v) => !v)}
-            style={iconButtonStyle}
-            aria-label={sidebarOpen ? 'ซ่อนแถบเมนู' : 'แสดงแถบเมนู'}
-          >
-            <Icon name="menu" size={19} color={T.primary} />
-          </button>
 
           {/* ช่องค้นหาด้านบนใช้เฉพาะหน้าจัดการร้าน/บัญชีร้านค้า
               หน้าภาพรวมและยอดขายรายร้านไม่แสดงช่องนี้ตาม UX ใหม่ */}
@@ -2053,12 +2050,12 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
               {!isPhone && (
                 <>
                   <div style={{ minWidth: 0, textAlign: 'left' }}>
-                    <div style={{ color: T.accentDark, fontWeight: 600, fontSize: '13px', ...ellipsisStyle }}>
+                    <div style={{ color: T.ink, fontWeight: 600, fontSize: '13px', ...ellipsisStyle }}>
                       {accountName}
                     </div>
                     <div style={{ color: T.muted, fontSize: '11.5px' }}>{accountRole}</div>
                   </div>
-                  <Icon name="settings" size={17} color={T.accentDark} />
+                  <Icon name="settings" size={17} color={T.ink} />
                 </>
               )}
             </button>
@@ -2446,8 +2443,8 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         </div>
       </Card>
 
-      {/* KPI แถวบน — การ์ดสีใหญ่ 2 ใบ + การ์ดเล็กซ้อนกัน (เลย์เอาต์เดียวกับเทมเพลต) */}
-      <div className="of-kpi-row">
+      {/* KPI แถวบน — การ์ดสีใหญ่ 2 ใบ ขนาดเท่ากัน */}
+      <div className="of-kpi-hero">
         <KpiCard
           label="ยอดขายสุทธิ"
           value={`${money(report.now.sales)}`}
@@ -2466,32 +2463,30 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
           variant="blue"
           icon="check"
         />
-        <div className="of-kpi-col">
-          <KpiCard
-            size="sm"
-            label="ยอดเฉลี่ยต่อออเดอร์"
-            value={money2(report.now.avgOrder)}
-            unit="บาท"
-            delta={changePct(report.now.avgOrder, report.before.avgOrder)}
-            deltaLabel={compareLabel}
-            icon="trend"
-            tone="blue"
-          />
-          <KpiCard
-            size="sm"
-            label="ออเดอร์ยกเลิก"
-            value={money(report.now.cancelledCount)}
-            unit="ออเดอร์"
-            delta={changePct(report.now.cancelledCount, report.before.cancelledCount)}
-            deltaLabel={compareLabel}
-            icon="ban"
-            tone="amber"
-          />
-        </div>
       </div>
 
-      {/* KPI แถวรอง — การ์ดเล็กพื้นขาว */}
-      <div className="of-kpi-row-2">
+      {/* KPI แถวรอง — การ์ดเล็กพื้นขาว เรียงเท่ากันทั้งแถว */}
+      <div className="of-kpi-small">
+        <KpiCard
+          size="sm"
+          label="ยอดเฉลี่ยต่อออเดอร์"
+          value={money2(report.now.avgOrder)}
+          unit="บาท"
+          delta={changePct(report.now.avgOrder, report.before.avgOrder)}
+          deltaLabel={compareLabel}
+          icon="trend"
+          tone="blue"
+        />
+        <KpiCard
+          size="sm"
+          label="ออเดอร์ยกเลิก"
+          value={money(report.now.cancelledCount)}
+          unit="ออเดอร์"
+          delta={changePct(report.now.cancelledCount, report.before.cancelledCount)}
+          deltaLabel={compareLabel}
+          icon="ban"
+          tone="amber"
+        />
         <KpiCard
           size="sm"
           label="อัตราการยกเลิก"
@@ -2629,7 +2624,7 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         }
       >
         <div style={{ border: `1px solid ${T.line}`, borderRadius: '12px', overflow: 'hidden', background: '#FFFFFF' }}>
-          <div style={{ padding: '18px 20px', borderBottom: `1px solid ${T.line}`, background: '#FAFBFF' }}>
+          <div style={{ padding: '18px 20px', borderBottom: `1px solid ${T.line}`, background: '#FAFAFC' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
               <div>
                 <h3 style={{ ...h3Style, margin: 0 }}>รายงานภาพรวมศูนย์อาหาร</h3>
@@ -2956,7 +2951,7 @@ function StoreSalesPage({ ctx }) {
             </div>
           </Card>
 
-          <div className="of-kpi-row">
+          <div className="of-kpi-hero">
             <KpiCard
               label="ยอดขายสุทธิ"
               value={money(report.now.sales)}
@@ -2975,28 +2970,29 @@ function StoreSalesPage({ ctx }) {
               variant="blue"
               icon="check"
             />
-            <div className="of-kpi-col">
-              <KpiCard
-                size="sm"
-                label="ยอดเฉลี่ยต่อออเดอร์"
-                value={money2(report.now.avgOrder)}
-                unit="บาท"
-                delta={changePct(report.now.avgOrder, report.before.avgOrder)}
-                deltaLabel={compareLabel}
-                icon="trend"
-                tone="blue"
-              />
-              <KpiCard
-                size="sm"
-                label="ออเดอร์ยกเลิก"
-                value={money(report.now.cancelledCount)}
-                unit="ออเดอร์"
-                hint={`อัตรายกเลิก ${report.now.cancelRate.toFixed(1)}%`}
-                delta={null}
-                icon="ban"
-                tone="amber"
-              />
-            </div>
+          </div>
+
+          <div className="of-kpi-small">
+            <KpiCard
+              size="sm"
+              label="ยอดเฉลี่ยต่อออเดอร์"
+              value={money2(report.now.avgOrder)}
+              unit="บาท"
+              delta={changePct(report.now.avgOrder, report.before.avgOrder)}
+              deltaLabel={compareLabel}
+              icon="trend"
+              tone="blue"
+            />
+            <KpiCard
+              size="sm"
+              label="ออเดอร์ยกเลิก"
+              value={money(report.now.cancelledCount)}
+              unit="ออเดอร์"
+              hint={`อัตรายกเลิก ${report.now.cancelRate.toFixed(1)}%`}
+              delta={null}
+              icon="ban"
+              tone="amber"
+            />
           </div>
 
           {/* [UX/UI] หัวการ์ดกราฟ: ยอดรวมด้านซ้าย + ปฏิทินและปุ่มช่วงเวลาด้านขวา */}
@@ -3982,7 +3978,7 @@ function StoreAccountsPage({ ctx }) {
                 username: e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20)
               }))
             }
-            style={{ ...inputStyle, background: mode === 'password' ? '#F3F4FA' : T.surface }}
+            style={{ ...inputStyle, background: mode === 'password' ? '#F3F3F8' : T.surface }}
           />
         </Field>
 
@@ -4086,7 +4082,7 @@ const sidebarStyle = {
 
 // โลโก้บนแถบบน — ความกว้างเท่าเมนูซ้ายเพื่อให้เส้นตรงกัน
 const brandStyle = {
-  width: '236px',
+  width: '212px',
   flexShrink: 0,
   display: 'flex',
   flexDirection: 'column',
@@ -4101,7 +4097,7 @@ const brandTitleStyle = {
   gap: '8px',
   fontSize: '20px',
   fontWeight: 700,
-  color: T.accent
+  color: T.primary
 };
 
 const brandSubtitleStyle = {
@@ -4294,7 +4290,7 @@ const topAccountStyle = {
   padding: '6px 12px 6px 6px',
   border: 'none',
   borderRadius: '999px',
-  background: T.accentSoft,
+  background: T.deepSoft,
   maxWidth: '250px',
   cursor: 'pointer',
   fontFamily: FONT_STACK,
@@ -4496,7 +4492,7 @@ function imageDropzoneStyle(dragOver, hasError) {
     flexShrink: 0,
     borderRadius: '14px',
     border: `2px dashed ${hasError ? T.down : dragOver ? T.primary : T.line}`,
-    background: dragOver ? T.primarySoft : '#FAFBFF',
+    background: dragOver ? T.primarySoft : '#FAFAFC',
     display: 'grid',
     placeItems: 'center',
     cursor: 'pointer',
@@ -4563,7 +4559,7 @@ const modalFootStyle = {
   gap: '10px',
   padding: '14px 22px',
   borderTop: `1px solid ${T.line}`,
-  background: '#FAFBFF'
+  background: '#FAFAFC'
 };
 
 const toastWrapStyle = {
