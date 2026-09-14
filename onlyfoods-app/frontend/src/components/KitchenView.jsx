@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-// สีหลักตามภาพกำหนดเป๊ะ 100%
 const PALETTE = {
   coral: '#FF724C',
   yellow: '#FDBF50',
@@ -9,15 +8,8 @@ const PALETTE = {
 };
 
 // SVG Icons
-const ChefHatIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-    <path d="M6 13.87A4 4 0 0 1 7.41 6a5.11 5.11 0 0 1 10.58 0A4 4 0 0 1 18 13.87V21H6z"/>
-    <line x1="6" y1="17" x2="18" y2="17"/>
-  </svg>
-);
-
 const SunIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
     <circle cx="12" cy="12" r="5"/>
     <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
     <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
@@ -27,7 +19,7 @@ const SunIcon = () => (
 );
 
 const MoonIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
   </svg>
 );
@@ -56,20 +48,26 @@ const CloseIcon = () => (
   </svg>
 );
 
-export default function KitchenView({ user, apiBase = "http://localhost:8000" }) {
+const LogoutIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+    <polyline points="16 17 21 12 16 7"/>
+    <line x1="21" y1="12" x2="9" y2="12"/>
+  </svg>
+);
+
+export default function KitchenView({ user, apiBase = "http://localhost:8000", onLogout }) {
   const [orders, setOrders] = useState([]);
   const [summary, setSummary] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
-  const [isDark, setIsDark] = useState(false); // State สลับโหมด Light / Dark
+  const [isDark, setIsDark] = useState(false);
   const isUpdatingRef = useRef(false);
 
-  // คำนวณสีธีมตามโหมดโดยใช้ PALETTE ที่กำหนด
   const theme = {
     pageBg: isDark ? PALETTE.dark : '#F4F5F8',
     cardBg: isDark ? '#1E2030' : PALETTE.white,
     cardInner: isDark ? PALETTE.dark : '#F8FAFC',
-    headerBg: PALETTE.dark,
-    headerText: PALETTE.white,
+    navBg: isDark ? '#1E2030' : PALETTE.white,
     textMain: isDark ? PALETTE.white : PALETTE.dark,
     textMuted: isDark ? '#94A3B8' : '#64748B',
     border: isDark ? '#3B3E5B' : '#E2E8F0',
@@ -80,7 +78,8 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
 
   const fetchData = useCallback(() => {
     if (isUpdatingRef.current) return;
-    const storeId = user?.storeId || 1;
+    // รองรับทั้ง StoreId และ storeId ป้องกันการดึงออเดอร์ผิดร้าน[cite: 2, 3]
+    const storeId = user?.StoreId || user?.storeId || 1; 
     
     fetch(`${apiBase}/api/orders?store_id=${storeId}`)
       .then(r => r.json())
@@ -102,22 +101,34 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  const markAsReady = (id, e) => {
+  // ปรับแก้ Logic อัปเดตสถานะ ปลดล็อก Ref ก่อนเรียก fetchData[cite: 3]
+  const markAsReady = async (id, e) => {
     if (e) e.stopPropagation();
     isUpdatingRef.current = true;
+
+    // 1. ซ่อนออเดอร์บน UI ชั่วคราวทันที[cite: 3]
     setOrders(prev => prev.filter(o => o.OrderID !== id));
     if (selectedOrder?.OrderID === id) setSelectedOrder(null);
 
-    fetch(`${apiBase}/api/orders/${id}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'Ready', user_role: 'Kitchen Staff', cancel_reason: null })
-    })
-    .then(() => fetchData())
-    .catch(() => fetchData())
-    .finally(() => {
-      setTimeout(() => { isUpdatingRef.current = false; }, 1000);
-    });
+    try {
+      // 2. ยิง API อัปเดตสถานะไปยัง Backend[cite: 3]
+      const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Ready', user_role: 'Kitchen Staff', cancel_reason: null })
+      });
+
+      if (!res.ok) {
+        throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
+      }
+    } catch (err) {
+      console.error("Update status error:", err);
+      alert("ไม่สามารถเปลี่ยนสถานะได้ กรุณาตรวจสอบระบบ Backend");
+    } finally {
+      // 3. ปลดล็อก Ref และดึงข้อมูลใหม่ทันที[cite: 3]
+      isUpdatingRef.current = false;
+      fetchData();
+    }
   };
 
   const getElapsedInfo = (timeStr) => {
@@ -134,143 +145,209 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
   };
 
   return (
-    <div style={{ backgroundColor: theme.pageBg, minHeight: '100vh', padding: '20px', fontFamily: "'Prompt', sans-serif", boxSizing: 'border-box', color: theme.textMain, transition: 'background-color 0.3s ease' }}>
+    <div style={{ backgroundColor: theme.pageBg, minHeight: '100vh', width: '100%', margin: 0, padding: 0, fontFamily: "'Prompt', sans-serif", color: theme.textMain, transition: 'background-color 0.3s ease' }}>
       
       {/* Header Bar */}
-      <header style={{ background: theme.headerBg, color: theme.headerText, padding: '16px 24px', borderRadius: '16px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', boxShadow: '0 8px 20px rgba(42, 44, 65, 0.15)', gap: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ background: theme.primary, color: theme.white, width: '46px', height: '46px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <ChefHatIcon />
-          </div>
+      <header style={{ 
+        background: theme.navBg, 
+        borderBottom: `1px solid ${theme.border}`, 
+        padding: '12px 24px', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'space-between',
+        width: '100%',
+        boxSizing: 'border-box',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+        position: 'sticky',
+        top: 0,
+        zIndex: 100
+      }}>
+        
+        {/* Left Side: Brand Logo + Status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '24px' }}>🍽️</span>
           <div>
-            <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '800' }}>KDS LIVE KITCHEN</h1>
-            <p style={{ margin: 0, fontSize: '13px', color: '#94A3B8' }}>รอปรุง: <span style={{ color: theme.secondary, fontWeight: '700' }}>{orders.length} คิว</span></p>
+            <div style={{ fontSize: '18px', fontWeight: '800', color: PALETTE.coral, lineHeight: '1.2' }}>Only Foods</div>
+            <div style={{ fontSize: '12px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              สถานะศูนย์อาหาร: <span style={{ color: '#10B981', fontWeight: '700' }}>● เปิดให้บริการ</span>
+            </div>
           </div>
         </div>
 
-        {/* Right Section: Summary Badges + Theme Switcher Button */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+        {/* Right Side: Kitchen Live Stats + Theme Toggle + Logout */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ 
+            background: isDark ? 'rgba(255,255,255,0.05)' : '#F8FAFC', 
+            border: `1px solid ${theme.border}`, 
+            padding: '6px 14px', 
+            borderRadius: '20px', 
+            fontSize: '13px', 
+            fontWeight: '600'
+          }}>
+            คิวรอปรุง: <span style={{ color: theme.primary, fontWeight: '800', fontSize: '15px' }}>{orders.length}</span>
+          </div>
+
           {summary.map((s, i) => (
-            <div key={i} style={{ background: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(255, 255, 255, 0.15)', padding: '6px 14px', borderRadius: '20px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div key={i} style={{ 
+              background: isDark ? 'rgba(255,255,255,0.05)' : '#F8FAFC', 
+              border: `1px solid ${theme.border}`, 
+              padding: '6px 12px', 
+              borderRadius: '20px', 
+              fontSize: '13px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '6px' 
+            }}>
               <span>{s.ProductName}</span>
-              <span style={{ background: theme.secondary, color: PALETTE.dark, borderRadius: '10px', padding: '1px 8px', fontSize: '12px', fontWeight: '800' }}>{s.TotalQty}</span>
+              <span style={{ background: theme.secondary, color: PALETTE.dark, borderRadius: '10px', padding: '1px 7px', fontSize: '11px', fontWeight: '800' }}>{s.TotalQty}</span>
             </div>
           ))}
 
-          {/* ปุ่มกดสลับ Light / Dark Mode */}
+          {/* Theme Switcher Button */}
           <button
             onClick={() => setIsDark(!isDark)}
             style={{
-              background: isDark ? theme.secondary : 'rgba(255, 255, 255, 0.15)',
-              color: isDark ? PALETTE.dark : theme.white,
-              border: 'none',
-              borderRadius: '12px',
-              padding: '10px 16px',
-              fontSize: '14px',
+              background: isDark ? theme.secondary : '#F1F5F9',
+              color: isDark ? PALETTE.dark : theme.textMain,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '10px',
+              padding: '8px 14px',
+              fontSize: '13px',
               fontWeight: '700',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               transition: 'all 0.2s ease'
             }}
           >
             {isDark ? <SunIcon /> : <MoonIcon />}
             {isDark ? 'Light' : 'Dark'}
           </button>
+
+          {/* Logout Button */}
+          {onLogout && (
+            <button
+              onClick={() => {
+                if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
+                  onLogout();
+                }
+              }}
+              style={{
+                background: isDark ? 'rgba(239, 68, 68, 0.2)' : '#FEE2E2',
+                color: '#EF4444',
+                border: `1px solid ${isDark ? '#7F1D1D' : '#FCA5A5'}`,
+                borderRadius: '10px',
+                padding: '8px 14px',
+                fontSize: '13px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <LogoutIcon />
+              ออกจากระบบ
+            </button>
+          )}
         </div>
+
       </header>
 
-      {/* Grid Display */}
-      <main style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '20px' }}>
-        {orders.length === 0 ? (
-          <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '80px 20px', background: theme.cardBg, borderRadius: '16px', border: `1px solid ${theme.border}` }}>
-            <h3 style={{ margin: 0, color: theme.textMuted }}>ไม่มีรายการอาหารค้างปรุง</h3>
-          </div>
-        ) : (
-          orders.map(o => {
-            const timeInfo = getElapsedInfo(o.CreatedAt);
-            const hasLongNote = o.Note?.length > 25 || o.items?.some(i => i.ItemNote?.length > 20);
+      {/* Main Grid Content Area */}
+      <main style={{ padding: '24px', boxSizing: 'border-box' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: '20px' }}>
+          {orders.length === 0 ? (
+            <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '100px 20px', background: theme.cardBg, borderRadius: '16px', border: `1px solid ${theme.border}` }}>
+              <h3 style={{ margin: 0, color: theme.textMuted, fontSize: '18px', fontWeight: '600' }}>ไม่มีรายการอาหารค้างปรุง</h3>
+            </div>
+          ) : (
+            orders.map(o => {
+              const timeInfo = getElapsedInfo(o.CreatedAt);
+              const hasLongNote = o.Note?.length > 25 || o.items?.some(i => i.ItemNote?.length > 20);
 
-            return (
-              <article
-                key={o.OrderID}
-                onClick={() => setSelectedOrder(o)}
-                style={{
-                  background: theme.cardBg,
-                  borderRadius: '16px',
-                  border: `1px solid ${theme.border}`,
-                  borderTop: `6px solid ${timeInfo.isUrgent ? '#EF4444' : theme.primary}`,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justify: 'space-between',
-                  overflow: 'hidden',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 16px rgba(42, 44, 65, 0.06)'
-                }}
-              >
-                {/* 1. Header Card */}
-                <div style={{ padding: '14px 18px', background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(255, 114, 76, 0.04)', borderBottom: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <span style={{ fontSize: '10px', color: theme.textMuted, fontWeight: '700', letterSpacing: '1px' }}>QUEUE</span>
-                    <div style={{ fontSize: '28px', fontWeight: '900', color: theme.textMain, lineHeight: '1' }}>#{o.QueueNo}</div>
+              return (
+                <article
+                  key={o.OrderID}
+                  onClick={() => setSelectedOrder(o)}
+                  style={{
+                    background: theme.cardBg,
+                    borderRadius: '16px',
+                    border: `1px solid ${theme.border}`,
+                    borderTop: `6px solid ${timeInfo.isUrgent ? '#EF4444' : theme.primary}`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.04)'
+                  }}
+                >
+                  {/* Card Header */}
+                  <div style={{ padding: '14px 18px', background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(255, 114, 76, 0.04)', borderBottom: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ fontSize: '10px', color: theme.textMuted, fontWeight: '700', letterSpacing: '1px' }}>QUEUE</span>
+                      <div style={{ fontSize: '28px', fontWeight: '900', color: theme.textMain, lineHeight: '1' }}>#{o.QueueNo}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '12px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '4px' }}><ClockIcon /> {formatTime(o.CreatedAt)}</div>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: timeInfo.isUrgent ? '#EF4444' : theme.primary, marginTop: '4px', display: 'inline-block' }}>{timeInfo.label}</span>
+                    </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '12px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '4px' }}><ClockIcon /> {formatTime(o.CreatedAt)}</div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: timeInfo.isUrgent ? '#EF4444' : theme.primary, marginTop: '4px', display: 'inline-block' }}>{timeInfo.label}</span>
-                  </div>
-                </div>
 
-                {/* 2. Items List */}
-                <div style={{ padding: '16px', flexGrow: 1 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {o.items?.map((item, idx) => (
-                      <div key={idx} style={{ background: theme.cardInner, padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}` }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <span style={{ fontSize: '15px', fontWeight: '700', color: theme.textMain }}>{item.ProductName}</span>
-                          <span style={{ background: PALETTE.dark, color: theme.white, padding: '2px 8px', borderRadius: '6px', fontSize: '13px', fontWeight: '800' }}>x{item.Qty}</span>
-                        </div>
-
-                        {item.ItemNote && (
-                          <div style={{ marginTop: '6px', fontSize: '12px', color: '#B45309', background: '#FFFBEB', padding: '4px 8px', borderRadius: '6px', border: '1px solid #FDE68A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            ⚠️ {item.ItemNote}
+                  {/* Items List */}
+                  <div style={{ padding: '16px', flexGrow: 1 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {o.items?.map((item, idx) => (
+                        <div key={idx} style={{ background: theme.cardInner, padding: '10px 12px', borderRadius: '10px', border: `1px solid ${theme.border}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <span style={{ fontSize: '15px', fontWeight: '700', color: theme.textMain }}>{item.ProductName}</span>
+                            <span style={{ background: PALETTE.dark, color: theme.white, padding: '2px 8px', borderRadius: '6px', fontSize: '13px', fontWeight: '800' }}>x{item.Qty}</span>
                           </div>
-                        )}
+
+                          {item.ItemNote && (
+                            <div style={{ marginTop: '6px', fontSize: '12px', color: '#B45309', background: '#FFFBEB', padding: '4px 8px', borderRadius: '6px', border: '1px solid #FDE68A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                               {item.ItemNote}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {o.Note && (
+                      <div style={{ marginTop: '12px', padding: '8px 10px', borderRadius: '8px', background: '#EFF6FF', border: '1px solid #BFDBFE', fontSize: '12px', color: '#1E40AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                         หมายเหตุ: {o.Note}
                       </div>
-                    ))}
+                    )}
+
+                    {hasLongNote && (
+                      <div style={{ marginTop: '10px', textAlign: 'center', fontSize: '11px', color: theme.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                        <ExpandIcon /> แตะเพื่อดูข้อความเต็ม
+                      </div>
+                    )}
                   </div>
 
-                  {o.Note && (
-                    <div style={{ marginTop: '12px', padding: '8px 10px', borderRadius: '8px', background: '#EFF6FF', border: '1px solid #BFDBFE', fontSize: '12px', color: '#1E40AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      📝 หมายเหตุ: {o.Note}
-                    </div>
-                  )}
-
-                  {hasLongNote && (
-                    <div style={{ marginTop: '10px', textAlign: 'center', fontSize: '11px', color: theme.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                      <ExpandIcon /> แตะเพื่อดูข้อความเต็ม
-                    </div>
-                  )}
-                </div>
-
-                {/* 3. Action Button (56px Height) */}
-                <div style={{ padding: '12px 16px', background: theme.cardInner, borderTop: `1px solid ${theme.border}` }}>
-                  <button
-                    onClick={(e) => markAsReady(o.OrderID, e)}
-                    style={{
-                      width: '100%', minHeight: '56px', background: theme.primary, color: theme.white, border: 'none', borderRadius: '12px', fontSize: '17px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', touchAction: 'manipulation', userSelect: 'none', boxShadow: '0 4px 12px rgba(255, 114, 76, 0.3)'
-                    }}
-                  >
-                    <CheckIcon /> ปรุงเสร็จแล้ว
-                  </button>
-                </div>
-              </article>
-            );
-          })
-        )}
+                  {/* Action Button */}
+                  <div style={{ padding: '12px 16px', background: theme.cardInner, borderTop: `1px solid ${theme.border}` }}>
+                    <button
+                      onClick={(e) => markAsReady(o.OrderID, e)}
+                      style={{
+                        width: '100%', minHeight: '52px', background: theme.primary, color: theme.white, border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', touchAction: 'manipulation', userSelect: 'none', boxShadow: '0 4px 12px rgba(255, 114, 76, 0.3)'
+                      }}
+                    >
+                      <CheckIcon /> ปรุงเสร็จแล้ว
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
       </main>
 
-      {/* Modal ป๊อปอัปอ่านโน้ตยาว */}
+      {/* Modal Popup */}
       {selectedOrder && (
         <div 
           onClick={() => setSelectedOrder(null)}
@@ -296,7 +373,7 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
                     <span style={{ color: theme.secondary, background: PALETTE.dark, padding: '2px 8px', borderRadius: '6px' }}>x{item.Qty}</span>
                   </div>
                   {item.ItemNote && (
-                    <div style={{ marginTop: '8px', fontSize: '14px', color: '#B45309', background: '#FFFBEB', padding: '8px 12px', borderRadius: '8px', border: '1px solid #FDE68A', wordBreak: 'break-word' }}>
+                    <div style={{ marginTop: '8px', fontSize: '14px', color: '#B45309', background: '#FFFBEB', padding: '8px 12px', borderRadius: '8px', border: '1px solid #FDE68A', wordBreak: 'word-break' }}>
                       <strong>รายละเอียดพิเศษ:</strong> {item.ItemNote}
                     </div>
                   )}
@@ -304,7 +381,7 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
               ))}
 
               {selectedOrder.Note && (
-                <div style={{ padding: '12px 14px', borderRadius: '12px', background: '#EFF6FF', border: '1px solid #BFDBFE', fontSize: '14px', color: '#1E40AF', wordBreak: 'break-word' }}>
+                <div style={{ padding: '12px 14px', borderRadius: '12px', background: '#EFF6FF', border: '1px solid #BFDBFE', fontSize: '14px', color: '#1E40AF', wordBreak: 'word-break' }}>
                   <strong>หมายเหตุออเดอร์:</strong> {selectedOrder.Note}
                 </div>
               )}
@@ -312,7 +389,7 @@ export default function KitchenView({ user, apiBase = "http://localhost:8000" })
 
             <button
               onClick={(e) => markAsReady(selectedOrder.OrderID, e)}
-              style={{ width: '100%', minHeight: '56px', marginTop: '24px', background: theme.primary, color: theme.white, border: 'none', borderRadius: '14px', fontSize: '18px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', touchAction: 'manipulation' }}
+              style={{ width: '100%', minHeight: '56px', marginTop: '24px', background: theme.primary, color: theme.white, border: 'none', borderRadius: '14px', fontSize: '18px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
             >
               <CheckIcon /> ปรุงเสร็จแล้ว
             </button>
