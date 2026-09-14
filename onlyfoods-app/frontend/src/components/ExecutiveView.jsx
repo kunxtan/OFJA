@@ -1,1131 +1,1325 @@
-// ใหม่
-import React, { useEffect, useState } from 'react';
+// =====================================================================
+//  ExecutiveView.jsx  —  โรล Executive (ผู้บริหาร) · Only Foods
+//  [UX/UI] ปรับ visual ให้ใช้รูปแบบเดียวกับ OwnerView (Berry Theme) โดยคง logic/API/functions เดิม
+// ---------------------------------------------------------------------
+//  ไฟล์นี้แก้เฉพาะหน้าของโรล Executive เท่านั้น ไม่แตะไฟล์ของโรลอื่น
+//  ทุกอย่างอ่าน/เขียนผ่าน API ของ main.py (ฐานข้อมูล onlyfoods_db)
+//  ฟีเจอร์ไหนที่ต้องเพิ่ม endpoint ใหม่ใน main.py จะเขียนคอมเมนต์กำกับไว้
+//  และมีโค้ดให้แปะเพิ่มในไฟล์ main_additions.py (แยกไฟล์ ไม่แก้ main.py เดิม)
+//
+//  สารบัญไฟล์
+//   1) CONFIG + THEME  (สีมาตรฐาน ใช้ทั้งไฟล์)
+//   2) UTILS           (วันที่/เวลาไทย, ฟอร์แมตตัวเลข, คำนวณรายงาน)
+//   3) ICONS           (SVG เส้น ดูเป็นทางการ — ไม่ใช้ emoji การ์ตูน)
+//   4) EXPORT          (บันทึกไฟล์ CSV / PDF จริง ไม่ใช่สั่งพิมพ์)
+//   5) UI ส่วนกลาง     (Card, KPI, Modal, Confirm, Toast, Field)
+//   6) CHARTS          (กราฟเส้นยอดขาย + แท่งเทียบร้าน)
+//   7) ExecutiveView   (โครงหน้า: Sidebar / Topbar / กระดิ่งแจ้งเตือน)
+//   8) PAGES           (ภาพรวม / ยอดขายรายร้าน / จัดการร้าน / บัญชีร้านค้า)
+// =====================================================================
 
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+// ---------------------------------------------------------------------
+// 1) CONFIG
+// ---------------------------------------------------------------------
+
+// MySQL ใน Docker มักบันทึก CreatedAt เป็นเวลา UTC และส่งกลับมาโดยไม่มีตัว "Z"
+// ถ้าไม่เติม Z ให้ browser เวลาในกราฟจะเพี้ยนไป 7 ชม. (ไม่ใช่เวลาไทย)
+// ถ้าฐานข้อมูลของกลุ่มตั้ง timezone เป็น Asia/Bangkok อยู่แล้ว ให้เปลี่ยนเป็น false
+const ORDER_TIME_IS_UTC = true;
+
+// ขนาดรูปร้านค้าสูงสุดที่ยอมให้อัปโหลด (หน่วย MB)
+// 2 MB พอสำหรับรูปหน้าร้าน และไม่ทำให้ payload ใหญ่จนหลังบ้านรับไม่ไหว
+const MAX_IMAGE_MB = 2;
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+// รอบ refresh ข้อมูล (ms)
+const REFRESH_MS = 15000;
+
+// ประเภทอาหาร (ใช้เป็น dropdown ตอนเพิ่ม/แก้ไขร้าน)
+const FOOD_CATEGORIES = [
+  'อาหารจานเดียว',
+  'ก๋วยเตี๋ยว / เส้น',
+  'ตามสั่ง',
+  'อาหารอีสาน',
+  'เครื่องดื่ม',
+  'ของหวาน / เบเกอรี',
+  'ทานเล่น',
+  'อื่น ๆ'
+];
+
+// ---------------------------------------------------------------------
+// 1.1) THEME — สีมาตรฐานของหน้านี้
+//      แก้ตามข้อ 1.3: สีตัวหนังสือต้องคงที่ ไม่เปลี่ยนตามพื้นหลัง
+//      heading = ink, body = text, caption = muted, บวก = up, ลบ = down
+// ---------------------------------------------------------------------
+// [UX/UI ONLY] ใช้โทนและ visual system เดียวกับ OwnerView (Berry Theme)
+const T = {
+  // --- สีหลัก (ม่วง Berry) ---
+  primary: '#5E35B1',
+  primaryDark: '#4527A0',
+  primarySoft: '#EDE7F6',
+  // --- สีรอง (ฟ้า Berry) ---
+  accent: '#1E88E5',
+  accentSoft: '#E3F2FD',
+  accentDark: '#1565C0',
+  // --- สีประกอบการ์ดเล็ก/ป้ายสถานะ ---
+  amber: '#F9A825',
+  amberSoft: '#FFF8E1',
+  greenSoft: '#E4F5EE',
+  redSoft: '#FDECEC',
+  trackSoft: '#EEF0F7',
+  // --- ตัวหนังสือ / เส้น / พื้นหลัง ---
+  ink: '#121926',
+  text: '#364152',
+  muted: '#697586',
+  line: '#E3E8EF',
+  bg: '#EEF2F6',
+  surface: '#FFFFFF',
+  up: '#00A854',
+  down: '#F44336',
+  sideBg: '#FFFFFF',
+  sideText: '#364152',
+  sideActive: '#EDE7F6',
+  // --- มุมโค้ง / เงา (ใช้ให้เหมือนกันทั้งหน้า) ---
+  radiusLg: '12px',
+  radiusMd: '8px',
+  shadowSm: '0 2px 8px rgba(18,25,38,0.04)',
+  shadowMd: '0 8px 24px rgba(18,25,38,0.08)'
+};
+
+// ความสูงแถบบน (ใช้อ้างอิงทั้งตอนวาง sidebar บนจอแคบ)
+const TOPBAR_H = 80;
+
+const FONT_STACK =
+  '"Roboto","Sarabun","IBM Plex Sans Thai","Noto Sans Thai","Segoe UI",system-ui,sans-serif';
+
+// ---------------------------------------------------------------------
+// 2) UTILS
+// ---------------------------------------------------------------------
+
+const intFmt = new Intl.NumberFormat('th-TH');
+const money = (v) => intFmt.format(Math.round(Number(v) || 0));
+const money2 = (v) =>
+  new Intl.NumberFormat('th-TH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(v) || 0);
+
+// ย่อตัวเลขในแกนกราฟ เช่น 12500 -> 12.5K (ตามสไลด์ "Use unit labels")
+function shortNumber(value) {
+  const n = Number(value) || 0;
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K`;
+  return String(Math.round(n));
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+function toISODate(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function todayISO() {
+  return toISODate(new Date());
+}
+
+// แปลงค่า DATETIME จาก API ให้เป็นเวลาไทยที่ถูกต้อง
 function parseOrderDate(value) {
   if (!value) return null;
   if (value instanceof Date) return value;
-
   const normalized = String(value).trim().replace(' ', 'T');
-  const alreadyHasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
-
-  // MySQL/Docker ส่ง DATETIME ที่บันทึกแบบ UTC มาโดยไม่มีตัว Z
-  // เติม Z เพื่อให้ browser แปลงเป็นเวลาท้องถิ่น เช่น Asia/Bangkok (+07:00)
+  const hasTz = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
   const parsed = new Date(
-    alreadyHasTimezone ? normalized : `${normalized}Z`
+    hasTz || !ORDER_TIME_IS_UTC ? normalized : `${normalized}Z`
   );
-
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function getPeriodBounds(days) {
-  const end = new Date();
-  end.setHours(0, 0, 0, 0);
-  end.setDate(end.getDate() + 1);
+// แสดงวันที่แบบไทยสั้น ๆ
+function thaiDate(iso) {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  const m = [
+    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+  ];
+  return `${d.getDate()} ${m[d.getMonth()]} ${(d.getFullYear() + 543) % 100}`;
+}
 
+// [เพิ่ม] แปลง CreatedAt ของรีวิว (DATETIME เต็มรูปแบบ) ให้เป็นวันที่+เวลาแบบไทย
+// ใช้ parseOrderDate ตัวเดิมของระบบเพื่อให้จัดการโซนเวลาเหมือนกับข้อมูลออเดอร์
+function thaiDateTime(value) {
+  const d = parseOrderDate(value);
+  if (!d) return '-';
+  const m = [
+    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+  ];
+  return `${d.getDate()} ${m[d.getMonth()]} ${(d.getFullYear() + 543) % 100} · ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function nowStamp() {
+  const d = new Date();
+  return `${toISODate(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// ขอบเขตช่วงเวลา: นับถอยหลัง `days` วัน โดยจบที่สิ้นวันของ anchorDate
+function periodBounds(anchorISO, days) {
+  const end = new Date(`${anchorISO}T00:00:00`);
+  end.setDate(end.getDate() + 1);
   const start = new Date(end);
   start.setDate(start.getDate() - days);
   return { start, end };
 }
 
-function ordersInsidePeriod(orders, days, storeId = null) {
-  const { start, end } = getPeriodBounds(days);
-  return (orders || []).filter(order => {
-    const createdAt = parseOrderDate(order.CreatedAt);
-    const correctStore = storeId === null ||
-      String(order.StoreId) === String(storeId);
-    return createdAt && createdAt >= start && createdAt < end && correctStore;
-  });
+// ช่วงก่อนหน้าที่ยาวเท่ากัน — ใช้เทียบ "เทียบกับเมื่อวาน / ช่วงก่อน"
+function previousBounds(anchorISO, days) {
+  const { start } = periodBounds(anchorISO, days);
+  const prevEnd = new Date(start);
+  const prevStart = new Date(start);
+  prevStart.setDate(prevStart.getDate() - days);
+  return { start: prevStart, end: prevEnd };
 }
 
-function orderIs(order, status) {
-  return String(order.Status || '').toLowerCase() === status.toLowerCase();
+const statusIs = (order, status) =>
+  String(order?.Status || '').toLowerCase() === status.toLowerCase();
+
+function inRange(order, bounds, storeId = null) {
+  const at = parseOrderDate(order.CreatedAt);
+  if (!at) return false;
+  if (at < bounds.start || at >= bounds.end) return false;
+  if (storeId !== null && String(order.StoreId) !== String(storeId)) return false;
+  return true;
 }
 
-function buildTrend(completedOrders, days) {
-  const { start } = getPeriodBounds(days);
+const sumAmount = (orders) =>
+  orders.reduce((s, o) => s + Number(o.TotalAmount || 0), 0);
+
+// % การเปลี่ยนแปลงเทียบช่วงก่อนหน้า (null = ช่วงก่อนไม่มีข้อมูลให้เทียบ)
+function changePct(current, previous) {
+  const c = Number(current) || 0;
+  const p = Number(previous) || 0;
+  if (p === 0) return c === 0 ? 0 : null;
+
+  // จำกัดค่าที่แสดงบน Dashboard ให้อยู่ระหว่าง -100% ถึง 100%
+  // เพื่อไม่ให้กรณีฐานช่วงก่อนหน้าต่ำมากแสดงเป็นหลักร้อย/หลักพันเปอร์เซ็นต์
+  const raw = ((c - p) / p) * 100;
+  return Math.max(-100, Math.min(100, raw));
+}
+
+// สรุปตัวเลขของกลุ่มออเดอร์หนึ่งช่วง
+function summarize(orders) {
+  const completed = orders.filter((o) => statusIs(o, 'Completed'));
+  const cancelled = orders.filter((o) => statusIs(o, 'Cancelled'));
+  const finished = completed.length + cancelled.length;
+  const sales = sumAmount(completed);
+  return {
+    sales,
+    completedCount: completed.length,
+    cancelledCount: cancelled.length,
+    cancelRate: finished ? (cancelled.length / finished) * 100 : 0,
+    avgOrder: completed.length ? sales / completed.length : 0,
+    completed,
+    cancelled
+  };
+}
+
+// สร้างข้อมูลกราฟ: days = 1 -> รายชั่วโมง, มากกว่านั้น -> รายวัน
+// แต่ละจุดเก็บยอดแยกร้านไว้ด้วย เพื่อให้ tooltip บอกร้านสูงสุด/ต่ำสุดได้
+function buildBuckets(completedOrders, anchorISO, days) {
+  const { start } = periodBounds(anchorISO, days);
+  const buckets = [];
 
   if (days === 1) {
-    return Array.from({ length: 24 }, (_, hour) => {
-      const sales = completedOrders
-        .filter(order => parseOrderDate(order.CreatedAt)?.getHours() === hour)
-        .reduce((sum, order) => sum + Number(order.TotalAmount || 0), 0);
-      return { label: `${String(hour).padStart(2, '0')}:00`, sales };
+    for (let h = 0; h < 24; h += 1) {
+      buckets.push({ key: `h${h}`, label: `${pad2(h)}:00`, sales: 0, count: 0, byStore: {} });
+    }
+    completedOrders.forEach((o) => {
+      const at = parseOrderDate(o.CreatedAt);
+      if (!at) return;
+      addToBucket(buckets[at.getHours()], o);
+    });
+    return buckets;
+  }
+
+  const indexByKey = {};
+  for (let i = 0; i < days; i += 1) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const key = toISODate(d);
+    indexByKey[key] = i;
+    buckets.push({
+      key,
+      label: `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`,
+      sales: 0,
+      count: 0,
+      byStore: {}
+    });
+  }
+  completedOrders.forEach((o) => {
+    const at = parseOrderDate(o.CreatedAt);
+    if (!at) return;
+    const idx = indexByKey[toISODate(at)];
+    if (idx !== undefined) addToBucket(buckets[idx], o);
+  });
+  return buckets;
+}
+
+function addToBucket(bucket, order) {
+  if (!bucket) return;
+  const amount = Number(order.TotalAmount || 0);
+  bucket.sales += amount;
+  bucket.count += 1;
+  const id = String(order.StoreId);
+  if (!bucket.byStore[id]) {
+    bucket.byStore[id] = { name: order.StoreName || `ร้าน #${id}`, sales: 0 };
+  }
+  bucket.byStore[id].sales += amount;
+}
+
+// ร้านสูงสุด/ต่ำสุดของจุดนั้นบนกราฟ
+function bucketExtremes(bucket) {
+  const rows = Object.values(bucket.byStore || {}).filter((r) => r.sales > 0);
+  if (!rows.length) return { best: null, worst: null };
+  const sorted = [...rows].sort((a, b) => b.sales - a.sales);
+  return {
+    best: sorted[0],
+    worst: sorted.length > 1 ? sorted[sorted.length - 1] : null
+  };
+}
+
+// สรุปเมนูขายดี/ขายน้อยของร้าน (ใช้ items ที่ API /api/orders ส่งมาด้วย)
+function summarizeMenus(completedOrders) {
+  const map = {};
+  completedOrders.forEach((o) => {
+    (o.items || []).forEach((it) => {
+      const name = it.ProductName || `สินค้า #${it.ProductId}`;
+      if (!map[name]) map[name] = { name, qty: 0, amount: 0 };
+      map[name].qty += Number(it.Qty || 0);
+      map[name].amount += Number(it.Qty || 0) * Number(it.UnitPrice || 0);
+    });
+  });
+  const rows = Object.values(map);
+  const total = rows.reduce((s, r) => s + r.amount, 0);
+  rows.forEach((r) => {
+    r.share = total ? (r.amount / total) * 100 : 0;
+  });
+  return rows.sort((a, b) => b.amount - a.amount);
+}
+
+// ตัวช่วยเรียก API ให้ข้อความ error อ่านรู้เรื่อง
+async function callApi(url, options) {
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (err) {
+    throw new Error('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจสอบว่า backend รันอยู่');
+  }
+  let data = null;
+  const raw = await response.text();
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    data = null;
+  }
+  if (!response.ok) {
+    // 404/405 = ยังไม่ได้เพิ่ม endpoint ใน main.py (ดูไฟล์ main_additions.py)
+    if (response.status === 404 || response.status === 405) {
+      throw new Error(
+        'ยังไม่มี endpoint นี้ในหลังบ้าน — ให้เพิ่มโค้ดจากไฟล์ main_additions.py ลงใน main.py ก่อน'
+      );
+    }
+    const detail = data && (data.detail || data.message);
+    throw new Error(
+      typeof detail === 'string' ? detail : `ทำรายการไม่สำเร็จ (HTTP ${response.status})`
+    );
+  }
+  return data;
+}
+
+// hook เล็ก ๆ ไว้เช็กจอแคบ (ใช้ย่อ/ซ่อนแถบเมนูอัตโนมัติ)
+function useIsNarrow(breakpoint = 960) {
+  const [narrow, setNarrow] = useState(
+    typeof window !== 'undefined' ? window.innerWidth < breakpoint : false
+  );
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < breakpoint);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [breakpoint]);
+  return narrow;
+}
+
+// ---------------------------------------------------------------------
+// 3) ICONS — SVG เส้นบาง ดูเป็นทางการ (แทนไอคอนการ์ตูน/emoji เดิม)
+// ---------------------------------------------------------------------
+const ICON_PATHS = {
+  overview: 'M3 3h7v7H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 14h7v7H3z',
+  trend: 'M3 17l6-6 4 4 8-8M21 7v5h-5',
+  store: 'M4 9h16M4 9l1-4h14l1 4M5 9v11h14V9M9 20v-6h6v6',
+  account: 'M12 12a4 4 0 100-8 4 4 0 000 8zM4 21a8 8 0 0116 0',
+  bell: 'M18 16V11a6 6 0 10-12 0v5l-2 3h16zM10 22h4',
+  search: 'M11 19a8 8 0 100-16 8 8 0 000 16zM21 21l-4.3-4.3',
+  menu: 'M4 7h16M4 12h16M4 17h16',
+  close: 'M6 6l12 12M18 6L6 18',
+  download: 'M12 3v12M7 11l5 5 5-5M4 21h16',
+  calendar: 'M7 3v4M17 3v4M3 9h18M5 5h14v16H5z',
+  edit: 'M4 20h4l10-10-4-4L4 16zM14 6l4 4',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14',
+  power: 'M12 3v9M7 6a8 8 0 1010 0',
+  ban: 'M12 21a9 9 0 100-18 9 9 0 000 18zM5.6 5.6l12.8 12.8',
+  plus: 'M12 5v14M5 12h14',
+  check: 'M4 12l5 5L20 6',
+  key: 'M14 7a4 4 0 11-3.6 5.8L4 19v3h3l1-1h2v-2h2v-2l1.4-1.4A4 4 0 0114 7z',
+  info: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 11v5M12 8h.01',
+  refresh: 'M4 12a8 8 0 0113.7-5.7L20 8M20 4v4h-4M20 12a8 8 0 01-13.7 5.7L4 16M4 20v-4h4',
+  settings:
+    'M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.7 1.7 0 002.5 1.1c1.6-.9 3.4.8 2.4 2.4a1.7 1.7 0 001.1 2.6c1.7.4 1.7 2.9 0 3.3a1.7 1.7 0 00-1.1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 00-2.5 1c-.4 1.8-2.9 1.8-3.4 0a1.7 1.7 0 00-2.5-1c-1.6.9-3.3-.9-2.4-2.4a1.7 1.7 0 00-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 001-2.6c-.9-1.6.8-3.3 2.4-2.4a1.7 1.7 0 002.5-1.1zM9 12a3 3 0 106 0 3 3 0 00-6 0',
+  logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3'
+};
+
+// คำทักทายตามเวลาของเครื่อง (ใช้แค่โชว์ในเมนูโปรไฟล์)
+function greetingText() {
+  const h = new Date().getHours();
+  if (h < 12) return 'สวัสดีตอนเช้า';
+  if (h < 17) return 'สวัสดีตอนบ่าย';
+  return 'สวัสดีตอนเย็น';
+}
+
+function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.7, style }) {
+  const d = ICON_PATHS[name] || ICON_PATHS.info;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0, display: 'block', ...style }}
+      aria-hidden="true"
+    >
+      <path d={d} />
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------
+// 4) EXPORT — บันทึกเป็นไฟล์จริง (ไม่ใช่ window.print)
+// ---------------------------------------------------------------------
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+// CSV: ใส่ BOM ข้างหน้าเพื่อให้ Excel อ่านภาษาไทยไม่เป็นตัวต่างดาว
+function exportCsv(filename, rows) {
+  const escape = (v) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = rows.map((r) => r.map(escape).join(',')).join('\r\n');
+  saveBlob(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }), filename);
+}
+
+// ---- PDF ----
+// วาดรายงานลง <canvas> (ฟอนต์ไทยใช้ฟอนต์ของเครื่องได้เลย) แล้วแปลงเป็น JPEG
+// จากนั้นประกอบเป็นไฟล์ PDF ด้วยมือ -> กดแล้วได้ไฟล์ .pdf ทันที ไม่ต้องสั่งพิมพ์
+const PDF_W = 595; // A4 กว้าง (pt)
+const PDF_H = 842; // A4 สูง (pt)
+const CANVAS_W = 1190; // 2x เพื่อความคมชัด
+const CANVAS_H = 1684;
+
+function dataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.split(',')[1];
+  const bin = atob(base64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function buildPdfBlob(jpegPages) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  let length = 0;
+  const offsets = [];
+  const push = (u8) => {
+    chunks.push(u8);
+    length += u8.length;
+  };
+  const pushText = (s) => push(encoder.encode(s));
+  const mark = (n) => {
+    offsets[n] = length;
+  };
+
+  const objectCount = 2 + jpegPages.length * 3;
+  pushText('%PDF-1.4\n');
+
+  mark(1);
+  pushText('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+
+  const kids = jpegPages.map((_, i) => `${3 + i * 3} 0 R`).join(' ');
+  mark(2);
+  pushText(
+    `2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${jpegPages.length} >>\nendobj\n`
+  );
+
+  jpegPages.forEach((jpeg, i) => {
+    const pageNo = 3 + i * 3;
+    const imgNo = pageNo + 1;
+    const contentNo = pageNo + 2;
+    const content = `q ${PDF_W} 0 0 ${PDF_H} 0 0 cm /Im0 Do Q\n`;
+
+    mark(pageNo);
+    pushText(
+      `${pageNo} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PDF_W} ${PDF_H}] ` +
+        `/Resources << /XObject << /Im0 ${imgNo} 0 R >> >> /Contents ${contentNo} 0 R >>\nendobj\n`
+    );
+
+    mark(imgNo);
+    pushText(
+      `${imgNo} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${CANVAS_W} ` +
+        `/Height ${CANVAS_H} /ColorSpace /DeviceRGB /BitsPerComponent 8 ` +
+        `/Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`
+    );
+    push(jpeg);
+    pushText('\nendstream\nendobj\n');
+
+    mark(contentNo);
+    pushText(
+      `${contentNo} 0 obj\n<< /Length ${content.length} >>\nstream\n${content}endstream\nendobj\n`
+    );
+  });
+
+  const xrefPos = length;
+  let xref = `xref\n0 ${objectCount + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objectCount; i += 1) {
+    xref += `${String(offsets[i] || 0).padStart(10, '0')} 00000 n \n`;
+  }
+  xref += `trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+  pushText(xref);
+
+  const out = new Uint8Array(length);
+  let pos = 0;
+  chunks.forEach((c) => {
+    out.set(c, pos);
+    pos += c.length;
+  });
+  return new Blob([out], { type: 'application/pdf' });
+}
+
+// วาดหน้ารายงาน 1 หน้า
+function drawReportPage({ title, subtitle, kpis, tableTitle, columns, rows, pageNo, pageCount }) {
+  const canvas = document.createElement('canvas');
+  canvas.width = CANVAS_W;
+  canvas.height = CANVAS_H;
+  const ctx = canvas.getContext('2d');
+  const font = (size, weight = 'normal') => {
+    ctx.font = `${weight} ${size}px ${FONT_STACK}`;
+  };
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // แถบหัวกระดาษ
+  ctx.fillStyle = T.primary;
+  ctx.fillRect(0, 0, CANVAS_W, 14);
+
+  const M = 70;
+  let y = 92;
+  ctx.fillStyle = T.ink;
+  font(38, 'bold');
+  ctx.fillText(title, M, y);
+
+  y += 34;
+  ctx.fillStyle = T.muted;
+  font(20);
+  ctx.fillText(subtitle, M, y);
+
+  y += 22;
+  ctx.fillText(`ออกรายงานเมื่อ ${nowStamp()} น. · Only Foods Food Court`, M, y);
+
+  // การ์ด KPI 3 คอลัมน์
+  if (kpis && kpis.length) {
+    y += 40;
+    const cardW = (CANVAS_W - M * 2 - 24 * 2) / 3;
+    kpis.forEach((k, i) => {
+      const col = i % 3;
+      const row = Math.floor(i / 3);
+      const x = M + col * (cardW + 24);
+      const cy = y + row * 150;
+      ctx.fillStyle = '#FAFBFF';
+      ctx.strokeStyle = T.line;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.rect(x, cy, cardW, 126);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = T.muted;
+      font(19);
+      ctx.fillText(k.label, x + 22, cy + 40);
+
+      ctx.fillStyle = T.ink;
+      font(32, 'bold');
+      ctx.fillText(k.value, x + 22, cy + 82);
+
+      if (k.note) {
+        ctx.fillStyle = k.tone === 'up' ? T.up : k.tone === 'down' ? T.down : T.muted;
+        font(18);
+        ctx.fillText(k.note, x + 22, cy + 110);
+      }
+    });
+    y += Math.ceil(kpis.length / 3) * 150 + 20;
+  }
+
+  // ตาราง
+  if (tableTitle) {
+    y += 24;
+    ctx.fillStyle = T.ink;
+    font(26, 'bold');
+    ctx.fillText(tableTitle, M, y);
+    y += 26;
+  }
+
+  if (columns && columns.length) {
+    const tableW = CANVAS_W - M * 2;
+    const colW = columns.map((c) => tableW * c.width);
+    const colX = [];
+    let acc = M;
+    colW.forEach((w) => {
+      colX.push(acc);
+      acc += w;
+    });
+
+    ctx.fillStyle = '#F2F4FA';
+    ctx.fillRect(M, y, tableW, 46);
+    ctx.fillStyle = T.text;
+    font(20, 'bold');
+    columns.forEach((c, i) => {
+      const tx = c.align === 'right' ? colX[i] + colW[i] - 16 : colX[i] + 16;
+      ctx.textAlign = c.align === 'right' ? 'right' : 'left';
+      ctx.fillText(c.title, tx, y + 30);
+    });
+    ctx.textAlign = 'left';
+    y += 46;
+
+    rows.forEach((row, ri) => {
+      if (ri % 2 === 1) {
+        ctx.fillStyle = '#FBFCFF';
+        ctx.fillRect(M, y, tableW, 42);
+      }
+      ctx.fillStyle = T.text;
+      font(19);
+      row.forEach((cell, i) => {
+        const c = columns[i];
+        const tx = c.align === 'right' ? colX[i] + colW[i] - 16 : colX[i] + 16;
+        ctx.textAlign = c.align === 'right' ? 'right' : 'left';
+        ctx.fillText(String(cell), tx, y + 28);
+      });
+      ctx.textAlign = 'left';
+      ctx.strokeStyle = T.line;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(M, y + 42);
+      ctx.lineTo(M + tableW, y + 42);
+      ctx.stroke();
+      y += 42;
     });
   }
 
-  return Array.from({ length: days }, (_, index) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + index);
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const day = date.getDate();
-    const sales = completedOrders
-      .filter(order => {
-        const createdAt = parseOrderDate(order.CreatedAt);
-        return createdAt && createdAt.getFullYear() === year &&
-          createdAt.getMonth() === month && createdAt.getDate() === day;
-      })
-      .reduce((sum, order) => sum + Number(order.TotalAmount || 0), 0);
-    return {
-      label: `${String(day).padStart(2, '0')}/${String(month + 1).padStart(2, '0')}`,
-      sales
-    };
-  });
+  // ท้ายกระดาษ
+  ctx.fillStyle = T.muted;
+  font(17);
+  ctx.fillText(`หน้า ${pageNo}/${pageCount}`, M, CANVAS_H - 50);
+  ctx.textAlign = 'right';
+  ctx.fillText('รายงานสร้างจากระบบ Only Foods', CANVAS_W - M, CANVAS_H - 50);
+  ctx.textAlign = 'left';
+
+  return canvas;
 }
 
-function buildOverviewReport(orders, dashboard, days) {
-  const periodOrders = ordersInsidePeriod(orders, days);
-  const completed = periodOrders.filter(order => orderIs(order, 'Completed'));
-  const cancelled = periodOrders.filter(order => orderIs(order, 'Cancelled'));
-  const finishedCount = completed.length + cancelled.length;
-
-  const stores = (dashboard || []).map(store => {
-    const storeOrders = periodOrders.filter(
-      order => String(order.StoreId) === String(store.StoreId)
-    );
-    const storeCompleted = storeOrders.filter(order => orderIs(order, 'Completed'));
-    return {
-      ...store,
-      sales: storeCompleted.reduce(
-        (sum, order) => sum + Number(order.TotalAmount || 0), 0
-      ),
-      completed_orders: storeCompleted.length,
-      cancelled_orders: storeOrders.filter(order => orderIs(order, 'Cancelled')).length
-    };
-  }).sort((a, b) => b.sales - a.sales);
-
-  return {
-    total_sales: completed.reduce(
-      (sum, order) => sum + Number(order.TotalAmount || 0), 0
-    ),
-    total_orders: completed.length,
-    total_cancelled: cancelled.length,
-    cancellation_rate: finishedCount
-      ? Number(((cancelled.length / finishedCount) * 100).toFixed(1))
-      : 0,
-    total_stores: dashboard.length,
-    trend: buildTrend(completed, days),
-    stores
-  };
+function exportPdf(filename, spec) {
+  const ROWS_FIRST_PAGE = 14;
+  const ROWS_PER_PAGE = 26;
+  const rows = spec.rows || [];
+  const pagesRows = [];
+  if (rows.length <= ROWS_FIRST_PAGE) {
+    pagesRows.push(rows);
+  } else {
+    pagesRows.push(rows.slice(0, ROWS_FIRST_PAGE));
+    for (let i = ROWS_FIRST_PAGE; i < rows.length; i += ROWS_PER_PAGE) {
+      pagesRows.push(rows.slice(i, i + ROWS_PER_PAGE));
+    }
+  }
+  const pageCount = pagesRows.length;
+  const jpegs = pagesRows.map((chunkRows, i) => {
+    const canvas = drawReportPage({
+      title: spec.title,
+      subtitle: i === 0 ? spec.subtitle : `${spec.subtitle} (ต่อ)`,
+      kpis: i === 0 ? spec.kpis : null,
+      tableTitle: i === 0 ? spec.tableTitle : `${spec.tableTitle} (ต่อ)`,
+      columns: spec.columns,
+      rows: chunkRows,
+      pageNo: i + 1,
+      pageCount
+    });
+    return dataUrlToBytes(canvas.toDataURL('image/jpeg', 0.92));
+  });
+  saveBlob(buildPdfBlob(jpegs), filename);
 }
 
-function buildStoreReport(orders, store, storeId, days) {
-  const periodOrders = ordersInsidePeriod(orders, days, storeId);
-  const completed = periodOrders.filter(order => orderIs(order, 'Completed'));
-  const cancelled = periodOrders.filter(order => orderIs(order, 'Cancelled'));
-  const totalSales = completed.reduce(
-    (sum, order) => sum + Number(order.TotalAmount || 0), 0
-  );
-  const finishedCount = completed.length + cancelled.length;
-
-  return {
-    store_id: storeId,
-    store_name: store?.StoreName || '',
-    total_sales: totalSales,
-    total_orders: completed.length,
-    total_cancelled: cancelled.length,
-    average_order: completed.length ? totalSales / completed.length : 0,
-    cancellation_rate: finishedCount
-      ? Number(((cancelled.length / finishedCount) * 100).toFixed(1))
-      : 0,
-    trend: buildTrend(completed, days)
-  };
-}
-
-export default function ExecutiveView({ apiBase, user }) {
-  const [dashboard, setDashboard] = useState([]);
-  const [allOrders, setAllOrders] = useState([]);
-  const [selectedStoreId, setSelectedStoreId] = useState('');
-  const [selectedStoreDashboard, setSelectedStoreDashboard] =
-    useState(null);
-
-  const [newStoreName, setNewStoreName] = useState('');
-  const [editingStoreId, setEditingStoreId] = useState(null);
-  const [editingStoreName, setEditingStoreName] = useState('');
-
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const [foodCourtOpen, setFoodCourtOpen] = useState(true);
-  const [changingFoodCourt, setChangingFoodCourt] = useState(false);
-  const [overviewDays, setOverviewDays] = useState(1);
-  const [overviewReport, setOverviewReport] = useState({
-    total_sales: 0,
-    total_orders: 0,
-    total_cancelled: 0,
-    cancellation_rate: 0,
-    total_stores: 0,
-    trend: [],
-    stores: []
-  });
-  const [overviewLoading, setOverviewLoading] = useState(true);
-  const [storeDays, setStoreDays] = useState(1);
-  const [storeReport, setStoreReport] = useState({
-    store_id: null,
-    store_name: '',
-    total_sales: 0,
-    total_orders: 0,
-    total_cancelled: 0,
-    average_order: 0,
-    cancellation_rate: 0,
-    trend: []
-  });
-  const [storeReportLoading, setStoreReportLoading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeMenu, setActiveMenu] = useState('overview');
-  const [searchText, setSearchText] = useState('');
-
-const fetchFoodCourtStatus = async () => {
-  try {
-    const response = await fetch(
-      `${apiBase}/api/food-court/status`
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data.detail || 'โหลดสถานะศูนย์อาหารไม่สำเร็จ'
-      );
-    }
-
-    setFoodCourtOpen(data.is_open);
-  } catch (err) {
-    setError(err.message);
-  }
-};
-
-  useEffect(() => {
-    fetchFoodCourtStatus();
-  }, [apiBase]);
-
-  const goPage = (pageId) => {
-    setActiveMenu(pageId);
-  };
-
-  const accountName =
-    user?.FullName || user?.name || user?.Username || 'ผู้บริหาร';
-  const accountRole = user?.Role || user?.role || 'Executive';
-  const filteredDashboard = dashboard.filter(store =>
-    String(store.StoreName || '')
-      .toLowerCase()
-      .includes(searchText.trim().toLowerCase())
-  );
-  const pageTitle = {
-    overview: ['ภาพรวมศูนย์อาหาร', 'สรุปยอดขายและการดำเนินงานของ Only Foods'],
-    'store-dashboard': ['ยอดขายรายร้าน', 'เลือกดูข้อมูลและแนวโน้มยอดขายของร้านค้าแต่ละร้าน'],
-    'store-management': ['จัดการร้านค้า', 'เพิ่ม แก้ไข และควบคุมสถานะร้านค้าภายในศูนย์อาหาร']
-  }[activeMenu];
-
-  // ใช้ API เดิมของโปรเจกต์ แล้วคำนวณรายงานใน ExecutiveView เท่านั้น
-  const fetchOrdersForReports = async (showLoading = true) => {
-    if (showLoading) setOverviewLoading(true);
-    try {
-      const response = await fetch(`${apiBase}/api/orders`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'โหลดรายการออเดอร์ไม่สำเร็จ');
-      }
-      setAllOrders(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setError(err.message || 'เชื่อมต่อรายงานยอดขายไม่สำเร็จ');
-    } finally {
-      setOverviewLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchDashboard();
-
-    const interval = setInterval(() => {
-      fetchDashboard(false);
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [apiBase]);
-
-  useEffect(() => {
-    if (selectedStoreId) {
-      fetchSingleStoreDashboard(selectedStoreId);
-    } else {
-      setSelectedStoreDashboard(null);
-      setStoreReport({
-        store_id: null,
-        store_name: '',
-        total_sales: 0,
-        total_orders: 0,
-        total_cancelled: 0,
-        average_order: 0,
-        cancellation_rate: 0,
-        trend: []
-      });
-    }
-  }, [selectedStoreId, apiBase]);
-
-  useEffect(() => {
-    setOverviewReport(
-      buildOverviewReport(allOrders, dashboard, overviewDays)
-    );
-  }, [allOrders, dashboard, overviewDays]);
-
-  useEffect(() => {
-    if (!selectedStoreId) return;
-    setStoreReportLoading(true);
-    const selectedStore = dashboard.find(
-      store => String(store.StoreId) === String(selectedStoreId)
-    );
-    setStoreReport(
-      buildStoreReport(allOrders, selectedStore, selectedStoreId, storeDays)
-    );
-    setStoreReportLoading(false);
-  }, [allOrders, dashboard, selectedStoreId, storeDays]);
-
-  useEffect(() => {
-    fetchOrdersForReports();
-    const interval = setInterval(() => fetchOrdersForReports(false), 5000);
-    return () => clearInterval(interval);
-  }, [apiBase]);
-
-  // ดึงแดชบอร์ดรวมและรายชื่อร้านทั้งหมด
-  const fetchDashboard = async (showError = true) => {
-    try {
-      const response = await fetch(
-        `${apiBase}/api/reports/dashboard`
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || 'ไม่สามารถโหลดข้อมูลร้านค้าได้'
-        );
-      }
-
-      setDashboard(data);
-    } catch (err) {
-      if (showError) {
-        setError(err.message);
-      }
-    }
-  };
-
-  // ดึงแดชบอร์ดเฉพาะร้านที่เลือก
-  const fetchSingleStoreDashboard = async (storeId) => {
-    try {
-      const response = await fetch(
-        `${apiBase}/api/reports/dashboard?store_id=${storeId}`
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || 'ไม่สามารถโหลดแดชบอร์ดร้านได้'
-        );
-      }
-
-      setSelectedStoreDashboard(
-        data.length > 0 ? data[0] : null
-      );
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  // เพิ่มร้านค้า
-  const addStore = async (event) => {
-    event.preventDefault();
-
-    setMessage('');
-    setError('');
-
-    if (!newStoreName.trim()) {
-      setError('กรุณากรอกชื่อร้านค้า');
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      const response = await fetch(
-        `${apiBase}/api/stores`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            store_name: newStoreName
-          })
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || 'เพิ่มร้านค้าไม่สำเร็จ'
-        );
-      }
-
-      setNewStoreName('');
-      setMessage('เพิ่มร้านค้าเรียบร้อยแล้ว');
-
-      await fetchDashboard();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // เริ่มแก้ไขร้าน
-  const startEditing = (store) => {
-    setEditingStoreId(store.StoreId);
-    setEditingStoreName(store.StoreName);
-    setMessage('');
-    setError('');
-  };
-
-  // ยกเลิกการแก้ไข
-  const cancelEditing = () => {
-    setEditingStoreId(null);
-    setEditingStoreName('');
-  };
-
-  // บันทึกชื่อร้านใหม่
-  const saveStoreEdit = async (storeId) => {
-    setMessage('');
-    setError('');
-
-    if (!editingStoreName.trim()) {
-      setError('กรุณากรอกชื่อร้านค้า');
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      const response = await fetch(
-        `${apiBase}/api/stores/${storeId}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            store_name: editingStoreName
-          })
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || 'แก้ไขร้านค้าไม่สำเร็จ'
-        );
-      }
-
-      setEditingStoreId(null);
-      setEditingStoreName('');
-      setMessage('แก้ไขข้อมูลร้านค้าเรียบร้อยแล้ว');
-
-      await fetchDashboard();
-
-      if (String(selectedStoreId) === String(storeId)) {
-        await fetchSingleStoreDashboard(storeId);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // เปิดหรือปิดร้าน
-  const toggleStore = async (storeId) => {
-    setMessage('');
-    setError('');
-
-    try {
-      const response = await fetch(
-        `${apiBase}/api/stores/${storeId}/toggle`,
-        {
-          method: 'PUT'
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || 'เปลี่ยนสถานะร้านไม่สำเร็จ'
-        );
-      }
-
-      setMessage('เปลี่ยนสถานะเปิด–ปิดร้านเรียบร้อยแล้ว');
-
-      await fetchDashboard();
-
-      if (String(selectedStoreId) === String(storeId)) {
-        await fetchSingleStoreDashboard(storeId);
-      }
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  // ระงับหรือปลดระงับร้าน
-  const suspendStore = async (storeId) => {
-    setMessage('');
-    setError('');
-
-    try {
-      const response = await fetch(
-        `${apiBase}/api/stores/${storeId}/suspend`,
-        {
-          method: 'PUT'
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || 'เปลี่ยนสิทธิ์ร้านไม่สำเร็จ'
-        );
-      }
-
-      setMessage('เปลี่ยนสถานะสิทธิ์ร้านเรียบร้อยแล้ว');
-
-      await fetchDashboard();
-
-      if (String(selectedStoreId) === String(storeId)) {
-        await fetchSingleStoreDashboard(storeId);
-      }
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const grandTotal = dashboard.reduce(
-    (total, store) => total + Number(store.net_sales || 0),
-    0
-  );
-
-  const totalOrders = dashboard.reduce(
-    (total, store) => total + Number(store.total_orders || 0),
-    0
-  );
-
-
-  // เปิดปิดศูนย์
-  const toggleFoodCourt = async () => {
-  const actionText = foodCourtOpen
-    ? 'ปิดศูนย์อาหาร'
-    : 'เปิดศูนย์อาหาร';
-
-  const confirmed = window.confirm(
-    `ยืนยันว่าต้องการ${actionText}หรือไม่?`
-  );
-
-  if (!confirmed) {
-    return;
-  }
-
-  setMessage('');
-  setError('');
-  setChangingFoodCourt(true);
-
-  try {
-    const response = await fetch(
-      `${apiBase}/api/food-court/toggle`,
-      {
-        method: 'PUT'
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data.detail || `${actionText}ไม่สำเร็จ`
-      );
-    }
-
-    setFoodCourtOpen(data.is_open);
-    setMessage(data.message);
-  } catch (err) {
-    setError(err.message);
-  } finally {
-    setChangingFoodCourt(false);
-  }
-};
-
+// ---------------------------------------------------------------------
+// 5) UI ส่วนกลาง
+// ---------------------------------------------------------------------
+
+function Card({ title, subtitle, right, children, style }) {
   return (
-    <div style={executiveShellStyle}>
-      {sidebarOpen && (
-        <aside style={sidebarStyle}>
-          <div style={brandStyle}>
-            <div style={brandIconStyle}>OF</div>
-            <div>
-              <div style={{ fontWeight: 'bold', fontSize: '17px' }}>OF Executive</div>
-              <div style={{ color: '#94a3b8', fontSize: '11px' }}>Only Foods · ผู้บริหาร</div>
-            </div>
+    <section className="of-card" style={{ ...cardStyle, ...style }}>
+      {(title || right) && (
+        <header style={cardHeadStyle}>
+          <div style={{ minWidth: 0 }}>
+            {title && <h3 style={h3Style}>{title}</h3>}
+            {subtitle && <p style={captionStyle}>{subtitle}</p>}
           </div>
-
-          <div style={{ color: '#64748b', fontSize: '11px', fontWeight: 'bold', margin: '22px 10px 8px' }}>เมนูหลัก</div>
-          <SidebarButton active={activeMenu === 'overview'} icon="▦" label="ภาพรวมศูนย์อาหาร" onClick={() => goPage('overview')} />
-          <SidebarButton active={activeMenu === 'store-dashboard'} icon="↗" label="ยอดขายรายร้าน" onClick={() => goPage('store-dashboard')} />
-          <SidebarButton active={activeMenu === 'store-management'} icon="▤" label="จัดการร้านค้า" onClick={() => goPage('store-management')} />
-
-          <div style={sidebarAccountStyle}>
-            <div style={avatarStyle}>{String(accountName).charAt(0).toUpperCase()}</div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{accountName}</div>
-              <div style={{ color: '#94a3b8', fontSize: '11px' }}>{accountRole}</div>
-            </div>
-          </div>
-        </aside>
+          {right}
+        </header>
       )}
+      {children}
+    </section>
+  );
+}
 
-      <main style={{ flex: 1, minWidth: 0 }}>
-        <div style={topbarStyle}>
-          <button type="button" onClick={() => setSidebarOpen(open => !open)} style={menuToggleStyle}>☰</button>
-          <div style={topSearchWrapStyle}>
-            <span style={{ color: '#94a3b8' }}>⌕</span>
-            <input
-              value={searchText}
-              onChange={event => setSearchText(event.target.value)}
-              placeholder="ค้นหาร้านค้า..."
-              style={topSearchInputStyle}
-            />
-          </div>
-          <div style={topAccountStyle}>
-            <div style={topAvatarStyle}>{String(accountName).charAt(0).toUpperCase()}</div>
-            <div>
-              <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{accountName}</div>
-              <div style={{ color: '#64748b', fontSize: '11px' }}>{accountRole}</div>
-            </div>
-          </div>
-        </div>
+// วงกลมตกแต่งมุมขวาบนของการ์ดสีเข้ม (ลายเดียวกับธีม Berry)
+function CardDecorCircles({ color }) {
+  return (
+    <>
+      <span style={{ position: 'absolute', width: '210px', height: '210px', borderRadius: '50%', background: color, opacity: 0.5, top: '-85px', right: '-95px' }} />
+      <span style={{ position: 'absolute', width: '210px', height: '210px', borderRadius: '50%', background: color, opacity: 0.5, top: '-125px', right: '-15px' }} />
+    </>
+  );
+}
 
-        <div style={{ background: '#f1f5f9', padding: '22px', minHeight: '100vh', color: '#0f172a' }}>
-          <div style={{ marginBottom: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '28px', color: '#082f49' }}>{pageTitle[0]}</h2>
-            <div style={{ color: '#64748b', marginTop: '5px' }}>{pageTitle[1]}</div>
-          </div>
+// คลื่นตกแต่งพื้นการ์ดสีฟ้า
+function CardDecorWave() {
+  return (
+    <span style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden="true">
+      <svg viewBox="0 0 200 100" preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
+        <path
+          d="M0 52 C 40 12, 60 92, 100 52 C 140 12, 160 92, 200 52 L 200 100 L 0 100 Z"
+          fill="rgba(255,255,255,0.12)"
+        />
+      </svg>
+    </span>
+  );
+}
 
-      {message && (
-        <div style={successStyle}>
-          {message}
-        </div>
-      )}
-
-      {error && (
-        <div style={errorStyle}>
-          {error}
-        </div>
-      )}
-
-      {activeMenu === 'overview' && (
-        <>
-      <div
-  style={{
-    background: 'white',
-    border: foodCourtOpen
-      ? '1px solid #86efac'
-      : '1px solid #fca5a5',
-    padding: '20px',
-    borderRadius: '14px',
-    marginBottom: '20px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '15px',
-    boxShadow: '0 2px 12px rgba(15,23,42,0.06)'
-  }}
->
-  <div>
-    <h3 style={{ margin: '0 0 6px' }}>
-      การควบคุมศูนย์อาหาร
-    </h3>
-
+// กล่องไอคอนมุมบนซ้ายของการ์ด (สีเข้มกว่าพื้นการ์ด)
+function CardIconBox({ icon, background, color = '#FFFFFF', size = 44 }) {
+  return (
     <div
       style={{
-        color: foodCourtOpen ? '#166534' : '#991b1b',
-        fontWeight: 'bold'
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: T.radiusMd,
+        background,
+        color,
+        display: 'grid',
+        placeItems: 'center',
+        position: 'relative',
+        zIndex: 2
       }}
     >
-      สถานะปัจจุบัน:{' '}
-      {foodCourtOpen
-        ? 'เปิดให้บริการ'
-        : 'ปิดให้บริการ'}
-    </div>
-
-    {!foodCourtOpen && (
-      <small style={{ color: '#991b1b' }}>
-        ลูกค้าจะไม่สามารถสร้างออเดอร์ใหม่ได้
-      </small>
-    )}
-  </div>
-
-  <button
-    type="button"
-    onClick={toggleFoodCourt}
-    disabled={changingFoodCourt}
-    style={{
-      padding: '11px 18px',
-      background: foodCourtOpen ? '#dc2626' : '#16a34a',
-      color: 'white',
-      border: 'none',
-      borderRadius: '6px',
-      cursor: changingFoodCourt
-        ? 'default'
-        : 'pointer',
-      fontWeight: 'bold'
-    }}
-  >
-    {changingFoodCourt
-      ? 'กำลังบันทึก...'
-      : foodCourtOpen
-        ? 'ปิดศูนย์อาหาร'
-        : 'เปิดศูนย์อาหาร'}
-  </button>
-</div>
-
-      <OverviewSalesDashboard
-        days={overviewDays}
-        setDays={setOverviewDays}
-        report={overviewReport}
-        loading={overviewLoading}
-      />
-        </>
-      )}
-
-      {/* ดูแดชบอร์ดแยกร้าน */}
-      {activeMenu === 'store-dashboard' && (
-      <div style={sectionStyle}>
-        <h3 style={{ marginTop: 0 }}>
-          ดูแดชบอร์ดแยกร้าน
-        </h3>
-
-        <select
-          value={selectedStoreId}
-          onChange={(event) =>
-            setSelectedStoreId(event.target.value)
-          }
-          style={inputStyle}
-        >
-          <option value="">
-            -- เลือกร้านค้าที่ต้องการดู --
-          </option>
-
-          {dashboard.map((store) => (
-            <option
-              key={store.StoreId}
-              value={store.StoreId}
-            >
-              {store.StoreName}
-            </option>
-          ))}
-        </select>
-
-        {selectedStoreDashboard && (
-          <div style={storeDashboardStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
-              <div>
-                <h3 style={{ margin: 0 }}>{selectedStoreDashboard.StoreName}</h3>
-                <div style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>แสดงเฉพาะออเดอร์สำเร็จของร้านนี้</div>
-              </div>
-              <PeriodButtons days={storeDays} setDays={setStoreDays} />
-            </div>
-
-            <div style={detailGridStyle}>
-              <DashboardDetail
-                label={storeDays === 1 ? 'ยอดขายวันนี้' : `ยอดขาย ${storeDays} วัน`}
-                value={`${Number(storeReport.total_sales || 0).toLocaleString()} บาท`}
-              />
-
-              <DashboardDetail
-                label={storeDays === 1 ? 'ออเดอร์สำเร็จวันนี้' : `ออเดอร์สำเร็จ ${storeDays} วัน`}
-                value={`${Number(storeReport.total_orders || 0).toLocaleString()} ออเดอร์`}
-              />
-
-              <DashboardDetail
-                label="ออเดอร์ยกเลิก"
-                value={`${Number(storeReport.total_cancelled || 0).toLocaleString()} ออเดอร์`}
-              />
-
-              <DashboardDetail
-                label="ยอดเฉลี่ยต่อออเดอร์"
-                value={`${Number(storeReport.average_order || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} บาท`}
-              />
-
-              <DashboardDetail
-                label="อัตราการยกเลิก"
-                value={`${Number(storeReport.cancellation_rate || 0).toLocaleString()}%`}
-              />
-
-              <DashboardDetail
-                label="สถานะร้าน"
-                value={
-                  selectedStoreDashboard.IsOpen
-                    ? 'เปิดให้บริการ'
-                    : 'ปิดให้บริการ'
-                }
-              />
-
-              <DashboardDetail
-                label="สถานะสิทธิ์"
-                value={
-                  selectedStoreDashboard.IsSuspended
-                    ? 'ถูกระงับสิทธิ์'
-                    : 'ใช้งานปกติ'
-                }
-              />
-            </div>
-
-            <div style={{ marginTop: '18px', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px', background: 'white' }}>
-              <h4 style={{ margin: '0 0 4px' }}>กราฟยอดขายของ {selectedStoreDashboard.StoreName}</h4>
-              <div style={{ color: '#64748b', fontSize: '12px' }}>
-                {storeDays === 1 ? 'ยอดขายแยกตามชั่วโมงของวันนี้' : `ยอดขายแยกตามวัน ย้อนหลัง ${storeDays} วัน`}
-              </div>
-              {storeReportLoading
-                ? <div style={{ minHeight: '250px', display: 'grid', placeItems: 'center', color: '#64748b' }}>กำลังโหลดข้อมูล...</div>
-                : <OverviewSalesBarChart data={storeReport.trend || []} />}
-            </div>
-          </div>
-        )}
-      </div>
-      )}
-
-      {/* ฟอร์มเพิ่มร้าน */}
-      {activeMenu === 'store-management' && (
-      <>
-      <div style={sectionStyle}>
-        <h3 style={{ marginTop: 0 }}>
-          เพิ่มร้านค้าใหม่
-        </h3>
-
-        <form
-          onSubmit={addStore}
-          style={addFormStyle}
-        >
-          <input
-            type="text"
-            required
-            placeholder="กรอกชื่อร้านค้า"
-            value={newStoreName}
-            onChange={(event) =>
-              setNewStoreName(event.target.value)
-            }
-            style={inputStyle}
-          />
-
-          <button
-            type="submit"
-            disabled={saving}
-            style={addButtonStyle}
-          >
-            {saving ? 'กำลังบันทึก...' : '+ เพิ่มร้านค้า'}
-          </button>
-        </form>
-      </div>
-
-      {/* ตารางร้านทั้งหมด */}
-      <div style={sectionStyle}>
-        <h3 style={{ marginTop: 0 }}>
-          ตารางรายชื่อร้านค้า
-        </h3>
-
-        <div style={{ overflowX: 'auto' }}>
-          <table style={tableStyle}>
-            <thead>
-              <tr style={tableHeaderStyle}>
-                <th style={cellStyle}>ID</th>
-                <th style={cellStyle}>ชื่อร้าน</th>
-                <th style={cellStyle}>สถานะเปิดร้าน</th>
-                <th style={cellStyle}>สถานะสิทธิ์</th>
-                <th style={cellStyle}>ยอดขาย</th>
-                <th style={cellStyle}>ออเดอร์</th>
-                <th style={cellStyle}>จัดการ</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {filteredDashboard.map((store) => (
-                <tr
-                  key={store.StoreId}
-                  style={tableRowStyle}
-                >
-                  <td style={cellStyle}>
-                    {store.StoreId}
-                  </td>
-
-                  <td style={cellStyle}>
-                    {editingStoreId === store.StoreId ? (
-                      <input
-                        value={editingStoreName}
-                        onChange={(event) =>
-                          setEditingStoreName(
-                            event.target.value
-                          )
-                        }
-                        style={smallInputStyle}
-                      />
-                    ) : (
-                      <strong>{store.StoreName}</strong>
-                    )}
-                  </td>
-
-                  <td style={cellStyle}>
-                    <span
-                      style={{
-                        color: store.IsOpen
-                          ? '#15803d'
-                          : '#64748b',
-                        fontWeight: 'bold'
-                      }}
-                    >
-                      {store.IsOpen ? 'เปิด' : 'ปิด'}
-                    </span>
-                  </td>
-
-                  <td style={cellStyle}>
-                    <span
-                      style={{
-                        color: store.IsSuspended
-                          ? '#dc2626'
-                          : '#15803d',
-                        fontWeight: 'bold'
-                      }}
-                    >
-                      {store.IsSuspended
-                        ? 'ถูกระงับ'
-                        : 'ปกติ'}
-                    </span>
-                  </td>
-
-                  <td style={cellStyle}>
-                    {Number(
-                      store.net_sales || 0
-                    ).toLocaleString()} บาท
-                  </td>
-
-                  <td style={cellStyle}>
-                    {store.total_orders || 0}
-                  </td>
-
-                  <td style={cellStyle}>
-                    {editingStoreId === store.StoreId ? (
-                      <>
-                        <button
-                          onClick={() =>
-                            saveStoreEdit(store.StoreId)
-                          }
-                          style={saveButtonStyle}
-                        >
-                          บันทึก
-                        </button>
-
-                        <button
-                          onClick={cancelEditing}
-                          style={cancelButtonStyle}
-                        >
-                          ยกเลิก
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() =>
-                            startEditing(store)
-                          }
-                          style={editButtonStyle}
-                        >
-                          แก้ไข
-                        </button>
-
-                        <button
-                          onClick={() =>
-                            toggleStore(store.StoreId)
-                          }
-                          style={
-                            store.IsOpen
-                              ? closeButtonStyle
-                              : openButtonStyle
-                          }
-                        >
-                          {store.IsOpen
-                            ? 'ปิดร้าน'
-                            : 'เปิดร้าน'}
-                        </button>
-
-                        <button
-                          onClick={() =>
-                            suspendStore(store.StoreId)
-                          }
-                          style={
-                            store.IsSuspended
-                              ? unsuspendButtonStyle
-                              : suspendButtonStyle
-                          }
-                        >
-                          {store.IsSuspended
-                            ? 'ปลดระงับ'
-                            : 'ระงับสิทธิ์'}
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-
-              {filteredDashboard.length === 0 && (
-                <tr>
-                  <td
-                    colSpan="7"
-                    style={{
-                      ...cellStyle,
-                      textAlign: 'center',
-                      color: '#64748b'
-                    }}
-                  >
-                    ยังไม่มีร้านค้าในระบบ
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      </>
-      )}
-        </div>
-      </main>
+      <Icon name={icon} size={22} color={color} />
     </div>
   );
 }
 
-function SidebarButton({ active, icon, label, onClick }) {
+// การ์ด KPI: ตัวเลขใหญ่ + เทียบช่วงก่อนหน้า (ตามหลัก "Compared to what?")
+// [UX/UI] หน้าตาแบบ Berry: การ์ดเด่นเป็นพื้นสีม่วง/ฟ้ามีลายวงกลม-คลื่น
+//         ส่วนการ์ดปกติเป็นพื้นขาวมีกล่องไอคอนสีอ่อนด้านหน้า
+//         *props เดิมใช้ได้เหมือนเดิมทุกตัว เพิ่มแค่ตัวเลือกด้านหน้าตา*
+function KpiCard({
+  label,
+  value,
+  unit,
+  delta,
+  deltaLabel,
+  hint,
+  highlight,
+  variant,            // 'purple' | 'blue' | 'plain' (ไม่ใส่ = คิดให้อัตโนมัติ)
+  icon = 'trend',     // ไอคอนในกล่องสี
+  tone = 'blue',      // โทนกล่องไอคอนของการ์ดพื้นขาว: blue | amber | purple | green
+  size = 'md'         // 'md' = การ์ดใหญ่ | 'sm' = การ์ดเล็ก (ใช้วางซ้อนกันข้างการ์ดสี)
+}) {
+  const hasDelta = delta !== null && delta !== undefined;
+  const positive = hasDelta && delta >= 0;
+  const kind = variant || (highlight ? 'purple' : 'plain');
+  const solid = kind === 'purple' || kind === 'blue';
+  const small = size === 'sm';
+
+  const solidBg =
+    kind === 'purple'
+      ? `linear-gradient(135deg, ${T.primary} 0%, ${T.primaryDark} 100%)`
+      : `linear-gradient(135deg, ${T.accent} 0%, ${T.accentDark} 100%)`;
+
+  const iconTones = {
+    blue: { bg: T.accentSoft, fg: T.accent },
+    amber: { bg: T.amberSoft, fg: T.amber },
+    purple: { bg: T.primarySoft, fg: T.primary },
+    green: { bg: T.greenSoft, fg: T.up }
+  };
+  const iconTone = iconTones[tone] || iconTones.blue;
+
+  return (
+    <div
+      className="of-card"
+      style={{
+        ...cardStyle,
+        padding: small ? '18px 20px' : '22px',
+        minHeight: solid ? '196px' : small ? 0 : '150px',
+        height: '100%',
+        background: solid ? solidBg : T.surface,
+        color: solid ? '#FFFFFF' : T.text,
+        overflow: 'hidden',
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center'
+      }}
+    >
+      {kind === 'purple' && <CardDecorCircles color={T.primaryDark} />}
+      {kind === 'blue' && <CardDecorWave />}
+
+      <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', gap: '14px' }}>
+        {solid ? (
+          <CardIconBox
+            icon={icon}
+            background={kind === 'purple' ? T.primaryDark : T.accentDark}
+          />
+        ) : (
+          <div
+            style={{
+              width: small ? '44px' : '48px',
+              height: small ? '44px' : '48px',
+              minWidth: small ? '44px' : '48px',
+              borderRadius: T.radiusMd,
+              background: iconTone.bg,
+              color: iconTone.fg,
+              display: 'grid',
+              placeItems: 'center'
+            }}
+          >
+            <Icon name={icon} size={22} color={iconTone.fg} />
+          </div>
+        )}
+
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: small ? '22px' : '26px',
+              fontWeight: 700,
+              lineHeight: 1.2,
+              color: solid ? '#FFFFFF' : T.ink
+            }}
+          >
+            {value}
+            {unit && (
+              <span
+                style={{
+                  fontSize: '13.5px',
+                  fontWeight: 500,
+                  marginLeft: '5px',
+                  color: solid ? 'rgba(255,255,255,.80)' : T.muted
+                }}
+              >
+                {unit}
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              marginTop: '3px',
+              fontSize: '13px',
+              color: solid ? 'rgba(255,255,255,.85)' : T.muted
+            }}
+          >
+            {label}
+          </div>
+        </div>
+      </div>
+
+      {hasDelta ? (
+        <div
+          style={{
+            position: 'relative',
+            zIndex: 2,
+            marginTop: small ? '10px' : '14px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            alignSelf: 'flex-start',
+            padding: '5px 10px',
+            borderRadius: '999px',
+            fontSize: '12.5px',
+            fontWeight: 700,
+            background: solid
+              ? 'rgba(255,255,255,.18)'
+              : positive ? T.greenSoft : T.redSoft,
+            color: solid ? '#FFFFFF' : positive ? T.up : T.down
+          }}
+        >
+          <span aria-hidden="true">{positive ? '▲' : '▼'}</span>
+          {Math.abs(delta).toFixed(1)}%
+          <span style={{ fontWeight: 500, opacity: solid ? 0.85 : 1, color: solid ? '#FFFFFF' : T.muted }}>
+            {deltaLabel}
+          </span>
+        </div>
+      ) : (
+        <div
+          style={{
+            position: 'relative',
+            zIndex: 2,
+            marginTop: small ? '10px' : '14px',
+            fontSize: '12.5px',
+            color: solid ? 'rgba(255,255,255,.80)' : T.muted
+          }}
+        >
+          {hint || 'ไม่มีข้อมูลช่วงก่อนหน้าให้เทียบ'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Badge({ tone = 'neutral', children }) {
+  const palette = {
+    ok: { color: T.up, background: T.greenSoft },
+    warn: { color: '#8A5A00', background: T.amberSoft },
+    danger: { color: T.down, background: T.redSoft },
+    neutral: { color: T.muted, background: T.trackSoft }
+  }[tone];
+  return (
+    <span
+      style={{
+        ...palette,
+        padding: '4px 11px',
+        borderRadius: '999px',
+        fontSize: '12px',
+        fontWeight: 700,
+        whiteSpace: 'nowrap',
+        display: 'inline-block'
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Button({ variant = 'primary', icon, children, style, ...rest }) {
+  // [UX/UI] โทนปุ่มแบบ Berry — ปุ่มหลักม่วง ปุ่มรองพื้นอ่อน
+  const variants = {
+    primary: { background: T.primary, color: '#FFFFFF', border: `1px solid ${T.primary}` },
+    accent: { background: T.accent, color: '#FFFFFF', border: `1px solid ${T.accent}` },
+    ghost: { background: T.surface, color: T.text, border: `1px solid ${T.line}` },
+    soft: { background: T.primarySoft, color: T.primary, border: `1px solid ${T.primarySoft}` },
+    danger: { background: T.redSoft, color: T.down, border: `1px solid ${T.redSoft}` },
+    dark: { background: T.primarySoft, color: T.primary, border: `1px solid ${T.primarySoft}` }
+  };
   return (
     <button
       type="button"
-      onClick={onClick}
+      {...rest}
       style={{
-        width: '100%',
-        display: 'flex',
+        ...variants[variant],
+        display: 'inline-flex',
         alignItems: 'center',
-        gap: '11px',
-        padding: '11px 12px',
-        marginBottom: '5px',
-        border: active ? '1px solid rgba(45,212,191,0.35)' : '1px solid transparent',
-        borderRadius: '9px',
-        background: active ? '#0f5967' : 'transparent',
-        color: active ? 'white' : '#cbd5e1',
-        cursor: 'pointer',
-        textAlign: 'left',
-        fontWeight: active ? 'bold' : 'normal'
+        gap: '7px',
+        padding: '10px 18px',
+        borderRadius: T.radiusMd,
+        fontSize: '13.5px',
+        fontWeight: 600,
+        fontFamily: FONT_STACK,
+        cursor: rest.disabled ? 'not-allowed' : 'pointer',
+        opacity: rest.disabled ? 0.55 : 1,
+        ...style
       }}
     >
-      <span style={{ width: '19px', textAlign: 'center', color: active ? '#5eead4' : '#94a3b8' }}>{icon}</span>
-      {label}
+      {icon && <Icon name={icon} size={16} />}
+      {children}
     </button>
   );
 }
 
-function OverviewSalesDashboard({ days, setDays, report, loading }) {
-  const periodLabel = days === 1 ? 'วันนี้' : `${days} วันย้อนหลัง`;
+// Modal กลาง ใช้ได้ทั้งฟอร์มและกล่องยืนยัน
+function Modal({ open, title, subtitle, onClose, children, footer, width = 620 }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
   return (
-    <div style={{ marginBottom: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '18px' }}>
-        <div>
-          <h3 style={{ margin: 0, color: '#0f172a' }}>Dashboard</h3>
-          <div style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>ข้อมูลจริงจากฐานข้อมูล · {periodLabel}</div>
-        </div>
-        <PeriodButtons days={days} setDays={setDays} />
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '18px' }}>
-        <OverviewMetricCard title="ยอดขายสุทธิรวม" value={`${Number(report.total_sales || 0).toLocaleString()} บาท`} color="#0f766e" background="white" />
-        <OverviewMetricCard title="ออเดอร์สำเร็จ" value={`${Number(report.total_orders || 0).toLocaleString()} ออเดอร์`} color="#0369a1" background="white" />
-        <OverviewMetricCard title="ออเดอร์ที่ยกเลิก" value={`${Number(report.total_cancelled || 0).toLocaleString()} ออเดอร์`} color="#dc2626" background="white" />
-        <OverviewMetricCard title="อัตราการยกเลิก" value={`${Number(report.cancellation_rate || 0).toLocaleString()}%`} color="#be123c" background="white" />
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(300px, 1fr)', gap: '16px', marginBottom: '18px' }}>
-        <div style={chartPanelStyle}>
-          <h4 style={{ margin: '0 0 4px' }}>ยอดขาย{days === 1 ? 'รายชั่วโมง' : 'รายวัน'}</h4>
-          <div style={{ color: '#64748b', fontSize: '12px' }}>{days === 1 ? 'ช่วงเวลาใดยอดขายสูง กราฟจะแสดงแท่งสูงขึ้น' : `ยอดขายแต่ละวันย้อนหลัง ${days} วัน`}</div>
-          {loading ? <ChartLoading /> : <OverviewSalesBarChart data={report.trend || []} />}
-        </div>
-
-        <div style={chartPanelStyle}>
-          <h4 style={{ margin: '0 0 4px' }}>ยอดขายแยกร้าน</h4>
-          <div style={{ color: '#64748b', fontSize: '12px' }}>เปรียบเทียบยอดขายของแต่ละร้านในช่วงเดียวกัน</div>
-          {loading ? <ChartLoading /> : <StoreComparisonChart stores={report.stores || []} />}
-        </div>
-      </div>
-
-      <div style={chartPanelStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '12px' }}>
-          <div>
-            <h4 style={{ margin: 0 }}>สรุปผลแต่ละร้าน</h4>
-            <div style={{ color: '#64748b', fontSize: '12px', marginTop: '4px' }}>ทั้งหมด {Number(report.total_stores || 0).toLocaleString()} ร้าน</div>
+    <div style={overlayStyle} onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
+      <div style={{ ...modalStyle, maxWidth: `${width}px` }} role="dialog" aria-modal="true">
+        <div style={modalHeadStyle}>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ ...h3Style, fontSize: '18px' }}>{title}</h3>
+            {subtitle && <p style={captionStyle}>{subtitle}</p>}
           </div>
+          <button type="button" onClick={onClose} style={iconButtonStyle} aria-label="ปิด">
+            <Icon name="close" size={18} color={T.muted} />
+          </button>
         </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={tableStyle}>
-            <thead><tr style={tableHeaderStyle}><th style={cellStyle}>ร้านค้า</th><th style={cellStyle}>ออเดอร์สำเร็จ</th><th style={cellStyle}>ยอดขาย</th><th style={cellStyle}>ยกเลิก</th><th style={cellStyle}>สถานะ</th></tr></thead>
-            <tbody>
-              {(report.stores || []).map(store => (
-                <tr key={store.StoreId} style={tableRowStyle}>
-                  <td style={cellStyle}><strong>{store.StoreName}</strong></td>
-                  <td style={cellStyle}>{Number(store.completed_orders || 0).toLocaleString()}</td>
-                  <td style={cellStyle}>{Number(store.sales || 0).toLocaleString()} บาท</td>
-                  <td style={cellStyle}>{Number(store.cancelled_orders || 0).toLocaleString()}</td>
-                  <td style={cellStyle}><StatusBadge store={store} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ padding: '18px 22px', maxHeight: '64vh', overflowY: 'auto' }}>
+          {children}
         </div>
+        {footer && <div style={modalFootStyle}>{footer}</div>}
       </div>
     </div>
   );
 }
 
-function ChartLoading() {
-  return <div style={{ minHeight: '250px', display: 'grid', placeItems: 'center', color: '#64748b' }}>กำลังโหลดข้อมูล...</div>;
-}
-
-function StatusBadge({ store }) {
-  const suspended = Boolean(store.IsSuspended);
-  const open = Boolean(store.IsOpen);
-  const text = suspended ? 'ระงับสิทธิ์' : open ? 'เปิดบริการ' : 'ปิดร้าน';
-  const color = suspended ? '#b91c1c' : open ? '#047857' : '#475569';
-  const background = suspended ? '#fee2e2' : open ? '#d1fae5' : '#e2e8f0';
-  return <span style={{ color, background, padding: '5px 10px', borderRadius: '999px', fontSize: '12px', fontWeight: 'bold' }}>{text}</span>;
-}
-
-function StoreComparisonChart({ stores }) {
-  const rows = (stores || []).slice(0, 8);
-  if (!rows.length) return <div style={{ minHeight: '250px', display: 'grid', placeItems: 'center', color: '#64748b' }}>ยังไม่มีร้านค้า</div>;
-  const maxValue = Math.max(...rows.map(store => Number(store.sales || 0)), 1);
+// กล่องยืนยันทุกการกระทำสำคัญ (ปิดศูนย์อาหาร/ปิดร้าน/ลบร้าน/ระงับสิทธิ์ ฯลฯ)
+function ConfirmDialog({ state, onCancel, onConfirm }) {
   return (
-    <div style={{ minHeight: '250px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '12px', marginTop: '14px' }}>
-      {rows.map((store, index) => {
-        const sales = Number(store.sales || 0);
-        return (
-          <div key={store.StoreId}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '12px', marginBottom: '5px' }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '62%' }}>{store.StoreName}</span>
-              <strong>{sales.toLocaleString()} บาท</strong>
+    <Modal
+      open={Boolean(state)}
+      title={state?.title || ''}
+      onClose={onCancel}
+      width={460}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onCancel}>
+            ยกเลิก
+          </Button>
+          <Button
+            variant={state?.danger ? 'danger' : 'primary'}
+            onClick={onConfirm}
+            icon="check"
+          >
+            {state?.confirmText || 'ยืนยัน'}
+          </Button>
+        </>
+      }
+    >
+      <p style={{ ...bodyStyle, margin: 0 }}>{state?.message}</p>
+      {state?.warning && (
+        <p style={{ ...captionStyle, color: T.down, marginTop: '10px' }}>{state.warning}</p>
+      )}
+    </Modal>
+  );
+}
+
+// Toast แจ้งผลทุกการกระทำ
+function ToastStack({ toasts, onDismiss }) {
+  return (
+    <div style={toastWrapStyle}>
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          onClick={() => onDismiss(t.id)}
+          style={{
+            ...toastStyle,
+            borderLeft: `4px solid ${t.type === 'error' ? T.down : t.type === 'warn' ? T.accent : T.up}`
+          }}
+        >
+          <Icon
+            name={t.type === 'error' ? 'ban' : t.type === 'warn' ? 'info' : 'check'}
+            size={17}
+            color={t.type === 'error' ? T.down : t.type === 'warn' ? '#9A6400' : T.up}
+          />
+          <span style={{ color: T.text, fontSize: '13.5px' }}>{t.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ช่องกรอกพร้อมดาวแดงสำหรับฟิลด์บังคับ + ข้อความ error ใต้ช่อง
+function Field({ label, required, error, hint, children }) {
+  return (
+    <label style={{ display: 'block', marginBottom: '14px' }}>
+      <span style={{ ...captionStyle, color: T.text, fontWeight: 600, display: 'block' }}>
+        {label}
+        {required && <span style={{ color: T.down, marginLeft: '3px' }}>*</span>}
+      </span>
+      <div style={{ marginTop: '6px' }}>{children}</div>
+      {hint && !error && <span style={{ ...captionStyle, fontSize: '11.5px' }}>{hint}</span>}
+      {error && (
+        <span style={{ ...captionStyle, color: T.down, fontSize: '11.5px', fontWeight: 600 }}>
+          {error}
+        </span>
+      )}
+    </label>
+  );
+}
+
+function EmptyState({ text, minHeight = '200px' }) {
+  return (
+    <div
+      style={{
+        minHeight,
+        display: 'grid',
+        placeItems: 'center',
+        color: T.muted,
+        fontSize: '13.5px'
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+// เลือกวันที่ + ช่วงย้อนหลัง (1 / 7 / 14 / 30 วัน นับจากวันที่เลือก)
+function PeriodPicker({ anchor, setAnchor, days, setDays }) {
+  return (
+    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={dateWrapStyle}>
+        <Icon name="calendar" size={16} color={T.muted} />
+        <input
+          type="date"
+          value={anchor}
+          max={todayISO()}
+          onChange={(e) => setAnchor(e.target.value || todayISO())}
+          style={dateInputStyle}
+          aria-label="เลือกวันที่ที่ต้องการดู"
+        />
+      </div>
+      {/* [UX/UI] ปุ่มเลือกช่วงแบบ segmented ของธีม Berry (พื้นม่วงอ่อน ปุ่มที่เลือกเป็นสีขาว) */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '4px',
+          flexWrap: 'wrap',
+          background: T.primarySoft,
+          padding: '4px',
+          borderRadius: T.radiusMd
+        }}
+      >
+        {[1, 7, 14, 30].map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setDays(v)}
+            style={{
+              padding: '7px 14px',
+              borderRadius: '6px',
+              fontSize: '13px',
+              fontWeight: 600,
+              fontFamily: FONT_STACK,
+              cursor: 'pointer',
+              border: 'none',
+              background: days === v ? T.surface : 'transparent',
+              color: days === v ? T.primary : T.muted,
+              boxShadow: days === v ? '0 1px 3px rgba(18,25,38,.12)' : 'none'
+            }}
+          >
+            {v === 1 ? 'วันเดียว' : `${v} วัน`}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// 6) CHARTS
+// ---------------------------------------------------------------------
+
+// กราฟเส้นยอดขายตามเวลา — จี้/ชี้ที่จุดแล้วขึ้นยอดรวม + ร้านที่ขายได้มากสุด/น้อยสุด
+// ใช้กราฟเส้นเพราะเป็นข้อมูล "แนวโน้มตามเวลา" (ตามสไลด์ Line Charts = trends over time)
+function SalesLineChart({ buckets, showStoreDetail = true }) {
+  const [hover, setHover] = useState(null);
+  const data = buckets || [];
+  if (!data.length) return <EmptyState text="ช่วงเวลานี้ยังไม่มีออเดอร์ที่สำเร็จ" />;
+
+  const W = 880;
+  const H = 320;
+  const L = 66;
+  const R = 22;
+  const TOP = 22;
+  const BOT = 46;
+  const gw = W - L - R;
+  const gh = H - TOP - BOT;
+  const maxValue = Math.max(...data.map((b) => b.sales), 1);
+  const xAt = (i) => (data.length === 1 ? L + gw / 2 : L + (i / (data.length - 1)) * gw);
+  const yAt = (v) => TOP + gh - (v / maxValue) * gh;
+
+  const linePath = data.map((b, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(b.sales)}`).join(' ');
+  const areaPath = `${linePath} L ${xAt(data.length - 1)} ${TOP + gh} L ${xAt(0)} ${TOP + gh} Z`;
+  const labelStep = Math.max(1, Math.ceil(data.length / 10));
+  const hoverBucket = hover !== null ? data[hover] : null;
+  const extremes = hoverBucket ? bucketExtremes(hoverBucket) : { best: null, worst: null };
+
+  return (
+    <div style={{ position: 'relative', marginTop: '10px' }}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: '100%', display: 'block' }}
+        onMouseLeave={() => setHover(null)}
+      >
+        <defs>
+          <linearGradient id="ofAreaFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={T.primary} stopOpacity="0.26" />
+            <stop offset="100%" stopColor={T.primary} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+
+        {/* เส้นกริดแนวนอน + ป้ายแกน Y */}
+        {[0, 1, 2, 3, 4].map((i) => {
+          const ratio = i / 4;
+          const y = TOP + gh * ratio;
+          return (
+            <g key={i}>
+              <line x1={L} x2={W - R} y1={y} y2={y} stroke={T.line} strokeWidth="1" />
+              <text x={L - 12} y={y + 4} textAnchor="end" fontSize="11" fill={T.muted}>
+                {shortNumber(maxValue * (1 - ratio))}
+              </text>
+            </g>
+          );
+        })}
+
+        <path d={areaPath} fill="url(#ofAreaFill)" />
+        <path d={linePath} fill="none" stroke={T.primary} strokeWidth="2.4" strokeLinejoin="round" />
+
+        {/* จุดข้อมูล + พื้นที่รับการชี้ */}
+        {data.map((b, i) => (
+          <g key={b.key}>
+            {i % labelStep === 0 || i === data.length - 1 ? (
+              <text x={xAt(i)} y={H - 16} textAnchor="middle" fontSize="11" fill={T.muted}>
+                {b.label}
+              </text>
+            ) : null}
+            <circle
+              cx={xAt(i)}
+              cy={yAt(b.sales)}
+              r={hover === i ? 5.5 : 3}
+              fill={hover === i ? T.primary : T.surface}
+              stroke={T.primary}
+              strokeWidth="2"
+            />
+            <rect
+              x={xAt(i) - gw / Math.max(data.length, 1) / 2}
+              y={TOP}
+              width={Math.max(gw / Math.max(data.length, 1), 10)}
+              height={gh}
+              fill="transparent"
+              onMouseEnter={() => setHover(i)}
+              onTouchStart={() => setHover(i)}
+              style={{ cursor: 'pointer' }}
+            />
+          </g>
+        ))}
+
+        {hover !== null && (
+          <line
+            x1={xAt(hover)}
+            x2={xAt(hover)}
+            y1={TOP}
+            y2={TOP + gh}
+            stroke={T.primary}
+            strokeDasharray="4 4"
+            strokeWidth="1"
+          />
+        )}
+        <line x1={L} x2={W - R} y1={TOP + gh} y2={TOP + gh} stroke="#CFD4E4" />
+      </svg>
+
+      {/* tooltip: ยอดรวมของจุดนั้น + ร้านขายดีสุด/น้อยสุดของช่วงเวลานั้น */}
+      {hoverBucket && (
+        <div
+          style={{
+            ...tooltipStyle,
+            left: `${(xAt(hover) / W) * 100}%`,
+            transform:
+              xAt(hover) / W > 0.7
+                ? 'translateX(-92%)'
+                : xAt(hover) / W < 0.3
+                ? 'translateX(-8%)'
+                : 'translateX(-50%)'
+          }}
+        >
+          <div style={{ color: T.ink, fontWeight: 700, fontSize: '13px' }}>
+            {hoverBucket.label}
+          </div>
+          <div style={{ color: T.text, fontSize: '13px', marginTop: '4px' }}>
+            ยอดขาย {money(hoverBucket.sales)} บาท · {money(hoverBucket.count)} ออเดอร์
+          </div>
+          {showStoreDetail && (
+            <div style={{ marginTop: '7px', borderTop: `1px solid ${T.line}`, paddingTop: '7px' }}>
+              {extremes.best ? (
+                <div style={{ fontSize: '12.5px', color: T.text }}>
+                  ขายดีสุด: <strong>{extremes.best.name}</strong> {money(extremes.best.sales)} บาท
+                </div>
+              ) : (
+                <div style={{ fontSize: '12.5px', color: T.muted }}>ช่วงนี้ยังไม่มียอดขาย</div>
+              )}
+              {extremes.worst && (
+                <div style={{ fontSize: '12.5px', color: T.muted, marginTop: '2px' }}>
+                  น้อยสุด: {extremes.worst.name} {money(extremes.worst.sales)} บาท
+                </div>
+              )}
             </div>
-            <div style={{ height: '12px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${Math.max((sales / maxValue) * 100, sales > 0 ? 3 : 0)}%`, background: ['#0f766e', '#2563eb', '#d97706', '#7c3aed'][index % 4], borderRadius: '999px' }} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// กราฟแท่งแนวนอนเทียบร้าน — เหมาะกับข้อมูลแบบ "เทียบหมวดหมู่" และอ่านชื่อร้านได้ครบ
+function StoreBarChart({ rows, valueKey = 'sales', suffix = 'บาท' }) {
+  const list = (rows || []).slice(0, 8);
+  if (!list.length) return <EmptyState text="ยังไม่มีข้อมูลร้านค้า" />;
+  const maxValue = Math.max(...list.map((r) => Number(r[valueKey]) || 0), 1);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '13px', marginTop: '12px' }}>
+      {list.map((r, i) => {
+        const value = Number(r[valueKey]) || 0;
+        return (
+          <div key={r.StoreId ?? r.name ?? i}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+              <span
+                style={{
+                  color: T.text,
+                  fontSize: '13px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '60%'
+                }}
+              >
+                {r.StoreName || r.name}
+              </span>
+              <strong style={{ color: T.ink, fontSize: '13px' }}>
+                {money(value)} {suffix}
+              </strong>
+            </div>
+            <div style={{ height: '10px', background: T.trackSoft, borderRadius: '999px', marginTop: '6px' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: `${Math.max((value / maxValue) * 100, value > 0 ? 3 : 0)}%`,
+                  borderRadius: '999px',
+                  background: i === 0 ? T.primary : i === list.length - 1 ? T.accent : '#9575CD'
+                }}
+              />
             </div>
           </div>
         );
@@ -1134,142 +1328,2822 @@ function StoreComparisonChart({ stores }) {
   );
 }
 
-function PeriodButtons({ days, setDays }) {
+// Donut chart: เหมาะกับ "สัดส่วนยอดขายรวม" ณ ช่วงเวลาหนึ่ง
+// แสดงร้านยอดสูงสุด 8 กลุ่ม และรวมร้านที่เหลือเป็น "ร้านอื่น ๆ" เพื่อไม่ให้วงกลมอ่านยากเกินไป
+function StoreDonutChart({ rows }) {
+  const raw = (rows || []).filter((r) => Number(r.sales) > 0);
+  if (!raw.length) return <EmptyState text="ช่วงเวลานี้ยังไม่มียอดขาย" />;
+
+  const top = raw.slice(0, 8);
+  const restSales = raw.slice(8).reduce((sum, r) => sum + Number(r.sales || 0), 0);
+  const list = restSales > 0
+    ? [...top, { StoreId: 'other', StoreName: 'ร้านอื่น ๆ', sales: restSales }]
+    : top;
+  const total = list.reduce((sum, r) => sum + Number(r.sales || 0), 0) || 1;
+  // [UX/UI] ชุดสีโทนม่วง–ฟ้าของธีม Berry
+  const COLORS = ['#5E35B1', '#1E88E5', '#9575CD', '#4FC3F7', '#4527A0', '#64B5F6', '#B39DDB', '#0288D1', '#C5CAE9'];
+  const radius = 72;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+
   return (
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-      {[1, 7, 14, 30].map(value => (
-        <button
-          key={value}
-          type="button"
-          onClick={() => setDays(value)}
-          style={{
-            padding: '9px 15px',
-            border: '1px solid #c7d2fe',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: 'bold',
-            background: days === value ? '#4f46e5' : 'white',
-            color: days === value ? 'white' : '#334155'
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '18px',
+        alignItems: 'center',
+        marginTop: '8px',
+        width: '100%',
+        minWidth: 0,
+        overflow: 'hidden'
+      }}
+    >
+      <div style={{ position: 'relative', width: '100%', maxWidth: '250px', margin: '0 auto', flex: '1 1 220px', minWidth: 0 }}>
+        <svg viewBox="0 0 200 200" style={{ width: '100%', display: 'block', transform: 'rotate(-90deg)' }} aria-label="สัดส่วนยอดขายแยกร้าน">
+          <circle cx="100" cy="100" r={radius} fill="none" stroke={T.trackSoft} strokeWidth="30" />
+          {list.map((r, i) => {
+            const value = Number(r.sales || 0);
+            const length = (value / total) * circumference;
+            const currentOffset = offset;
+            offset += length;
+            return (
+              <circle
+                key={r.StoreId ?? r.StoreName}
+                cx="100"
+                cy="100"
+                r={radius}
+                fill="none"
+                stroke={COLORS[i % COLORS.length]}
+                strokeWidth="30"
+                strokeDasharray={`${length} ${Math.max(circumference - length, 0)}`}
+                strokeDashoffset={-currentOffset}
+                strokeLinecap="butt"
+              />
+            );
+          })}
+        </svg>
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', textAlign: 'center' }}>
+          <div>
+            <div style={{ ...captionStyle, margin: 0 }}>ยอดขายรวม</div>
+            <strong style={{ display: 'block', color: T.ink, fontSize: '21px', marginTop: '3px' }}>{money(total)}</strong>
+            <span style={{ color: T.muted, fontSize: '12px' }}>บาท</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '9px', minWidth: 0, flex: '1 1 240px', width: '100%', overflow: 'hidden' }}>
+        {list.map((r, i) => {
+          const share = (Number(r.sales || 0) / total) * 100;
+          return (
+            <div key={r.StoreId ?? r.StoreName} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0, 1fr) minmax(46px, auto)', gap: '8px', alignItems: 'center', width: '100%', minWidth: 0 }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: COLORS[i % COLORS.length] }} />
+              <span style={{ color: T.text, fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.StoreName}</span>
+              <span style={{ color: T.ink, fontSize: '12.5px', fontWeight: 700, whiteSpace: 'nowrap', textAlign: 'right' }}>{share.toFixed(1)}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ช่องเลือกร้านแบบพิมพ์ค้นหาได้ + คลิกเลือกจากรายการ
+function SearchableStorePicker({ stores, value, onChange }) {
+  const selected = stores.find((s) => String(s.StoreId) === String(value));
+  const [query, setQuery] = useState(selected?.StoreName || '');
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const next = stores.find((s) => String(s.StoreId) === String(value));
+    setQuery(next?.StoreName || '');
+  }, [value, stores]);
+
+  const filtered = stores.filter((s) =>
+    String(s.StoreName || '').toLowerCase().includes(query.trim().toLowerCase())
+  );
+
+  const choose = (store) => {
+    onChange(String(store.StoreId));
+    setQuery(store.StoreName || '');
+    setOpen(false);
+  };
+
+  return (
+    <div style={{ position: 'relative', marginTop: '8px' }}>
+      <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: '8px', padding: '0 10px' }}>
+        <Icon name="search" size={16} color={T.muted} />
+        <input
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            if (value) onChange('');
           }}
-        >
-          {value === 1 ? 'วันนี้' : `${value} วัน`}
-        </button>
+          onBlur={() => setTimeout(() => setOpen(false), 120)}
+          placeholder="พิมพ์ชื่อร้าน หรือคลิกเพื่อเลือกร้านค้า"
+          style={{ ...searchInputStyle, padding: '10px 0' }}
+        />
+        {query && (
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setQuery('');
+              onChange('');
+              setOpen(true);
+            }}
+            style={{ ...iconButtonStyle, width: '26px', height: '26px', border: 'none' }}
+            aria-label="ล้างร้านที่เลือก"
+          >
+            <Icon name="close" size={14} color={T.muted} />
+          </button>
+        )}
+      </div>
+      {open && (
+        <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(100% + 6px)', zIndex: 45, background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusMd, boxShadow: '0 14px 30px rgba(18,25,38,0.14)', maxHeight: '320px', overflowY: 'auto' }}>
+          {filtered.length ? filtered.map((s) => (
+            <button
+              key={s.StoreId}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => choose(s)}
+              style={{ width: '100%', border: 'none', borderBottom: `1px solid ${T.line}`, background: String(s.StoreId) === String(value) ? T.primarySoft : T.surface, color: T.text, padding: '10px 12px', textAlign: 'left', fontFamily: FONT_STACK, cursor: 'pointer', fontSize: '13px' }}
+            >
+              {s.StoreName}
+            </button>
+          )) : (
+            <div style={{ padding: '12px', color: T.muted, fontSize: '13px' }}>ยังไม่มีข้อมูลร้านค้า</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// แถวเมนูขายดี/ขายน้อย พร้อมยอดขายและสัดส่วน % ของยอดร้าน
+function MenuRankList({ rows, tone = 'primary', emptyText }) {
+  if (!rows.length) return <EmptyState text={emptyText || 'ยังไม่มีข้อมูลเมนู'} minHeight="120px" />;
+  const maxValue = Math.max(...rows.map((r) => r.amount), 1);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
+      {rows.map((r) => (
+        <div key={r.name}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+            <span style={{ color: T.text, fontSize: '13px' }}>{r.name}</span>
+            <strong style={{ color: T.ink, fontSize: '13px', whiteSpace: 'nowrap' }}>
+              {money(r.amount)} บาท
+            </strong>
+          </div>
+          <div style={{ height: '8px', background: T.trackSoft, borderRadius: '999px', marginTop: '5px' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.max((r.amount / maxValue) * 100, 3)}%`,
+                borderRadius: '999px',
+                background: tone === 'primary' ? T.primary : T.accent
+              }}
+            />
+          </div>
+          <div style={{ ...captionStyle, marginTop: '4px' }}>
+            ขายได้ {money(r.qty)} จาน · คิดเป็น {r.share.toFixed(1)}% ของยอดขายร้าน
+          </div>
+        </div>
       ))}
     </div>
   );
 }
 
-function OverviewMetricCard({ title, value, color, background }) {
+// =====================================================================
+// 7) ExecutiveView — โครงหน้าหลัก
+// =====================================================================
+export default function ExecutiveView({ apiBase, user, onLogout }) {
+  const API = apiBase || 'http://localhost:8000';
+  const isNarrow = useIsNarrow();
+  const isPhone = useIsNarrow(640);
+
+  // ---- โครงหน้า / เมนู ----
+  const [activeMenu, setActiveMenu] = useState('overview');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [search, setSearch] = useState('');
+  const searchRef = useRef(null);
+
+  // ---- ข้อมูลหลัก ----
+  const [stores, setStores] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [foodCourtOpen, setFoodCourtOpen] = useState(true);
+  const [switchingCourt, setSwitchingCourt] = useState(false);
+
+  // ---- แจ้งเตือน ----
+  const [notifications, setNotifications] = useState([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  // ---- เมนูโปรไฟล์มุมขวาบน ----
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef(null);
+  const [locallyRead, setLocallyRead] = useState([]); // เผื่อหลังบ้านยังไม่มี endpoint mark-read
+
+  // ---- แจ้งผล / ยืนยัน ----
+  const [toasts, setToasts] = useState([]);
+  const [confirmState, setConfirmState] = useState(null);
+  const confirmResolver = useRef(null);
+
+  const pushToast = useCallback((message, type = 'success') => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4200);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // คลิกนอกกล่องแล้วปิดเมนูโปรไฟล์
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (profileRef.current && !profileRef.current.contains(event.target)) {
+        setProfileOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // ถามยืนยันแบบ async: const ok = await ask({...})
+  const ask = useCallback((options) => {
+    setConfirmState(options);
+    return new Promise((resolve) => {
+      confirmResolver.current = resolve;
+    });
+  }, []);
+
+  const closeConfirm = (result) => {
+    setConfirmState(null);
+    confirmResolver.current?.(result);
+    confirmResolver.current = null;
+  };
+
+  // ---- โหลดข้อมูล ----
+  const loadStores = useCallback(
+    async (silent = false) => {
+      try {
+        const data = await callApi(`${API}/api/reports/dashboard`);
+        setStores(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if (!silent) pushToast(err.message, 'error');
+      }
+    },
+    [API, pushToast]
+  );
+
+  const loadOrders = useCallback(
+    async (silent = false) => {
+      try {
+        const data = await callApi(`${API}/api/orders`);
+        setOrders(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if (!silent) pushToast(err.message, 'error');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [API, pushToast]
+  );
+
+  const loadFoodCourt = useCallback(
+    async (silent = true) => {
+      try {
+        const data = await callApi(`${API}/api/food-court/status`);
+        setFoodCourtOpen(Boolean(data?.is_open));
+      } catch (err) {
+        if (!silent) pushToast(err.message, 'error');
+      }
+    },
+    [API, pushToast]
+  );
+
+  const loadNotifications = useCallback(
+    async (silent = true) => {
+      const userId = user?.UserId || user?.userId;
+      if (!userId) return;
+      try {
+        const data = await callApi(`${API}/api/notifications/${userId}`);
+        setNotifications(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if (!silent) pushToast(err.message, 'error');
+      }
+    },
+    [API, user, pushToast]
+  );
+
+  useEffect(() => {
+    loadStores();
+    loadOrders();
+    loadFoodCourt(true);
+    loadNotifications(true);
+    const timer = setInterval(() => {
+      loadStores(true);
+      loadOrders(true);
+      loadFoodCourt(true);
+      loadNotifications(true);
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [loadStores, loadOrders, loadFoodCourt, loadNotifications]);
+
+  // จอแคบให้ยุบแถบเมนูอัตโนมัติ (ข้อ 1.2 — กดขีด 3 ขีดแล้วแถบหายไปเลย)
+  useEffect(() => {
+    setSidebarOpen(!isNarrow);
+  }, [isNarrow]);
+
+  // ---- เปิด/ปิดศูนย์อาหาร (ข้อ 2) ----
+  // ตัวนี้ยิงไปที่ FoodCourtSetting ในฐานข้อมูล ทุกโรลจึงเห็นค่าเดียวกัน
+  // และ /api/orders ฝั่ง main.py เช็กค่านี้ก่อนสร้างออเดอร์อยู่แล้ว
+  // => ปิดศูนย์แล้วลูกค้ากดสั่งไม่ได้จริง ไม่ใช่แค่ซ่อนปุ่มบนหน้าจอ
+  const toggleFoodCourt = async () => {
+    const closing = foodCourtOpen;
+    const ok = await ask({
+      title: closing ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร',
+      message: closing
+        ? 'ยืนยันปิดศูนย์อาหารทั้งหมดใช่หรือไม่'
+        : 'ยืนยันเปิดศูนย์อาหารให้กลับมาให้บริการใช่หรือไม่',
+      warning: closing
+        ? 'ระหว่างปิด ลูกค้าจะสั่งอาหารไม่ได้ทุกร้าน และพนักงานทุกโรลจะเห็นสถานะปิดบนหน้าจอ'
+        : null,
+      confirmText: closing ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร',
+      danger: closing
+    });
+    if (!ok) return;
+
+    setSwitchingCourt(true);
+    try {
+      const data = await callApi(`${API}/api/food-court/toggle`, { method: 'PUT' });
+      setFoodCourtOpen(Boolean(data?.is_open));
+      pushToast(data?.message || 'อัปเดตสถานะศูนย์อาหารแล้ว');
+    } catch (err) {
+      pushToast(err.message, 'error');
+    } finally {
+      setSwitchingCourt(false);
+    }
+  };
+
+  // ---- อ่านแจ้งเตือน (ข้อ 1.1) ----
+  const isRead = (n) => Boolean(n.IsRead) || locallyRead.includes(n.NotifId);
+  const unreadCount = notifications.filter((n) => !isRead(n)).length;
+
+  const markRead = async (notif) => {
+    if (isRead(notif)) return;
+    setLocallyRead((prev) => [...prev, notif.NotifId]); // ตัวเลขลดทันทีที่กดอ่าน
+    try {
+      await callApi(`${API}/api/notifications/${notif.NotifId}/read`, { method: 'PUT' });
+      loadNotifications(true);
+    } catch (err) {
+      // ถ้ายังไม่ได้เพิ่ม endpoint ใน main.py จะทำเครื่องหมายว่าอ่านแล้วเฉพาะหน้าจอนี้
+      console.debug('mark-read endpoint ยังไม่พร้อม:', err.message);
+    }
+  };
+
+  const markAllRead = async () => {
+    const userId = user?.UserId || user?.userId;
+    setLocallyRead(notifications.map((n) => n.NotifId));
+    try {
+      await callApi(`${API}/api/notifications/${userId}/read-all`, { method: 'PUT' });
+      loadNotifications(true);
+      pushToast('อ่านแจ้งเตือนทั้งหมดแล้ว');
+    } catch (err) {
+      pushToast('ทำเครื่องหมายอ่านแล้วเฉพาะหน้าจอนี้ (ยังไม่ได้เพิ่ม endpoint ในหลังบ้าน)', 'warn');
+    }
+  };
+
+  // ---- ข้อมูลผู้ใช้ ----
+  const accountName = user?.FullName || user?.Username || 'ผู้บริหาร';
+  const accountRole = user?.Role || 'Executive';
+
+  // ออกจากระบบ: ถ้า App ส่ง prop onLogout มาให้ ก็เรียกอันนั้น (แนะนำให้ส่งมา)
+  // ถ้ายังไม่ได้ส่งมา จะล้างข้อมูลล็อกอินที่เก็บไว้แล้วรีโหลดหน้ากลับไปหน้าล็อกอินแทน
+  const handleLogout = () => {
+    setProfileOpen(false);
+    if (typeof onLogout === 'function') {
+      onLogout();
+      return;
+    }
+    try {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+    } catch (err) {
+      /* บางเบราว์เซอร์บล็อก storage ไว้ — ข้ามไปรีโหลดเลย */
+    }
+    window.location.reload();
+  };
+
+  // [UX/UI] เพิ่มเฉพาะ caption ไว้โชว์ใต้ชื่อเมนูให้เหมือนธีม Berry (ไม่กระทบการทำงาน)
+  const MENUS = [
+    { id: 'overview', icon: 'overview', label: 'ภาพรวมศูนย์อาหาร', caption: 'สรุปยอดขายทั้งศูนย์' },
+    { id: 'store-sales', icon: 'trend', label: 'ยอดขายรายร้าน', caption: 'เจาะรายร้าน/เมนู' },
+    { id: 'store-manage', icon: 'store', label: 'จัดการร้านค้า', caption: 'เพิ่ม แก้ไข ปิดร้าน' },
+    { id: 'store-accounts', icon: 'account', label: 'บัญชีร้านค้า', caption: 'บัญชีผู้ใช้ของร้าน' }
+  ];
+
+  const PAGE_META = {
+    overview: {
+      title: 'ภาพรวมศูนย์อาหาร',
+      subtitle: 'ดูภาพรวมยอดขาย แนวโน้ม และสถานะร้านค้าทั้งศูนย์',
+      searchPlaceholder: 'ค้นหาร้านค้าในตารางสรุป...'
+    },
+    'store-sales': {
+      title: 'ยอดขายรายร้าน',
+      subtitle: 'เจาะดูยอดขาย แนวโน้ม และเมนูของร้านแต่ละร้าน',
+      searchPlaceholder: 'ค้นหาชื่อร้านเพื่อเลือกดู...'
+    },
+    'store-manage': {
+      title: 'จัดการร้านค้า',
+      subtitle: 'เพิ่ม แก้ไข ปิดร้าน ระงับสิทธิ์ และลบร้านค้าออกจากระบบ',
+      searchPlaceholder: 'ค้นหาร้านค้าที่ต้องการจัดการ...'
+    },
+    'store-accounts': {
+      title: 'บัญชีร้านค้า',
+      subtitle: 'ออกบัญชีผู้ใช้ให้ร้านค้าเข้าระบบไปจัดการเมนูและออเดอร์ของตัวเอง',
+      searchPlaceholder: 'ค้นหาชื่อผู้ใช้หรือชื่อร้าน...'
+    }
+  }[activeMenu];
+
+  const ctx = {
+    API,
+    user,
+    stores,
+    orders,
+    loading,
+    search: search.trim().toLowerCase(),
+    pushToast,
+    ask,
+    reloadStores: loadStores,
+    reloadOrders: loadOrders
+  };
+
   return (
-    <div style={{ padding: '19px', borderRadius: '12px', background, border: '1px solid rgba(148,163,184,0.18)' }}>
-      <div style={{ color: '#475569', fontSize: '13px', fontWeight: 'bold' }}>{title}</div>
-      <div style={{ color, fontSize: '25px', fontWeight: 'bold', marginTop: '7px' }}>{value}</div>
-    </div>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Sarabun:wght@400;500;600;700&display=swap');
+        html, body, #root {
+          width: 100% !important;
+          max-width: 100% !important;
+          min-width: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          box-sizing: border-box !important;
+        }
+        html {
+          overflow-x: hidden !important;
+          background: ${T.bg};
+        }
+        body {
+          min-height: 100%;
+          min-width: 0 !important;
+          overflow-x: hidden !important;
+          background: ${T.bg};
+          display: block !important;
+          place-items: initial !important;
+          align-items: initial !important;
+          justify-content: initial !important;
+        }
+        #root {
+          min-height: 100vh !important;
+          text-align: left !important;
+          display: block !important;
+          overflow-x: hidden !important;
+        }
+        #root > * {
+          max-width: 100% !important;
+          min-width: 0 !important;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        button, input, select, textarea { font-family: ${FONT_STACK}; }
+        button { transition: transform .15s ease, box-shadow .15s ease, background .15s ease, color .15s ease; }
+        table tbody tr { transition: background .15s ease; }
+        table tbody tr:hover { background: #F8FAFC; }
+
+        /* ---------- [UX/UI] ธีม Berry ---------- */
+        /* ปุ่มทั่วไปมีเงาตอบสนองเวลาชี้เมาส์ */
+        button:not(.of-nav-item):not(.of-icon-btn):hover { box-shadow: 0 2px 8px rgba(18,25,38,.10); }
+
+        /* กริดการ์ด KPI: การ์ดสีใหญ่ 2 ใบ + คอลัมน์การ์ดเล็กซ้อนกัน 2 ใบ */
+        .of-kpi-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin-bottom: 24px; align-items: stretch; }
+        .of-kpi-col { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+        .of-kpi-col > * { flex: 1; min-width: 0; }
+        .of-kpi-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+        @media (max-width: 1100px) {
+          .of-kpi-row { grid-template-columns: 1fr 1fr; }
+          .of-kpi-col { grid-column: span 2; flex-direction: row; }
+        }
+        @media (max-width: 720px) {
+          .of-kpi-row { grid-template-columns: 1fr; }
+          .of-kpi-col { grid-column: span 1; flex-direction: column; }
+          .of-kpi-row-2 { grid-template-columns: 1fr; }
+        }
+
+        /* การ์ดยกตัวเล็กน้อยเมื่อชี้เมาส์ */
+        .of-card { transition: box-shadow .2s ease, transform .2s ease; }
+        .of-card:hover { box-shadow: ${T.shadowMd}; }
+
+        /* เมนูฝั่งซ้าย */
+        .of-nav-item:hover { background: ${T.primarySoft} !important; color: ${T.primary} !important; }
+        .of-nav-item:hover .of-nav-caption { color: ${T.primary}; opacity: .8; }
+
+        /* ปุ่มไอคอนบนแถบบน */
+        .of-icon-btn.purple:hover { background: ${T.primary} !important; color: #fff !important; }
+        .of-icon-btn.purple:hover svg { stroke: #fff !important; }
+        .of-icon-btn.amber:hover { background: ${T.amber} !important; }
+        .of-icon-btn.amber:hover svg { stroke: #fff !important; }
+        .of-user-chip:hover { background: #D6E9FB !important; }
+        .of-dropdown-item:hover { background: ${T.primarySoft}; color: ${T.primary}; }
+        .of-dropdown-item:hover svg { stroke: ${T.primary}; }
+
+        /* ช่องกรอกเวลาโฟกัส */
+        input:focus, select:focus, textarea:focus { outline: 2px solid ${T.primarySoft}; border-color: ${T.primary} !important; }
+
+        /* แถบเลื่อนบาง ๆ ให้เข้ากับธีม */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: #D3D9E4; border-radius: 999px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+      `}</style>
+      <div style={{ ...shellStyle, fontFamily: FONT_STACK }}>
+        {/* =============================================================
+            [UX/UI] แถบบนแบบธีม Berry — โลโก้ + สถานะศูนย์อาหารอยู่ซ้ายสุด
+            ตำแหน่งเดียวกับตัวอย่างดีไซน์ที่อ้างอิง (ตรงกับหน้าเจ้าของร้าน)
+            ============================================================= */}
+        <header
+          style={{
+            ...topbarStyle,
+            padding: isPhone ? '10px 12px' : topbarStyle.padding,
+            gap: isPhone ? '8px' : topbarStyle.gap
+          }}
+        >
+          <div style={{ ...brandStyle, width: isNarrow ? 'auto' : brandStyle.width }}>
+            <div style={brandTitleStyle}>
+              <span style={{ fontSize: '20px', lineHeight: 1 }}>🍽️</span>
+              <span>Only Foods</span>
+            </div>
+            {!isPhone && (
+              <div style={brandSubtitleStyle}>
+                สถานะศูนย์อาหาร:
+                <span
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: foodCourtOpen ? T.up : T.down,
+                    display: 'inline-block'
+                  }}
+                />
+                <span style={{ color: foodCourtOpen ? T.up : T.down, fontWeight: 600 }}>
+                  {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="of-icon-btn purple"
+            onClick={() => setSidebarOpen((v) => !v)}
+            style={iconButtonStyle}
+            aria-label={sidebarOpen ? 'ซ่อนแถบเมนู' : 'แสดงแถบเมนู'}
+          >
+            <Icon name="menu" size={19} color={T.primary} />
+          </button>
+
+          {/* ช่องค้นหาด้านบนใช้เฉพาะหน้าจัดการร้าน/บัญชีร้านค้า
+              หน้าภาพรวมและยอดขายรายร้านไม่แสดงช่องนี้ตาม UX ใหม่ */}
+          {(activeMenu === 'store-manage' || activeMenu === 'store-accounts') && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                searchRef.current?.blur();
+              }}
+              style={{ ...searchWrapStyle, maxWidth: isPhone ? 'none' : searchWrapStyle.maxWidth, flexBasis: isPhone ? '100%' : 'auto', order: isPhone ? 5 : 'initial' }}
+            >
+              <button
+                type="button"
+                style={{ ...iconButtonStyle, border: 'none', background: 'transparent', width: '28px', height: '28px' }}
+                aria-label="ค้นหา"
+                onClick={() => searchRef.current?.focus()}
+              >
+                <Icon name="search" size={17} color={T.muted} />
+              </button>
+              <input
+                ref={searchRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={PAGE_META.searchPlaceholder}
+                style={searchInputStyle}
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  style={{ ...iconButtonStyle, border: 'none', background: 'transparent', width: '26px', height: '26px' }}
+                  aria-label="ล้างคำค้นหา"
+                >
+                  <Icon name="close" size={15} color={T.muted} />
+                </button>
+              )}
+            </form>
+          )}
+
+          {/* ตัวดันช่องว่าง — ทำให้กระดิ่งกับชิปโปรไฟล์ไปอยู่ขวาสุดทุกหน้า */}
+          <div style={{ flex: 1, minWidth: '8px' }} />
+
+          {/* ป้ายสถานะศูนย์อาหารบนจอเล็ก (จอใหญ่ไปโชว์ใต้โลโก้แล้ว) */}
+          {isPhone && (
+            <div
+              style={{
+                ...courtPillStyle,
+                padding: '6px 9px',
+                fontSize: '11.5px',
+                background: foodCourtOpen ? T.greenSoft : T.redSoft,
+                color: foodCourtOpen ? T.up : T.down
+              }}
+            >
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor' }} />
+              {foodCourtOpen ? 'ศูนย์อาหารเปิด' : 'ศูนย์อาหารปิด'}
+            </div>
+          )}
+
+          {/* กระดิ่งแจ้งเตือน — กดแล้วดูรายการจริง กดอ่านแล้วเลขลด */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="of-icon-btn amber"
+              onClick={() => setNotifOpen((v) => !v)}
+              style={{ ...iconButtonStyle, background: T.amberSoft, color: T.amber }}
+              aria-label="การแจ้งเตือน"
+            >
+              <Icon name="bell" size={19} color={T.amber} />
+              {unreadCount > 0 && (
+                <span style={notifBadgeStyle}>{unreadCount > 99 ? '99+' : unreadCount}</span>
+              )}
+            </button>
+
+            {notifOpen && (
+              <>
+                <div style={dropdownBackdropStyle} onClick={() => setNotifOpen(false)} />
+                <div style={notifPanelStyle}>
+                  <div style={notifHeadStyle}>
+                    <div>
+                      <div style={{ color: T.ink, fontWeight: 700, fontSize: '14px' }}>การแจ้งเตือน</div>
+                      <div style={captionStyle}>ยังไม่ได้อ่าน {unreadCount} รายการ</div>
+                    </div>
+                    {unreadCount > 0 && (
+                      <Button variant="ghost" onClick={markAllRead} style={{ padding: '6px 10px', fontSize: '12px' }}>
+                        อ่านทั้งหมด
+                      </Button>
+                    )}
+                  </div>
+                  <div style={{ maxHeight: '340px', overflowY: 'auto' }}>
+                    {notifications.length === 0 && (
+                      <div style={{ padding: '26px', textAlign: 'center', color: T.muted, fontSize: '13px' }}>
+                        ยังไม่มีการแจ้งเตือน
+                      </div>
+                    )}
+                    {notifications.map((n) => (
+                      <button
+                        key={n.NotifId}
+                        type="button"
+                        onClick={() => markRead(n)}
+                        style={{
+                          ...notifItemStyle,
+                          background: isRead(n) ? T.surface : T.primarySoft
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            marginTop: '6px',
+                            background: isRead(n) ? T.line : T.primary
+                          }}
+                        />
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ display: 'block', color: T.text, fontSize: '13px' }}>{n.Message}</span>
+                          <span style={{ display: 'block', color: T.muted, fontSize: '11.5px', marginTop: '3px' }}>
+                            {parseOrderDate(n.CreatedAt)?.toLocaleString('th-TH') || ''}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ชิปผู้ใช้ทรงแคปซูลสีฟ้าอ่อน — กดแล้วเปิดเมนูโปรไฟล์ */}
+          <div style={{ position: 'relative' }} ref={profileRef}>
+            <button
+              type="button"
+              className="of-user-chip"
+              onClick={() => setProfileOpen((v) => !v)}
+              style={{ ...topAccountStyle, padding: isPhone ? '5px' : topAccountStyle.padding }}
+              aria-label="เมนูบัญชีผู้ใช้"
+            >
+              <div style={{ ...avatarStyle, background: T.primary }}>
+                {String(accountName).charAt(0).toUpperCase()}
+              </div>
+              {/* จอเล็กโชว์แค่วงกลมตัวอักษร กดแล้วเมนูโปรไฟล์ยังเปิดได้เหมือนกัน */}
+              {!isPhone && (
+                <>
+                  <div style={{ minWidth: 0, textAlign: 'left' }}>
+                    <div style={{ color: T.accentDark, fontWeight: 600, fontSize: '13px', ...ellipsisStyle }}>
+                      {accountName}
+                    </div>
+                    <div style={{ color: T.muted, fontSize: '11.5px' }}>{accountRole}</div>
+                  </div>
+                  <Icon name="settings" size={17} color={T.accentDark} />
+                </>
+              )}
+            </button>
+
+            {profileOpen && (
+              <div style={profilePanelStyle}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: T.ink, lineHeight: 1.5 }}>
+                    {greetingText()}, {accountName}
+                  </h4>
+                  <p style={{ margin: '4px 0 16px', fontSize: '13px', color: T.muted }}>
+                    {accountRole} (ผู้บริหารศูนย์อาหาร)
+                  </p>
+                </div>
+
+                <hr style={{ border: 'none', borderTop: `1px solid ${T.line}`, margin: '0 0 12px' }} />
+
+                <button
+                  type="button"
+                  className="of-dropdown-item"
+                  style={dropdownItemStyle}
+                  onClick={handleLogout}
+                >
+                  <Icon name="logout" size={18} /> ออกจากระบบ
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        {/* ===== ตัวเนื้อหา: แถบเมนูซ้าย + พื้นที่หน้า ===== */}
+        <div style={shellBodyStyle}>
+          {/* ===== แถบเมนูซ้าย — กดขีด 3 ขีดแล้วหายไปทั้งแถบ ===== */}
+          {sidebarOpen && (
+            <aside
+              style={{
+                ...sidebarStyle,
+                width: isNarrow ? 'min(84vw, 290px)' : sidebarStyle.width,
+                minWidth: isNarrow ? 'min(84vw, 290px)' : sidebarStyle.minWidth,
+                position: isNarrow ? 'absolute' : 'relative',
+                left: isNarrow ? 0 : 'auto',
+                top: isNarrow ? 0 : 'auto',
+                bottom: isNarrow ? 0 : 'auto',
+                alignSelf: isNarrow ? 'auto' : 'stretch',
+                boxShadow: isNarrow ? '4px 0 24px rgba(18,25,38,.10)' : sidebarStyle.boxShadow,
+                zIndex: isNarrow ? 60 : 20
+              }}
+            >
+              <nav style={{ flex: 1 }}>
+                <div style={sidebarLabelStyle}>เมนูหลัก</div>
+                {MENUS.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className="of-nav-item"
+                    onClick={() => {
+                      setActiveMenu(m.id);
+                      setSearch('');
+                      if (isNarrow) setSidebarOpen(false);
+                    }}
+                    style={{
+                      ...sidebarItemStyle,
+                      background: activeMenu === m.id ? T.sideActive : 'transparent',
+                      color: activeMenu === m.id ? T.primary : T.sideText
+                    }}
+                  >
+                    <Icon name={m.icon} size={20} />
+                    <span style={{ minWidth: 0, textAlign: 'left' }}>
+                      <span style={{ display: 'block', fontSize: '14px', fontWeight: activeMenu === m.id ? 600 : 500 }}>
+                        {m.label}
+                      </span>
+                      <span
+                        className="of-nav-caption"
+                        style={{
+                          display: 'block',
+                          fontSize: '11.5px',
+                          marginTop: '2px',
+                          color: activeMenu === m.id ? T.primary : T.muted,
+                          opacity: activeMenu === m.id ? 0.8 : 1
+                        }}
+                      >
+                        {m.caption}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </nav>
+
+              <div style={sidebarFootStyle}>
+                <div style={avatarStyle}>{String(accountName).charAt(0).toUpperCase()}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={ellipsisStyle}>{accountName}</div>
+                  <div style={{ fontSize: '11.5px', color: T.muted }}>{accountRole}</div>
+                </div>
+              </div>
+            </aside>
+          )}
+
+          {isNarrow && sidebarOpen && (
+            <div style={backdropStyle} onClick={() => setSidebarOpen(false)} />
+          )}
+
+          <main style={mainScrollStyle}>
+            {/* ===== เนื้อหา ===== */}
+            <div style={{ ...contentStyle, padding: isPhone ? '14px 10px 22px' : isNarrow ? '18px 14px 24px' : contentStyle.padding }}>
+              <div style={{ marginBottom: '18px' }}>
+                <h2 style={{ ...h2Style, fontSize: isPhone ? '20px' : h2Style.fontSize }}>{PAGE_META.title}</h2>
+                <p style={{ ...captionStyle, fontSize: '13.5px' }}>{PAGE_META.subtitle}</p>
+              </div>
+
+              {!foodCourtOpen && (
+                <div style={courtBannerStyle}>
+                  <Icon name="info" size={18} color={T.down} />
+                  <span>
+                    ศูนย์อาหารปิดให้บริการอยู่ — ลูกค้าสั่งอาหารไม่ได้ทุกร้าน และทุกโรลจะเห็นสถานะนี้
+                  </span>
+                </div>
+              )}
+
+              {activeMenu === 'overview' && (
+                <OverviewPage
+                  ctx={ctx}
+                  foodCourtOpen={foodCourtOpen}
+                  switchingCourt={switchingCourt}
+                  onToggleCourt={toggleFoodCourt}
+                />
+              )}
+              {activeMenu === 'store-sales' && <StoreSalesPage ctx={ctx} />}
+              {activeMenu === 'store-manage' && <StoreManagePage ctx={ctx} />}
+              {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx} />}
+            </div>
+          </main>
+        </div>
+
+      <ConfirmDialog
+        state={confirmState}
+        onCancel={() => closeConfirm(false)}
+        onConfirm={() => closeConfirm(true)}
+      />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      </div>
+    </>
   );
 }
 
-function OverviewSalesBarChart({ data }) {
-  if (!data || data.length === 0) {
-    return <div style={{ minHeight: '250px', display: 'grid', placeItems: 'center', color: '#64748b' }}>ช่วงเวลานี้ยังไม่มียอดขายสำเร็จ</div>;
-  }
-  const width = 850, height = 300, left = 65, right = 20, top = 30, bottom = 50;
-  const graphWidth = width - left - right, graphHeight = height - top - bottom;
-  const values = data.map(item => Number(item.sales || 0));
-  const maxValue = Math.max(...values, 1);
-  const slotWidth = graphWidth / data.length;
-  const barWidth = Math.min(44, slotWidth * 0.62);
-  const labelStep = Math.max(1, Math.ceil(data.length / 8));
-  const shortNumber = value => value >= 1000000 ? `${(value / 1000000).toFixed(1)}M` : value >= 1000 ? `${Math.round(value / 1000)}K` : Math.round(value).toString();
+// =====================================================================
+// 8) PAGES
+// =====================================================================
+
+// ---------------------------------------------------------------------
+// 8.1 หน้าภาพรวมศูนย์อาหาร (ข้อ 3)
+//  หลักที่ใช้จากสไลด์:
+//   - Inverted Pyramid: ตัวเลขสรุปด้านบน -> กราฟแนวโน้มตรงกลาง -> ตารางรายละเอียดล่าง
+//   - Compared to what: ทุก KPI มีตัวเลขเทียบช่วงก่อนหน้า ไม่ใช่ตัวเลขลอย ๆ
+//   - 5-Second Rule: KPI สำคัญสุดอยู่ซ้ายบน
+// ---------------------------------------------------------------------
+function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
+  const { orders, stores, loading, pushToast } = ctx;
+  const [anchor, setAnchor] = useState(todayISO());
+  const [days, setDays] = useState(1);
+  const [exportPreview, setExportPreview] = useState(null);
+
+  const report = useMemo(() => {
+    const bounds = periodBounds(anchor, days);
+    const prevBounds = previousBounds(anchor, days);
+    const current = orders.filter((o) => inRange(o, bounds));
+    const previous = orders.filter((o) => inRange(o, prevBounds));
+    const now = summarize(current);
+    const before = summarize(previous);
+
+    // ยอดแยกร้าน + เทียบช่วงก่อนหน้า
+    const storeRows = stores
+      .map((s) => {
+        const mine = now.completed.filter((o) => String(o.StoreId) === String(s.StoreId));
+        const minePrev = before.completed.filter((o) => String(o.StoreId) === String(s.StoreId));
+        const cancelled = now.cancelled.filter((o) => String(o.StoreId) === String(s.StoreId));
+        const sales = sumAmount(mine);
+        const prevSales = sumAmount(minePrev);
+        return {
+          ...s,
+          sales,
+          prevSales,
+          delta: changePct(sales, prevSales),
+          completedCount: mine.length,
+          cancelledCount: cancelled.length,
+          avg: mine.length ? sales / mine.length : 0
+        };
+      })
+      .sort((a, b) => b.sales - a.sales);
+
+    // ช่วงเวลาขายดี (ดูจากชั่วโมงที่ยอดรวมสูงสุด)
+    const byHour = Array.from({ length: 24 }, () => 0);
+    now.completed.forEach((o) => {
+      const at = parseOrderDate(o.CreatedAt);
+      if (at) byHour[at.getHours()] += Number(o.TotalAmount || 0);
+    });
+    const peakHour = byHour.indexOf(Math.max(...byHour));
+    const peakSales = byHour[peakHour] || 0;
+
+    return {
+      now,
+      before,
+      storeRows,
+      buckets: buildBuckets(now.completed, anchor, days),
+      peakHour: peakSales > 0 ? peakHour : null,
+      peakSales,
+      activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
+    };
+  }, [orders, stores, anchor, days]);
+
+  const periodLabel =
+    days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+  const compareLabel = days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
+
+  const visibleStoreRows = report.storeRows;
+  const maxStoreSales = Math.max(...report.storeRows.map((s) => Number(s.sales) || 0), 1);
+
+  const bestStore = report.storeRows.find((s) => s.sales > 0) || null;
+
+  // ---- ส่งออกไฟล์ ----
+  const csvRows = () => {
+    const rows = [
+      ['รายงานภาพรวมศูนย์อาหาร Only Foods'],
+      ['ช่วงข้อมูล', periodLabel],
+      ['ออกรายงานเมื่อ', nowStamp()],
+      [],
+      ['ตัวชี้วัด', 'ค่า', 'ช่วงก่อนหน้า'],
+      ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales), Math.round(report.before.sales)],
+      ['ออเดอร์สำเร็จ', report.now.completedCount, report.before.completedCount],
+      ['ออเดอร์ยกเลิก', report.now.cancelledCount, report.before.cancelledCount],
+      ['อัตราการยกเลิก (%)', report.now.cancelRate.toFixed(1), report.before.cancelRate.toFixed(1)],
+      ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', report.now.avgOrder.toFixed(2), report.before.avgOrder.toFixed(2)],
+      [],
+      ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ยอดขาย (บาท)', 'ยกเลิก', 'ยอดเฉลี่ย/ออเดอร์', 'เทียบช่วงก่อน (%)'],
+      ...report.storeRows.map((s) => [
+        s.StoreName,
+        s.completedCount,
+        Math.round(s.sales),
+        s.cancelledCount,
+        s.avg.toFixed(2),
+        s.delta === null ? '-' : s.delta.toFixed(1)
+      ]),
+      [],
+      [days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
+      ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count])
+    ];
+    return rows;
+  };
+
+  const saveCsv = () => {
+    exportCsv(`onlyfoods-overview-${anchor}-${days}d.csv`, csvRows());
+    setExportPreview(null);
+    pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
+  };
+
+  const savePdf = () => {
+    try {
+      exportPdf(`onlyfoods-overview-${anchor}-${days}d.pdf`, {
+        title: 'รายงานภาพรวมศูนย์อาหาร',
+        subtitle: `ช่วงข้อมูล: ${periodLabel}`,
+        kpis: [
+          {
+            label: 'ยอดขายสุทธิ',
+            value: `${money(report.now.sales)} บาท`,
+            note: describeDelta(changePct(report.now.sales, report.before.sales), compareLabel),
+            tone: toneOf(changePct(report.now.sales, report.before.sales))
+          },
+          {
+            label: 'ออเดอร์สำเร็จ',
+            value: `${money(report.now.completedCount)} ออเดอร์`,
+            note: describeDelta(
+              changePct(report.now.completedCount, report.before.completedCount),
+              compareLabel
+            ),
+            tone: toneOf(changePct(report.now.completedCount, report.before.completedCount))
+          },
+          {
+            label: 'ยอดเฉลี่ยต่อออเดอร์',
+            value: `${money2(report.now.avgOrder)} บาท`,
+            note: `${money(report.activeStores)} ร้านเปิดให้บริการ`
+          },
+          {
+            label: 'ออเดอร์ยกเลิก',
+            value: `${money(report.now.cancelledCount)} ออเดอร์`,
+            note: `อัตรายกเลิก ${report.now.cancelRate.toFixed(1)}%`,
+            tone: report.now.cancelRate > 10 ? 'down' : 'flat'
+          },
+          {
+            label: 'ร้านขายดีที่สุด',
+            value: bestStore ? bestStore.StoreName : '-',
+            note: bestStore ? `${money(bestStore.sales)} บาท` : 'ยังไม่มียอดขาย'
+          },
+          {
+            label: 'ช่วงเวลาขายดี',
+            value: report.peakHour === null ? '-' : `${pad2(report.peakHour)}:00 น.`,
+            note: report.peakHour === null ? 'ยังไม่มีข้อมูล' : `${money(report.peakSales)} บาท`
+          }
+        ],
+        tableTitle: 'สรุปผลรายร้าน',
+        columns: [
+          { title: 'ร้านค้า', width: 0.34 },
+          { title: 'ออเดอร์สำเร็จ', width: 0.15, align: 'right' },
+          { title: 'ยอดขาย (บาท)', width: 0.19, align: 'right' },
+          { title: 'ยกเลิก', width: 0.12, align: 'right' },
+          { title: 'เทียบช่วงก่อน', width: 0.2, align: 'right' }
+        ],
+        rows: report.storeRows.map((s) => [
+          s.StoreName,
+          money(s.completedCount),
+          money(s.sales),
+          money(s.cancelledCount),
+          s.delta === null ? '-' : `${s.delta >= 0 ? '+' : ''}${s.delta.toFixed(1)}%`
+        ])
+      });
+      setExportPreview(null);
+      pushToast('บันทึกไฟล์ PDF เรียบร้อยแล้ว');
+    } catch (err) {
+      pushToast('สร้างไฟล์ PDF ไม่สำเร็จ', 'error');
+    }
+  };
 
   return (
-    <div style={{ overflowX: 'auto', marginTop: '12px' }}>
-      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', minWidth: '620px', display: 'block' }}>
-        {[0, 1, 2, 3, 4].map(line => {
-          const ratio = line / 4, y = top + graphHeight * ratio, amount = maxValue * (1 - ratio);
-          return <g key={line}><line x1={left} x2={width-right} y1={y} y2={y} stroke="#e5e7eb"/><text x={left-10} y={y+4} textAnchor="end" fontSize="11" fill="#64748b">{shortNumber(amount)}</text></g>;
-        })}
-        {data.map((item, index) => {
-          const sales = Number(item.sales || 0), barHeight = (sales / maxValue) * graphHeight;
-          const x = left + index * slotWidth + (slotWidth - barWidth) / 2, y = top + graphHeight - barHeight;
-          const showLabel = index % labelStep === 0 || index === data.length - 1;
-          return <g key={`${item.label}-${index}`}><rect x={x} y={y} width={barWidth} height={Math.max(barHeight,2)} rx="5" fill="#168a86"><title>{item.label}: {sales.toLocaleString()} บาท</title></rect>{sales > 0 && <text x={x+barWidth/2} y={Math.max(y-7,12)} textAnchor="middle" fontSize="10" fontWeight="bold" fill="#0f766e">{shortNumber(sales)}</text>}{showLabel && <text x={x+barWidth/2} y={height-18} textAnchor="middle" fontSize="11" fill="#64748b">{item.label}</text>}</g>;
-        })}
-        <line x1={left} x2={width-right} y1={top+graphHeight} y2={top+graphHeight} stroke="#cbd5e1"/>
-      </svg>
-    </div>
-  );
-}
+    <>
+      {/* สวิตช์เปิด–ปิดศูนย์อาหาร */}
+      <Card style={{ marginBottom: '18px' }}>
+        <div style={courtControlStyle}>
+          <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', minWidth: 0 }}>
+            {/* [UX/UI] กล่องไอคอนสีอ่อนแบบการ์ดเล็กของธีม Berry */}
+            <div
+              style={{
+                width: '48px',
+                height: '48px',
+                minWidth: '48px',
+                borderRadius: T.radiusMd,
+                display: 'grid',
+                placeItems: 'center',
+                background: foodCourtOpen ? T.greenSoft : T.redSoft,
+                color: foodCourtOpen ? T.up : T.down
+              }}
+            >
+              <Icon name="power" size={22} color={foodCourtOpen ? T.up : T.down} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+            <h3 style={h3Style}>การควบคุมศูนย์อาหาร</h3>
+            <p style={{ ...bodyStyle, margin: '6px 0 0' }}>
+              สถานะปัจจุบัน:{' '}
+              <strong style={{ color: foodCourtOpen ? T.up : T.down }}>
+                {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
+              </strong>
+            </p>
+            <p style={captionStyle}>
+              สถานะนี้เก็บในฐานข้อมูล ทุกโรลจึงเห็นตรงกัน และระบบจะบล็อกการสั่งอาหารให้อัตโนมัติเมื่อปิด
+            </p>
+            </div>
+          </div>
+          <Button
+            variant={foodCourtOpen ? 'danger' : 'primary'}
+            icon="power"
+            onClick={onToggleCourt}
+            disabled={switchingCourt}
+          >
+            {switchingCourt ? 'กำลังบันทึก...' : foodCourtOpen ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร'}
+          </Button>
+        </div>
+      </Card>
 
-function DashboardDetail({ label, value }) {
-  return (
-    <div style={detailCardStyle}>
-      <div style={{ color: '#64748b', fontSize: '13px' }}>
-        {label}
+      {/* แถบเลือกช่วงเวลา + ส่งออกไฟล์ */}
+      <Card style={{ marginBottom: '18px' }}>
+        <div style={toolbarStyle}>
+          <div>
+            <h3 style={h3Style}>ช่วงข้อมูลที่กำลังดู</h3>
+            <p style={captionStyle}>
+              {periodLabel} · อัปเดตล่าสุด {nowStamp()} น.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* [UX/UI] ตัวเลือกช่วงเวลาย้ายไปอยู่บนหัวการ์ดกราฟแล้ว เหลือแค่ปุ่มส่งออกไฟล์ตรงนี้ */}
+            <Button variant="ghost" icon="download" onClick={() => setExportPreview('csv')}>
+              CSV
+            </Button>
+            <Button variant="dark" icon="download" onClick={() => setExportPreview('pdf')}>
+              PDF
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* KPI แถวบน — การ์ดสีใหญ่ 2 ใบ + การ์ดเล็กซ้อนกัน (เลย์เอาต์เดียวกับเทมเพลต) */}
+      <div className="of-kpi-row">
+        <KpiCard
+          label="ยอดขายสุทธิ"
+          value={`${money(report.now.sales)}`}
+          unit="บาท"
+          delta={changePct(report.now.sales, report.before.sales)}
+          deltaLabel={compareLabel}
+          highlight
+          icon="trend"
+        />
+        <KpiCard
+          label="ออเดอร์สำเร็จ"
+          value={money(report.now.completedCount)}
+          unit="ออเดอร์"
+          delta={changePct(report.now.completedCount, report.before.completedCount)}
+          deltaLabel={compareLabel}
+          variant="blue"
+          icon="check"
+        />
+        <div className="of-kpi-col">
+          <KpiCard
+            size="sm"
+            label="ยอดเฉลี่ยต่อออเดอร์"
+            value={money2(report.now.avgOrder)}
+            unit="บาท"
+            delta={changePct(report.now.avgOrder, report.before.avgOrder)}
+            deltaLabel={compareLabel}
+            icon="trend"
+            tone="blue"
+          />
+          <KpiCard
+            size="sm"
+            label="ออเดอร์ยกเลิก"
+            value={money(report.now.cancelledCount)}
+            unit="ออเดอร์"
+            delta={changePct(report.now.cancelledCount, report.before.cancelledCount)}
+            deltaLabel={compareLabel}
+            icon="ban"
+            tone="amber"
+          />
+        </div>
       </div>
 
+      {/* KPI แถวรอง — การ์ดเล็กพื้นขาว */}
+      <div className="of-kpi-row-2">
+        <KpiCard
+          size="sm"
+          label="อัตราการยกเลิก"
+          value={`${report.now.cancelRate.toFixed(1)}%`}
+          hint={`ช่วงก่อนหน้า ${report.before.cancelRate.toFixed(1)}%`}
+          delta={null}
+          icon="info"
+          tone="amber"
+        />
+        <KpiCard
+          size="sm"
+          label="ช่วงเวลาขายดี"
+          value={report.peakHour === null ? '—' : `${pad2(report.peakHour)}:00`}
+          unit={report.peakHour === null ? '' : 'น.'}
+          hint={report.peakHour === null ? 'ยังไม่มียอดขาย' : `ทำยอดได้ ${money(report.peakSales)} บาท`}
+          delta={null}
+          icon="calendar"
+          tone="purple"
+        />
+      </div>
+
+      {/* กราฟแนวโน้ม + เทียบร้าน */}
+      <div style={chartGridStyle}>
+        {/* [UX/UI] หัวการ์ดกราฟ: ยอดรวมด้านซ้าย + ปฏิทินและปุ่มช่วงเวลาด้านขวา */}
+        <Card>
+          <div style={chartHeadStyle}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: T.muted, fontSize: '14px', fontWeight: 500 }}>
+                {days === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}
+              </div>
+              <h3 style={{ margin: '6px 0 0', fontSize: '24px', fontWeight: 700, color: T.ink }}>
+                {money(report.now.sales)} บาท
+              </h3>
+              <p style={captionStyle}>
+                ชี้ที่จุดบนกราฟเพื่อดูยอดรวม และร้านที่ขายได้มากสุด/น้อยสุดของช่วงนั้น
+              </p>
+            </div>
+            <PeriodPicker anchor={anchor} setAnchor={setAnchor} days={days} setDays={setDays} />
+          </div>
+          {loading ? <EmptyState text="กำลังโหลดข้อมูล..." /> : <SalesLineChart buckets={report.buckets} />}
+        </Card>
+
+        <Card title="ยอดขายแยกร้าน" subtitle="เรียงจากร้านที่ทำยอดสูงสุดในช่วงเดียวกัน">
+          {loading ? <EmptyState text="กำลังโหลดข้อมูล..." /> : <StoreDonutChart rows={report.storeRows} />}
+        </Card>
+      </div>
+
+      {/* ตารางรายละเอียด */}
+      <Card
+        title="สรุปผลรายร้าน"
+        subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`}
+        style={{ marginTop: '16px' }}
+      >
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>ร้านค้า</th>
+                <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
+                <th style={thRightStyle}>ยอดขาย</th>
+                <th style={thRightStyle}>{compareLabel}</th>
+                <th style={thRightStyle}>ยกเลิก</th>
+                <th style={thStyle}>สถานะ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleStoreRows.map((s) => (
+                <tr key={s.StoreId} style={trStyle}>
+                  <td style={tdStyle}>
+                    <strong style={{ color: T.ink }}>{s.StoreName}</strong>
+                  </td>
+                  <td style={tdRightStyle}>{money(s.completedCount)}</td>
+                  <td style={{ ...tdRightStyle, minWidth: '170px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', color: T.ink, fontWeight: 700 }}>
+                      {money(s.sales)} บาท
+                    </div>
+                    <div style={{ height: '6px', background: T.trackSoft, borderRadius: '999px', marginTop: '6px', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.max((Number(s.sales || 0) / maxStoreSales) * 100, s.sales > 0 ? 3 : 0)}%`,
+                          borderRadius: '999px',
+                          background: T.primary
+                        }}
+                      />
+                    </div>
+                  </td>
+                  <td style={tdRightStyle}>
+                    {s.delta === null ? (
+                      <span style={{ color: T.muted }}>—</span>
+                    ) : (
+                      <span style={{ color: s.delta >= 0 ? T.up : T.down, fontWeight: 700 }}>
+                        {s.delta >= 0 ? '▲' : '▼'} {Math.abs(s.delta).toFixed(1)}%
+                      </span>
+                    )}
+                  </td>
+                  <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
+                  <td style={tdStyle}>
+                    <Badge tone={s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
+                      {s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+              {visibleStoreRows.length === 0 && (
+                <tr>
+                  <td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
+                    ไม่พบร้านค้าที่ตรงกับคำค้นหา
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* พรีวิวรายงานก่อนบันทึกไฟล์ CSV / PDF */}
+      <Modal
+        open={Boolean(exportPreview)}
+        title={`พรีวิวก่อนบันทึก ${String(exportPreview || '').toUpperCase()}`}
+        subtitle={`รายงานภาพรวมศูนย์อาหาร · ${periodLabel}`}
+        onClose={() => setExportPreview(null)}
+        width={820}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setExportPreview(null)}>ยกเลิก</Button>
+            <Button
+              variant={exportPreview === 'pdf' ? 'dark' : 'primary'}
+              icon="download"
+              onClick={exportPreview === 'pdf' ? savePdf : saveCsv}
+            >
+              บันทึก {String(exportPreview || '').toUpperCase()}
+            </Button>
+          </>
+        }
+      >
+        <div style={{ border: `1px solid ${T.line}`, borderRadius: '12px', overflow: 'hidden', background: '#FFFFFF' }}>
+          <div style={{ padding: '18px 20px', borderBottom: `1px solid ${T.line}`, background: '#FAFBFF' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+              <div>
+                <h3 style={{ ...h3Style, margin: 0 }}>รายงานภาพรวมศูนย์อาหาร</h3>
+                <p style={{ ...captionStyle, marginTop: '5px' }}>{periodLabel}</p>
+              </div>
+              <Badge tone="neutral">{exportPreview === 'pdf' ? 'PDF · รายงานจัดหน้า A4' : 'CSV · เปิดต่อใน Excel ได้'}</Badge>
+            </div>
+          </div>
+          <div style={{ padding: '16px 20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+              {[
+                ['ยอดขายสุทธิ', `${money(report.now.sales)} บาท`],
+                ['ออเดอร์สำเร็จ', `${money(report.now.completedCount)} ออเดอร์`],
+                ['ออเดอร์ยกเลิก', `${money(report.now.cancelledCount)} ออเดอร์`],
+                ['ยอดเฉลี่ย/ออเดอร์', `${money2(report.now.avgOrder)} บาท`]
+              ].map(([label, value]) => (
+                <div key={label} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '12px' }}>
+                  <div style={{ ...captionStyle, margin: 0 }}>{label}</div>
+                  <strong style={{ display: 'block', color: T.ink, marginTop: '6px', fontSize: '16px' }}>{value}</strong>
+                </div>
+              ))}
+            </div>
+            <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างข้อมูลสรุปผลรายร้าน</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>ร้านค้า</th>
+                    <th style={thRightStyle}>ออเดอร์</th>
+                    <th style={thRightStyle}>ยอดขาย</th>
+                    <th style={thRightStyle}>ยกเลิก</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.storeRows.slice(0, 6).map((s) => (
+                    <tr key={s.StoreId} style={trStyle}>
+                      <td style={tdStyle}>{s.StoreName}</td>
+                      <td style={tdRightStyle}>{money(s.completedCount)}</td>
+                      <td style={tdRightStyle}>{money(s.sales)} บาท</td>
+                      <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {report.storeRows.length > 6 && (
+              <p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>
+                และอีก {report.storeRows.length - 6} ร้านในไฟล์จริง
+              </p>
+            )}
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function toneOf(delta) {
+  if (delta === null || delta === undefined) return 'flat';
+  return delta >= 0 ? 'up' : 'down';
+}
+
+function describeDelta(delta, label) {
+  if (delta === null || delta === undefined) return 'ไม่มีข้อมูลช่วงก่อนหน้า';
+  return `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}% ${label}`;
+}
+
+// =====================================================================
+// [เพิ่ม] รีวิวจากลูกค้า — แสดงในหน้า "ยอดขายรายร้าน"
+// ดึงจาก GET /api/stores/{storeId}/reviews (เพิ่มใน main.py) ตอนเลือกร้าน
+// แสดงคะแนนเฉลี่ย/จำนวนรีวิวรวม แล้วไล่รายการรีวิวล่าสุดของร้านนั้น
+// =====================================================================
+function StarRating({ value, size = 14 }) {
+  const rounded = Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
+  return (
+    <span style={{ fontSize: size, letterSpacing: '1px', whiteSpace: 'nowrap' }} aria-label={`${value} จาก 5 ดาว`}>
+      <span style={{ color: T.accent }}>{'★★★★★'.slice(0, rounded)}</span>
+      <span style={{ color: T.line }}>{'★★★★★'.slice(rounded)}</span>
+    </span>
+  );
+}
+
+function ReviewRow({ review }) {
+  return (
+    <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
       <div
         style={{
-          marginTop: '6px',
-          fontSize: '20px',
-          fontWeight: 'bold'
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '10px',
+          flexWrap: 'wrap'
         }}
       >
-        {value}
+        <div style={{ fontWeight: 700, fontSize: '13.5px', color: T.ink }}>
+          {review.ReviewerName || 'ลูกค้าไม่ระบุชื่อ'}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <StarRating value={review.Rating} />
+          <span style={captionStyle}>{thaiDateTime(review.CreatedAt)}</span>
+        </div>
       </div>
+      {review.Comment && (
+        <p style={{ margin: '6px 0 0', fontSize: '13px', color: T.text, lineHeight: 1.6 }}>
+          {review.Comment}
+        </p>
+      )}
     </div>
   );
 }
 
-const executiveShellStyle = {
+// การ์ดสรุป+รายการรีวิว แยกเป็นคอมโพเนนต์ของตัวเอง เพื่อ fetch ข้อมูลเฉพาะตอน
+// เปลี่ยนร้าน (ไม่ผูกกับ orders ที่โหลดมาแล้วตั้งแต่แรก เพราะรีวิวไม่ใช่ข้อมูลออเดอร์)
+function StoreReviewSection({ ctx, storeId }) {
+  const { API } = ctx;
+  const [state, setState] = useState({ loading: false, error: null, data: null });
+
+  useEffect(() => {
+    if (!storeId) {
+      setState({ loading: false, error: null, data: null });
+      return undefined;
+    }
+    let cancelled = false;
+    setState({ loading: true, error: null, data: null });
+    callApi(`${API}/api/stores/${storeId}/reviews`)
+      .then((data) => {
+        if (!cancelled) setState({ loading: false, error: null, data });
+      })
+      .catch((err) => {
+        if (!cancelled) setState({ loading: false, error: err.message, data: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [API, storeId]);
+
+  const summary = state.data?.summary || { total: 0, average: 0 };
+  const reviews = state.data?.reviews || [];
+
+  return (
+    <Card
+      title="รีวิวจากลูกค้า"
+      subtitle="คะแนนและความคิดเห็นล่าสุดของร้านนี้"
+      style={{ marginBottom: '16px' }}
+      right={
+        summary.total > 0 ? (
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: '20px', fontWeight: 700, color: T.ink, lineHeight: 1.2 }}>
+              {summary.average.toFixed(1)}
+              <span style={{ fontSize: '13px', color: T.muted, fontWeight: 500 }}> / 5</span>
+            </div>
+            <div style={captionStyle}>{money(summary.total)} รีวิว</div>
+          </div>
+        ) : null
+      }
+    >
+      {state.loading && <EmptyState text="กำลังโหลดรีวิว..." />}
+      {!state.loading && state.error && <EmptyState text={state.error} />}
+      {!state.loading && !state.error && reviews.length === 0 && (
+        <EmptyState text="ร้านนี้ยังไม่มีรีวิวจากลูกค้า" />
+      )}
+      {!state.loading && !state.error && reviews.length > 0 && (
+        <div>
+          {reviews.map((r) => (
+            <ReviewRow key={r.ReviewId} review={r} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------
+// 8.2 หน้ายอดขายรายร้าน (ข้อ 4)
+//  เลือกร้าน -> ดูย้อนหลังได้เหมือนหน้าภาพรวม + เมนูขายดี/ขายน้อย
+//  เมนูคำนวณจาก items ที่ /api/orders ส่งมาพร้อมออเดอร์ (ตาราง OrderDetail)
+//  [เพิ่ม] และการ์ดรีวิวจากลูกค้า (ดึงจาก /api/stores/{storeId}/reviews)
+// ---------------------------------------------------------------------
+function StoreSalesPage({ ctx }) {
+  const { orders, stores, pushToast } = ctx;
+  const [storeId, setStoreId] = useState('');
+  const [anchor, setAnchor] = useState(todayISO());
+  const [days, setDays] = useState(1);
+
+
+  const store = stores.find((s) => String(s.StoreId) === String(storeId)) || null;
+
+  const report = useMemo(() => {
+    if (!storeId) return null;
+    const bounds = periodBounds(anchor, days);
+    const prevBounds = previousBounds(anchor, days);
+    const current = orders.filter((o) => inRange(o, bounds, storeId));
+    const previous = orders.filter((o) => inRange(o, prevBounds, storeId));
+    const now = summarize(current);
+    const before = summarize(previous);
+    const menus = summarizeMenus(now.completed);
+    return {
+      now,
+      before,
+      buckets: buildBuckets(now.completed, anchor, days),
+      bestMenus: menus.slice(0, 2),
+      worstMenus: [...menus].reverse().slice(0, 2),
+      menuCount: menus.length
+    };
+  }, [orders, storeId, anchor, days]);
+
+  const periodLabel =
+    days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+  const compareLabel = days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
+
+  const handleCsv = () => {
+    if (!report || !store) return;
+    exportCsv(`onlyfoods-${store.StoreName}-${anchor}-${days}d.csv`, [
+      [`รายงานยอดขายร้าน ${store.StoreName}`],
+      ['ช่วงข้อมูล', periodLabel],
+      ['ออกรายงานเมื่อ', nowStamp()],
+      [],
+      ['ตัวชี้วัด', 'ค่า', 'ช่วงก่อนหน้า'],
+      ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales), Math.round(report.before.sales)],
+      ['ออเดอร์สำเร็จ', report.now.completedCount, report.before.completedCount],
+      ['ออเดอร์ยกเลิก', report.now.cancelledCount, report.before.cancelledCount],
+      ['ยอดเฉลี่ยต่อออเดอร์', report.now.avgOrder.toFixed(2), report.before.avgOrder.toFixed(2)],
+      [],
+      ['เมนู', 'จำนวนที่ขายได้', 'ยอดขาย (บาท)', 'สัดส่วนของยอดร้าน (%)'],
+      ...summarizeMenus(report.now.completed).map((m) => [
+        m.name,
+        m.qty,
+        Math.round(m.amount),
+        m.share.toFixed(1)
+      ]),
+      [],
+      [days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
+      ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count])
+    ]);
+    pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
+  };
+
+  const handlePdf = () => {
+    if (!report || !store) return;
+    exportPdf(`onlyfoods-${store.StoreName}-${anchor}-${days}d.pdf`, {
+      title: `รายงานยอดขาย · ${store.StoreName}`,
+      subtitle: `ช่วงข้อมูล: ${periodLabel}`,
+      kpis: [
+        {
+          label: 'ยอดขายสุทธิ',
+          value: `${money(report.now.sales)} บาท`,
+          note: describeDelta(changePct(report.now.sales, report.before.sales), compareLabel),
+          tone: toneOf(changePct(report.now.sales, report.before.sales))
+        },
+        {
+          label: 'ออเดอร์สำเร็จ',
+          value: `${money(report.now.completedCount)} ออเดอร์`,
+          note: describeDelta(
+            changePct(report.now.completedCount, report.before.completedCount),
+            compareLabel
+          ),
+          tone: toneOf(changePct(report.now.completedCount, report.before.completedCount))
+        },
+        {
+          label: 'ยอดเฉลี่ยต่อออเดอร์',
+          value: `${money2(report.now.avgOrder)} บาท`,
+          note: `ยกเลิก ${report.now.cancelledCount} ออเดอร์`
+        }
+      ],
+      tableTitle: 'ยอดขายแยกตามเมนู',
+      columns: [
+        { title: 'เมนู', width: 0.46 },
+        { title: 'จำนวน', width: 0.16, align: 'right' },
+        { title: 'ยอดขาย (บาท)', width: 0.2, align: 'right' },
+        { title: 'สัดส่วน', width: 0.18, align: 'right' }
+      ],
+      rows: summarizeMenus(report.now.completed).map((m) => [
+        m.name,
+        money(m.qty),
+        money(m.amount),
+        `${m.share.toFixed(1)}%`
+      ])
+    });
+    pushToast('บันทึกไฟล์ PDF เรียบร้อยแล้ว');
+  };
+
+  return (
+    <>
+      <Card style={{ marginBottom: '16px', zIndex: 40 }}>
+        <div style={toolbarStyle}>
+          <div style={{ minWidth: '240px', flex: 1 }}>
+            <h3 style={h3Style}>เลือกร้านค้า</h3>
+            <SearchableStorePicker stores={stores} value={storeId} onChange={setStoreId} />
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* [UX/UI] ตัวเลือกช่วงเวลาย้ายไปอยู่บนหัวการ์ดกราฟแล้ว ช่องเลือกร้านจึงไม่โดนเบียด */}
+            <Button variant="ghost" icon="download" onClick={handleCsv} disabled={!storeId}>
+              CSV
+            </Button>
+            <Button variant="dark" icon="download" onClick={handlePdf} disabled={!storeId}>
+              PDF
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {!storeId && (
+        <Card>
+          <EmptyState text="เลือกร้านจากช่องด้านบนเพื่อดูยอดขายและเมนูของร้านนั้น" />
+        </Card>
+      )}
+
+      {storeId && report && store && (
+        <>
+          <Card style={{ marginBottom: '16px' }}>
+            <div style={toolbarStyle}>
+              <div>
+                <h3 style={h3Style}>{store.StoreName}</h3>
+                <p style={captionStyle}>{periodLabel}</p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Badge tone={store.IsOpen ? 'ok' : 'neutral'}>
+                  {store.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}
+                </Badge>
+                <Badge tone={store.IsSuspended ? 'danger' : 'ok'}>
+                  {store.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
+                </Badge>
+              </div>
+            </div>
+          </Card>
+
+          <div className="of-kpi-row">
+            <KpiCard
+              label="ยอดขายสุทธิ"
+              value={money(report.now.sales)}
+              unit="บาท"
+              delta={changePct(report.now.sales, report.before.sales)}
+              deltaLabel={compareLabel}
+              highlight
+              icon="trend"
+            />
+            <KpiCard
+              label="ออเดอร์สำเร็จ"
+              value={money(report.now.completedCount)}
+              unit="ออเดอร์"
+              delta={changePct(report.now.completedCount, report.before.completedCount)}
+              deltaLabel={compareLabel}
+              variant="blue"
+              icon="check"
+            />
+            <div className="of-kpi-col">
+              <KpiCard
+                size="sm"
+                label="ยอดเฉลี่ยต่อออเดอร์"
+                value={money2(report.now.avgOrder)}
+                unit="บาท"
+                delta={changePct(report.now.avgOrder, report.before.avgOrder)}
+                deltaLabel={compareLabel}
+                icon="trend"
+                tone="blue"
+              />
+              <KpiCard
+                size="sm"
+                label="ออเดอร์ยกเลิก"
+                value={money(report.now.cancelledCount)}
+                unit="ออเดอร์"
+                hint={`อัตรายกเลิก ${report.now.cancelRate.toFixed(1)}%`}
+                delta={null}
+                icon="ban"
+                tone="amber"
+              />
+            </div>
+          </div>
+
+          {/* [UX/UI] หัวการ์ดกราฟ: ยอดรวมด้านซ้าย + ปฏิทินและปุ่มช่วงเวลาด้านขวา */}
+          <Card style={{ marginBottom: '16px' }}>
+            <div style={chartHeadStyle}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: T.muted, fontSize: '14px', fontWeight: 500 }}>
+                  {days === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}
+                </div>
+                <h3 style={{ margin: '6px 0 0', fontSize: '24px', fontWeight: 700, color: T.ink }}>
+                  {money(report.now.sales)} บาท
+                </h3>
+                <p style={captionStyle}>ชี้ที่จุดบนกราฟเพื่อดูยอดขายของช่วงเวลานั้น</p>
+              </div>
+              <PeriodPicker anchor={anchor} setAnchor={setAnchor} days={days} setDays={setDays} />
+            </div>
+            <SalesLineChart buckets={report.buckets} showStoreDetail={false} />
+          </Card>
+
+          <div style={{ ...chartGridStyle, marginBottom: '16px' }}>
+            <Card
+              title="เมนูขายดี 2 อันดับแรก"
+              subtitle="ดูว่าเมนูไหนเป็นตัวทำรายได้หลักของร้าน"
+            >
+              <MenuRankList rows={report.bestMenus} emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้" />
+            </Card>
+            <Card
+              title="เมนูที่ขายได้น้อย 2 อันดับ"
+              subtitle="ใช้ตัดสินใจว่าควรปรับราคา จัดโปรฯ หรือถอดเมนูออก"
+            >
+              <MenuRankList
+                rows={report.worstMenus}
+                tone="accent"
+                emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้"
+              />
+            </Card>
+          </div>
+
+          {/* [เพิ่ม] รีวิวจากลูกค้าของร้านนี้ */}
+          <StoreReviewSection ctx={ctx} storeId={storeId} />
+        </>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------
+// 8.3 หน้าจัดการร้านค้า (ข้อ 5)
+//  เพิ่ม / แก้ไข / เปิด–ปิดร้าน / ระงับสิทธิ์ / ลบ  — ทุกอย่างยิงเข้าฐานข้อมูลจริง
+//  ฟิลด์ที่บังคับกรอกมีดอกจันสีแดง และมีป๊อปอัพยืนยันทุกการกระทำที่มีผลกับร้าน
+// ---------------------------------------------------------------------
+
+const EMPTY_STORE_FORM = {
+  StoreId: null,
+  name: '',
+  category: '',
+  contactName: '',
+  phone: '',
+  lineId: '',
+  email: '',
+  description: '',
+  imageData: '',
+  imageName: ''
+};
+
+// ตรวจจับข้อความมั่ว ๆ ที่คนเทสมักพิมพ์ขอผ่านฟอร์ม เช่น "000000", "aaaaaa",
+// "111111", หรือกดเรียงเลข "123456" / "654321" — ไม่ใช่ข้อมูลติดต่อจริง
+function looksLikeGarbage(value) {
+  const compact = String(value || '').trim().replace(/\s/g, '');
+  if (compact.length < 2) return false;
+
+  // ตัวอักษร/ตัวเลขตัวเดียวซ้ำกันทั้งสตริง เช่น 000000, aaaaaa, ------
+  if (/^(.)\1+$/.test(compact)) return true;
+
+  // ตัวเลขล้วนที่เรียงติดกัน เช่น 123456 หรือ 654321
+  if (/^\d+$/.test(compact) && compact.length >= 4) {
+    const digits = compact.split('').map(Number);
+    const ascending = digits.every((d, i) => i === 0 || d === digits[i - 1] + 1);
+    const descending = digits.every((d, i) => i === 0 || d === digits[i - 1] - 1);
+    if (ascending || descending) return true;
+  }
+  return false;
+}
+
+// รูปแบบอีเมลที่รัดกุมขึ้น: ต้องมี @ ตามด้วยชื่อโดเมนที่ถูกต้อง และปิดท้ายด้วย
+// นามสกุลโดเมนที่เป็นตัวอักษรล้วนอย่างน้อย 2 ตัว (กัน "x@gmail", "x@gmail.c12" ฯลฯ)
+const EMAIL_RE =
+  /^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+
+// ตรวจข้อมูลฝั่งหน้าจอ (คิดจากมุมคนเทส: เว้นวรรครัว ๆ, พิมพ์ 00, ใส่ยาวเกิน)
+function validateStoreForm(form) {
+  const errors = {};
+  const name = form.name.trim();
+  if (!name) errors.name = 'กรุณากรอกชื่อร้านค้า';
+  else if (name.length < 2) errors.name = 'ชื่อร้านต้องมีอย่างน้อย 2 ตัวอักษร';
+  else if (name.length > 100) errors.name = 'ชื่อร้านต้องไม่เกิน 100 ตัวอักษร';
+  else if (/^[\d\s\-_.]+$/.test(name)) errors.name = 'ชื่อร้านต้องไม่ใช่ตัวเลขหรือสัญลักษณ์ล้วน';
+
+  if (!form.category) errors.category = 'กรุณาเลือกประเภทอาหาร';
+
+  // ชื่อผู้ติดต่อ, LINE, อีเมล เป็นข้อมูลติดต่อร้านที่ทีมบริหารต้องใช้ตามตัวจริง
+  // จึงบังคับกรอกทั้งหมด และกันไม่ให้พิมพ์มั่ว ๆ ผ่านได้
+  const contactName = form.contactName.trim();
+  if (!contactName) {
+    errors.contactName = 'กรุณากรอกชื่อผู้ติดต่อ';
+  } else if (contactName.length < 2) {
+    errors.contactName = 'ชื่อผู้ติดต่อสั้นเกินไป';
+  } else if (contactName.length > 60) {
+    errors.contactName = 'ชื่อผู้ติดต่อต้องไม่เกิน 60 ตัวอักษร';
+  } else if (/^[\d\s\-_.]+$/.test(contactName) || looksLikeGarbage(contactName)) {
+    errors.contactName = 'กรุณากรอกชื่อผู้ติดต่อจริง ไม่ใช่ตัวเลขหรือข้อความมั่ว';
+  }
+
+  const phone = form.phone.replace(/[\s-]/g, '');
+  if (!phone) errors.phone = 'กรุณากรอกเบอร์โทรติดต่อ';
+  else if (!/^0\d{8,9}$/.test(phone)) {
+    errors.phone = 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก และขึ้นต้นด้วย 0';
+  } else if (looksLikeGarbage(phone)) {
+    errors.phone = 'เบอร์โทรนี้ไม่ถูกต้อง';
+  }
+
+  const lineId = form.lineId.trim();
+  if (!lineId) {
+    errors.lineId = 'กรุณากรอก LINE ID สำหรับติดต่อร้าน';
+  } else if (/\s/.test(lineId)) {
+    errors.lineId = 'LINE ID ห้ามมีช่องว่าง';
+  } else if (lineId.replace(/^@/, '').length < 2) {
+    errors.lineId = 'LINE ID สั้นเกินไป';
+  } else if (lineId.length > 30) {
+    errors.lineId = 'LINE ID ต้องไม่เกิน 30 ตัวอักษร';
+  } else if (looksLikeGarbage(lineId.replace(/^@/, ''))) {
+    errors.lineId = 'กรุณากรอก LINE ID ที่ถูกต้อง ไม่ใช่ข้อความมั่ว';
+  }
+
+  const email = form.email.trim();
+  if (!email) {
+    errors.email = 'กรุณากรอกอีเมลติดต่อ';
+  } else if (!EMAIL_RE.test(email)) {
+    errors.email = 'รูปแบบอีเมลไม่ถูกต้อง เช่น shop@example.com';
+  } else if (looksLikeGarbage(email.split('@')[0])) {
+    errors.email = 'กรุณากรอกอีเมลที่ถูกต้อง ไม่ใช่ข้อความมั่ว';
+  }
+
+  if (form.description.trim().length > 300) {
+    errors.description = 'คำอธิบายต้องไม่เกิน 300 ตัวอักษร';
+  }
+  return errors;
+}
+
+function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose, onSubmit, saving }) {
+  const fileInputRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const update = (key) => (e) => {
+    setForm((prev) => ({ ...prev, [key]: e.target.value }));
+    setErrors((prev) => ({ ...prev, [key]: undefined }));
+  };
+
+  const triggerPick = () => fileInputRef.current?.click();
+
+  // รับไฟล์ไม่ว่าจะมาจากตัวเลือกไฟล์หรือลากมาวาง — ตรวจชนิด/ขนาดที่จุดเดียว
+  const handleFile = (file) => {
+    if (!file) return;
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      setErrors((prev) => ({ ...prev, image: 'รองรับเฉพาะไฟล์ JPG, PNG และ WebP' }));
+      return;
+    }
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+      setErrors((prev) => ({
+        ...prev,
+        image: `ไฟล์ใหญ่เกินกำหนด (${(file.size / 1024 / 1024).toFixed(2)} MB) — อัปโหลดได้ไม่เกิน ${MAX_IMAGE_MB} MB`
+      }));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setForm((prev) => ({ ...prev, imageData: String(reader.result), imageName: file.name }));
+      setErrors((prev) => ({ ...prev, image: undefined }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const onPickImage = (e) => {
+    handleFile(e.target.files?.[0]);
+    e.target.value = '';
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    handleFile(e.dataTransfer.files?.[0]);
+  };
+
+  return (
+    <Modal
+      open={open}
+      title={mode === 'edit' ? 'แก้ไขข้อมูลร้านค้า' : 'เพิ่มร้านค้าใหม่'}
+      subtitle="ช่องที่มีเครื่องหมาย * ต้องกรอกให้ครบก่อนจึงจะบันทึกได้"
+      onClose={onClose}
+      width={660}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            ยกเลิก
+          </Button>
+          <Button icon="check" onClick={onSubmit} disabled={saving}>
+            {saving ? 'กำลังบันทึก...' : mode === 'edit' ? 'บันทึกการแก้ไข' : 'เพิ่มร้านค้า'}
+          </Button>
+        </>
+      }
+    >
+      <Field label="ชื่อร้านค้า" required error={errors.name}>
+        <input
+          value={form.name}
+          onChange={update('name')}
+          maxLength={100}
+          placeholder="เช่น ร้านข้าวแกงวิศวะเดือด"
+          style={inputStyle}
+        />
+      </Field>
+
+      <Field label="ประเภทอาหาร" required error={errors.category}>
+        <select value={form.category} onChange={update('category')} style={inputStyle}>
+          <option value="">— เลือกประเภทอาหาร —</option>
+          {FOOD_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <div style={twoColStyle}>
+        <Field label="ชื่อผู้ติดต่อ" required error={errors.contactName}>
+          <input
+            value={form.contactName}
+            onChange={update('contactName')}
+            maxLength={60}
+            placeholder="ชื่อเจ้าของร้านหรือผู้ดูแล"
+            style={inputStyle}
+          />
+        </Field>
+
+        <Field
+          label="เบอร์โทรติดต่อ"
+          required
+          error={errors.phone}
+          hint="ตัวเลข 9–10 หลัก ขึ้นต้นด้วย 0"
+        >
+          <input
+            value={form.phone}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, phone: e.target.value.replace(/[^\d]/g, '').slice(0, 10) }))
+            }
+            inputMode="numeric"
+            placeholder="0812345678"
+            style={inputStyle}
+          />
+        </Field>
+      </div>
+
+      <div style={twoColStyle}>
+        <Field label="LINE ID" required error={errors.lineId} hint="ห้ามเว้นวรรค">
+          <input
+            value={form.lineId}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, lineId: e.target.value.replace(/\s/g, '').slice(0, 30) }))
+            }
+            placeholder="@onlyfoods"
+            style={inputStyle}
+          />
+        </Field>
+
+        <Field label="อีเมล" required error={errors.email} hint="เช่น shop@example.com">
+          <input
+            type="email"
+            value={form.email}
+            onChange={update('email')}
+            maxLength={100}
+            placeholder="shop@example.com"
+            style={inputStyle}
+          />
+        </Field>
+      </div>
+
+      <Field
+        label="คำอธิบายร้าน"
+        error={errors.description}
+        hint={`${form.description.length}/300 ตัวอักษร`}
+      >
+        <textarea
+          value={form.description}
+          onChange={update('description')}
+          maxLength={300}
+          rows={3}
+          placeholder="จุดเด่นของร้าน เมนูแนะนำ ฯลฯ"
+          style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_STACK }}
+        />
+      </Field>
+
+      <Field
+        label="รูปหน้าร้าน"
+        error={errors.image}
+        hint={`คลิกหรือวางรูปในกรอบเพื่ออัปโหลด · JPG/PNG/WebP · ไม่เกิน ${MAX_IMAGE_MB} MB`}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={onPickImage}
+          style={{ display: 'none' }}
+        />
+        <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={triggerPick}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            style={imageDropzoneStyle(dragOver, !!errors.image)}
+            aria-label="อัปโหลดรูปหน้าร้าน"
+          >
+            {form.imageData ? (
+              <img src={form.imageData} alt="ตัวอย่างรูปร้าน" style={imageDropzonePreviewStyle} />
+            ) : (
+              <span style={imageDropzonePlaceholderStyle}>
+                <Icon name="plus" size={22} color={T.primary} />
+                <span>เพิ่มรูป</span>
+              </span>
+            )}
+          </button>
+          {form.imageData && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <Button variant="ghost" onClick={triggerPick}>
+                เปลี่ยนรูป
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setForm((prev) => ({ ...prev, imageData: '', imageName: '' }))}
+              >
+                ลบรูป
+              </Button>
+            </div>
+          )}
+        </div>
+      </Field>
+    </Modal>
+  );
+}
+
+function StoreManagePage({ ctx }) {
+  const { API, user, stores, search, pushToast, ask, reloadStores } = ctx;
+  const [details, setDetails] = useState([]); // ข้อมูลเต็มจาก /api/stores
+  const [modalOpen, setModalOpen] = useState(false);
+  const [mode, setMode] = useState('create');
+  const [form, setForm] = useState(EMPTY_STORE_FORM);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [quickName, setQuickName] = useState('');
+
+  const loadDetails = useCallback(async () => {
+    try {
+      const data = await callApi(`${API}/api/stores`);
+      setDetails(Array.isArray(data) ? data : []);
+    } catch (err) {
+      // ไม่ต้องเด้ง error ซ้ำ เพราะหน้ายังใช้ข้อมูลจาก /api/reports/dashboard ได้
+      console.debug('โหลดรายละเอียดร้านไม่สำเร็จ:', err.message);
+    }
+  }, [API]);
+
+  useEffect(() => {
+    loadDetails();
+  }, [loadDetails]);
+
+  const detailOf = (storeId) =>
+    details.find((d) => String(d.StoreId) === String(storeId)) || {};
+
+  const rows = stores.filter((s) =>
+    String(s.StoreName || '').toLowerCase().includes(search)
+  );
+
+  // ---- เปิดฟอร์ม ----
+  const openCreate = () => {
+    // ข้อ 6: ถ้ายังไม่พิมพ์ชื่อร้าน กดถัดไปไม่ได้ ต้องเด้งเตือนก่อน
+    if (!quickName.trim()) {
+      pushToast('กรุณากรอกชื่อร้านค้าก่อน จึงจะเปิดฟอร์มเพิ่มร้านได้', 'warn');
+      return;
+    }
+    setMode('create');
+    setForm({ ...EMPTY_STORE_FORM, name: quickName.trim() });
+    setErrors({});
+    setModalOpen(true);
+  };
+
+  const openEdit = (store) => {
+    const d = detailOf(store.StoreId);
+    setMode('edit');
+    setForm({
+      StoreId: store.StoreId,
+      name: store.StoreName || '',
+      category: d.Category || '',
+      contactName: d.ContactName || '',
+      phone: d.ContactPhone || '',
+      lineId: d.ContactLine || '',
+      email: d.ContactEmail || '',
+      description: d.Description || '',
+      imageData: d.ImageUrl || '',
+      imageName: ''
+    });
+    setErrors({});
+    setModalOpen(true);
+  };
+
+  // ---- บันทึกฟอร์ม ----
+  const submitForm = async () => {
+    const found = validateStoreForm(form);
+    setErrors(found);
+    if (Object.keys(found).length) {
+      pushToast('ยังกรอกข้อมูลไม่ครบหรือไม่ถูกต้อง กรุณาตรวจสอบช่องที่มีข้อความสีแดง', 'error');
+      return;
+    }
+
+    const payload = {
+      store_name: form.name.trim(),
+      category: form.category,
+      contact_name: form.contactName.trim(),
+      contact_phone: form.phone,
+      contact_line: form.lineId.trim(),
+      contact_email: form.email.trim(),
+      description: form.description.trim(),
+      image_url: form.imageData,
+      performed_by: user?.FullName || user?.Username || 'Executive'
+    };
+
+    // ยิงไป endpoint แบบเก็บรายละเอียดครบก่อน (/full จาก main_additions.py)
+    // ถ้ายังไม่ได้เพิ่มในหลังบ้าน จะถอยไปใช้ endpoint เดิมของ main.py ที่บันทึกได้แค่ชื่อร้าน
+    // => ไฟล์นี้รันได้ทันทีตั้งแต่ยังไม่แก้หลังบ้าน แค่ข้อมูลจะยังไม่ครบ
+    const send = async (path, method) =>
+      callApi(`${API}${path}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+    setSaving(true);
+    try {
+      const isEdit = mode === 'edit';
+      const fullPath = isEdit ? `/api/stores/${form.StoreId}/full` : '/api/stores/full';
+      const basicPath = isEdit ? `/api/stores/${form.StoreId}` : '/api/stores';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      try {
+        await send(fullPath, method);
+        pushToast(isEdit ? 'บันทึกการแก้ไขร้านค้าแล้ว' : 'เพิ่มร้านค้าเข้าระบบเรียบร้อยแล้ว');
+      } catch (fullError) {
+        if (!/endpoint/i.test(fullError.message)) throw fullError;
+        await send(basicPath, method);
+        pushToast(
+          'บันทึกได้เฉพาะชื่อร้าน — เพิ่มโค้ดจาก main_additions.py ในหลังบ้านก่อน จึงจะเก็บประเภทอาหาร/ช่องทางติดต่อ/รูปได้',
+          'warn'
+        );
+      }
+
+      if (!isEdit) setQuickName('');
+      setModalOpen(false);
+      await reloadStores();
+      await loadDetails();
+    } catch (err) {
+      pushToast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ---- เปิด/ปิดร้าน ----
+  const toggleStore = async (store) => {
+    const closing = Boolean(store.IsOpen);
+    const ok = await ask({
+      title: closing ? 'ปิดร้านค้า' : 'เปิดร้านค้า',
+      message: `ยืนยัน${closing ? 'ปิด' : 'เปิด'}ร้าน "${store.StoreName}" ใช่หรือไม่`,
+      warning: closing ? 'ลูกค้าจะสั่งอาหารจากร้านนี้ไม่ได้จนกว่าจะเปิดใหม่' : null,
+      confirmText: closing ? 'ปิดร้าน' : 'เปิดร้าน',
+      danger: closing
+    });
+    if (!ok) return;
+    try {
+      await callApi(`${API}/api/stores/${store.StoreId}/toggle`, { method: 'PUT' });
+      pushToast(`${closing ? 'ปิด' : 'เปิด'}ร้าน ${store.StoreName} แล้ว`);
+      await reloadStores();
+    } catch (err) {
+      pushToast(err.message, 'error');
+    }
+  };
+
+  // ---- ระงับ/ปลดระงับสิทธิ์ ----
+  const suspendStore = async (store) => {
+    const suspending = !store.IsSuspended;
+    const ok = await ask({
+      title: suspending ? 'ระงับสิทธิ์ร้านค้า' : 'ปลดระงับสิทธิ์',
+      message: `ยืนยัน${suspending ? 'ระงับสิทธิ์' : 'ปลดระงับสิทธิ์'}ร้าน "${store.StoreName}" ใช่หรือไม่`,
+      warning: suspending
+        ? 'ร้านจะขายไม่ได้ชั่วคราว แต่ข้อมูลและยอดขายเดิมยังอยู่ครบ'
+        : null,
+      confirmText: suspending ? 'ระงับสิทธิ์' : 'ปลดระงับ',
+      danger: suspending
+    });
+    if (!ok) return;
+    try {
+      await callApi(`${API}/api/stores/${store.StoreId}/suspend`, { method: 'PUT' });
+      pushToast(`${suspending ? 'ระงับสิทธิ์' : 'ปลดระงับ'}ร้าน ${store.StoreName} แล้ว`);
+      await reloadStores();
+    } catch (err) {
+      pushToast(err.message, 'error');
+    }
+  };
+
+  // ---- ลบร้าน ----
+  const deleteStore = async (store) => {
+    const ok = await ask({
+      title: 'ลบร้านค้าออกจากระบบ',
+      message: `ยืนยันลบร้าน "${store.StoreName}" ออกจากระบบใช่หรือไม่`,
+      warning:
+        'เมนูของร้านจะถูกลบไปด้วย และถ้าร้านนี้เคยมีออเดอร์ ระบบจะไม่ยอมให้ลบ (ให้ใช้ระงับสิทธิ์แทน)',
+      confirmText: 'ลบร้านค้า',
+      danger: true
+    });
+    if (!ok) return;
+    try {
+      await callApi(`${API}/api/stores/${store.StoreId}`, { method: 'DELETE' });
+      pushToast(`ลบร้าน ${store.StoreName} แล้ว`);
+      await reloadStores();
+      await loadDetails();
+    } catch (err) {
+      pushToast(err.message, 'error');
+    }
+  };
+
+  return (
+    <>
+      <Card title="เพิ่มร้านค้าใหม่" subtitle="พิมพ์ชื่อร้านก่อน แล้วกดต่อเพื่อกรอกรายละเอียดให้ครบ" style={{ marginBottom: '16px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
+          <input
+            value={quickName}
+            onChange={(e) => setQuickName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                openCreate();
+              }
+            }}
+            maxLength={100}
+            placeholder="ชื่อร้านค้า เช่น ก๋วยเตี๋ยวเรือตึกพระเทพ"
+            style={{ ...inputStyle, flex: 1, minWidth: '240px' }}
+          />
+          <Button icon="plus" onClick={openCreate}>
+            กรอกรายละเอียดร้าน
+          </Button>
+        </div>
+      </Card>
+
+      <Card
+        title="รายชื่อร้านค้าทั้งหมด"
+        subtitle={`${money(rows.length)} ร้านที่แสดงอยู่ · ใช้ช่องค้นหาด้านบนเพื่อกรองรายชื่อ`}
+      >
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>ร้านค้า</th>
+                <th style={thStyle}>ประเภท</th>
+                <th style={thStyle}>ติดต่อ</th>
+                <th style={thStyle}>สถานะ</th>
+                <th style={thRightStyle}>ยอดขายสะสม</th>
+                <th style={thStyle}>จัดการ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s) => {
+                const d = detailOf(s.StoreId);
+                return (
+                  <tr key={s.StoreId} style={trStyle}>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {d.ImageUrl ? (
+                          <img
+                            src={d.ImageUrl}
+                            alt=""
+                            style={{
+                              width: '38px',
+                              height: '38px',
+                              borderRadius: T.radiusMd,
+                              objectFit: 'cover',
+                              border: `1px solid ${T.line}`
+                            }}
+                          />
+                        ) : (
+                          <div style={storeThumbStyle}>
+                            {String(s.StoreName || '?').charAt(0)}
+                          </div>
+                        )}
+                        <div style={{ minWidth: 0 }}>
+                          <strong style={{ color: T.ink }}>{s.StoreName}</strong>
+                          <div style={captionStyle}>รหัสร้าน #{s.StoreId}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td style={tdStyle}>{d.Category || <span style={{ color: T.muted }}>—</span>}</td>
+                    <td style={tdStyle}>
+                      {d.ContactPhone ? (
+                        <>
+                          <div>{d.ContactPhone}</div>
+                          {d.ContactLine && <div style={captionStyle}>LINE {d.ContactLine}</div>}
+                        </>
+                      ) : (
+                        <span style={{ color: T.muted }}>—</span>
+                      )}
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <Badge tone={s.IsOpen ? 'ok' : 'neutral'}>{s.IsOpen ? 'เปิด' : 'ปิด'}</Badge>
+                        {Boolean(s.IsSuspended) && <Badge tone="danger">ระงับสิทธิ์</Badge>}
+                      </div>
+                    </td>
+                    <td style={tdRightStyle}>{money(s.net_sales)} บาท</td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <Button variant="soft" icon="edit" onClick={() => openEdit(s)} style={smallBtn}>
+                          แก้ไข
+                        </Button>
+                        <Button variant="soft" icon="power" onClick={() => toggleStore(s)} style={smallBtn}>
+                          {s.IsOpen ? 'ปิดร้าน' : 'เปิดร้าน'}
+                        </Button>
+                        <Button variant="soft" icon="ban" onClick={() => suspendStore(s)} style={smallBtn}>
+                          {s.IsSuspended ? 'ปลดระงับ' : 'ระงับสิทธิ์'}
+                        </Button>
+                        <Button variant="danger" icon="trash" onClick={() => deleteStore(s)} style={smallBtn}>
+                          ลบ
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
+                    ไม่พบร้านค้าที่ตรงกับคำค้นหา
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <StoreFormModal
+        open={modalOpen}
+        mode={mode}
+        form={form}
+        setForm={setForm}
+        errors={errors}
+        setErrors={setErrors}
+        saving={saving}
+        onClose={() => setModalOpen(false)}
+        onSubmit={submitForm}
+      />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------
+// 8.4 หน้าบัญชีร้านค้า (ข้อ 6)
+//  ออก username/password ให้ร้านที่มาสมัคร เพื่อให้ล็อกอินไปจัดการเมนู/ออเดอร์ของตัวเอง
+//  บันทึกลงตาราง Users (Role = Shop Owner / Front Staff / Kitchen Staff) พร้อมผูก StoreId
+// ---------------------------------------------------------------------
+
+const STORE_ROLES = ['Shop Owner'];
+const ROLE_LABEL = {
+  'Shop Owner': 'เจ้าของร้าน',
+  // 'Front Staff': 'พนักงานหน้าร้าน',
+  // 'Kitchen Staff': 'พนักงานครัว'
+};
+
+const EMPTY_ACCOUNT_FORM = {
+  storeId: '',
+  role: 'Shop Owner',
+  fullName: '',
+  username: '',
+  password: '',
+  confirm: ''
+};
+
+function validateAccountForm(form, mode) {
+  const errors = {};
+  if (!form.storeId) errors.storeId = 'กรุณาเลือกร้านค้าที่ผูกกับบัญชีนี้';
+  if (!form.role) errors.role = 'กรุณาเลือกตำแหน่ง';
+
+  const fullName = form.fullName.trim();
+  if (!fullName) errors.fullName = 'กรุณากรอกชื่อ-นามสกุลผู้ใช้';
+  else if (fullName.length > 100) errors.fullName = 'ชื่อต้องไม่เกิน 100 ตัวอักษร';
+
+  if (mode === 'create') {
+    const username = form.username.trim();
+    if (!username) errors.username = 'กรุณากรอกชื่อผู้ใช้';
+    else if (!/^[a-zA-Z0-9_]{4,20}$/.test(username)) {
+      errors.username = 'ใช้ได้เฉพาะ a-z, 0-9 และ _ ความยาว 4–20 ตัว (ห้ามเว้นวรรค)';
+    }
+  }
+
+  if (!form.password) errors.password = 'กรุณากรอกรหัสผ่าน';
+  else if (form.password.length < 6) errors.password = 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร';
+  else if (form.password.length > 50) errors.password = 'รหัสผ่านต้องไม่เกิน 50 ตัวอักษร';
+  else if (/\s/.test(form.password)) errors.password = 'รหัสผ่านห้ามมีช่องว่าง';
+
+  if (form.confirm !== form.password) errors.confirm = 'ยืนยันรหัสผ่านไม่ตรงกัน';
+  return errors;
+}
+
+function StoreAccountsPage({ ctx }) {
+  const { API, user, stores, search, pushToast, ask } = ctx;
+  const [accounts, setAccounts] = useState([]);
+  const [loadError, setLoadError] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [mode, setMode] = useState('create'); // create | password
+  const [form, setForm] = useState(EMPTY_ACCOUNT_FORM);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const loadAccounts = useCallback(async () => {
+    try {
+      const data = await callApi(`${API}/api/store-accounts`);
+      setAccounts(Array.isArray(data) ? data : []);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err.message);
+    }
+  }, [API]);
+
+  useEffect(() => {
+    loadAccounts();
+  }, [loadAccounts]);
+
+  const storeName = (id) =>
+    stores.find((s) => String(s.StoreId) === String(id))?.StoreName || '—';
+
+  const rows = accounts.filter((a) => {
+    const text = `${a.Username} ${a.FullName} ${storeName(a.StoreId)}`.toLowerCase();
+    return text.includes(search);
+  });
+
+  const openCreate = () => {
+    if (!stores.length) {
+      pushToast('ยังไม่มีร้านค้าในระบบ ให้เพิ่มร้านค้าก่อนจึงจะออกบัญชีได้', 'warn');
+      return;
+    }
+    setMode('create');
+    setForm(EMPTY_ACCOUNT_FORM);
+    setErrors({});
+    setModalOpen(true);
+  };
+
+  const openResetPassword = (account) => {
+    setMode('password');
+    setForm({
+      storeId: account.StoreId || '',
+      role: account.Role,
+      fullName: account.FullName,
+      username: account.Username,
+      password: '',
+      confirm: '',
+      userId: account.UserId
+    });
+    setErrors({});
+    setModalOpen(true);
+  };
+
+  const submit = async () => {
+    const found = validateAccountForm(form, mode);
+    setErrors(found);
+    if (Object.keys(found).length) {
+      pushToast('ยังกรอกข้อมูลไม่ครบหรือไม่ถูกต้อง กรุณาตรวจสอบช่องที่มีข้อความสีแดง', 'error');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (mode === 'password') {
+        await callApi(`${API}/api/store-accounts/${form.userId}/password`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            password: form.password,
+            full_name: form.fullName.trim(),
+            role: form.role,
+            store_id: Number(form.storeId),
+            performed_by: user?.FullName || 'Executive'
+          })
+        });
+        pushToast('อัปเดตบัญชีร้านค้าเรียบร้อยแล้ว');
+      } else {
+        await callApi(`${API}/api/store-accounts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: form.username.trim(),
+            password: form.password,
+            full_name: form.fullName.trim(),
+            role: form.role,
+            store_id: Number(form.storeId),
+            performed_by: user?.FullName || 'Executive'
+          })
+        });
+        pushToast('สร้างบัญชีให้ร้านค้าเรียบร้อยแล้ว');
+      }
+      setModalOpen(false);
+      await loadAccounts();
+    } catch (err) {
+      pushToast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeAccount = async (account) => {
+    const ok = await ask({
+      title: 'ลบบัญชีผู้ใช้',
+      message: `ยืนยันลบบัญชี "${account.Username}" (${account.FullName}) ใช่หรือไม่`,
+      warning: 'ผู้ใช้รายนี้จะเข้าสู่ระบบไม่ได้อีก',
+      confirmText: 'ลบบัญชี',
+      danger: true
+    });
+    if (!ok) return;
+    try {
+      await callApi(`${API}/api/store-accounts/${account.UserId}`, { method: 'DELETE' });
+      pushToast('ลบบัญชีเรียบร้อยแล้ว');
+      await loadAccounts();
+    } catch (err) {
+      pushToast(err.message, 'error');
+    }
+  };
+
+  const update = (key) => (e) => {
+    setForm((prev) => ({ ...prev, [key]: e.target.value }));
+    setErrors((prev) => ({ ...prev, [key]: undefined }));
+  };
+
+  return (
+    <>
+      <Card style={{ marginBottom: '16px' }}>
+        <div style={toolbarStyle}>
+          <div>
+            <h3 style={h3Style}>บัญชีสำหรับร้านค้า</h3>
+            <p style={captionStyle}>
+              ออกชื่อผู้ใช้และรหัสผ่านให้ร้าน แล้วร้านจะล็อกอินไปเพิ่มเมนูและจัดการออเดอร์ของตัวเองได้
+            </p>
+          </div>
+          <Button icon="plus" onClick={openCreate}>
+            สร้างบัญชีร้านค้า
+          </Button>
+        </div>
+      </Card>
+
+      {loadError && (
+        <Card style={{ marginBottom: '16px', borderLeft: `4px solid ${T.accent}` }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <Icon name="info" size={18} color="#9A6400" />
+            <div>
+              <strong style={{ color: T.ink }}>ยังใช้งานหน้านี้ไม่ได้</strong>
+              <p style={{ ...bodyStyle, margin: '6px 0 0' }}>{loadError}</p>
+              <p style={captionStyle}>
+                เปิดไฟล์ main_additions.py แล้วคัดลอกส่วน &quot;บัญชีร้านค้า&quot; ไปวางต่อท้าย main.py จากนั้นรัน backend ใหม่
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <Card title="รายชื่อบัญชีทั้งหมด" subtitle={`${money(rows.length)} บัญชีที่แสดงอยู่`}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>ชื่อผู้ใช้</th>
+                <th style={thStyle}>ชื่อ-นามสกุล</th>
+                <th style={thStyle}>ตำแหน่ง</th>
+                <th style={thStyle}>ร้านค้า</th>
+                <th style={thStyle}>จัดการ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((a) => (
+                <tr key={a.UserId} style={trStyle}>
+                  <td style={tdStyle}>
+                    <strong style={{ color: T.ink }}>{a.Username}</strong>
+                  </td>
+                  <td style={tdStyle}>{a.FullName}</td>
+                  <td style={tdStyle}>
+                    <Badge tone={a.Role === 'Shop Owner' ? 'warn' : 'neutral'}>
+                      {ROLE_LABEL[a.Role] || a.Role}
+                    </Badge>
+                  </td>
+                  <td style={tdStyle}>{storeName(a.StoreId)}</td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <Button variant="ghost" icon="key" onClick={() => openResetPassword(a)} style={smallBtn}>
+                        แก้ไข / ตั้งรหัสใหม่
+                      </Button>
+                      <Button variant="danger" icon="trash" onClick={() => removeAccount(a)} style={smallBtn}>
+                        ลบ
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
+                    ยังไม่มีบัญชีร้านค้าในระบบ
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal
+        open={modalOpen}
+        title={mode === 'password' ? 'แก้ไขบัญชีร้านค้า' : 'สร้างบัญชีให้ร้านค้า'}
+        subtitle="ช่องที่มีเครื่องหมาย * ต้องกรอกให้ครบก่อนจึงจะบันทึกได้"
+        onClose={() => setModalOpen(false)}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setModalOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button icon="check" onClick={submit} disabled={saving}>
+              {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+            </Button>
+          </>
+        }
+      >
+        <Field label="ร้านค้า" required error={errors.storeId}>
+          <select value={form.storeId} onChange={update('storeId')} style={inputStyle}>
+            <option value="">— เลือกร้านค้า —</option>
+            {stores.map((s) => (
+              <option key={s.StoreId} value={s.StoreId}>
+                {s.StoreName}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="ตำแหน่ง" required error={errors.role}>
+          <select value={form.role} onChange={update('role')} style={inputStyle}>
+            {STORE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABEL[r]}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="ชื่อ-นามสกุลผู้ใช้" required error={errors.fullName}>
+          <input value={form.fullName} onChange={update('fullName')} maxLength={100} style={inputStyle} />
+        </Field>
+
+        <Field
+          label="ชื่อผู้ใช้ (username)"
+          required
+          error={errors.username}
+          hint={mode === 'password' ? 'แก้ชื่อผู้ใช้ไม่ได้' : 'a-z, 0-9, _ ความยาว 4–20 ตัว'}
+        >
+          <input
+            value={form.username}
+            disabled={mode === 'password'}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                username: e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20)
+              }))
+            }
+            style={{ ...inputStyle, background: mode === 'password' ? '#F3F4FA' : T.surface }}
+          />
+        </Field>
+
+        <div style={twoColStyle}>
+          <Field label="รหัสผ่าน" required error={errors.password} hint="อย่างน้อย 6 ตัว ห้ามเว้นวรรค">
+            <input
+              type="text"
+              value={form.password}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, password: e.target.value.replace(/\s/g, '').slice(0, 50) }))
+              }
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="ยืนยันรหัสผ่าน" required error={errors.confirm}>
+            <input
+              type="text"
+              value={form.confirm}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, confirm: e.target.value.replace(/\s/g, '').slice(0, 50) }))
+              }
+              style={inputStyle}
+            />
+          </Field>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+// =====================================================================
+// 9) STYLES — รวมไว้ท้ายไฟล์ที่เดียว จะได้แก้สีทีเดียวทั้งหน้า
+// =====================================================================
+
+// --- ตัวหนังสือมาตรฐาน (ข้อ 1.3) ---
+const h2Style = { margin: 0, fontSize: '24px', fontWeight: 700, color: T.ink, lineHeight: 1.3 };
+const h3Style = { margin: 0, fontSize: '18px', fontWeight: 600, color: T.ink };
+const bodyStyle = { fontSize: '14px', color: T.text, lineHeight: 1.6 };
+const captionStyle = { margin: '4px 0 0', fontSize: '12.5px', color: T.muted, lineHeight: 1.5 };
+const ellipsisStyle = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  color: T.ink,
+  fontWeight: 600,
+  fontSize: '13px'
+};
+
+// --- โครงหน้า ---
+// [UX/UI] โครงหน้าแบบธีม Berry: แถบบนเต็มความกว้าง แล้วค่อยเป็น (เมนูซ้าย + เนื้อหา)
+const shellStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  position: 'relative',
+  width: '100%',
+  maxWidth: '100%',
+  minWidth: 0,
+  height: '100dvh',
+  minHeight: '100dvh',
+  overflow: 'hidden',
+  background: T.bg,
+  color: T.text,
+  margin: 0,
+  padding: 0
+};
+
+// แถวล่างของโครงหน้า (เมนูซ้าย + พื้นที่เนื้อหาที่เลื่อนได้)
+const shellBodyStyle = {
   display: 'flex',
   alignItems: 'stretch',
+  flex: 1,
+  minHeight: 0,
   width: '100%',
-  minHeight: '100vh',
-  background: '#f1f5f9'
+  position: 'relative'
+};
+
+// พื้นที่เนื้อหา เลื่อนเฉพาะส่วนนี้ แถบบนกับเมนูซ้ายจึงอยู่กับที่
+const mainScrollStyle = {
+  flex: '1 1 0%',
+  minWidth: 0,
+  width: 0,
+  maxWidth: '100%',
+  overflowY: 'auto',
+  overflowX: 'hidden'
 };
 
 const sidebarStyle = {
-  width: '235px',
-  minWidth: '235px',
-  minHeight: '100vh',
-  padding: '18px 14px',
+  width: '260px',
+  minWidth: '260px',
+  padding: '16px 16px 12px',
   boxSizing: 'border-box',
-  background: 'linear-gradient(180deg, #082f49 0%, #0b2940 100%)',
-  color: 'white',
-  position: 'sticky',
-  top: 0,
-  alignSelf: 'flex-start',
+  background: T.sideBg,
+  borderRight: `1px solid ${T.line}`,
   display: 'flex',
   flexDirection: 'column',
-  zIndex: 20
+  alignSelf: 'stretch',
+  overflowY: 'auto',
+  flexShrink: 0,
+  boxShadow: '0 1px 3px rgba(18,25,38,0.02)'
 };
 
+// โลโก้บนแถบบน — ความกว้างเท่าเมนูซ้ายเพื่อให้เส้นตรงกัน
 const brandStyle = {
+  width: '236px',
+  flexShrink: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  whiteSpace: 'nowrap',
+  minWidth: 0
+};
+
+const brandTitleStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  fontSize: '20px',
+  fontWeight: 700,
+  color: T.accent
+};
+
+const brandSubtitleStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  fontSize: '12px',
+  marginTop: '4px',
+  color: T.muted
+};
+
+const sidebarLabelStyle = {
+  color: T.ink,
+  fontSize: '14px',
+  fontWeight: 500,
+  padding: '12px 16px',
+  marginBottom: '4px'
+};
+
+const sidebarItemStyle = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '16px',
+  padding: '10px 16px',
+  marginBottom: '8px',
+  border: 'none',
+  borderRadius: T.radiusMd,
+  cursor: 'pointer',
+  textAlign: 'left',
+  fontSize: '14px',
+  fontFamily: FONT_STACK,
+  transition: 'background .18s ease, color .18s ease'
+};
+
+const sidebarFootStyle = {
   display: 'flex',
   alignItems: 'center',
   gap: '10px',
-  padding: '6px 5px 17px',
-  borderBottom: '1px solid rgba(148,163,184,0.18)'
-};
-
-const brandIconStyle = {
-  width: '38px',
-  height: '38px',
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: '10px',
-  background: '#0d9488',
-  color: 'white',
-  fontWeight: 'bold'
-};
-
-const sidebarAccountStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '10px',
-  marginTop: 'auto',
-  padding: '15px 5px 4px',
-  borderTop: '1px solid rgba(148,163,184,0.18)'
+  padding: '16px 10px 6px',
+  marginTop: '12px',
+  borderTop: `1px solid ${T.line}`
 };
 
 const avatarStyle = {
@@ -1279,271 +4153,451 @@ const avatarStyle = {
   display: 'grid',
   placeItems: 'center',
   borderRadius: '50%',
-  background: '#0f766e',
-  color: 'white',
-  fontWeight: 'bold'
-};
-
-const topbarStyle = {
-  minHeight: '68px',
-  padding: '10px 22px',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '14px',
-  background: 'white',
-  borderBottom: '1px solid #e2e8f0',
-  position: 'sticky',
-  top: 0,
-  zIndex: 15,
-  boxSizing: 'border-box'
-};
-
-const menuToggleStyle = {
-  width: '38px',
-  height: '38px',
-  border: '1px solid #cbd5e1',
-  borderRadius: '9px',
-  background: 'white',
-  color: '#0f172a',
-  cursor: 'pointer',
-  fontSize: '18px'
-};
-
-const topSearchWrapStyle = {
-  width: 'min(420px, 50%)',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  padding: '9px 12px',
-  border: '1px solid #e2e8f0',
-  borderRadius: '10px',
-  background: '#f8fafc'
-};
-
-const topSearchInputStyle = {
-  width: '100%',
-  border: 'none',
-  outline: 'none',
-  background: 'transparent',
-  color: '#0f172a'
-};
-
-const topAccountStyle = {
-  marginLeft: 'auto',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '9px',
-  padding: '7px 11px',
-  border: '1px solid #e2e8f0',
-  borderRadius: '999px',
-  background: 'white'
-};
-
-const topAvatarStyle = {
-  width: '32px',
-  height: '32px',
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: '50%',
-  background: '#0f766e',
-  color: 'white',
-  fontWeight: 'bold'
-};
-
-const sectionStyle = {
-  background: 'white',
-  padding: '20px',
-  borderRadius: '14px',
-  marginBottom: '20px',
-  boxShadow: '0 2px 12px rgba(15,23,42,0.06)'
-};
-
-const chartPanelStyle = {
-  background: 'white',
-  border: '1px solid #e2e8f0',
-  borderRadius: '14px',
-  padding: '18px',
-  boxShadow: '0 2px 10px rgba(15,23,42,0.04)'
-};
-
-const summaryGridStyle = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-  gap: '15px',
-  marginBottom: '20px'
-};
-
-const darkCardStyle = {
-  background: '#0f172a',
-  color: 'white',
-  padding: '22px',
-  borderRadius: '12px'
-};
-
-const blueCardStyle = {
-  background: '#1d4ed8',
-  color: 'white',
-  padding: '22px',
-  borderRadius: '12px'
-};
-
-const purpleCardStyle = {
-  background: '#7e22ce',
-  color: 'white',
-  padding: '22px',
-  borderRadius: '12px'
-};
-
-const cardLabelStyle = {
-  color: '#e2e8f0',
+  background: T.primary,
+  color: '#FFFFFF',
+  fontWeight: 700,
   fontSize: '14px'
 };
 
-const greenValueStyle = {
-  color: '#4ade80',
-  fontSize: '28px',
-  fontWeight: 'bold',
-  marginTop: '8px'
+const backdropStyle = {
+  position: 'absolute',
+  inset: 0,
+  background: 'rgba(18,25,38,0.45)',
+  zIndex: 55
 };
 
-const whiteValueStyle = {
-  color: 'white',
-  fontSize: '28px',
-  fontWeight: 'bold',
-  marginTop: '8px'
+const topbarStyle = {
+  minHeight: `${TOPBAR_H}px`,
+  padding: '12px 24px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '16px',
+  background: T.surface,
+  borderBottom: `1px solid ${T.line}`,
+  position: 'relative',
+  zIndex: 70,
+  flexShrink: 0,
+  boxSizing: 'border-box',
+  flexWrap: 'wrap'
 };
 
-const addFormStyle = {
+const iconButtonStyle = {
+  position: 'relative',
+  width: '38px',
+  height: '38px',
   display: 'grid',
-  gridTemplateColumns: '1fr auto',
-  gap: '10px'
+  placeItems: 'center',
+  border: 'none',
+  borderRadius: T.radiusMd,
+  background: T.primarySoft,
+  color: T.primary,
+  cursor: 'pointer',
+  padding: 0,
+  transition: 'background .2s ease, color .2s ease'
 };
 
-const inputStyle = {
-  width: '100%',
-  padding: '10px',
-  border: '1px solid #cbd5e1',
-  borderRadius: '6px',
+const searchWrapStyle = {
+  flex: '0 1 420px',
+  minWidth: '180px',
+  maxWidth: '420px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  padding: '5px 10px',
+  border: `1px solid ${T.line}`,
+  borderRadius: '8px',
+  background: T.surface,
+  boxShadow: '0 1px 2px rgba(18,25,38,0.02)'
+};
+
+const searchInputStyle = {
+  flex: 1,
+  minWidth: 0,
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  color: T.text,
+  fontSize: '13.5px',
+  fontFamily: FONT_STACK,
+  padding: '6px 0'
+};
+
+const courtPillStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '7px',
+  padding: '7px 12px',
+  borderRadius: '999px',
+  fontSize: '12.5px',
+  fontWeight: 700,
+  whiteSpace: 'nowrap'
+};
+
+const notifBadgeStyle = {
+  position: 'absolute',
+  top: '-6px',
+  right: '-6px',
+  minWidth: '19px',
+  height: '19px',
+  padding: '0 5px',
+  borderRadius: '999px',
+  background: T.primary,
+  color: '#FFFFFF',
+  fontSize: '11px',
+  fontWeight: 700,
+  display: 'grid',
+  placeItems: 'center',
   boxSizing: 'border-box'
 };
 
-const smallInputStyle = {
-  width: '100%',
-  minWidth: '170px',
-  padding: '7px',
-  border: '1px solid #94a3b8',
-  borderRadius: '5px',
-  boxSizing: 'border-box'
+const dropdownBackdropStyle = { position: 'fixed', inset: 0, zIndex: 40 };
+
+const notifPanelStyle = {
+  position: 'absolute',
+  top: '46px',
+  right: 0,
+  width: 'min(330px, 90vw)',
+  background: T.surface,
+  border: `1px solid ${T.line}`,
+  borderRadius: T.radiusLg,
+  boxShadow: '0 18px 40px rgba(18,25,38,0.16)',
+  overflow: 'hidden',
+  zIndex: 50
 };
 
-const addButtonStyle = {
-  padding: '10px 18px',
-  background: '#2563eb',
-  color: 'white',
+const notifHeadStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '10px',
+  padding: '14px 16px',
+  borderBottom: `1px solid ${T.line}`
+};
+
+const notifItemStyle = {
+  width: '100%',
+  display: 'flex',
+  gap: '10px',
+  alignItems: 'flex-start',
+  padding: '12px 16px',
+  border: 'none',
+  borderBottom: `1px solid ${T.line}`,
+  cursor: 'pointer',
+  textAlign: 'left',
+  fontFamily: FONT_STACK
+};
+
+const topAccountStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '9px',
+  padding: '6px 12px 6px 6px',
+  border: 'none',
+  borderRadius: '999px',
+  background: T.accentSoft,
+  maxWidth: '250px',
+  cursor: 'pointer',
+  fontFamily: FONT_STACK,
+  transition: 'background .2s ease'
+};
+
+// กล่องเมนูโปรไฟล์ที่เด้งออกมาเวลากดชิปผู้ใช้
+const profilePanelStyle = {
+  position: 'absolute',
+  top: 'calc(100% + 10px)',
+  right: 0,
+  width: 'min(290px, 86vw)',
+  background: T.surface,
+  border: `1px solid ${T.line}`,
+  borderRadius: T.radiusLg,
+  boxShadow: '0 12px 34px rgba(18,25,38,0.14)',
+  padding: '20px',
+  zIndex: 80
+};
+
+const dropdownItemStyle = {
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  padding: '10px 12px',
+  marginBottom: '2px',
   border: 'none',
   borderRadius: '6px',
+  background: 'transparent',
+  color: T.text,
+  fontSize: '14px',
+  fontFamily: FONT_STACK,
+  textAlign: 'left',
   cursor: 'pointer',
-  fontWeight: 'bold'
+  transition: 'background .2s ease, color .2s ease'
 };
 
+
+const contentStyle = {
+  width: '100%',
+  maxWidth: '1540px',
+  minWidth: 0,
+  margin: '0 auto',
+  padding: 'clamp(16px, 2.2vw, 24px)',
+  minHeight: `calc(100dvh - ${TOPBAR_H}px)`,
+  boxSizing: 'border-box',
+  overflowX: 'hidden'
+};
+
+const courtBannerStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  padding: '14px 16px',
+  marginBottom: '18px',
+  borderRadius: T.radiusLg,
+  background: T.redSoft,
+  border: `1px solid ${T.redSoft}`,
+  color: T.down,
+  fontSize: '13.5px',
+  fontWeight: 600
+};
+
+// --- การ์ด / กริด ---
+const cardStyle = {
+  background: T.surface,
+  border: 'none',
+  borderRadius: T.radiusLg,
+  padding: 'clamp(18px, 2.2vw, 24px)',
+  boxSizing: 'border-box',
+  position: 'relative',
+  // ไม่ใส่ overflow: hidden ตรงนี้ เพราะรายการที่เด้งออกจากการ์ด (เช่น ลิสต์เลือกร้าน) จะโดนตัด
+  // การ์ด KPI ที่มีลายวงกลม/คลื่น จะใส่ overflow: hidden เองเฉพาะการ์ดนั้น
+  boxShadow: T.shadowSm
+};
+
+const cardHeadStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  gap: '12px',
+  flexWrap: 'wrap',
+  marginBottom: '14px'
+};
+
+// หัวการ์ดกราฟ: ข้อความซ้าย + ตัวเลือกช่วงเวลาขวา (จอแคบจะตกลงมาอยู่คนละบรรทัด)
+const chartHeadStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  gap: '14px',
+  flexWrap: 'wrap',
+  marginBottom: '6px'
+};
+
+const chartGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(360px, 100%), 1fr))',
+  gap: '24px'
+};
+
+const toolbarStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-end',
+  gap: '14px',
+  flexWrap: 'wrap'
+};
+
+const courtControlStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '16px',
+  flexWrap: 'wrap'
+};
+
+// --- ตาราง ---
 const tableStyle = {
   width: '100%',
   borderCollapse: 'collapse',
-  minWidth: '900px'
+  minWidth: '760px',
+  marginTop: '12px'
 };
 
-const tableHeaderStyle = {
-  background: '#f1f5f9',
-  textAlign: 'left'
+const thStyle = {
+  padding: '16px',
+  background: T.surface,
+  color: T.ink,
+  fontSize: '14px',
+  fontWeight: 600,
+  textAlign: 'left',
+  whiteSpace: 'nowrap',
+  borderBottom: `1px solid ${T.line}`
 };
 
-const tableRowStyle = {
-  borderBottom: '1px solid #e2e8f0'
-};
+const thRightStyle = { ...thStyle, textAlign: 'right' };
+const trStyle = { borderBottom: `1px solid ${T.line}` };
+const tdStyle = { padding: '16px', fontSize: '14px', color: T.text, verticalAlign: 'middle' };
+const tdRightStyle = { ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' };
 
-const cellStyle = {
-  padding: '12px',
-  verticalAlign: 'middle'
-};
-
-const baseActionButton = {
-  padding: '6px 9px',
-  border: 'none',
-  borderRadius: '4px',
-  cursor: 'pointer',
-  color: 'white',
-  fontWeight: 'bold',
-  marginRight: '5px',
-  marginBottom: '4px'
-};
-
-const editButtonStyle = {
-  ...baseActionButton,
-  background: '#f59e0b'
-};
-
-const saveButtonStyle = {
-  ...baseActionButton,
-  background: '#16a34a'
-};
-
-const cancelButtonStyle = {
-  ...baseActionButton,
-  background: '#64748b'
-};
-
-const closeButtonStyle = {
-  ...baseActionButton,
-  background: '#475569'
-};
-
-const openButtonStyle = {
-  ...baseActionButton,
-  background: '#2563eb'
-};
-
-const suspendButtonStyle = {
-  ...baseActionButton,
-  background: '#dc2626'
-};
-
-const unsuspendButtonStyle = {
-  ...baseActionButton,
-  background: '#16a34a'
-};
-
-const successStyle = {
-  padding: '11px',
-  marginBottom: '15px',
-  background: '#dcfce7',
-  color: '#166534',
-  borderRadius: '6px'
-};
-
-const errorStyle = {
-  padding: '11px',
-  marginBottom: '15px',
-  background: '#fee2e2',
-  color: '#991b1b',
-  borderRadius: '6px'
-};
-
-const storeDashboardStyle = {
-  marginTop: '15px',
-  padding: '18px',
-  border: '1px solid #dbeafe',
-  borderRadius: '8px',
-  background: '#eff6ff'
-};
-
-const detailGridStyle = {
+const storeThumbStyle = {
+  width: '38px',
+  height: '38px',
+  borderRadius: T.radiusMd,
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-  gap: '10px'
+  placeItems: 'center',
+  background: T.primarySoft,
+  color: T.primary,
+  fontWeight: 700
 };
 
-const detailCardStyle = {
-  background: 'white',
-  padding: '14px',
-  borderRadius: '7px'
+// --- ฟอร์ม ---
+const inputStyle = {
+  width: '100%',
+  padding: '11px 13px',
+  border: `1px solid ${T.line}`,
+  borderRadius: T.radiusMd,
+  fontSize: '13.5px',
+  fontFamily: FONT_STACK,
+  color: T.text,
+  background: T.surface,
+  boxSizing: 'border-box',
+  outlineColor: T.primary
+};
+
+const twoColStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(210px, 100%), 1fr))',
+  gap: '0 14px'
+};
+
+const smallBtn = { padding: '7px 10px', fontSize: '12.5px' };
+
+// --- กรอบอัปโหลดรูปหน้าร้าน (คลิก/ลากไฟล์มาวางได้) ---
+const imageDropzonePreviewStyle = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  display: 'block'
+};
+
+const imageDropzonePlaceholderStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '4px',
+  color: T.primary,
+  fontSize: '12px',
+  fontWeight: 700
+};
+
+function imageDropzoneStyle(dragOver, hasError) {
+  return {
+    width: '104px',
+    height: '104px',
+    flexShrink: 0,
+    borderRadius: '14px',
+    border: `2px dashed ${hasError ? T.down : dragOver ? T.primary : T.line}`,
+    background: dragOver ? T.primarySoft : '#FAFBFF',
+    display: 'grid',
+    placeItems: 'center',
+    cursor: 'pointer',
+    overflow: 'hidden',
+    padding: 0,
+    fontFamily: FONT_STACK,
+    transition: 'border-color .15s ease, background .15s ease'
+  };
+}
+
+const dateWrapStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '7px',
+  padding: '7px 12px',
+  border: `1px solid ${T.line}`,
+  borderRadius: T.radiusMd,
+  background: T.surface
+};
+
+const dateInputStyle = {
+  minWidth: 0,
+  maxWidth: '100%',
+  border: 'none',
+  outline: 'none',
+  background: 'transparent',
+  color: T.text,
+  fontSize: '13px',
+  fontFamily: FONT_STACK
+};
+
+// --- Modal / Toast / Tooltip ---
+const overlayStyle = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(42,44,65,0.5)',
+  display: 'grid',
+  placeItems: 'center',
+  padding: '18px',
+  zIndex: 90
+};
+
+const modalStyle = {
+  width: '100%',
+  background: T.surface,
+  borderRadius: '16px',
+  boxShadow: '0 26px 60px rgba(42,44,65,0.26)',
+  overflow: 'hidden',
+  maxHeight: 'calc(100dvh - 24px)'
+};
+
+const modalHeadStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  gap: '12px',
+  padding: '18px 22px',
+  borderBottom: `1px solid ${T.line}`
+};
+
+const modalFootStyle = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: '10px',
+  padding: '14px 22px',
+  borderTop: `1px solid ${T.line}`,
+  background: '#FAFBFF'
+};
+
+const toastWrapStyle = {
+  position: 'fixed',
+  right: 'clamp(10px, 2vw, 20px)',
+  bottom: 'clamp(10px, 2vw, 20px)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '9px',
+  zIndex: 120,
+  maxWidth: 'min(360px, 90vw)'
+};
+
+const toastStyle = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: '9px',
+  padding: '12px 16px',
+  borderRadius: T.radiusLg,
+  background: T.surface,
+  border: `1px solid ${T.line}`,
+  boxShadow: '0 12px 30px rgba(42,44,65,0.16)',
+  cursor: 'pointer'
+};
+
+const tooltipStyle = {
+  position: 'absolute',
+  top: '8px',
+  padding: '10px 13px',
+  background: T.surface,
+  border: `1px solid ${T.line}`,
+  borderRadius: T.radiusLg,
+  boxShadow: '0 12px 28px rgba(42,44,65,0.16)',
+  pointerEvents: 'none',
+  minWidth: '190px',
+  zIndex: 5
 };
