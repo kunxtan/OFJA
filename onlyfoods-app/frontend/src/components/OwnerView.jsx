@@ -109,7 +109,10 @@ function Icon({ name, size = 20 }) {
     settings: <><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0 -2.573-1.066c-1.543 .94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0 -1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543 .826-3.31 2.37-2.37c1 .608 2.296 .07 2.572-1.065z"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></>,
     bell: <><path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6"/><path d="M9 17v1a3 3 0 0 0 6 0v-1"/></>,
     user: <><path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" /><path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /></>,
-    logout: <><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>
+    logout: <><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>,
+    plus: <><path d="M12 5l0 14" /><path d="M5 12l14 0" /></>,
+    trash: <><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></>,
+    edit: <><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" /></>
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -196,6 +199,100 @@ function OverviewSalesBarChart({ data }) {
   );
 }
 
+// --- Component อัปโหลดรูปภาพแบบ Drag & Drop ---
+function ImageUploadZone({ image, onChange }) {
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    processFile(file);
+  };
+
+  const handleChange = (e) => {
+    const file = e.target.files[0];
+    processFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const processFile = (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('กรุณาอัปโหลดไฟล์รูปภาพเท่านั้น');
+      return;
+    }
+    // ตรวจสอบขนาดไม่เกิน 5 MB (5 * 1024 * 1024)
+    if (file.size > 5242880) {
+      alert('ขนาดไฟล์ต้องไม่เกิน 5 MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      onChange(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const triggerFileSelect = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  return (
+    <div
+      className={`berry-upload-zone ${isDragging ? 'dragging' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onClick={triggerFileSelect}
+    >
+      <input
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        ref={fileInputRef}
+        onChange={handleChange}
+      />
+      {image ? (
+        <div className="berry-upload-preview-container">
+          <img src={image} alt="Preview" className="berry-upload-preview" />
+          <div className="berry-upload-change-overlay">
+            <Icon name="edit" size={24} />
+            <span style={{ marginTop: '4px' }}>Click to change</span>
+          </div>
+        </div>
+      ) : (
+        <div className="berry-upload-placeholder">
+          {/* Cloud Icon SVG with Gradient */}
+          <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#1e88e5' }}>
+            <defs>
+              <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#4ade80" />
+                <stop offset="100%" stopColor="#60a5fa" />
+              </linearGradient>
+            </defs>
+            <path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-12" fill="url(#cloudGrad)" fillOpacity="0.4" />
+            <path d="M9 15l3 -3l3 3" />
+            <path d="M12 12l0 9" />
+          </svg>
+          <button type="button" className="berry-btn-browse" onClick={(e) => { e.stopPropagation(); triggerFileSelect(); }}>Browse</button>
+          <p>or drag files to upload to <strong>My Drive</strong> and select</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!document.getElementById('berry-font-link')) {
@@ -225,10 +322,17 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
-  // --- ระบบนับจำนวนแจ้งเตือนที่ฉลาดขึ้น ---
+  // --- ระบบนับจำนวนแจ้งเตือน ---
   const [unreadCancels, setUnreadCancels] = useState(0);
   const [knownCancelsCount, setKnownCancelsCount] = useState(0);
-  const isFirstFetch = useRef(true); // ใช้เช็คว่าเพิ่งเปิดหน้าเว็บครั้งแรกหรือไม่
+  const isFirstFetch = useRef(true);
+
+  // --- ระบบจัดการเมนู (เพิ่ม/แก้ไข/ลบ) ---
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newMenu, setNewMenu] = useState({ name: '', price: '', img: '' });
+  
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editMenu, setEditMenu] = useState({ id: null, name: '', price: '', img: '' });
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -243,13 +347,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const fetchData = () => {
     fetch(`${apiBase}/api/reports/dashboard?store_id=${storeId}`).then(r => r.json()).then(d => setDash(d[0] || {}));
     
-    // ดึงข้อมูลยกเลิก
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
       .then(r => r.json())
       .then(data => {
         setCancels(data);
-        
-        // ถ้านี่คือการดึงข้อมูลครั้งแรก ให้ระบบ "จำ" ยอดทั้งหมดไว้เลยว่าเป็นของเก่า
         if (isFirstFetch.current) {
           setKnownCancelsCount(data.length);
           isFirstFetch.current = false;
@@ -272,20 +373,16 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     }
   }, [history, storeId, storeDays]);
 
-  // --- อัปเดตแจ้งเตือนเมื่อมีออเดอร์ถูกยกเลิกเพิ่มเข้ามา ---
   useEffect(() => {
-    // ถ้ายอดแคนเซิลมีเพิ่มขึ้นจากที่เคยรู้ และไม่ใช่การดึงข้อมูลครั้งแรก
     if (!isFirstFetch.current && cancels.length > knownCancelsCount) {
       if (page !== 'cancel') {
         setUnreadCancels(cancels.length - knownCancelsCount);
       } else {
-        // ถ้าเปิดหน้า Cancel อยู่แล้ว ให้อัปเดตยอดที่รู้เลย โดยไม่ต้องแจ้งเตือน
         setKnownCancelsCount(cancels.length);
       }
     }
   }, [cancels.length, page, knownCancelsCount]);
 
-  // เมื่อผู้ใช้กดเข้ามาที่หน้า 'cancel' ให้เคลียร์การแจ้งเตือน
   useEffect(() => {
     if (page === 'cancel') {
       setUnreadCancels(0);
@@ -313,6 +410,78 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     });
   };
 
+  // --- CRUD Menu ---
+  const handleAddMenu = async (e) => {
+    e.preventDefault();
+    if (!newMenu.name || !newMenu.price) return;
+    try {
+      await fetch(`${apiBase}/api/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          StoreId: storeId,
+          ProductName: newMenu.name,
+          UnitPrice: Number(newMenu.price),
+          IsOutOfStock: false,
+          img: newMenu.img || ''
+        })
+      });
+      showToast('เพิ่มเมนูสำเร็จ');
+      setNewMenu({ name: '', price: '', img: '' });
+      setIsAddModalOpen(false);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      showToast('เกิดข้อผิดพลาดในการเพิ่มเมนู');
+    }
+  };
+
+  const openEditModal = (product) => {
+    setEditMenu({
+      id: product.ProductId,
+      name: product.ProductName,
+      price: product.UnitPrice,
+      img: product.img || ''
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditMenuSubmit = async (e) => {
+    e.preventDefault();
+    if (!editMenu.name || !editMenu.price) return;
+    try {
+      await fetch(`${apiBase}/api/products/${editMenu.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ProductName: editMenu.name,
+          UnitPrice: Number(editMenu.price),
+          img: editMenu.img || ''
+        })
+      });
+      showToast('แก้ไขเมนูสำเร็จ');
+      setIsEditModalOpen(false);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      showToast('เกิดข้อผิดพลาดในการแก้ไขเมนู');
+    }
+  };
+
+  const handleDeleteMenu = async (id, name) => {
+    if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบเมนู "${name}"?`)) return;
+    try {
+      await fetch(`${apiBase}/api/products/${id}`, {
+        method: 'DELETE'
+      });
+      showToast('ลบเมนูสำเร็จ');
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      showToast('เกิดข้อผิดพลาดในการลบเมนู');
+    }
+  };
+
   const handleLogout = () => {
     if (onLogout) onLogout();
   };
@@ -321,7 +490,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมร้านค้า', icon: 'dashboard' },
     { id: 'menu', label: 'Manage Menu', caption: 'จัดการเมนู/สต็อก', icon: 'menu' },
     { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history' },
-    // แสดง Badge ก็ต่อเมื่อมียอดที่ยังไม่อ่าน
     { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
   ];
 
@@ -352,11 +520,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         <div className="berry-topbar-right">
           <button className="berry-icon-btn amber-light"><Icon name="bell" size={20} /></button>
           
-          {/* Profile Dropdown Area */}
           <div className="berry-profile-container" ref={profileRef}>
-            
             <div className="berry-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
-              <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--berry-blue-dark)' }}>
+              <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--berry-blue-dark)', padding: '0 8px' }}>
                 {user?.name || 'Shop Owner'}
               </span>
               <div style={{ color: 'var(--berry-blue-dark)', display: 'flex', alignItems: 'center' }}>
@@ -364,7 +530,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
               </div>
             </div>
 
-            {/* Popup Dropdown */}
             {profileOpen && (
               <div className="berry-profile-dropdown">
                 <div className="dropdown-header">
@@ -524,46 +689,71 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           )}
 
           {page === 'menu' && (
-            <div className="berry-card">
-              <div className="berry-card-header-simple">
-                <h3>Menu & Stock Management</h3>
+            <div style={{ paddingBottom: '40px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: '600' }}>Menu & Stock Management</h3>
+                
+                <button 
+                  className="berry-btn btn-primary" 
+                  style={{ padding: '8px 16px', fontSize: '13px' }}
+                  onClick={() => setIsAddModalOpen(true)}
+                >
+                  <Icon name="plus" size={16} /> Add New Menu
+                </button>
               </div>
-              <div className="berry-table-container">
-                <table className="berry-table">
-                  <thead>
-                    <tr>
-                      <th>Product ID</th>
-                      <th>Menu Name</th>
-                      <th>Price</th>
-                      <th>Status</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {products.length === 0 && <tr><td colSpan="5" className="empty-state">No products found.</td></tr>}
-                    {products.map(p => (
-                      <tr key={p.ProductId}>
-                        <td className="mono">#{p.ProductId}</td>
-                        <td style={{ fontWeight: '500' }}>{p.ProductName}</td>
-                        <td className="mono">${fmtMoney(p.UnitPrice)}</td>
-                        <td>
+
+              {products.length === 0 ? (
+                 <div className="berry-card empty-state" style={{ padding: '60px 20px' }}>No products found. Start by adding a new menu.</div>
+              ) : (
+                <div className="berry-product-grid">
+                  {products.map(p => (
+                    <div key={p.ProductId} className="berry-product-card">
+                      <img 
+                        src={p.img || `https://placehold.co/400x300/e3e8ef/697586?text=No+Image`} 
+                        alt={p.ProductName} 
+                        className="berry-product-img" 
+                      />
+                      
+                      <div className="berry-product-body">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                          <h4 className="berry-product-title">{p.ProductName}</h4>
+                        </div>
+                        <div className="berry-product-price">฿{fmtMoney(p.UnitPrice)}</div>
+                        
+                        <div>
                           <Badge tone={p.IsOutOfStock ? 'danger' : 'success'}>
-                            {p.IsOutOfStock ? 'Out of Stock' : 'In Stock'}
+                            {p.IsOutOfStock ? 'สินค้าหมด (Out of Stock)' : 'พร้อมขาย (In Stock)'}
                           </Badge>
-                        </td>
-                        <td>
+                        </div>
+                        
+                        <div className="berry-product-actions">
                           <button 
                             onClick={() => toggleStock(p.ProductId, p.ProductName, p.IsOutOfStock)} 
                             className={`berry-btn-small ${p.IsOutOfStock ? 'btn-primary-light' : 'btn-error-light'}`}
+                            style={{ flex: 1 }}
                           >
-                            {p.IsOutOfStock ? 'Mark In Stock' : 'Mark Out of Stock'}
+                            {p.IsOutOfStock ? 'ปรับเป็นพร้อมขาย' : 'ปรับเป็นสินค้าหมด'}
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                          <button 
+                            className="berry-btn-icon btn-primary-light" 
+                            title="Edit"
+                            onClick={() => openEditModal(p)}
+                          >
+                            <Icon name="edit" size={16} />
+                          </button>
+                          <button 
+                            className="berry-btn-icon btn-error-light" 
+                            title="Delete"
+                            onClick={() => handleDeleteMenu(p.ProductId, p.ProductName)}
+                          >
+                            <Icon name="trash" size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -647,6 +837,84 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
         </main>
       </div>
+
+      {/* ===== ADD MENU MODAL ===== */}
+      {isAddModalOpen && (
+        <div className="berry-modal-overlay">
+          <div className="berry-modal">
+            <h3>Add New Menu</h3>
+            <form onSubmit={handleAddMenu}>
+              <div className="berry-form-group">
+                <label>Menu Name (ชื่อเมนู)</label>
+                <input 
+                  type="text" 
+                  value={newMenu.name} 
+                  onChange={e => setNewMenu({...newMenu, name: e.target.value})} 
+                  placeholder="เช่น ข้าวกะเพราหมูสับ"
+                  required 
+                />
+              </div>
+              <div className="berry-form-group">
+                <label>Price (ราคา)</label>
+                <input 
+                  type="number" 
+                  value={newMenu.price} 
+                  onChange={e => setNewMenu({...newMenu, price: e.target.value})} 
+                  placeholder="0"
+                  min="0"
+                  required 
+                />
+              </div>
+              <div className="berry-form-group">
+                <label style={{ marginBottom: '4px' }}>Image (รูปภาพ) *จำกัด 5 MB</label>
+                <ImageUploadZone image={newMenu.img} onChange={(b64) => setNewMenu({...newMenu, img: b64})} />
+              </div>
+              <div className="berry-modal-actions">
+                <button type="button" className="berry-btn btn-error-light" onClick={() => { setIsAddModalOpen(false); setNewMenu({ name: '', price: '', img: '' }); }}>Cancel</button>
+                <button type="submit" className="berry-btn btn-primary">Save Menu</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===== EDIT MENU MODAL ===== */}
+      {isEditModalOpen && (
+        <div className="berry-modal-overlay">
+          <div className="berry-modal">
+            <h3>Edit Menu</h3>
+            <form onSubmit={handleEditMenuSubmit}>
+              <div className="berry-form-group">
+                <label>Menu Name (ชื่อเมนู)</label>
+                <input 
+                  type="text" 
+                  value={editMenu.name} 
+                  onChange={e => setEditMenu({...editMenu, name: e.target.value})} 
+                  required 
+                />
+              </div>
+              <div className="berry-form-group">
+                <label>Price (ราคา)</label>
+                <input 
+                  type="number" 
+                  value={editMenu.price} 
+                  onChange={e => setEditMenu({...editMenu, price: e.target.value})} 
+                  min="0"
+                  required 
+                />
+              </div>
+              <div className="berry-form-group">
+                <label style={{ marginBottom: '4px' }}>Image (รูปภาพ) *จำกัด 5 MB</label>
+                <ImageUploadZone image={editMenu.img} onChange={(b64) => setEditMenu({...editMenu, img: b64})} />
+              </div>
+              <div className="berry-modal-actions">
+                <button type="button" className="berry-btn btn-error-light" onClick={() => setIsEditModalOpen(false)}>Cancel</button>
+                <button type="submit" className="berry-btn btn-primary">Update Menu</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ===== Toast ===== */}
       <div className={`berry-toast ${toast.show ? 'show' : ''}`}>
@@ -896,7 +1164,7 @@ body, html {
   .berry-sidebar {
     position: fixed;
     left: 0;
-    top: 80px; /* ยึดไว้ใต้ Topbar */
+    top: 80px;
     bottom: 0;
     width: 260px !important;
     transform: translateX(-100%);
@@ -906,7 +1174,6 @@ body, html {
     transform: translateX(0);
     box-shadow: 4px 0 24px rgba(0,0,0,0.1);
   }
-  .berry-brand { width: auto; }
 }
 
 /* -------------------------------------------
@@ -951,6 +1218,150 @@ body, html {
 .berry-period-btn:hover { color: var(--berry-text-dark); }
 .berry-period-btn.active { background: #fff; color: var(--berry-text-dark); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 
+/* -------------------------------------------
+   Product Grid (Card Layout)
+   ------------------------------------------- */
+.berry-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px;
+}
+.berry-product-card {
+  background: var(--berry-paper);
+  border: 1px solid var(--berry-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.berry-product-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+}
+.berry-product-img {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  background: #f4f6f9;
+  border-bottom: 1px solid var(--berry-border);
+}
+.berry-product-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 12px;
+}
+.berry-product-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--berry-text-dark);
+  line-height: 1.4;
+}
+.berry-product-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--berry-purple);
+}
+.berry-product-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--berry-border);
+}
+.berry-btn-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+/* -------------------------------------------
+   Drag & Drop Upload Zone
+   ------------------------------------------- */
+.berry-upload-zone {
+  border: 2px dashed #b0bec5;
+  border-radius: 12px;
+  background-color: #f8fafc;
+  padding: 24px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+.berry-upload-zone.dragging {
+  border-color: var(--berry-blue);
+  background-color: var(--berry-blue-light);
+}
+.berry-upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.berry-btn-browse {
+  background-color: #1565c0;
+  color: white;
+  border: none;
+  padding: 8px 24px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(21, 101, 192, 0.2);
+  transition: background-color 0.2s;
+}
+.berry-btn-browse:hover {
+  background-color: #0d47a1;
+}
+.berry-upload-placeholder p {
+  margin: 0;
+  font-size: 12px;
+  color: #546e7a;
+}
+.berry-upload-preview-container {
+  position: relative;
+  width: 100%;
+  height: 140px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.berry-upload-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent;
+}
+.berry-upload-change-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.berry-upload-zone:hover .berry-upload-change-overlay {
+  opacity: 1;
+}
+
 /* Lists & Tables */
 .berry-list-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; }
 .berry-list-item .title { font-size: 14px; font-weight: 500; color: var(--berry-text-dark); }
@@ -966,7 +1377,7 @@ body, html {
 .berry-table .mono { font-family: 'Roboto', monospace; }
 .berry-table .bold { font-weight: 600; }
 .berry-table .muted { color: var(--berry-text-muted); font-size: 13px; }
-.empty-state { text-align: center; color: var(--berry-text-muted); padding: 32px !important; }
+.empty-state { text-align: center; color: var(--berry-text-muted); padding: 32px !important; font-size: 14px; }
 
 /* Buttons */
 .berry-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 20px; border-radius: var(--radius-md); border: none; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.2s ease; }
@@ -986,6 +1397,59 @@ body, html {
 .berry-badge.tone-success { background: var(--berry-green-light); color: var(--berry-green); }
 .berry-badge.tone-danger { background: var(--berry-red-light); color: var(--berry-red); }
 .berry-badge.tone-warning { background: var(--berry-amber-light); color: var(--berry-amber); }
+
+/* Modal */
+.berry-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.berry-modal {
+  background: var(--berry-paper);
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  width: 440px;
+  max-width: 90%;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+.berry-modal h3 {
+  margin: 0 0 20px;
+  font-size: 18px;
+  color: var(--berry-text-dark);
+}
+.berry-form-group {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.berry-form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--berry-text-dark);
+}
+.berry-form-group input[type="text"],
+.berry-form-group input[type="number"] {
+  padding: 10px 14px;
+  border: 1px solid var(--berry-border);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.berry-form-group input:focus {
+  border-color: var(--berry-purple);
+}
+.berry-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
 
 /* Toast */
 .berry-toast { position: fixed; bottom: 24px; right: 24px; background: white; color: var(--berry-text-dark); padding: 12px 20px; border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 12px; z-index: 1000; opacity: 0; transform: translateY(20px); pointer-events: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS Product (
     UnitPrice DECIMAL(10, 2) NOT NULL,
     Category VARCHAR(50) DEFAULT 'ทั่วไป',
     IsOutOfStock TINYINT(1) DEFAULT 0,
+    img LONGTEXT NULL, -- เพิ่มคอลัมน์ img สำหรับเก็บ Base64 รูปภาพ
     FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -100,11 +101,11 @@ INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points) VALUES
 ('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0)
 ON DUPLICATE KEY UPDATE FullName=VALUES(FullName);
 
-INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock) VALUES 
-(1, 'ข้าวราดกะเพราหมูกรอบไข่ดาว', 60.00, 'อาหารจานเดียว', 0),
-(1, 'ข้าวแกงเขียวหวานไก่', 50.00, 'อาหารจานเดียว', 0),
-(1, 'ไข่ต้มยางมะตูม', 10.00, 'ทานเล่น', 0),
-(2, 'ชาไทยสูตรเข้มข้น (เย็น)', 30.00, 'เครื่องดื่ม', 0),
-(2, 'ชาเขียวมัทฉะนมสด', 35.00, 'เครื่องดื่ม', 0),
-(3, 'ก๋วยเตี๋ยวเรือน้ำตกเนื้อพิเศษ', 55.00, 'ก๋วยเตี๋ยว', 0)
+INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock, img) VALUES 
+(1, 'ข้าวราดกะเพราหมูกรอบไข่ดาว', 60.00, 'อาหารจานเดียว', 0, NULL),
+(1, 'ข้าวแกงเขียวหวานไก่', 50.00, 'อาหารจานเดียว', 0, NULL),
+(1, 'ไข่ต้มยางมะตูม', 10.00, 'ทานเล่น', 0, NULL),
+(2, 'ชาไทยสูตรเข้มข้น (เย็น)', 30.00, 'เครื่องดื่ม', 0, NULL),
+(2, 'ชาเขียวมัทฉะนมสด', 35.00, 'เครื่องดื่ม', 0, NULL),
+(3, 'ก๋วยเตี๋ยวเรือน้ำตกเนื้อพิเศษ', 55.00, 'ก๋วยเตี๋ยว', 0, NULL)
 ON DUPLICATE KEY UPDATE ProductName=VALUES(ProductName);

@@ -74,12 +74,25 @@ class StatusUpdateSchema(BaseModel):
     user_role: str
     cancel_reason: Optional[str] = None
 
-# เพิ่ม
 class StoreCreateSchema(BaseModel):
     store_name: str
 
 class StoreUpdateSchema(BaseModel):
     store_name: str
+
+# --- Schema สำหรับเพิ่ม/แก้ไข เมนู ---
+class ProductCreateSchema(BaseModel):
+    StoreId: int
+    ProductName: str
+    UnitPrice: float
+    IsOutOfStock: Optional[bool] = False
+    img: Optional[str] = None
+
+class ProductUpdateSchema(BaseModel):
+    ProductName: str
+    UnitPrice: float
+    img: Optional[str] = None
+
 
 @app.post("/api/login")
 def login(data: LoginSchema, db=Depends(get_db)):
@@ -102,7 +115,6 @@ def get_stores(db=Depends(get_db)):
         cur.execute("SELECT * FROM Store")
         return cur.fetchall()
 
-# เพิ่ม
 @app.post("/api/stores", status_code=201)
 def create_store(data: StoreCreateSchema, db=Depends(get_db)):
     store_name = data.store_name.strip()
@@ -191,13 +203,11 @@ def update_store(
 def create_order(data: CreateOrderSchema, db=Depends(get_db)):
     try:
         with db.cursor() as cur:
-            # --- 1. เช็คสถานะศูนย์อาหารก่อนเป็นอันดับแรก ---
             cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
             fc_status = cur.fetchone()
             if fc_status and int(fc_status['IsOpen']) == 0:
                 raise HTTPException(status_code=400, detail="ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้")
 
-            # --- 2. ค่อยเช็คสถานะรายร้านค้า ---
             cur.execute("SELECT IsOpen, IsSuspended, StoreName FROM Store WHERE StoreId=%s", (data.store_id,))
             st = cur.fetchone()
             if not st:
@@ -317,6 +327,8 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
         db.commit()
         return {"success": True}
 
+# --- Products API ---
+
 @app.get("/api/products")
 def get_products(store_id: Optional[int] = None, db=Depends(get_db)):
     with db.cursor() as cur:
@@ -326,12 +338,65 @@ def get_products(store_id: Optional[int] = None, db=Depends(get_db)):
             cur.execute("SELECT p.*, s.StoreName FROM Product p JOIN Store s ON p.StoreId = s.StoreId")
         return cur.fetchall()
 
+# เพิ่มเมนูใหม่
+@app.post("/api/products", status_code=201)
+def add_product(data: ProductCreateSchema, db=Depends(get_db)):
+    try:
+        with db.cursor() as cur:
+            cur.execute("""
+                INSERT INTO Product (StoreId, ProductName, UnitPrice, IsOutOfStock, img)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (data.StoreId, data.ProductName, data.UnitPrice, 1 if data.IsOutOfStock else 0, data.img))
+            product_id = cur.lastrowid
+            db.commit()
+            return {"success": True, "product_id": product_id, "message": "เพิ่มเมนูสำเร็จ"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# แก้ไขเมนู
+@app.put("/api/products/{product_id}")
+def edit_product(product_id: int, data: ProductUpdateSchema, db=Depends(get_db)):
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT ProductId FROM Product WHERE ProductId = %s", (product_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="ไม่พบเมนูนี้")
+
+            cur.execute("""
+                UPDATE Product
+                SET ProductName = %s, UnitPrice = %s, img = %s
+                WHERE ProductId = %s
+            """, (data.ProductName, data.UnitPrice, data.img, product_id))
+            db.commit()
+            return {"success": True, "message": "แก้ไขเมนูสำเร็จ"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ลบเมนู
+@app.delete("/api/products/{product_id}")
+def delete_product(product_id: int, db=Depends(get_db)):
+    try:
+        with db.cursor() as cur:
+            cur.execute("DELETE FROM Product WHERE ProductId = %s", (product_id,))
+            db.commit()
+            return {"success": True, "message": "ลบเมนูสำเร็จ"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.put("/api/products/{product_id}/toggle-stock")
 def toggle_stock(product_id: int, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("UPDATE Product SET IsOutOfStock = NOT IsOutOfStock WHERE ProductId = %s", (product_id,))
         db.commit()
         return {"success": True}
+
+# --- Stores API ---
 
 @app.put("/api/stores/{store_id}/toggle")
 def toggle_store(store_id: int, db=Depends(get_db)):
