@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS Users (
     Role ENUM('Customer', 'Front Staff', 'Kitchen Staff', 'Shop Owner', 'Accountant', 'Executive') NOT NULL,
     StoreId INT NULL,
     Points INT DEFAULT 0,
+    Phone VARCHAR(20) NULL,      -- <-- เพิ่มบรรทัดนี้
+    Email VARCHAR(100) NULL,     -- <-- เพิ่มบรรทัดนี้
     FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -28,21 +30,37 @@ CREATE TABLE IF NOT EXISTS Product (
     UnitPrice DECIMAL(10, 2) NOT NULL,
     Category VARCHAR(50) DEFAULT 'ทั่วไป',
     IsOutOfStock TINYINT(1) DEFAULT 0,
-    img LONGTEXT NULL, -- เพิ่มคอลัมน์ img สำหรับเก็บ Base64 รูปภาพ
     FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS `Order` (
+CREATE TABLE IF NOT EXISTS Review (
+    ReviewID INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID INT NOT NULL,
+    StoreId INT NOT NULL,
+    UserId INT NOT NULL,
+    Rating INT NOT NULL,
+    Comment TEXT NULL,
+    ImageUrl LONGTEXT NULL,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE,
+    FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE CASCADE,
+    FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS Order (
     OrderID INT AUTO_INCREMENT PRIMARY KEY,
     StoreId INT NOT NULL,
     UserId INT NULL,
     QueueNo VARCHAR(20) NOT NULL,
     TotalAmount DECIMAL(10, 2) NOT NULL,
-    Status ENUM('Verifying_Slip', 'Pending', 'Cooking', 'Ready', 'Completed', 'Cancelled') DEFAULT 'Verifying_Slip',
+    -- แก้ไข ENUM บรรทัดนี้ โดยเพิ่ม 'Pending_Cancellation', 'NoShow'
+    Status ENUM('Verifying_Slip', 'Pending', 'Cooking', 'Ready', 'Completed', 'Cancelled', 'Pending_Cancellation', 'NoShow') DEFAULT 'Verifying_Slip',
     Note TEXT,
     IsWalkIn TINYINT(1) DEFAULT 0,
     SlipUrl VARCHAR(255) NULL,
     CancelReason VARCHAR(255) NULL,
+    ReadyAt DATETIME NULL,           -- <-- เพิ่มบรรทัดนี้
+    CancelDeadline DATETIME NULL,    -- <-- เพิ่มบรรทัดนี้
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -101,11 +119,27 @@ INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points) VALUES
 ('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0)
 ON DUPLICATE KEY UPDATE FullName=VALUES(FullName);
 
-INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock, img) VALUES 
-(1, 'ข้าวราดกะเพราหมูกรอบไข่ดาว', 60.00, 'อาหารจานเดียว', 0, NULL),
-(1, 'ข้าวแกงเขียวหวานไก่', 50.00, 'อาหารจานเดียว', 0, NULL),
-(1, 'ไข่ต้มยางมะตูม', 10.00, 'ทานเล่น', 0, NULL),
-(2, 'ชาไทยสูตรเข้มข้น (เย็น)', 30.00, 'เครื่องดื่ม', 0, NULL),
-(2, 'ชาเขียวมัทฉะนมสด', 35.00, 'เครื่องดื่ม', 0, NULL),
-(3, 'ก๋วยเตี๋ยวเรือน้ำตกเนื้อพิเศษ', 55.00, 'ก๋วยเตี๋ยว', 0, NULL)
+INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock) VALUES 
+(1, 'ข้าวราดกะเพราหมูกรอบไข่ดาว', 60.00, 'อาหารจานเดียว', 0),
+(1, 'ข้าวแกงเขียวหวานไก่', 50.00, 'อาหารจานเดียว', 0),
+(1, 'ไข่ต้มยางมะตูม', 10.00, 'ทานเล่น', 0),
+(2, 'ชาไทยสูตรเข้มข้น (เย็น)', 30.00, 'เครื่องดื่ม', 0),
+(2, 'ชาเขียวมัทฉะนมสด', 35.00, 'เครื่องดื่ม', 0),
+(3, 'ก๋วยเตี๋ยวเรือน้ำตกเนื้อพิเศษ', 55.00, 'ก๋วยเตี๋ยว', 0)
 ON DUPLICATE KEY UPDATE ProductName=VALUES(ProductName);
+
+ALTER TABLE Users 
+ADD COLUMN GoogleId VARCHAR(255) UNIQUE NULL AFTER Username,
+ADD COLUMN Phone VARCHAR(20) NULL AFTER Points,
+ADD COLUMN ProfileImg VARCHAR(255) NULL AFTER Phone,
+MODIFY COLUMN Password VARCHAR(50) NULL;
+
+------------------
+CREATE TABLE IF NOT EXISTS FoodCourtSetting (
+    SettingId TINYINT PRIMARY KEY,
+    IsOpen TINYINT(1) NOT NULL DEFAULT 1,
+    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen) VALUES (1, 1);
+ALTER TABLE `Order` ADD COLUMN ReadyAt DATETIME NULL;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 /* ============================================================
-   OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า (Berry Theme Style)
+   OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า (Executive Theme Colors)
    ============================================================ */
 
 const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -233,6 +233,7 @@ function ImageUploadZone({ image, onChange }) {
       alert('กรุณาอัปโหลดไฟล์รูปภาพเท่านั้น');
       return;
     }
+    // ตรวจสอบขนาดไม่เกิน 5 MB (5 * 1024 * 1024)
     if (file.size > 5242880) {
       alert('ขนาดไฟล์ต้องไม่เกิน 5 MB');
       return;
@@ -273,11 +274,12 @@ function ImageUploadZone({ image, onChange }) {
         </div>
       ) : (
         <div className="berry-upload-placeholder">
-          <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#1e88e5' }}>
+          {/* Cloud Icon SVG with Executive Gradient */}
+          <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--berry-purple)' }}>
             <defs>
               <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#4ade80" />
-                <stop offset="100%" stopColor="#60a5fa" />
+                <stop offset="0%" stopColor="#FDBF50" />
+                <stop offset="100%" stopColor="#FF724C" />
               </linearGradient>
             </defs>
             <path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-12" fill="url(#cloudGrad)" fillOpacity="0.4" />
@@ -315,12 +317,14 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   
   const [page, setPage] = useState('dashboard');
   
+  // ให้ sidebar กางออกโดยเริ่มต้น
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState({ show: false, msg: '' });
 
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
+  // --- ระบบนับจำนวนแจ้งเตือน ---
   const [unreadCancels, setUnreadCancels] = useState(0);
   const [knownCancelsCount, setKnownCancelsCount] = useState(0);
   const isFirstFetch = useRef(true);
@@ -1108,27 +1112,36 @@ body, html {
 }
 
 .berry-root {
-  --berry-bg: #eef2f6;
-  --berry-paper: #ffffff;
-  --berry-purple: #5e35b1;
-  --berry-purple-light: #ede7f6;
-  --berry-purple-dark: #4527a0;
-  --berry-blue: #1e88e5;
-  --berry-blue-light: #e3f2fd;
-  --berry-blue-dark: #1565c0;
-  --berry-text-dark: #121926;
-  --berry-text-muted: #697586;
-  --berry-border: #e3e8ef;
-  --berry-red: #f44336;
-  --berry-red-light: #fbe9e7;
-  --berry-green: #00c853;
-  --berry-green-light: #b9f6ca;
-  --berry-amber: #ffc107;
-  --berry-amber-light: #fff8e1;
+  --berry-bg: #F6F7FB;
+  --berry-paper: #FFFFFF;
   
-  --radius-lg: 12px;
-  --radius-md: 8px;
-  --shadow-sm: 0px 2px 8px rgba(0,0,0,0.04);
+  /* Primary (Mapped from Executive Orange) */
+  --berry-purple: #FF724C;
+  --berry-purple-light: #FFEAE3;
+  --berry-purple-dark: #E8552D;
+  
+  /* Secondary/Deep (Mapped from Executive Navy) */
+  --berry-blue: #2A2C41;
+  --berry-blue-light: #EDEEF4;
+  --berry-blue-dark: #1D1F2F;
+  
+  /* Typography */
+  --berry-text-dark: #2A2C41;
+  --berry-text-muted: #8A8FA6;
+  --berry-border: #E6E8F0;
+  
+  /* Status Colors */
+  --berry-red: #E2452F;
+  --berry-red-light: #FDEAE6;
+  --berry-green: #17A673;
+  --berry-green-light: #E3F6EE;
+  --berry-amber: #E2A430;
+  --berry-amber-light: #FFF4DE;
+
+  /* Shadows/Radius */
+  --radius-lg: 14px;
+  --radius-md: 9px;
+  --shadow-sm: 0 2px 10px rgba(42,44,65,0.05);
   
   font-family: 'Roboto', 'Sarabun', sans-serif;
   color: var(--berry-text-dark);
@@ -1326,7 +1339,7 @@ body, html {
   .berry-sidebar {
     position: fixed;
     left: 0;
-    top: 80px;
+    top: 80px; /* ยึดไว้ใต้ Topbar */
     bottom: 0;
     width: 260px !important;
     transform: translateX(-100%);
@@ -1336,6 +1349,7 @@ body, html {
     transform: translateX(0);
     box-shadow: 4px 0 24px rgba(0,0,0,0.1);
   }
+  .berry-brand { width: auto; }
 }
 
 /* -------------------------------------------
@@ -1378,7 +1392,7 @@ body, html {
 /* Period Buttons */
 .berry-period-btn { background: transparent; border: none; padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--berry-text-muted); cursor: pointer; font-family: inherit; transition: all 0.2s ease; }
 .berry-period-btn:hover { color: var(--berry-text-dark); }
-.berry-period-btn.active { background: #fff; color: var(--berry-text-dark); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.berry-period-btn.active { background: var(--berry-paper); color: var(--berry-text-dark); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 
 /* -------------------------------------------
    Product Grid (Card Layout)
@@ -1618,7 +1632,7 @@ body, html {
 }
 
 /* Toast */
-.berry-toast { position: fixed; bottom: 24px; right: 24px; background: white; color: var(--berry-text-dark); padding: 12px 20px; border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 12px; z-index: 1000; opacity: 0; transform: translateY(20px); pointer-events: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.berry-toast { position: fixed; bottom: 24px; right: 24px; background: var(--berry-paper); color: var(--berry-text-dark); padding: 12px 20px; border-radius: var(--radius-md); box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 12px; z-index: 1000; opacity: 0; transform: translateY(20px); pointer-events: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); border: 1px solid var(--berry-border); }
 .berry-toast.show { opacity: 1; transform: translateY(0); }
 .berry-toast .icon-wrapper { background: var(--berry-green-light); color: var(--berry-green); width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
 
