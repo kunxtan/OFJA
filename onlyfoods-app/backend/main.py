@@ -47,6 +47,13 @@ def send_notif(db, user_id: int, msg: str):
                 (user_id, msg)
             )
 
+# เพิ่ม Schema สำหรับสร้างพนักงาน
+class StaffCreateSchema(BaseModel):
+    username: str
+    password: str
+    fullName: str
+    role: str
+
 class LoginSchema(BaseModel):
     username: str
     password: str
@@ -498,3 +505,53 @@ def get_logs(db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM AuditLog ORDER BY LogID DESC LIMIT 50")
         return cur.fetchall()
+
+
+
+# ==========================================
+# STAFF MANAGEMENT API
+# ==========================================
+
+@app.get("/api/stores/{store_id}/staff")
+def get_store_staff(store_id: int, db=Depends(get_db)):
+    with db.cursor() as cur:
+        # ดึงมาเฉพาะพนักงานหน้าร้านกับคนครัว
+        cur.execute("""
+            SELECT UserId, Username, FullName, Role 
+            FROM Users 
+            WHERE StoreId = %s AND Role IN ('Front Staff', 'Kitchen Staff')
+        """, (store_id,))
+        return cur.fetchall()
+
+@app.post("/api/stores/{store_id}/staff", status_code=201)
+def add_store_staff(store_id: int, data: StaffCreateSchema, db=Depends(get_db)):
+    try:
+        with db.cursor() as cur:
+            # เช็คก่อนว่า username ซ้ำมั้ย (Username ห้ามซ้ำกันทั้งระบบ)
+            cur.execute("SELECT UserId FROM Users WHERE Username = %s", (data.username,))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="Username นี้มีอยู่ในระบบแล้ว")
+
+            cur.execute("""
+                INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points)
+                VALUES (%s, %s, %s, %s, %s, 0)
+            """, (data.username, data.password, data.fullName, data.role, store_id))
+            db.commit()
+            return {"success": True, "message": "เพิ่มพนักงานสำเร็จ"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/staff/{user_id}")
+def delete_staff(user_id: int, db=Depends(get_db)):
+    try:
+        with db.cursor() as cur:
+            cur.execute("DELETE FROM Users WHERE UserId = %s", (user_id,))
+            db.commit()
+            return {"success": True, "message": "ลบพนักงานสำเร็จ"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

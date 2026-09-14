@@ -112,7 +112,8 @@ function Icon({ name, size = 20 }) {
     logout: <><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>,
     plus: <><path d="M12 5l0 14" /><path d="M5 12l14 0" /></>,
     trash: <><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></>,
-    edit: <><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" /></>
+    edit: <><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" /></>,
+    users: <><path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /><path d="M21 21v-2a4 4 0 0 0 -3 -3.85" /></>
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -232,7 +233,6 @@ function ImageUploadZone({ image, onChange }) {
       alert('กรุณาอัปโหลดไฟล์รูปภาพเท่านั้น');
       return;
     }
-    // ตรวจสอบขนาดไม่เกิน 5 MB (5 * 1024 * 1024)
     if (file.size > 5242880) {
       alert('ขนาดไฟล์ต้องไม่เกิน 5 MB');
       return;
@@ -273,7 +273,6 @@ function ImageUploadZone({ image, onChange }) {
         </div>
       ) : (
         <div className="berry-upload-placeholder">
-          {/* Cloud Icon SVG with Gradient */}
           <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#1e88e5' }}>
             <defs>
               <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -309,30 +308,32 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [cancels, setCancels] = useState([]);
   const [products, setProducts] = useState([]);
   const [history, setHistory] = useState([]); 
+  const [staffList, setStaffList] = useState([]); 
   
   const [storeDays, setStoreDays] = useState(1);
   const [storeReport, setStoreReport] = useState(null);
   
   const [page, setPage] = useState('dashboard');
   
-  // ให้ sidebar กางออกโดยเริ่มต้น
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState({ show: false, msg: '' });
 
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
-  // --- ระบบนับจำนวนแจ้งเตือน ---
   const [unreadCancels, setUnreadCancels] = useState(0);
   const [knownCancelsCount, setKnownCancelsCount] = useState(0);
   const isFirstFetch = useRef(true);
 
-  // --- ระบบจัดการเมนู (เพิ่ม/แก้ไข/ลบ) ---
+  // --- Modal States ---
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newMenu, setNewMenu] = useState({ name: '', price: '', img: '' });
   
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editMenu, setEditMenu] = useState({ id: null, name: '', price: '', img: '' });
+
+  const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
+  const [newStaff, setNewStaff] = useState({ username: '', password: '', fullName: '', role: 'Front Staff' });
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -359,6 +360,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
     fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => r.json()).then(setProducts);
     fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => r.json()).then(setHistory).catch(err => console.error(err));
+    fetch(`${apiBase}/api/stores/${storeId}/staff`).then(r => r.json()).then(setStaffList).catch(err => console.error(err));
   };
 
   useEffect(() => {
@@ -410,12 +412,11 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     });
   };
 
-  // --- CRUD Menu ---
   const handleAddMenu = async (e) => {
     e.preventDefault();
     if (!newMenu.name || !newMenu.price) return;
     try {
-      await fetch(`${apiBase}/api/products`, {
+      const res = await fetch(`${apiBase}/api/products`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -426,13 +427,17 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           img: newMenu.img || ''
         })
       });
+      if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Failed to add menu');
+      }
       showToast('เพิ่มเมนูสำเร็จ');
       setNewMenu({ name: '', price: '', img: '' });
       setIsAddModalOpen(false);
       fetchData();
     } catch (err) {
       console.error(err);
-      showToast('เกิดข้อผิดพลาดในการเพิ่มเมนู');
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
     }
   };
 
@@ -450,7 +455,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     e.preventDefault();
     if (!editMenu.name || !editMenu.price) return;
     try {
-      await fetch(`${apiBase}/api/products/${editMenu.id}`, {
+      const res = await fetch(`${apiBase}/api/products/${editMenu.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -459,26 +464,73 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           img: editMenu.img || ''
         })
       });
+      if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Failed to update menu');
+      }
       showToast('แก้ไขเมนูสำเร็จ');
       setIsEditModalOpen(false);
       fetchData();
     } catch (err) {
       console.error(err);
-      showToast('เกิดข้อผิดพลาดในการแก้ไขเมนู');
+      showToast('เกิดข้อผิดพลาด: ' + err.message);
     }
   };
 
   const handleDeleteMenu = async (id, name) => {
     if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบเมนู "${name}"?`)) return;
     try {
-      await fetch(`${apiBase}/api/products/${id}`, {
+      const res = await fetch(`${apiBase}/api/products/${id}`, {
         method: 'DELETE'
       });
+      if (!res.ok) {
+          throw new Error('Failed to delete menu');
+      }
       showToast('ลบเมนูสำเร็จ');
       fetchData();
     } catch (err) {
       console.error(err);
       showToast('เกิดข้อผิดพลาดในการลบเมนู');
+    }
+  };
+
+  // --- Staff Management ---
+  const handleAddStaff = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${apiBase}/api/stores/${storeId}/staff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newStaff)
+      });
+      if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Failed to add staff');
+      }
+      showToast('เพิ่มพนักงานสำเร็จ');
+      setNewStaff({ username: '', password: '', fullName: '', role: 'Front Staff' });
+      setIsStaffModalOpen(false);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteStaff = async (userId, name) => {
+    if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบพนักงาน "${name}" ออกจากระบบ?`)) return;
+    try {
+      const res = await fetch(`${apiBase}/api/staff/${userId}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) {
+          throw new Error('Failed to delete staff');
+      }
+      showToast('ลบพนักงานสำเร็จ');
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      showToast('เกิดข้อผิดพลาดในการลบพนักงาน');
     }
   };
 
@@ -489,6 +541,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมร้านค้า', icon: 'dashboard' },
     { id: 'menu', label: 'Manage Menu', caption: 'จัดการเมนู/สต็อก', icon: 'menu' },
+    { id: 'staff', label: 'Manage Staff', caption: 'จัดการพนักงาน', icon: 'users' },
     { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history' },
     { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
   ];
@@ -692,7 +745,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             <div style={{ paddingBottom: '40px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h3 style={{ margin: 0, fontSize: '20px', fontWeight: '600' }}>Menu & Stock Management</h3>
-                
                 <button 
                   className="berry-btn btn-primary" 
                   style={{ padding: '8px 16px', fontSize: '13px' }}
@@ -713,7 +765,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                         alt={p.ProductName} 
                         className="berry-product-img" 
                       />
-                      
                       <div className="berry-product-body">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                           <h4 className="berry-product-title">{p.ProductName}</h4>
@@ -754,6 +805,60 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ===== STAFF MANAGEMENT PAGE ===== */}
+          {page === 'staff' && (
+            <div className="berry-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: '600' }}>Staff Management</h3>
+                <button 
+                  className="berry-btn btn-primary" 
+                  style={{ padding: '8px 16px', fontSize: '13px' }}
+                  onClick={() => setIsStaffModalOpen(true)}
+                >
+                  <Icon name="plus" size={16} /> Add Staff
+                </button>
+              </div>
+
+              <div className="berry-table-container">
+                <table className="berry-table">
+                  <thead>
+                    <tr>
+                      <th>User ID</th>
+                      <th>Username</th>
+                      <th>Full Name</th>
+                      <th>Role</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staffList.length === 0 && <tr><td colSpan="5" className="empty-state">No staff accounts found.</td></tr>}
+                    {staffList.map(s => (
+                      <tr key={s.UserId}>
+                        <td className="mono muted">#{s.UserId}</td>
+                        <td className="bold">{s.Username}</td>
+                        <td>{s.FullName}</td>
+                        <td>
+                          <Badge tone={s.Role === 'Front Staff' ? 'primary' : 'warning'}>
+                            {s.Role === 'Front Staff' ? 'หน้าร้าน (Front)' : 'คนครัว (Kitchen)'}
+                          </Badge>
+                        </td>
+                        <td>
+                          <button 
+                            className="berry-btn-icon btn-error-light" 
+                            title="Delete Staff"
+                            onClick={() => handleDeleteStaff(s.UserId, s.FullName)}
+                          >
+                            <Icon name="trash" size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -837,6 +942,63 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
         </main>
       </div>
+
+      {/* ===== ADD STAFF MODAL ===== */}
+      {isStaffModalOpen && (
+        <div className="berry-modal-overlay">
+          <div className="berry-modal">
+            <h3>Add New Staff</h3>
+            <form onSubmit={handleAddStaff}>
+              <div className="berry-form-group">
+                <label>Username (ชื่อผู้ใช้เข้าสู่ระบบ)</label>
+                <input 
+                  type="text" 
+                  value={newStaff.username} 
+                  onChange={e => setNewStaff({...newStaff, username: e.target.value})} 
+                  placeholder="เช่น front01"
+                  required 
+                />
+              </div>
+              <div className="berry-form-group">
+                <label>Password (รหัสผ่าน)</label>
+                <input 
+                  type="password" 
+                  value={newStaff.password} 
+                  onChange={e => setNewStaff({...newStaff, password: e.target.value})} 
+                  placeholder="รหัสผ่าน"
+                  required 
+                />
+              </div>
+              <div className="berry-form-group">
+                <label>Full Name (ชื่อ-นามสกุล)</label>
+                <input 
+                  type="text" 
+                  value={newStaff.fullName} 
+                  onChange={e => setNewStaff({...newStaff, fullName: e.target.value})} 
+                  placeholder="เช่น สมหมาย หน้าร้าน"
+                  required 
+                />
+              </div>
+              <div className="berry-form-group">
+                <label>Role (ตำแหน่ง)</label>
+                <select 
+                  className="berry-select"
+                  value={newStaff.role} 
+                  onChange={e => setNewStaff({...newStaff, role: e.target.value})}
+                >
+                  <option value="Front Staff">พนักงานหน้าร้าน (Front Staff)</option>
+                  <option value="Kitchen Staff">คนครัว (Kitchen Staff)</option>
+                </select>
+              </div>
+              
+              <div className="berry-modal-actions">
+                <button type="button" className="berry-btn btn-error-light" onClick={() => setIsStaffModalOpen(false)}>Cancel</button>
+                <button type="submit" className="berry-btn btn-primary">Save Staff</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ===== ADD MENU MODAL ===== */}
       {isAddModalOpen && (
@@ -1397,6 +1559,7 @@ body, html {
 .berry-badge.tone-success { background: var(--berry-green-light); color: var(--berry-green); }
 .berry-badge.tone-danger { background: var(--berry-red-light); color: var(--berry-red); }
 .berry-badge.tone-warning { background: var(--berry-amber-light); color: var(--berry-amber); }
+.berry-badge.tone-primary { background: var(--berry-blue-light); color: var(--berry-blue); }
 
 /* Modal */
 .berry-modal-overlay {
@@ -1433,7 +1596,9 @@ body, html {
   color: var(--berry-text-dark);
 }
 .berry-form-group input[type="text"],
-.berry-form-group input[type="number"] {
+.berry-form-group input[type="password"],
+.berry-form-group input[type="number"],
+.berry-select {
   padding: 10px 14px;
   border: 1px solid var(--berry-border);
   border-radius: var(--radius-md);
@@ -1441,7 +1606,8 @@ body, html {
   font-size: 14px;
   outline: none;
 }
-.berry-form-group input:focus {
+.berry-form-group input:focus,
+.berry-select:focus {
   border-color: var(--berry-purple);
 }
 .berry-modal-actions {
