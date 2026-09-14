@@ -15,9 +15,10 @@ const STORE_COLORS = ['#FF724C', '#2A2C41', '#FDBF50', '#697586', '#E0532E', '#4
 /* ---------------- Pure helpers ---------------- */
 const fmtMoney = (n) => {
   const num = Number(n || 0);
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-  if (num >= 10000) return (num / 1000).toFixed(1) + 'K';
-  return num.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return num.toLocaleString('th-TH', { 
+    minimumFractionDigits: 0, 
+    maximumFractionDigits: 0 
+  });
 };
 
 const colorForStore = (storeId) => STORE_COLORS[Number(storeId) % STORE_COLORS.length];
@@ -417,7 +418,7 @@ function BerryDonutChart({ data, valueFormat, height = 240 }) {
     const val = Math.max(0, Number(d.value || 0));
     const pctRatio = val / total;
     const strokeLength = pctRatio * circumference;
-    const gap = data.length > 1 ? 2 : 0;
+    const gap = 0;
     const adjustedLength = Math.max(0, strokeLength - gap);
     
     const strokeDashoffset = -accumulatedAngle * circumference;
@@ -477,14 +478,16 @@ function BerryDonutChart({ data, valueFormat, height = 240 }) {
           padding: '12px'
         }}>
           <span style={{ fontSize: '11px', color: 'var(--berry-text-muted)', fontWeight: '500', whiteSpace: 'nowrap' }}>
-            {activeSlice ? activeSlice.label : 'ยอดสุทธิรวม'}
+            {activeSlice ? 'ยอดสุทธิ' : 'ยอดสุทธิรวม'}
           </span>
+          
           <span style={{ fontSize: '15px', fontWeight: '700', color: 'var(--berry-text-dark)', marginTop: '2px' }}>
             {activeSlice 
               ? (valueFormat ? valueFormat(activeSlice.value) : activeSlice.value)
               : (valueFormat ? valueFormat(total) : total)
             }
           </span>
+          
           {activeSlice && (
             <span style={{ fontSize: '12px', color: activeSlice.color, fontWeight: '700', marginTop: '2px' }}>
               {activeSlice.pct}%
@@ -493,7 +496,6 @@ function BerryDonutChart({ data, valueFormat, height = 240 }) {
         </div>
       </div>
 
-      {/* Legend / คำอธิบายสี */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '150px', maxWidth: '220px' }}>
         {slices.map((slice, i) => (
           <div
@@ -595,7 +597,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [loading, setLoading] = useState(true);
 
   const [page, setPage] = useState('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768);
   const [toast, setToast] = useState({ show: false, msg: '' });
   
   const [profileOpen, setProfileOpen] = useState(false);
@@ -605,7 +607,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [dropdown, setDropdown] = useState('');
 
   const [trendDays, setTrendDays] = useState(7);
-  const [netChartType, setNetChartType] = useState('bar'); // 📍 เปลี่ยนค่าเริ่มต้นเป็น bar ตรงนี้
+  const [netChartType, setNetChartType] = useState('bar'); 
   const [salesStoreFilter, setSalesStoreFilter] = useState('all');
   const [detailStoreId, setDetailStoreId] = useState(null);
   const [auditSearch, setAuditSearch] = useState('');
@@ -618,6 +620,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [rangeEnd, setRangeEnd] = useState(reportEnd);
   const [reportStoreFilter, setReportStoreFilter] = useState('all');
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [salesStart, setSalesStart] = useState(reportStart);
+  const [salesEnd, setSalesEnd] = useState(reportEnd);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -666,7 +670,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     return { totalGross, totalOrders, totalCancelled, rate: +rate.toFixed(1), abnormalStores: storeSummary.filter(s => s.status !== 'ok') };
   }, [storeSummary]);
 
-  const salesFilteredRows = salesStoreFilter === 'all' ? storeSummary : storeSummary.filter(s => String(s.storeId) === String(salesStoreFilter));
+  const salesOrders = useMemo(() => filterOrdersByRange(orders, salesStart, salesEnd, 'all'), [orders, salesStart, salesEnd]);
+  const salesStoreSummary = useMemo(() => buildStoreSummary(stores, salesOrders), [stores, salesOrders]);
+
+  const salesFilteredRows = salesStoreFilter === 'all' 
+    ? salesStoreSummary 
+    : salesStoreSummary.filter(s => String(s.storeId) === String(salesStoreFilter));
 
   const salesTotals = useMemo(() => {
     const gross = salesFilteredRows.reduce((a, s) => a + s.grossSales, 0);
@@ -676,8 +685,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     return { gross, net, completed, cancelled };
   }, [salesFilteredRows]);
 
-  const topMenu = useMemo(() => buildTopMenu(orders, salesStoreFilter, 10), [orders, salesStoreFilter]);
+  const topMenu = useMemo(() => buildTopMenu(salesOrders, salesStoreFilter, 10), [salesOrders, salesStoreFilter]);
   const hourlyTrend = useMemo(() => buildSalesTrend(orders, trendDays), [orders, trendDays]);
+
+  // ดึงข้อมูลเมนูของร้านที่ถูกเลือกเพื่อแสดงใน Modal แบบละเอียด
+  const detailStoreMenus = useMemo(() => {
+    if (!detailStoreId) return [];
+    return buildTopMenu(salesOrders, detailStoreId, 100); // ดึงสูงสุด 100 เมนูที่ขายได้ของร้านที่เลือก
+  }, [salesOrders, detailStoreId]);
 
   const periodStats = useMemo(() => {
     const { currStart, currEnd, prevStart, prevEnd } = getPeriodBounds(trendDays);
@@ -698,7 +713,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       return {
         curr, prev, compareLabel,
         deltaGross: pctChange(curr.gross, prev.gross),
-        deltaNet: pctChange(curr.net, prev.net), // เพิ่มบรรทัดนี้เพื่อคำนวณการเติบโตยอดสุทธิ
+        deltaNet: pctChange(curr.net, prev.net), 
         deltaOrders: pctChange(curr.totalOrders, prev.totalOrders),
         deltaCancelled: pctChange(curr.cancelled, prev.cancelled),
         deltaRate: +(curr.rate - prev.rate).toFixed(1),
@@ -761,6 +776,10 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       {/* ===== TOPBAR (HEADER) ===== */}
       <header className="berry-topbar">
         <div className="berry-topbar-left">
+          <button className="berry-icon-btn purple-light" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <Icon name="menu" size={20} color="var(--berry-purple)" />
+          </button>
+
           <div className="berry-brand">
             <div className="brand-title">
               <span className="brand-icon">📈</span> 
@@ -770,9 +789,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               ระบบจัดการบัญชีส่วนกลาง
             </div>
           </div>
-          <button className="berry-icon-btn purple-light" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            <Icon name="menu" size={20} color="var(--berry-purple)" />
-          </button>
         </div>
 
         <div className="berry-topbar-right">
@@ -932,7 +948,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       <div className="berry-panel-caption">สัดส่วนและรายได้สุทธิของแต่ละร้าน</div>
                     </div>
                     
-                    {/* 📍 สลับปุ่ม Bar ขึ้นมาก่อน Donut ตรงนี้ */}
                     <div className="berry-toggle-pills">
                       <button
                         className={netChartType === 'bar' ? 'active' : ''}
@@ -949,7 +964,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </div>
                   </div>
 
-                  {/* แสดงผลกราฟตามประเภทที่เลือก (ปรับให้เงื่อนไขเช็ค Bar ขึ้นก่อนด้วย) */}
                   {netChartType === 'bar' ? (
                     <BerryHBarChart
                       data={periodStats.curr.storesData.map(s => ({ label: s.storeName, value: s.netSales }))}
@@ -1017,6 +1031,25 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <option value="all">ทุกร้านค้า</option>
                   {storeSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
                 </select>
+
+                {/* --- เพิ่ม Input เลือกวันที่ 2 อันตรงนี้ --- */}
+                <label>ตั้งแต่วันที่:</label>
+                <input 
+                  type="date" 
+                  className="berry-input" 
+                  value={salesStart} 
+                  onChange={e => setSalesStart(e.target.value)} 
+                />
+
+                <label>ถึงวันที่:</label>
+                <input 
+                  type="date" 
+                  className="berry-input" 
+                  value={salesEnd} 
+                  onChange={e => setSalesEnd(e.target.value)} 
+                />
+                {/* -------------------------------------- */}
+
                 <button className="berry-btn primary" onClick={() => showToast('อัปเดตตารางยอดขายแล้ว')}>
                   ค้นหา
                 </button>
@@ -1051,10 +1084,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.completedOrders)}</td>
                           <td>฿{fmtMoney(s.grossSales)}</td>
-                          <td style={{ color: 'var(--berry-red)' }}>{fmtMoney(s.cancelledOrders)} ({s.rate}%)</td>
+                          <td style={{ color: s.status === 'bad' ? 'var(--berry-red)' : s.status === 'warn' ? '#D99B00' : 'var(--berry-green)' }}>
+                          {fmtMoney(s.cancelledOrders)} ({s.rate}%)
+                          </td>
                           <td style={{ fontWeight: 700 }}>฿{fmtMoney(s.netSales)}</td>
                           <td>
-                            <span className="berry-link" onClick={() => { setSalesStoreFilter(String(s.storeId)); setDetailStoreId(s.storeId); }}>
+                            {/* เปิด Modal แสดงรายละเอียดเมนู */}
+                            <span className="berry-link" onClick={() => setDetailStoreId(s.storeId)}>
                               ดูรายละเอียด →
                             </span>
                           </td>
@@ -1086,6 +1122,42 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                 )}
               </div>
+              
+              {/* ===== Modal ดูรายละเอียดเมนูขายดีสำหรับร้านที่เลือก ===== */}
+              {detailStoreId && (
+                <div className="berry-modal-overlay" onClick={() => setDetailStoreId(null)}>
+                  <div className="berry-modal-content" onClick={e => e.stopPropagation()}>
+                    <div className="berry-modal-header">
+                      <h3>รายละเอียดเมนู: {storeSummary.find(s => s.storeId === detailStoreId)?.storeName || 'ไม่ทราบชื่อร้าน'}</h3>
+                      <button className="berry-icon-btn" onClick={() => setDetailStoreId(null)}>
+                        <Icon name="cancel" size={20} />
+                      </button>
+                    </div>
+                    <div className="berry-modal-body">
+                      {detailStoreMenus.length === 0 ? (
+                        <div className="berry-empty-note">ไม่พบข้อมูลเมนูที่ขายได้ของร้านนี้ในช่วงเวลาที่เลือก</div>
+                      ) : (
+                        <table className="berry-table">
+                          <thead>
+                            <tr>
+                              <th>ชื่อเมนู</th>
+                              <th style={{ textAlign: 'right' }}>จำนวนที่ขายได้ (จาน)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {detailStoreMenus.map((m, idx) => (
+                              <tr key={idx}>
+                                <td>{m.name}</td>
+                                <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{fmtMoney(m.qty)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1189,7 +1261,17 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       {filteredLogs.map(l => (
                         <tr key={l.LogID}>
                           <td>{fmtDateTime(l.CreatedAt)}</td>
-                          <td><Badge tone={String(l.Action || '').includes('REJECT') ? 'bad' : 'neutral'}>{l.Action}</Badge></td>
+                          <td>
+                          <Badge 
+                            tone={
+                              String(l.Action || '').toUpperCase().includes('REJECT') ? 'bad' : 
+                              String(l.Action || '').toUpperCase().includes('APPROVE') ? 'green' : 
+                              'neutral'
+                            }
+                          >
+                            {l.Action}
+                          </Badge>
+                          </td>
                           <td>{l.PerformedBy}</td>
                           <td>{l.Details}</td>
                         </tr>
@@ -1322,11 +1404,12 @@ const STYLES = `
 }
 
 .berry-root {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   margin: 0;
   padding: 0;
   
@@ -1401,10 +1484,13 @@ const STYLES = `
 /* Body & Sidebar */
 .berry-body { display: flex; flex: 1; overflow: hidden; }
 .berry-sidebar {
-  width: 260px; background: var(--berry-card-bg);
+  width: 260px; 
+  background: var(--berry-card-bg);
   border-right: 1px solid var(--berry-border);
   transition: width 0.3s;
-  display: flex; flex-direction: column;
+  display: flex; 
+  flex-direction: column;
+  flex-shrink: 0;
 }
 .berry-sidebar.collapsed { width: 80px; }
 .berry-nav { padding: 16px; }
@@ -1527,4 +1613,131 @@ const STYLES = `
 .berry-bullet-target { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--berry-text-dark); }
 .berry-bullet-value { width: 52px; text-align: right; font-weight: 700; font-size: 13px; flex-shrink: 0; }
 
+/* ============================================================
+   MODAL STYLES (NEW)
+   ============================================================ */
+.berry-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(42, 44, 65, 0.7); /* พื้นหลังให้มืดลง */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-in-out;
+}
+.berry-modal-content {
+  background: var(--berry-card-bg);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 15px 40px rgba(0,0,0,0.25);
+  animation: scaleUp 0.2s ease-in-out;
+}
+.berry-modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--berry-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.berry-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--berry-text-dark);
+}
+.berry-modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scaleUp {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+  /* ============================================================
+   RESPONSIVE DESIGN (MOBILE & TABLET)
+   ============================================================ */
+@media (max-width: 768px) {
+  /* Topbar Adjustments */
+  .berry-topbar { padding: 0 16px; height: 60px; }
+  .brand-title { font-size: 18px; }
+  .brand-subtitle { display: none; } /* ซ่อน Subtitle บนมือถือเพื่อประหยัดพื้นที่ */
+  .berry-user-chip span { display: none; } /* ซ่อนชื่อผู้ใช้งาน ให้เหลือแค่ไอคอน Setting */
+  .berry-user-chip { padding: 6px 10px; }
+  
+  /* Sidebar เปลี่ยนเป็น Off-Canvas (ลิ้นชักซ่อนด้านซ้าย) */
+  .berry-sidebar {
+    position: fixed;
+    top: 60px;
+    left: -260px;
+    height: calc(100vh - 60px);
+    z-index: 1000;
+    box-shadow: 4px 0 15px rgba(42, 44, 65, 0.1);
+    transition: left 0.3s ease;
+  }
+  .berry-sidebar.open {
+    left: 0;
+    width: 260px;
+  }
+  .berry-sidebar.collapsed {
+    left: -260px;
+    width: 260px;
+  }
+  
+  /* Content Padding & Gap */
+  .berry-content { padding: 16px; }
+  .berry-dashboard-grid { gap: 16px; }
+  
+  /* Dashboard Header */
+  .berry-dashboard-toprow { flex-direction: column; align-items: flex-start; gap: 8px; }
+  
+  /* Stats Row 4 ให้เหลือ 1 คอลัมน์บนมือถือ */
+  .berry-stats-row-4 { grid-template-columns: 1fr; gap: 12px; }
+  
+  /* Panels & Charts */
+  .berry-chart-row { display: flex; flex-direction: column; gap: 16px; }
+  .berry-chart-row .berry-panel { 
+    flex-basis: auto !important; 
+    width: 100%; 
+    min-width: unset; 
+  }
+  
+  /* Panel Details */
+  .berry-panel { padding: 16px; }
+  .berry-panel-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .berry-toggle-pills { 
+    align-self: stretch; 
+    justify-content: space-between; 
+    overflow-x: auto; 
+  }
+  .berry-toggle-pills button { flex: 1; text-align: center; white-space: nowrap; }
+  
+  /* Filters & Inputs (ขยายให้เต็ม 100%) */
+  .berry-filter-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .berry-filter-row > div, 
+  .berry-filter-row input, 
+  .berry-filter-row select, 
+  .berry-filter-row button {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+  /* Table Adjustments */
+  .berry-table td, .berry-table th { 
+    white-space: nowrap; 
+    font-size: 13px; 
+    padding: 10px 8px; 
+  }
+  
+  /* Modals */
+  .berry-modal-content { width: 95%; max-height: 80vh; }
+  .berry-modal-header h3 { font-size: 14px; }
+}
 `;
