@@ -128,10 +128,12 @@ def ensure_review_table(db):
             """
             CREATE TABLE IF NOT EXISTS Review (
                 ReviewId INT AUTO_INCREMENT PRIMARY KEY,
+                OrderID INT NOT NULL,
                 StoreId INT NOT NULL,
-                ReviewerName VARCHAR(100) NULL,
+                UserId INT NOT NULL,
                 Rating TINYINT NOT NULL,
                 Comment VARCHAR(500) NULL,
+                ImageUrl LONGTEXT NULL,
                 CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 CONSTRAINT chk_review_rating CHECK (Rating BETWEEN 1 AND 5),
                 FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE CASCADE
@@ -164,6 +166,22 @@ def ensure_food_court_setting(db):
 class LoginSchema(BaseModel):
     username: str
     password: str
+
+class RegisterSchema(BaseModel):
+    username: str
+    password: str
+    name: str
+
+class GoogleAuthSchema(BaseModel):
+    google_id: str
+    email: str
+    name: str
+
+class CompleteProfileSchema(BaseModel):
+    user_id: int
+    full_name: str
+    phone: str
+    profile_img: Optional[str] = None
 
 class StaffCreateSchema(BaseModel):
     username: str
@@ -200,6 +218,9 @@ class CreateOrderSchema(BaseModel):
     note: Optional[str] = ""
     is_walk_in: Optional[bool] = False
     slip_url: Optional[str] = None
+    payment_method: Optional[str] = None
+    pickup_time: Optional[str] = None
+    order_time: Optional[str] = None
 
 class VerifySlipSchema(BaseModel):
     approved: bool
@@ -239,6 +260,13 @@ class ProductUpdateSchema(BaseModel):
     UnitPrice: float
     img: Optional[str] = None
 
+class ReviewCreateSchema(BaseModel):
+    order_id: int
+    user_id: int
+    rating: int
+    comment: Optional[str] = ""
+    image_url: Optional[str] = None
+
 class CancelRequestSchema(BaseModel):
     reason: str
     response_window_minutes: int
@@ -260,6 +288,53 @@ def login(data: LoginSchema, db=Depends(get_db)):
         if not user:
             raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
         return user
+
+@app.post("/api/register")
+def register(data: RegisterSchema, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT UserId FROM Users WHERE Username=%s", (data.username,))
+        if cur.fetchone():
+            raise HTTPException(status_code=400, detail="ชื่อผู้ใช้นี้ถูกใช้งานแล้ว")
+        cur.execute(
+            "INSERT INTO Users (Username, Password, FullName, Role) VALUES (%s, %s, %s, 'Customer')", 
+            (data.username, data.password, data.name)
+        )
+        user_id = cur.lastrowid
+        db.commit()
+        cur.execute("SELECT * FROM Users WHERE UserId=%s", (user_id,))
+        return cur.fetchone()
+
+@app.post("/api/auth/google")
+def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM Users WHERE GoogleId=%s OR Email=%s", (data.google_id, data.email))
+        user = cur.fetchone()
+        
+        if not user:
+            # ถ้าเป็นผู้ใช้ใหม่จาก Google ให้สร้างบัญชี
+            cur.execute(
+                "INSERT INTO Users (Username, GoogleId, Email, FullName, Role) VALUES (%s, %s, %s, %s, 'Customer')", 
+                (data.email.split('@')[0], data.google_id, data.email, data.name)
+            )
+            user_id = cur.lastrowid
+            db.commit()
+            cur.execute("SELECT * FROM Users WHERE UserId=%s", (user_id,))
+            user = cur.fetchone()
+        
+        # เช็คว่ามีเบอร์โทรศัพท์หรือยัง ถ้ายังให้แจ้งให้หน้าบ้านบังคับกรอก
+        is_profile_incomplete = not bool(user.get('Phone'))
+        return {"user": user, "is_profile_incomplete": is_profile_incomplete}
+
+@app.put("/api/users/complete-profile")
+def complete_profile(data: CompleteProfileSchema, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE Users SET FullName=%s, Phone=%s, ProfileImg=%s WHERE UserId=%s", 
+            (data.full_name, data.phone, data.profile_img, data.user_id)
+        )
+        db.commit()
+        cur.execute("SELECT * FROM Users WHERE UserId=%s", (data.user_id,))
+        return cur.fetchone()
 
 @app.get("/api/customers/{user_id}")
 def get_customer_profile(user_id: int, db=Depends(get_db)):
@@ -493,6 +568,35 @@ def suspend_store(store_id: int, db=Depends(get_db)):
         db.commit()
         return {"success": True}
 
+
+# =====================================================================
+# Review Management Endpoints
+# =====================================================================
+
+@app.post("/api/reviews")
+def create_review(data: ReviewCreateSchema, db=Depends(get_db)):
+    ensure_review_table(db)
+    with db.cursor() as cur:
+        # หารหัสร้านค้าจาก OrderID
+        cur.execute("SELECT StoreId FROM `Order` WHERE OrderID=%s", (data.order_id,))
+        order = cur.fetchone()
+        if not order: 
+            raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อนี้")
+        
+        # บันทึกรีวิว
+        cur.execute(
+            """
+            INSERT INTO Review (OrderID, StoreId, UserId, Rating, Comment, ImageUrl) 
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (data.order_id, order['StoreId'], data.user_id, data.rating, data.comment, data.image_url)
+        )
+        
+        # อัปเดตสถานะการรีวิวใน Order 
+        cur.execute("UPDATE `Order` SET IsReviewed=1 WHERE OrderID=%s", (data.order_id,))
+        db.commit()
+        return {"success": True}
+
 @app.get("/api/stores/{store_id}/reviews")
 def get_store_reviews(store_id: int, db=Depends(get_db)):
     ensure_review_table(db)
@@ -503,10 +607,11 @@ def get_store_reviews(store_id: int, db=Depends(get_db)):
 
         cur.execute(
             """
-            SELECT ReviewId, StoreId, ReviewerName, Rating, Comment, CreatedAt
-            FROM Review
-            WHERE StoreId = %s
-            ORDER BY CreatedAt DESC, ReviewId DESC
+            SELECT r.*, u.FullName as ReviewerName 
+            FROM Review r 
+            JOIN Users u ON r.UserId = u.UserId 
+            WHERE r.StoreId = %s 
+            ORDER BY r.CreatedAt DESC, r.ReviewId DESC
             """,
             (store_id,),
         )
@@ -839,10 +944,11 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
             queue_no = f"OF-{random.randint(100, 999)}"
             initial_status = 'Pending' if data.is_walk_in else 'Verifying_Slip'
             
-            cur.execute(
-                "INSERT INTO `Order` (StoreId, UserId, QueueNo, TotalAmount, Status, Note, IsWalkIn, SlipUrl) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (data.store_id, data.user_id, queue_no, total, initial_status, data.note, 1 if data.is_walk_in else 0, data.slip_url)
-            )
+            cur.execute("""
+                INSERT INTO `Order` (StoreId, UserId, QueueNo, TotalAmount, Status, Note, IsWalkIn, SlipUrl, PaymentMethod, PickupTime, OrderTime) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (data.store_id, data.user_id, queue_no, total, initial_status, data.note, 1 if data.is_walk_in else 0, data.slip_url, data.payment_method, data.pickup_time, data.order_time))
+            
             order_id = cur.lastrowid
 
             for pid, qty, price, note in validated_items:
@@ -1030,7 +1136,7 @@ def get_cancellations(store_id: Optional[int] = None, db=Depends(get_db)):
             q += " AND o.StoreId = %s"
             params.append(store_id)
         q += " ORDER BY o.OrderID DESC"
-        cur.execute(query, params)
+        cur.execute(q, params)
         return cur.fetchall()
 
 @app.get("/api/audit-logs")
