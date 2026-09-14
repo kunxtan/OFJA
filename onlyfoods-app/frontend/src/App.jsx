@@ -6,261 +6,498 @@ import OwnerView from './components/OwnerView';
 import AccountantView from './components/AccountantView';
 import ExecutiveView from './components/ExecutiveView';
 
-// ==========================================
-// MOCK DATABASE & INITIAL STATES
-// ==========================================
-const INITIAL_STORES = [
-  { id: 1, name: 'ร้านกะเพราถาด KMITL', category: 'อาหารตามสั่ง', status: 'Open', rating: 5.0, totalSales: 15400, ownerUsername: 'owner01', isSuspended: false },
-  { id: 2, name: 'ร้านก๋วยเตี๋ยวเรือรสเด็ด', category: 'ก๋วยเตี๋ยว', status: 'Open', rating: 5.0, totalSales: 12100, ownerUsername: 'owner02', isSuspended: false },
-  { id: 3, name: 'ร้านชาดี ชาไทย', category: 'เครื่องดื่ม', status: 'Open', rating: 5.0, totalSales: 8900, ownerUsername: 'owner03', isSuspended: false }
-];
+const PALETTE = {
+  coral: '#FF724C',
+  yellow: '#FDBF50',
+  white: '#FFFFFF',
+  dark: '#2A2C41',
+  darkLight: '#373A56',
+  grayBg: '#F5F6FA',
+  textSub: '#7E84A3',
+  border: '#EBEBF0'
+};
 
-const INITIAL_PRODUCTS = [
-  { id: 101, storeId: 1, name: 'ข้าวผัดกะเพราหมูกรอบ', price: 50, isOutOfStock: false, img: '' },
-  { id: 102, storeId: 1, name: 'ข้าวผัดพริกแกงไก่ + ไข่ดาว', price: 55, isOutOfStock: false, img: '' },
-  { id: 201, storeId: 2, name: 'ก๋วยเตี๋ยวเรือน้ำตกเนื้อเปื่อย', price: 50, isOutOfStock: false, img: '' },
-  { id: 301, storeId: 3, name: 'ชาไทยเย็นเข้มข้น', price: 30, isOutOfStock: false, img: '' }
-];
-
-const INITIAL_USERS = [
-  { id: 1, username: 'uefa01', password: 'uefa01', role: 'Customer', name: 'คุณ ยูฟ่า (ลูกค้า VIP)' },
-  
-  // ร้านที่ 1: ร้านแกง
-  { id: 2, username: 'staff01', password: 'staff01', role: 'Front', name: 'ฟลุ้ค หน้าร้าน (ร้านแกง)', storeId: 1 },
-  { id: 3, username: 'kitchen01', password: 'kitchen01', role: 'Kitchen', name: 'เชฟฟลุ้ค ห้องครัว (ร้านแกง)', storeId: 1 },
-  
-  // ร้านที่ 2: ชาไทย
-  { id: 4, username: 'staff02', password: 'staff02', role: 'Front', name: 'ยูฟ่า หน้าร้าน (ชาไทย)', storeId: 2 },
-  { id: 5, username: 'kitchen02', password: 'kitchen02', role: 'Kitchen', name: 'เชฟยูฟ่า ห้องครัว (ชาไทย)', storeId: 2 },
-  
-  // ร้านที่ 3: ก๋วยเตี๋ยวเรือ
-  { id: 6, username: 'staff03', password: 'staff03', role: 'Front', name: 'พนักงานโฟโต้ หน้าร้าน (ก๋วยเตี๋ยวเรือ)', storeId: 3 },
-  { id: 7, username: 'kitchen03', password: 'kitchen03', role: 'Kitchen', name: 'เชฟโฟโต้ ห้องครัว (ก๋วยเตี๋ยวเรือ)', storeId: 3 },
-  
-  { id: 8, username: 'account01', password: 'account01', role: 'Accountant', name: 'คุณปัด ฝ่ายบัญชี' },
-  { id: 9, username: 'exec01', password: 'exec01', role: 'Executive', name: 'ท่านกัปตัน ผู้บริหารสูงสุด' }
-];
+const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
 
 export default function App() {
-  // Global States
   const [currentUser, setCurrentUser] = useState(null);
-  const [users, setUsers] = useState(INITIAL_USERS);
-  const [stores, setStores] = useState(INITIAL_STORES);
-  const [products, setProducts] = useState(INITIAL_PRODUCTS);
-  const [orders, setOrders] = useState([]);
-  const [cancellationLogs, setCancellationLogs] = useState([]);
+  const [stores, setStores] = useState([]);
+  const [products, setProducts] = useState([]);
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
-  const [announcement, setAnnouncement] = useState('');
-  const [pushNotifications, setPushNotifications] = useState([]);
 
-  useEffect(() => {
-    const fetchFoodCourtStatus = () => {
-      fetch('http://localhost:8000/api/food-court/status')
-        .then(res => res.json())
-        .then(data => setFoodCourtOpen(data.is_open))
-        .catch(err => console.error(err));
-    };
-    
-    fetchFoodCourtStatus();
-    const interval = setInterval(fetchFoodCourtStatus, 4000);
-    return () => clearInterval(interval);
-  }, []);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileForm, setProfileForm] = useState({ full_name: '', phone: '', profile_img: '' });
 
-  // Auth Form State
   const [authTab, setAuthTab] = useState('login');
-  const [authForm, setAuthForm] = useState({ username: '', password: '', role: 'Customer', name: '' });
+  const [authForm, setAuthForm] = useState({ username: '', password: '', name: '' });
   const [authError, setAuthError] = useState('');
 
-  // Handle Login & Register
-  const handleAuthSubmit = async (e) => {
-    e.preventDefault();
-    setAuthError('');
-    const apiBase = "http://localhost:8000";
+  const API_BASE = "http://localhost:8000";
 
-    if (authTab === 'login') {
-      try {
-        const res = await fetch(`${apiBase}/api/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: authForm.username, password: authForm.password })
-        });
-        const data = await res.json();
-        
-        if (!res.ok) throw new Error(data.detail);
-        
-        // แปลงชื่อ Role จาก DB ให้ตรงกับที่ Frontend เขียนไว้
-        let roleMap = { 'Kitchen Staff': 'Kitchen', 'Front Staff': 'Front', 'Shop Owner': 'Owner' };
-        let finalRole = roleMap[data.Role] || data.Role;
+  useEffect(() => {
+    fetchFoodCourtStatus();
+    fetchStores();
+    fetchProducts();
 
-        setCurrentUser({ 
-          UserId: data.UserId, id: data.UserId, 
-          username: data.Username, 
-          role: finalRole, 
-          FullName: data.FullName, name: data.FullName, 
-          storeId: data.StoreId, 
-          Points: data.Points 
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (window.google) {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleGoogleResponse
         });
-        setAuthForm({ username: '', password: '', role: 'Customer', name: '' });
-      } catch (err) {
-        setAuthError(err.message || 'เชื่อมต่อระบบล้มเหลว');
       }
-    } else {
-      // โหมดสมัครสมาชิก
-      try {
-        const res = await fetch(`${apiBase}/api/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: authForm.username, password: authForm.password, name: authForm.name })
-        });
+    };
+    document.body.appendChild(script);
+  }, []);
+
+  const fetchFoodCourtStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/food-court/status`);
+      if (res.ok) {
         const data = await res.json();
-        
-        if (!res.ok) throw new Error(data.detail);
-        
-        alert('ลงทะเบียนสำเร็จ!');
-        setCurrentUser({ 
-          UserId: data.UserId, id: data.UserId, 
-          username: data.Username, 
-          role: 'Customer', 
-          FullName: data.FullName, name: data.FullName, 
-          Points: data.Points 
-        });
-      } catch (err) {
-        setAuthError(err.message || 'สมัครสมาชิกไม่สำเร็จ');
+        setFoodCourtOpen(data.is_open ?? true);
       }
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchStores = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/stores`);
+      if (res.ok) setStores(await res.json());
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchProducts = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/products`);
+      if (res.ok) setProducts(await res.json());
+    } catch (err) { console.error(err); }
+  };
+
+  const handleGoogleResponse = async (response) => {
+    try {
+      const payload = JSON.parse(atob(response.credential.split('.')[1]));
+      
+      const res = await fetch(`${API_BASE}/api/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          google_id: payload.sub,
+          email: payload.email,
+          name: payload.name
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail);
+
+      const user = data.user;
+      setCurrentUser({
+        UserId: user.UserId, id: user.UserId,
+        username: user.Username,
+        role: user.Role,
+        FullName: user.FullName, name: user.FullName || user.Username,
+        Phone: user.Phone,
+        Points: user.Points || 0
+      });
+
+      if (data.is_profile_incomplete) {
+        setProfileForm({ full_name: user.FullName || payload.name || '', phone: '', profile_img: payload.picture || '' });
+        setShowProfileModal(true);
+      }
+    } catch (err) {
+      alert(`Google Auth Error: ${err.message}`);
     }
   };
 
-  const addNotification = (userId, message) => {
-    setPushNotifications(prev => [{ id: Date.now(), userId, message, time: new Date().toLocaleTimeString() }, ...prev]);
+  const triggerGoogleConnect = () => {
+    if (window.google) {
+      window.google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          alert("กรุณาอนุญาต Pop-up บนเบราว์เซอร์เพื่อเชื่อมต่อ Google");
+        }
+      });
+    } else {
+      alert("ระบบ Google Auth กำลังโหลด กรุณาลองใหม่อีกครั้ง");
+    }
   };
 
-  // ฟังก์ชันเคลียร์ User ออกจากระบบ (ส่งไปให้ OwnerView หรือตัวอื่นๆ ใช้)
-  const handleLogout = () => {
-    setCurrentUser(null);
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+
+    const endpoint = authTab === 'login' ? '/api/login' : '/api/register';
+    const bodyData = authTab === 'login' 
+      ? { username: authForm.username, password: authForm.password }
+      : { username: authForm.username, password: authForm.password, name: authForm.name };
+
+    try {
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail);
+
+      let roleMap = { 'Kitchen Staff': 'Kitchen', 'Front Staff': 'Front', 'Shop Owner': 'Owner' };
+      let finalRole = roleMap[data.Role] || data.Role || 'Customer';
+
+      setCurrentUser({
+        UserId: data.UserId, id: data.UserId,
+        username: data.Username,
+        role: finalRole,
+        FullName: data.FullName, name: data.FullName || data.Username,
+        storeId: data.StoreId,
+        Points: data.Points || 0
+      });
+      setAuthForm({ username: '', password: '', name: '' });
+    } catch (err) {
+      setAuthError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
+    }
+  };
+
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE}/api/users/complete-profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: currentUser.UserId,
+          full_name: profileForm.full_name,
+          phone: profileForm.phone,
+          profile_img: profileForm.profile_img
+        })
+      });
+      const updatedUser = await res.json();
+      if (!res.ok) throw new Error("บันทึกข้อมูลไม่สำเร็จ");
+
+      setCurrentUser(prev => ({
+        ...prev,
+        FullName: updatedUser.FullName,
+        name: updatedUser.FullName,
+        Phone: updatedUser.Phone
+      }));
+      setShowProfileModal(false);
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (
-      <div
-        style={{
-          fontFamily: 'sans-serif',
-          width: '100%',
-          maxWidth: 'none',
-          margin: 0,
-          // ดึง padding ออกถ้าเป็นหน้า Owner เพื่อให้ Sidebar แสดงเต็มจอสวยงาม
-          padding: currentUser?.role === 'Owner' ? '0' : '15px', 
-          background: '#f4f6f9',
-          minHeight: '100vh',
-          boxSizing: 'border-box'
-        }}
-      >
-      {/* Central Announcement Banner */}
-      {announcement && (
-        <div style={{ background: '#fff3cd', border: '1px solid #ffeeba', color: '#856404', padding: '10px 15px', borderRadius: '6px', marginBottom: '15px', fontWeight: 'bold' }}>
-          📢 ประกาศจากศูนย์อาหาร: {announcement}
-        </div>
-      )}
+    <div className="app-main-viewport">
+      {/* 🚀 CSS Reset ล้างค่าขอบเดิมของ React Template ทิ้งทั้งหมด */}
+      <style>{`
+        html, body, #root {
+          width: 100% !important;
+          height: 100% !important;
+          min-height: 100dvh !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          max-width: none !important;
+          overflow-x: hidden;
+        }
 
-      {/* Main Header ซ่อนเมื่อ Role เป็น Owner เพื่อไม่ให้ซ้อนกับ Navbar ของ Owner */}
-      {currentUser?.role !== 'Owner' && (
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '15px 20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
-          <div>
-            <h2 style={{ margin: 0, color: '#007bff' }}>🍽️ Only Foods KMITL System</h2>
-            <small style={{ color: foodCourtOpen ? 'green' : 'red', fontWeight: 'bold' }}>
-              สถานะศูนย์อาหาร: {foodCourtOpen ? '🟢 เปิดให้บริการ' : '🔴 ปิดให้บริการชั่วคราว'}
-            </small>
-          </div>
-          {currentUser && (
-            <div style={{ textAlign: 'right' }}>
-              <span style={{ marginRight: '10px' }}>👤 {currentUser.name} (<strong>{currentUser.role}</strong>)</span>
-              <button onClick={handleLogout} style={{ background: '#dc3545', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>ออกจากระบบ</button>
-            </div>
-          )}
-        </header>
-      )}
+        .app-main-viewport {
+          font-family: 'Prompt', sans-serif;
+          background-color: ${PALETTE.dark};
+          width: 100vw;
+          min-height: 100dvh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-sizing: border-box;
+          color: ${PALETTE.white};
+          padding: 24px;
+        }
 
-      {/* Auth Screen */}
+        .auth-card-container {
+          background-color: ${PALETTE.white};
+          border-radius: 28px;
+          width: 100%;
+          max-width: 900px;
+          display: flex;
+          flex-direction: row;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45);
+          color: ${PALETTE.dark};
+          transition: all 0.3s ease;
+        }
+
+        .auth-form-side {
+          flex: 1.2;
+          padding: 44px 40px;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
+          justify: center;
+          width: 100%;
+        }
+
+        .auth-banner-side {
+          flex: 0.8;
+          background: linear-gradient(135deg, ${PALETTE.coral} 0%, #E85A33 100%);
+          color: ${PALETTE.white};
+          padding: 40px;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
+          justify: center;
+          align-items: center;
+          text-align: center;
+          width: 100%;
+        }
+
+        .auth-input-field {
+          width: 100%;
+          padding: 14px 18px 14px 46px;
+          border-radius: 30px;
+          border: 1px solid ${PALETTE.border};
+          background: ${PALETTE.grayBg};
+          box-sizing: border-box;
+          outline: none;
+          font-size: 14px;
+          color: ${PALETTE.dark};
+          transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .auth-input-field:focus {
+          border-color: ${PALETTE.coral};
+          box-shadow: 0 0 0 3px ${PALETTE.coral}22;
+        }
+
+        /* 📱 ปรับแต่งสำหรับแท็บเล็ตและมือถือ */
+        @media (max-width: 768px) {
+          .app-main-viewport {
+            padding: 0 !important; /* บนมือถือยืดเต็มขอบจอไร้ขอบดำ */
+            align-items: stretch;
+          }
+
+          .auth-card-container {
+            flex-direction: column-reverse;
+            max-width: 100% !important;
+            min-height: 100dvh;
+            border-radius: 0 !important; /* ถอดขอบมนออกเมื่อเปิดบนมือถือ */
+            box-shadow: none !important;
+          }
+
+          .auth-form-side {
+            padding: 28px 24px;
+            justify-content: flex-start;
+          }
+
+          .auth-banner-side {
+            padding: 32px 24px;
+          }
+        }
+      `}</style>
+
       {!currentUser ? (
-        <div style={{ background: '#fff', padding: '25px', borderRadius: '8px', maxWidth: '420px', margin: '40px auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-          <div style={{ display: 'flex', marginBottom: '20px', borderBottom: '2px solid #eee' }}>
-            <button onClick={() => { setAuthTab('login'); setAuthError(''); }} style={{ flex: 1, padding: '10px', background: 'none', border: 'none', fontWeight: authTab === 'login' ? 'bold' : 'normal', borderBottom: authTab === 'login' ? '3px solid #007bff' : 'none', cursor: 'pointer' }}>เข้าสู่ระบบ</button>
-            <button onClick={() => { setAuthTab('register'); setAuthError(''); }} style={{ flex: 1, padding: '10px', background: 'none', border: 'none', fontWeight: authTab === 'register' ? 'bold' : 'normal', borderBottom: authTab === 'register' ? '3px solid #007bff' : 'none', cursor: 'pointer' }}>ลงทะเบียนลูกค้าใหม่</button>
-          </div>
-
-          {authError && <div style={{ color: 'red', fontSize: '13px', marginBottom: '10px' }}>{authError}</div>}
-
-          <form onSubmit={handleAuthSubmit}>
-            <div style={{ marginBottom: '12px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold' }}>Username</label>
-              <input type="text" required value={authForm.username} onChange={e => setAuthForm({ ...authForm, username: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
-            </div>
-            <div style={{ marginBottom: '12px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold' }}>Password</label>
-              <input type="password" required value={authForm.password} onChange={e => setAuthForm({ ...authForm, password: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        <div className="auth-card-container">
+          
+          {/* Form Side */}
+          <div className="auth-form-side">
+            <div style={{ marginBottom: '24px' }}>
+              <h2 style={{ margin: '0 0 4px 0', fontSize: '28px', fontWeight: 800, color: PALETTE.dark }}>
+                {authTab === 'login' ? 'Hello!' : 'Hello, friend!'}
+              </h2>
+              <p style={{ margin: 0, color: PALETTE.textSub, fontSize: '14px' }}>
+                {authTab === 'login' ? 'Sign in to your account' : 'Create your account to get started'}
+              </p>
             </div>
 
-            {authTab === 'register' && (
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold' }}>ชื่อ-นามสกุล</label>
-                <input type="text" required value={authForm.name} onChange={e => setAuthForm({ ...authForm, name: e.target.value })} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+            {authError && (
+              <div style={{ background: '#FFF0ED', color: PALETTE.coral, padding: '12px 16px', borderRadius: '18px', fontSize: '13px', marginBottom: '18px', fontWeight: 600, border: `1px solid ${PALETTE.coral}33` }}>
+                {authError}
               </div>
             )}
 
-            <button type="submit" style={{ width: '100%', background: '#007bff', color: '#fff', border: 'none', padding: '10px', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>
-              {authTab === 'login' ? ' เข้าสู่ระบบ' : ' ยืนยันการลงทะเบียน'}
-            </button>
-          </form>
+            <form onSubmit={handleAuthSubmit}>
+              {authTab === 'register' && (
+                <div style={{ position: 'relative', marginBottom: '14px' }}>
+                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}>👤</span>
+                  <input 
+                    type="text" 
+                    required 
+                    placeholder="Full Name"
+                    className="auth-input-field"
+                    value={authForm.name} 
+                    onChange={e => setAuthForm({ ...authForm, name: e.target.value })} 
+                  />
+                </div>
+              )}
 
-          <div style={{ marginTop: '20px', padding: '10px', background: '#e9ecef', borderRadius: '4px', fontSize: '11px', color: '#333' }}>
-            <strong> บัญชีสำหรับทดสอบบทบาทต่างๆ (Password: 123)</strong>
-            <ul style={{ paddingLeft: '15px', margin: '5px 0 0 0' }}>
-              <li>ลูกค้า: <code>uefa01</code></li>
-              <li>ครัว: <code>kitchen01</code> | ฟร้อนท์: <code>front01</code></li>
-              <li>เจ้าของร้าน: <code>owner01</code></li>
-              <li>บัญชี: <code>account01</code> | ผู้บริหาร: <code>exec01</code></li>
-            </ul>
+              <div style={{ position: 'relative', marginBottom: '14px' }}>
+                <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}>✉️</span>
+                <input 
+                  type="text" 
+                  required 
+                  placeholder="E-mail / Username"
+                  className="auth-input-field"
+                  value={authForm.username} 
+                  onChange={e => setAuthForm({ ...authForm, username: e.target.value })} 
+                />
+              </div>
+
+              <div style={{ position: 'relative', marginBottom: '20px' }}>
+                <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}>🔒</span>
+                <input 
+                  type="password" 
+                  required 
+                  placeholder="Password"
+                  className="auth-input-field"
+                  value={authForm.password} 
+                  onChange={e => setAuthForm({ ...authForm, password: e.target.value })} 
+                />
+              </div>
+
+              <button 
+                type="submit" 
+                style={{
+                  width: '100%', 
+                  background: `linear-gradient(135deg, ${PALETTE.coral} 0%, #E85A33 100%)`, 
+                  color: PALETTE.white, 
+                  border: 'none', 
+                  padding: '14px', 
+                  borderRadius: '30px', 
+                  fontWeight: 700, 
+                  fontSize: '14px', 
+                  cursor: 'pointer', 
+                  boxShadow: `0 8px 20px ${PALETTE.coral}44`,
+                  letterSpacing: '0.5px',
+                  textTransform: 'uppercase'
+                }}>
+                {authTab === 'login' ? 'SIGN IN' : 'CREATE ACCOUNT'}
+              </button>
+            </form>
+
+            <div style={{ textAlign: 'center', marginTop: '18px', fontSize: '13px', color: PALETTE.textSub }}>
+              {authTab === 'login' ? "Don't have an account? " : "Already have an account? "}
+              <span 
+                onClick={() => { setAuthTab(authTab === 'login' ? 'register' : 'login'); setAuthError(''); }}
+                style={{ color: PALETTE.coral, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}>
+                {authTab === 'login' ? 'Create' : 'Sign in'}
+              </span>
+            </div>
+
+            <div style={{ position: 'relative', textAlign: 'center', margin: '20px 0 16px 0' }}>
+              <hr style={{ border: 'none', borderTop: `1px solid ${PALETTE.border}` }} />
+              <span style={{ position: 'absolute', top: '-9px', left: '50%', transform: 'translateX(-50%)', background: PALETTE.white, padding: '0 12px', fontSize: '11px', color: PALETTE.textSub, fontWeight: 600 }}>
+                OR CONNECT WITH
+              </span>
+            </div>
+
+            <button 
+              onClick={triggerGoogleConnect} 
+              style={{
+                width: '100%',
+                backgroundColor: PALETTE.white,
+                color: PALETTE.dark,
+                border: `2px solid ${PALETTE.border}`,
+                padding: '11px 16px',
+                borderRadius: '30px',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justify: 'center',
+                gap: '10px',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.03)'
+              }}>
+              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+              {authTab === 'login' ? 'Sign in with Gmail' : 'Sign up with Gmail'}
+            </button>
           </div>
+
+          {/* Banner Side */}
+          <div className="auth-banner-side">
+            <div style={{
+              width: 56, height: 56, borderRadius: '18px',
+              background: 'rgba(255, 255, 255, 0.2)',
+              backdropFilter: 'blur(8px)',
+              display: 'grid', placeItems: 'center',
+              fontSize: '28px', marginBottom: '16px'
+            }}>
+              🍽️
+            </div>
+            
+            <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', fontWeight: 800 }}>
+              {authTab === 'login' ? 'Welcome Back!' : 'Glad to see you!'}
+            </h2>
+            
+            <p style={{ margin: '0 0 16px 0', fontSize: '13px', lineHeight: '1.5', opacity: 0.9, maxWidth: '260px' }}>
+              Only Foods KMITL ระบบสั่งอาหารออนไลน์ ชำระเงินสะดวก สะสมแต้มรวดเร็ว
+            </p>
+
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              color: foodCourtOpen ? PALETTE.dark : PALETTE.white,
+              background: foodCourtOpen ? PALETTE.yellow : 'rgba(0,0,0,0.3)',
+              padding: '6px 16px',
+              borderRadius: '20px',
+              display: 'inline-block'
+            }}>
+              {foodCourtOpen ? '● ศูนย์อาหารเปิดให้บริการ' : '● ปิดให้บริการชั่วคราว'}
+            </span>
+
+            <div style={{
+              marginTop: '20px',
+              padding: '10px 14px',
+              background: 'rgba(0, 0, 0, 0.15)',
+              borderRadius: '14px',
+              fontSize: '11px',
+              textAlign: 'left',
+              width: '100%',
+              maxWidth: '260px'
+            }}>
+              <div style={{ fontWeight: 700, color: PALETTE.yellow, marginBottom: '2px' }}>🔑 Test Staff Accounts (Pass = User)</div>
+              <div>• หน้าร้าน: <code>staff01</code> | ครัว: <code>kitchen01</code></div>
+              <div>• เจ้าของร้าน: <code>owner01</code> | ผู้บริหาร: <code>exec01</code></div>
+            </div>
+          </div>
+
         </div>
       ) : (
-        /* Render Views according to Role */
-        <div style={{ height: currentUser.role === 'Owner' ? '100vh' : 'auto' }}>
-          {currentUser.role === 'Customer' && (
-            <CustomerView user={currentUser} apiBase="http://localhost:8000" />
-          )}
-          {currentUser.role === 'Kitchen' && (
-            <KitchenView user={currentUser} apiBase="http://localhost:8000" />
-          )}
-          {currentUser.role === 'Front' && (
-            <CounterView user={currentUser} apiBase="http://localhost:8000" />
-          )}
-          {currentUser.role === 'Owner' && (
-            <OwnerView 
-              user={currentUser} 
-              apiBase="http://localhost:8000" 
-              onLogout={handleLogout}  /* ส่งฟังก์ชัน Logout ไปให้เมนู Dropdown ในหน้า Owner */
-            />
-          )}
-          {currentUser.role === 'Accountant' && (
-            <AccountantView user={currentUser} apiBase="http://localhost:8000" />
-          )}
-          {currentUser.role === 'Executive' && (
-            <ExecutiveView user={currentUser} apiBase="http://localhost:8000" />
-          )}
+        /* เมื่อเข้าใช้งานแล้ว ให้ Component ย่อยขยายเต็ม 100% หน้าจอ */
+        <div style={{ width: '100%', minHeight: '100vh' }}>
+          {currentUser.role === 'Customer' && <CustomerView user={currentUser} apiBase={API_BASE} stores={stores} products={products} onLogout={() => setCurrentUser(null)} />}
+          {currentUser.role === 'Kitchen' && <KitchenView user={currentUser} apiBase={API_BASE} onLogout={() => setCurrentUser(null)} />}
+          {currentUser.role === 'Front' && <CounterView user={currentUser} apiBase={API_BASE} stores={stores} onLogout={() => setCurrentUser(null)} />}
+          {currentUser.role === 'Owner' && <OwnerView user={currentUser} apiBase={API_BASE} onLogout={() => setCurrentUser(null)} />}
+          {currentUser.role === 'Accountant' && <AccountantView user={currentUser} apiBase={API_BASE} onLogout={() => setCurrentUser(null)} />}
+          {currentUser.role === 'Executive' && <ExecutiveView user={currentUser} apiBase={API_BASE} onRefreshStores={fetchStores} onLogout={() => setCurrentUser(null)} />}
+        </div>
+      )}
+
+      {/* Modal Profile Completion */}
+      {showProfileModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(42, 44, 65, 0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}>
+          <div style={{ backgroundColor: PALETTE.white, padding: '28px', borderRadius: '24px', width: '100%', maxWidth: '380px', boxShadow: '0 20px 50px rgba(0,0,0,0.4)', color: PALETTE.dark, boxSizing: 'border-box' }}>
+            <h3 style={{ marginTop: 0, marginBottom: '6px', fontSize: '18px', fontWeight: 800 }}>🎉 เชื่อมต่อ Gmail สำเร็จ!</h3>
+            <p style={{ fontSize: '12px', color: PALETTE.textSub, marginTop: 0, marginBottom: '16px' }}>กรุณากรอกเบอร์โทรศัพท์เพื่อเปิดใช้งานบัญชี</p>
+            
+            <form onSubmit={handleSaveProfile}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>ชื่อ-นามสกุล</label>
+                <input type="text" required value={profileForm.full_name} onChange={e => setProfileForm({ ...profileForm, full_name: e.target.value })} style={{ width: '100%', padding: '10px 14px', borderRadius: '20px', border: `1px solid ${PALETTE.border}`, background: PALETTE.grayBg, boxSizing: 'border-box', outline: 'none', fontSize: '13px' }} />
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>เบอร์โทรศัพท์</label>
+                <input type="tel" required placeholder="08X-XXX-XXXX" value={profileForm.phone} onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })} style={{ width: '100%', padding: '10px 14px', borderRadius: '20px', border: `1px solid ${PALETTE.border}`, background: PALETTE.grayBg, boxSizing: 'border-box', outline: 'none', fontSize: '13px' }} />
+              </div>
+              <button type="submit" style={{ width: '100%', background: PALETTE.coral, color: PALETTE.white, border: 'none', padding: '12px', borderRadius: '30px', fontWeight: 700, cursor: 'pointer', fontSize: '14px', marginTop: '8px', boxShadow: `0 6px 16px ${PALETTE.coral}44` }}>
+                บันทึกและเริ่มใช้งานทันที
+              </button>
+            </form>
+          </div>
         </div>
       )}
     </div>
   );
-}
-
-// ==========================================
-// HELPER FUNCTIONS
-// ==========================================
-function getStatusLabel(status) {
-  switch (status) {
-    case 'Pending': return 'รับออเดอร์แล้ว (รอเข้าครัว)';
-    case 'Cooking': return 'กำลังปรุงอาหาร';
-    case 'Ready': return 'ปรุงเสร็จแล้ว (รอรับที่หน้าร้าน)';
-    case 'Completed': return 'รับอาหารสำเร็จ';
-    case 'Cancelled': return 'ยกเลิกออเดอร์';
-    default: return status;
-  }
 }
