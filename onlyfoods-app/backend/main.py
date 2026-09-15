@@ -8,6 +8,25 @@ from pydantic import BaseModel
 import pymysql
 from pymysql.cursors import DictCursor
 
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+# --- เพิ่มโค้ดส่วนนี้เข้าไปต่อท้ายการประกาศ app ---
+app.add_middleware(
+    CORSMiddleware,
+    # ใส่ "*" เพื่ออนุญาตให้ทุกเว็บเรียกใช้งาน API ได้ (หรือจะระบุ url ของ vercel ตรงๆ ก็ได้ครับ)
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],  # อนุญาตทุก Method (GET, POST, PUT, DELETE)
+    allow_headers=["*"],  # อนุญาตทุก Header
+)
+# ---------------------------------------------
+
+# ... โค้ด API เดิมของคุณ ...
+
 # =====================================================================
 # Only Foods Engine Pro - Main Application Entrypoint
 # =====================================================================
