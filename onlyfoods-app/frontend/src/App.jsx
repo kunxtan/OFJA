@@ -32,7 +32,9 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ username: '', password: '', name: '' });
   const [authError, setAuthError] = useState('');
 
-  const API_BASE = "http://localhost:8000";
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+  // เวลาเรียกใช้งาน:
+  fetch(`${API_URL}/api/stores`)
 
   useEffect(() => {
     fetchFoodCourtStatus();

@@ -1,6 +1,6 @@
-SET NAMES utf8mb4;
-CREATE DATABASE IF NOT EXISTS onlyfoods_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE onlyfoods_db;
+-- SET NAMES utf8mb4;
+-- CREATE DATABASE IF NOT EXISTS onlyfoods_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- USE onlyfoods_db;
 
 CREATE TABLE IF NOT EXISTS Store (
     StoreId INT AUTO_INCREMENT PRIMARY KEY,
