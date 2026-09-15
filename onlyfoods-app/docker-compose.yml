@@ -1,13 +1,10 @@
-version: '3.8'
 services:
   db:
-    image: mysql:8.0
+    image: mysql:8.0-debian
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: onlyfoods_db
-    ports:
-      - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -15,8 +12,6 @@ services:
   backend:
     build: ./backend
     restart: always
-    ports:
-      - "8000:8000"
     environment:
       - DB_HOST=db
       - DB_USER=root
@@ -28,9 +23,17 @@ services:
   frontend:
     build: ./frontend
     restart: always
-    ports:
-      - "80:80"
     depends_on:
+      - backend
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "3306:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - frontend
       - backend
 
 volumes:
