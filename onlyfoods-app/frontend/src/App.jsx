@@ -32,7 +32,7 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ username: '', password: '', name: '' });
   const [authError, setAuthError] = useState('');
 
-  const API_BASE = "[http://onlyfoods.cskmitl.com:3306](http://onlyfoods.cskmitl.com:3306)";
+  const API_BASE = "";
 
   useEffect(() => {
     fetchFoodCourtStatus();
