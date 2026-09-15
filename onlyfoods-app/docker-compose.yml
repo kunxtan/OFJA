@@ -12,6 +12,8 @@ services:
   backend:
     build: ./backend
     restart: always
+    ports:
+      - "8000:8000" # เปิดพอร์ต 8000 ให้เรียกใช้งาน API ได้โดยตรง
     environment:
       - DB_HOST=db
       - DB_USER=root
@@ -23,17 +25,9 @@ services:
   frontend:
     build: ./frontend
     restart: always
-    depends_on:
-      - backend
-
-  proxy:
-    image: nginx:alpine
     ports:
-      - "3306:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
+      - "3000:80" # หรือพอร์ตที่ Frontend ของคุณรันอยู่ (เช่น 3000 หรือ 5173 ตาม Dockerfile)
     depends_on:
-      - frontend
       - backend
 
 volumes:
