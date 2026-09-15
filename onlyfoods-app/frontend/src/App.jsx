@@ -32,9 +32,8 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ username: '', password: '', name: '' });
   const [authError, setAuthError] = useState('');
 
-  const API_BASE = import.meta.env?.VITE_API_URL || process.env?.REACT_APP_API_URL || 'https://ofja.onrender.com';
+  const API_BASE = import.meta.env.VITE_API_URL || 'https://ofja.onrender.com';
   // เวลาเรียกใช้งาน:
-  fetch(`${API_URL}/api/stores`)
 
   useEffect(() => {
     fetchFoodCourtStatus();
