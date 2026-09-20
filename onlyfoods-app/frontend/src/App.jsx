@@ -32,7 +32,8 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ username: '', password: '', name: '' });
   const [authError, setAuthError] = useState('');
 
-  const API_BASE = "http://localhost:8000";
+  // แก้ไขโค้ดบรรทัดที่ 32
+  const API_BASE = "http://161.246.157.217:3000";
 
   useEffect(() => {
     fetchFoodCourtStatus();
