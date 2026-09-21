@@ -57,7 +57,7 @@ export default function CustomerView({ user, apiBase }) {
   const [isReadOnlyReview, setIsReadOnlyReview] = useState(false);
   const [reviewedOrderIds, setReviewedOrderIds] = useState({});
 
-  // STORE REVIEWS MODAL STATE (ระบบดูรีวิวทั้งหมดของร้านค้า)
+  // STORE REVIEWS MODAL STATE
   const [selectedStoreForReviews, setSelectedStoreForReviews] = useState(null);
   const [storeReviewsList, setStoreReviewsList] = useState([]);
   const [isLoadingReviews, setIsLoadingReviews] = useState(false);
@@ -82,71 +82,67 @@ export default function CustomerView({ user, apiBase }) {
 
   // API FUNCTIONS
   const fetchStores = async () => {
-  try {
-    const res = await fetch(`${apiBase}/api/stores`);
-    if (!res.ok) return;
-    const data = await res.json();
-    // ดึงคะแนนและจำนวนรีวิวของแต่ละร้าน
-    const storesWithReviews = await Promise.all(
-      data.map(async (store) => {
-        try {
-          const reviewRes = await fetch(
-            `${apiBase}/api/stores/${store.StoreId}/reviews`
-          );
+    try {
+      const res = await fetch(`${apiBase}/api/stores`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const storesWithReviews = await Promise.all(
+        data.map(async (store) => {
+          try {
+            const reviewRes = await fetch(
+              `${apiBase}/api/stores/${store.StoreId}/reviews`
+            );
 
-          if (!reviewRes.ok) {
+            if (!reviewRes.ok) {
+              return {
+                ...store,
+                RatingAverage: 0,
+                ReviewCount: 0
+              };
+            }
+
+            const reviewData = await reviewRes.json();
+            const summary = reviewData?.summary || {};
+            return {
+              ...store,
+              RatingAverage: Number(summary.average || 0),
+              ReviewCount: Number(summary.total || 0)
+            };
+          } catch (error) {
+            console.error(
+              `Error fetching reviews for store ${store.StoreId}:`,
+              error
+            );
+
             return {
               ...store,
               RatingAverage: 0,
               ReviewCount: 0
             };
           }
+        })
+      );
 
-          const reviewData = await reviewRes.json();
-          const summary = reviewData?.summary || {};
-          return {
-            ...store,
-            // คะแนนเฉลี่ยของร้าน
-            RatingAverage: Number(summary.average || 0),
-            // จำนวนรีวิวของร้าน
-            ReviewCount: Number(summary.total || 0)
-          };
-        } catch (error) {
-          console.error(
-            `Error fetching reviews for store ${store.StoreId}:`,
-            error
-          );
-
-          return {
-            ...store,
-            RatingAverage: 0,
-            ReviewCount: 0
-          };
+      setStores(storesWithReviews);
+      setSelectedStore(prev => {
+        if (
+          prev &&
+          storesWithReviews.some(
+            store => Number(store.StoreId) === Number(prev)
+          )
+        ) {
+          return prev;
         }
-      })
-    );
+        if (storesWithReviews.length > 0) {
+          return Number(storesWithReviews[0].StoreId);
+        }
+        return null;
+      });
+    } catch (error) {
+      console.error("Error fetching stores:", error);
+    }
+  };
 
-    setStores(storesWithReviews);
-    // ไม่ให้ร้านที่กำลังเลือกถูก reset
-    setSelectedStore(prev => {
-      if (
-        prev &&
-        storesWithReviews.some(
-          store =>
-            Number(store.StoreId) === Number(prev)
-        )
-      ) {
-        return prev;
-      }
-      if (storesWithReviews.length > 0) {
-        return Number(storesWithReviews[0].StoreId);
-      }
-      return null;
-    });
-  } catch (error) {
-    console.error("Error fetching stores:", error);
-  }
-};
   const fetchProducts = async () => {
     if (!selectedStore) return;
     try {
@@ -201,7 +197,6 @@ export default function CustomerView({ user, apiBase }) {
 
     try {
       const res = await fetch(`${apiBase}/api/stores/${storeId}/reviews`);
-
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -247,17 +242,24 @@ export default function CustomerView({ user, apiBase }) {
     }
   }, [selectedStore, apiBase]);
 
+  // 🟢 ปรับปรุงการเช็ค State ของ Modal ของหมด เพื่อให้ปิดลงเมื่อสถานะออเดอร์ถูกอัปเดตแล้ว
   useEffect(() => {
     const pendingOutOfStock = myOrders.find(
       (ord) => ord.Status === "Pending_Cancellation" || ord.Status === "OutOfStock_Pending" || ord.Status === "Item_Unavailable"
     );
-    if (pendingOutOfStock && !outOfStockOrder) {
-      setOutOfStockOrder(pendingOutOfStock);
-      if (pendingOutOfStock.StoreID || pendingOutOfStock.store_id) {
-        setSelectedStore(pendingOutOfStock.StoreID || pendingOutOfStock.store_id);
+
+    if (pendingOutOfStock) {
+      if (!outOfStockOrder || outOfStockOrder.OrderID !== pendingOutOfStock.OrderID) {
+        setOutOfStockOrder(pendingOutOfStock);
+        if (pendingOutOfStock.StoreID || pendingOutOfStock.store_id) {
+          setSelectedStore(pendingOutOfStock.StoreID || pendingOutOfStock.store_id);
+        }
       }
+    } else {
+      setOutOfStockOrder(null);
+      setIsChangeMenuMode(false);
     }
-  }, [myOrders, outOfStockOrder]);
+  }, [myOrders]);
 
   const getNotifKey = (n) => n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
 
@@ -269,43 +271,61 @@ export default function CustomerView({ user, apiBase }) {
     }
   }, [notifs, isInitialized]);
 
+  // 🟢 ขอยกเลิกออเดอร์พร้อมปิด Modal ทันที
   const handleCancelOutOfStockOrder = async () => {
     if (!outOfStockOrder) return;
     try {
-      const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/cancel`, {
+      const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/customer-cancel`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด" })
+        body: JSON.stringify({ 
+          user_id: userId,
+          reason: "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด" 
+        })
       });
       if (res.ok) {
         alert("ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบกำลังดำเนินการคืนเงิน");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
-        fetchMyOrders();
+        await fetchMyOrders();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || "ไม่สามารถยกเลิกออเดอร์ได้");
       }
     } catch (error) {
       console.error("Error cancelling order:", error);
     }
   };
 
-  const handleChangeOrderMenu = async () => {
+const handleChangeOrderMenu = async () => {
     if (!outOfStockOrder || !newSelectedProduct) return;
+
+    // หาเมนูเดิมในออเดอร์เพื่อระบุ ID แนบไปฝั่ง Backend
+    const originalItem = (outOfStockOrder.items || [])[0];
+
     try {
       const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/change-item`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          user_id: userId,
+          detail_id: originalItem?.DetailID || originalItem?.DetailId || null,
+          product_id: originalItem?.ProductId || null,
           new_product_id: newSelectedProduct.ProductId,
           new_product_name: newSelectedProduct.ProductName,
           unit_price: newSelectedProduct.UnitPrice
         })
       });
+
       if (res.ok) {
         alert("เปลี่ยนเมนูสำเร็จ! ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
-        fetchMyOrders();
+        await fetchMyOrders();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || "ไม่สามารถเปลี่ยนเมนูได้");
       }
     } catch (error) {
       console.error("Error changing menu:", error);
@@ -603,7 +623,7 @@ export default function CustomerView({ user, apiBase }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return alert(data.detail || "ไม่สามารถส่งรีวิวได้");
 
-      alert("ส่งรีวิวเรียบร้อยแล้ว ");
+      alert("ส่งรีวิวเรียบร้อยแล้ว");
       setReviewedOrderIds(prev => ({
         ...prev,
         [reviewOrder.OrderID]: {
@@ -649,7 +669,7 @@ export default function CustomerView({ user, apiBase }) {
         {viewMode === "stores" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ 🏬</h2>
+              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ </h2>
               {isFoodCourtOpen && <span style={{ fontSize: "13px", color: COLORS.gray }}>{filteredStores.length} ร้านค้า</span>}
             </div>
 
@@ -710,12 +730,11 @@ export default function CustomerView({ user, apiBase }) {
                           {store.Description || "ร้านอาหารอร่อย คุณภาพดี ศูนย์อาหาร KMITL"}
                         </div>
 
-                        {/* ดาวรีวิวเฉลี่ย + ปุ่มดูรีวิวทั้งหมด */}
                         <div 
                           style={{ 
                             display: "flex", 
                             alignItems: "center", 
-                            justify: "space-between", 
+                            justifyContent: "space-between", 
                             background: "#FFF9F0", 
                             padding: "8px 12px", 
                             borderRadius: "12px", 
@@ -786,7 +805,7 @@ export default function CustomerView({ user, apiBase }) {
               <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ร้าน: {activeStore.StoreName}</h2>
             </div>
 
-            {Boolean(activeStore.IsSuspended) && (
+            {activeStore.IsSuspended && (
               <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "15px", borderRadius: "15px", marginBottom: "20px", textAlign: "center", fontWeight: "700" }}>
                 ร้านค้านี้ถูกระงับการจำหน่ายชั่วคราว
               </div>
@@ -801,9 +820,9 @@ export default function CustomerView({ user, apiBase }) {
               {filteredProducts.map(product => (
                 <div key={product.ProductId} style={{ ...cardStyle, display: "flex", flexDirection: "column", minWidth: 0 }}>
                   <img
-                    src={product.img || product.ImageUrl || "https://via.placeholder.com/400x280?text=Food"}
+                    src={product.ImageUrl || "https://via.placeholder.com/400x280?text=Food"}
                     alt={product.ProductName}
-                    style={{ width: "100%", height: "175px", objectFit: "cover", borderRadius: "15px 15px 0 0" }}
+                    style={{ width: "100%", height: "175px", objectFit: "cover", borderRadius: "15px" }}
                   />
                   <div style={{ padding: "5px 2px 0" }}>
                     <div style={{ fontSize: "17px", fontWeight: "900", marginTop: "7px" }}>{product.ProductName}</div>
@@ -813,7 +832,7 @@ export default function CustomerView({ user, apiBase }) {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px", gap: "8px" }}>
                       <span style={{ color: COLORS.orange, fontSize: "19px", fontWeight: "900" }}>{product.UnitPrice} ฿</span>
                       {product.IsOutOfStock ? (
-                        <span style={{ color: COLORS.red, fontSize: "12px", fontWeight: "800" }}>❌ สินค้าหมด</span>
+                        <span style={{ color: COLORS.red, fontSize: "12px", fontWeight: "800" }}> สินค้าหมด</span>
                       ) : (
                         <button
                           onClick={() => addToCart(product)}
@@ -877,7 +896,7 @@ export default function CustomerView({ user, apiBase }) {
               }}
               title="เปลี่ยนรูปโปรไฟล์"
             >
-               📷
+              📷
             </label>
             <input
               id="profile-upload-input"
@@ -924,7 +943,7 @@ export default function CustomerView({ user, apiBase }) {
       </div>
 
       <div style={{ maxWidth: "750px", margin: "0 auto" }}>
-        <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "15px" }}>📜 ประวัติการสั่งซื้อและรีวิวของฉัน</h3>
+        <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "15px" }}> ประวัติการสั่งซื้อและรีวิวของฉัน</h3>
         
         {myOrders.length === 0 ? (
           <div style={{ ...cardStyle, padding: "40px 20px", textAlign: "center", color: COLORS.gray }}>
@@ -951,7 +970,7 @@ export default function CustomerView({ user, apiBase }) {
                   </div>
 
                   <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "8px" }}>
-                    🕐 เวลาสั่งซื้อ: {order.OrderTime || order.order_time || order.CreatedAt || "-"}
+                    เวลาสั่งซื้อ: {order.OrderTime || order.order_time || order.CreatedAt || "-"}
                   </div>
 
                   {order.items && order.items.length > 0 && (
@@ -960,7 +979,7 @@ export default function CustomerView({ user, apiBase }) {
                         <div key={item.OrderDetailID || index} style={{ display: "flex", justifyContent: "space-between", gap: "10px", padding: "4px 0", fontSize: "13px" }}>
                           <div>
                             <b>• {item.ProductName}</b> <span style={{ color: COLORS.orange, fontWeight: "700" }}>x{item.Qty}</span>
-                            {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "11px", marginLeft: "10px" }}>📝 {item.ItemNote}</div>}
+                            {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "11px", marginLeft: "10px" }}> {item.ItemNote}</div>}
                           </div>
                           <span>{(Number(item.UnitPrice || 0) * Number(item.Qty || 1)).toFixed(2)} ฿</span>
                         </div>
@@ -989,7 +1008,7 @@ export default function CustomerView({ user, apiBase }) {
                           fontFamily: "inherit"
                         }}
                       >
-                         {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
+                        {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
                       </button>
                     )}
                   </div>
@@ -1004,7 +1023,7 @@ export default function CustomerView({ user, apiBase }) {
 
   const renderOrders = () => (
     <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน 📋</h2>
+      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
       {myOrders.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}>🛒</div>ยังไม่มีคำสั่งซื้อ
@@ -1024,12 +1043,12 @@ export default function CustomerView({ user, apiBase }) {
               </div>
               {(order.OrderTime || order.CreatedAt || order.order_time) && (
                 <div style={{ marginTop: "12px", fontSize: "12px", color: COLORS.gray }}>
-                  🕐 เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}
+                  เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}
                 </div>
               )}
               {(order.PickupTime || order.pickup_time) && (
                 <div style={{ marginTop: "5px", fontSize: "12px", color: COLORS.gray }}>
-                  🍱 เวลารับอาหาร: {order.PickupTime || order.pickup_time}
+                  เวลารับอาหาร: {order.PickupTime || order.pickup_time}
                 </div>
               )}
               {order.items && order.items.length > 0 && (
@@ -1054,7 +1073,7 @@ export default function CustomerView({ user, apiBase }) {
                   onClick={() => handleOpenReviewModal(order)}
                   style={{ width: "100%", marginTop: "15px", padding: "11px", border: "none", borderRadius: "12px", background: COLORS.yellow, color: COLORS.navy, fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
                 >
-                   {order.IsReviewed || order.review || reviewedOrderIds[order.OrderID] ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
+                  {order.IsReviewed || order.review || reviewedOrderIds[order.OrderID] ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
                 </button>
               )}
             </div>
@@ -1108,7 +1127,7 @@ export default function CustomerView({ user, apiBase }) {
                   <div key={item.cartItemId || `${item.ProductId}-${index}`} style={{ padding: "15px", marginBottom: "14px", borderRadius: "17px", background: "#FFF9F5", border: `1px solid ${COLORS.border}` }}>
                     <div style={{ fontSize: "11px", fontWeight: "800", color: COLORS.orange, marginBottom: "10px" }}>รายการที่ {index + 1}</div>
                     <div style={{ display: "flex", gap: "12px" }}>
-                      <img src={item.img || item.ImageUrl || "https://via.placeholder.com/80?text=Food"} alt="" style={{ width: "70px", height: "70px", objectFit: "cover", borderRadius: "13px", flexShrink: 0 }} />
+                      <img src={item.ImageUrl || "https://via.placeholder.com/80?text=Food"} alt="" style={{ width: "70px", height: "70px", objectFit: "cover", borderRadius: "13px", flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: "900", fontSize: "15px" }}>{item.ProductName}</div>
                         <div style={{ color: COLORS.orange, fontWeight: "900", marginTop: "3px" }}>{Number(item.UnitPrice).toFixed(2)} ฿</div>
@@ -1131,7 +1150,7 @@ export default function CustomerView({ user, apiBase }) {
 
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>🕐 เวลารับอาหาร</label>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> เวลารับอาหาร</label>
                   <input type="time" value={pickupTime} onChange={e => setPickupTime(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }} />
                   <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
                 </div>
@@ -1142,10 +1161,9 @@ export default function CustomerView({ user, apiBase }) {
                 </div>
 
                 <div style={{ marginBottom: "15px" }}>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>💳 วิธีชำระเงิน</label>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>วิธีชำระเงิน</label>
                   <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} style={{ width: "100%", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }}>
                     <option value="PromptPay">สแกน QR Code (PromptPay)</option>
-                    <option value="CreditCard">บัตรเครดิต / เดบิต</option>
                     <option value="TrueMoney">TrueMoney Wallet</option>
                   </select>
                 </div>
@@ -1172,7 +1190,7 @@ export default function CustomerView({ user, apiBase }) {
                     fontFamily: "inherit" 
                   }}
                 >
-                  {isFoodCourtOpen ? "ถัดไป: ชำระเงิน ➔" : "ศูนย์อาหารปิดให้บริการชั่วคราว"}
+                  {isFoodCourtOpen ? "ชำระเงิน" : "ศูนย์อาหารปิดให้บริการชั่วคราว"}
                 </button>
               </div>
             </>
@@ -1190,7 +1208,7 @@ export default function CustomerView({ user, apiBase }) {
         <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(440px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center" }}>
           
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}>📲 ชำระเงินผ่าน QR Code</h3>
+            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}>ชำระเงินผ่าน QR Code</h3>
             <button onClick={() => setIsPaymentModalOpen(false)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
           </div>
 
@@ -1265,7 +1283,7 @@ export default function CustomerView({ user, apiBase }) {
       <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }} onClick={() => setReviewOrder(null)}>
         <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(420px, 100%)", borderRadius: "22px", padding: "25px", boxSizing: "border-box" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, fontSize: "20px" }}>{isReadOnlyReview ? "📝 รีวิวของคุณ" : "⭐ ให้คะแนนร้าน"}</h3>
+            <h3 style={{ margin: 0, fontSize: "20px" }}>{isReadOnlyReview ? " รีวิวของคุณ" : " ให้คะแนนร้าน"}</h3>
             <button onClick={() => setReviewOrder(null)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
           </div>
           <p style={{ color: COLORS.gray, fontSize: "13px" }}>คิว #{reviewOrder.QueueNo} • {reviewOrder.StoreName}</p>
@@ -1355,8 +1373,19 @@ export default function CustomerView({ user, apiBase }) {
     );
   };
 
-  const renderOutOfStockModal = () => {
+const renderOutOfStockModal = () => {
     if (!outOfStockOrder) return null;
+
+    // ดึง ID เมนูเดิมในออเดอร์เพื่อป้องกันการเลือกซ้ำ
+    const originalProductIds = (outOfStockOrder.items || []).map(item => Number(item.ProductId));
+
+    // กรองสินค้า: ต้องเป็นสินค้าของร้านนั้น + ไม่หมด (IsOutOfStock != 1) + ไม่ใช่เมนูเดิม
+    const availableProducts = products.filter((p) => {
+      const isSameStore = Number(p.StoreId) === Number(outOfStockOrder.StoreId || outOfStockOrder.StoreID);
+      const isAvailable = !p.IsOutOfStock && Number(p.IsOutOfStock) !== 1;
+      const isNotOriginal = !originalProductIds.includes(Number(p.ProductId));
+      return isAvailable && isNotOriginal;
+    });
 
     return (
       <div
@@ -1373,7 +1402,7 @@ export default function CustomerView({ user, apiBase }) {
         }}
       >
         <div style={{ background: COLORS.white, width: "min(460px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center" }}>
-          <div style={{ fontSize: "50px", marginBottom: "10px" }}></div>
+          <div style={{ fontSize: "50px", marginBottom: "10px" }}>⚠️</div>
           <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>
             สินค้าบางรายการหมด!
           </h3>
@@ -1422,13 +1451,16 @@ export default function CustomerView({ user, apiBase }) {
           ) : (
             <div style={{ marginTop: "20px", textAlign: "left" }}>
               <label style={{ fontSize: "13px", fontWeight: "800", color: COLORS.navy, display: "block", marginBottom: "8px" }}>
-                เลือกเมนูทดแทนจากร้าน {outOfStockOrder.StoreName}:
+                เลือกเมนูทดแทนที่พร้อมเสิร์ฟจากร้าน {outOfStockOrder.StoreName}:
               </label>
 
               <div style={{ maxHeight: "220px", overflowY: "auto", display: "grid", gap: "8px", marginBottom: "15px" }}>
-                {products
-                  .filter((p) => !p.IsOutOfStock)
-                  .map((product) => (
+                {availableProducts.length === 0 ? (
+                  <div style={{ textAlign: "center", color: COLORS.gray, padding: "20px", fontSize: "13px" }}>
+                    ไม่มีเมนูอื่นที่สามารถเลือกทดแทนได้ในขณะนี้
+                  </div>
+                ) : (
+                  availableProducts.map((product) => (
                     <div
                       key={product.ProductId}
                       onClick={() => setNewSelectedProduct(product)}
@@ -1451,7 +1483,8 @@ export default function CustomerView({ user, apiBase }) {
                         <span style={{ color: COLORS.orange, fontWeight: "900" }}>✓ เลือก</span>
                       )}
                     </div>
-                  ))}
+                  ))
+                )}
               </div>
 
               <div style={{ display: "flex", gap: "10px" }}>
@@ -1519,7 +1552,7 @@ export default function CustomerView({ user, apiBase }) {
               <div style={{ textAlign: "center", padding: "40px 0", color: COLORS.gray }}>กำลังโหลดรีวิว...</div>
             ) : storeReviewsList.length === 0 ? (
               <div style={{ textAlign: "center", padding: "40px 0", color: COLORS.gray }}>
-                <div style={{ fontSize: "40px", marginBottom: "8px" }}></div>
+                <div style={{ fontSize: "40px", marginBottom: "8px" }}>💬</div>
                 ยังไม่มีความคิดเห็นสำหรับร้านนี้
               </div>
             ) : (
@@ -1567,7 +1600,6 @@ export default function CustomerView({ user, apiBase }) {
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <div style={logoStyle} onClick={() => handleSelectTab("menu")}>Only<span style={{ color: COLORS.orange }}>Foods</span></div>
             
-            {/* Badge แสดงสถานะศูนย์อาหารเปิด-ปิด */}
             <div
               style={{
                 display: "flex",
@@ -1598,7 +1630,7 @@ export default function CustomerView({ user, apiBase }) {
           {activeTab === "menu" && (
             <input
               type="text"
-              placeholder={viewMode === "stores" ? "🔍 ค้นหาร้านอาหาร..." : "🔍 ค้นหาเมนูอาหาร..."}
+              placeholder={viewMode === "stores" ? " ค้นหาร้านอาหาร..." : " ค้นหาเมนูอาหาร..."}
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={searchStyle}
