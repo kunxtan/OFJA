@@ -229,10 +229,17 @@ function summarizeMenus(completedOrders) {
     });
     return rows.sort((a, b) => b.amount - a.amount);
 }
-async function callApi(url, options) {
+async function callApi(url, options = {}) {
     let response;
     try {
-        response = await fetch(url, options);
+        const requestOptions = { ...options };
+        if (typeof requestOptions.body === 'string') {
+            requestOptions.headers = {
+                'Content-Type': 'application/json',
+                ...(requestOptions.headers || {})
+            };
+        }
+        response = await fetch(url, requestOptions);
     }
     catch (err) {
         throw new Error('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจสอบว่า backend รันอยู่');
@@ -284,7 +291,8 @@ const ICON_PATHS = {
     info: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 11v5M12 8h.01',
     refresh: 'M4 12a8 8 0 0113.7-5.7L20 8M20 4v4h-4M20 12a8 8 0 01-13.7 5.7L4 16M4 20v-4h4',
     settings: 'M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.7 1.7 0 002.5 1.1c1.6-.9 3.4.8 2.4 2.4a1.7 1.7 0 001.1 2.6c1.7.4 1.7 2.9 0 3.3a1.7 1.7 0 00-1.1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 00-2.5 1c-.4 1.8-2.9 1.8-3.4 0a1.7 1.7 0 00-2.5-1c-1.6.9-3.3-.9-2.4-2.4a1.7 1.7 0 00-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 001-2.6c-.9-1.6.8-3.3 2.4-2.4a1.7 1.7 0 002.5-1.1zM9 12a3 3 0 106 0 3 3 0 00-6 0',
-    logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3'
+    logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3',
+    history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2'
 };
 function greetingText() {
     const h = new Date().getHours();
@@ -649,14 +657,24 @@ function KpiCard({ label, value, unit, delta, deltaLabel, hint, highlight, varia
                 borderRadius: '999px',
                 fontSize: '12.5px',
                 fontWeight: 700,
-                background: solid
-                    ? 'rgba(255,255,255,.18)'
-                    : positive ? T.greenSoft : T.redSoft,
-                color: solid ? '#FFFFFF' : positive ? T.up : T.down
+                background: delta === 0
+                    ? (solid ? 'rgba(255,255,255,.18)' : '#F1F3F7')
+                    : positive
+                        ? (solid ? 'rgba(220,252,231,.96)' : T.greenSoft)
+                        : (solid ? 'rgba(254,226,226,.96)' : T.redSoft),
+                color: delta === 0
+                    ? (solid ? '#FFFFFF' : T.muted)
+                    : positive ? T.up : T.down
             }}>
-          <span aria-hidden="true">{rising ? '↗' : '↘'}</span>
-          {Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}%
-          <span style={{ fontWeight: 500, opacity: solid ? 0.85 : 1, color: solid ? '#FFFFFF' : T.muted }}>
+          <span aria-hidden="true">{delta === 0 ? '→' : rising ? '↗' : '↘'}</span>
+          {delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}%
+          <span style={{
+              fontWeight: 500,
+              opacity: solid && delta === 0 ? 0.85 : 1,
+              color: delta === 0
+                  ? (solid ? '#FFFFFF' : T.muted)
+                  : positive ? T.up : T.down
+          }}>
             {deltaLabel}
           </span>
         </div>) : (<div style={{
@@ -1081,6 +1099,8 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const isNarrow = useIsNarrow();
     const isPhone = useIsNarrow(640);
     const [activeMenu, setActiveMenu] = useState('overview');
+    // [CROSS-NAV] เก็บร้านที่ผู้บริหารคลิกมาจากอีกหน้า เพื่อเปิดรายละเอียดร้านเดิมต่อเนื่อง
+    const [focusStoreId, setFocusStoreId] = useState('');
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [search, setSearch] = useState('');
     const searchRef = useRef(null);
@@ -1090,10 +1110,18 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const [foodCourtOpen, setFoodCourtOpen] = useState(true);
     const [switchingCourt, setSwitchingCourt] = useState(false);
     const [notifications, setNotifications] = useState([]);
+    const [issueAlerts, setIssueAlerts] = useState([]);
     const [notifOpen, setNotifOpen] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
     const profileRef = useRef(null);
-    const [locallyRead, setLocallyRead] = useState([]);
+    const [locallyRead, setLocallyRead] = useState(() => {
+        try {
+            return JSON.parse(window.localStorage.getItem('executiveSyntheticRead') || '[]');
+        }
+        catch {
+            return [];
+        }
+    });
     const [toasts, setToasts] = useState([]);
     const [confirmState, setConfirmState] = useState(null);
     const confirmResolver = useRef(null);
@@ -1127,8 +1155,30 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     };
     const loadStores = useCallback(async (silent = false) => {
         try {
-            const data = await callApi(`${API}/api/reports/dashboard`);
-            setStores(Array.isArray(data) ? data : []);
+            const [dashboardData, storeData] = await Promise.all([
+                callApi(`${API}/api/reports/dashboard`),
+                callApi(`${API}/api/stores`)
+            ]);
+
+            const dashboardStores = Array.isArray(dashboardData) ? dashboardData : [];
+            const fullStores = Array.isArray(storeData) ? storeData : [];
+
+            const fullById = new Map(
+                fullStores.map((s) => [String(s.StoreId), s])
+            );
+
+            const merged = dashboardStores.map((s) => ({
+                ...s,
+                ...(fullById.get(String(s.StoreId)) || {})
+            }));
+
+            fullStores.forEach((s) => {
+                if (!merged.some((m) => String(m.StoreId) === String(s.StoreId))) {
+                    merged.push(s);
+                }
+            });
+
+            setStores(merged);
         }
         catch (err) {
             if (!silent)
@@ -1158,10 +1208,53 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                 pushToast(err.message, 'error');
         }
     }, [API, pushToast]);
+    const loadIssueAlerts = useCallback(async () => {
+        if (!Array.isArray(stores) || stores.length === 0) {
+            setIssueAlerts([]);
+            return;
+        }
+
+        try {
+            const results = await Promise.all(
+                stores.map(async (store) => {
+                    try {
+                        const rows = await callApi(`${API}/api/reports/issue/store/${store.StoreId}`);
+                        return (Array.isArray(rows) ? rows : []).map((report) => ({
+                            NotifId: `front-issue-${report.ReportID}`,
+                            Synthetic: true,
+                            EventType: 'ISSUE_REPORT',
+                            StoreId: report.StoreId || store.StoreId,
+                            Message: `มีรายงานปัญหาจาก ${report.StoreName || store.StoreName}: ${report.IssueType || 'ไม่ระบุประเภท'}`,
+                            CreatedAt: report.CreatedAt
+                        }));
+                    }
+                    catch {
+                        return [];
+                    }
+                })
+            );
+
+            const merged = results
+                .flat()
+                .sort((a, b) => {
+                    const ad = parseOrderDate(a.CreatedAt);
+                    const bd = parseOrderDate(b.CreatedAt);
+                    return (bd?.getTime() || 0) - (ad?.getTime() || 0);
+                })
+                .slice(0, 20);
+
+            setIssueAlerts(merged);
+        }
+        catch (err) {
+            console.debug('โหลดรายงานปัญหาสำหรับกระดิ่งไม่สำเร็จ:', err.message);
+        }
+    }, [API, stores]);
+
     const loadNotifications = useCallback(async (silent = true) => {
         const userId = user?.UserId || user?.userId;
         if (!userId)
             return;
+
         try {
             const data = await callApi(`${API}/api/notifications/${userId}`);
             setNotifications(Array.isArray(data) ? data : []);
@@ -1185,6 +1278,15 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         return () => clearInterval(timer);
     }, [loadStores, loadOrders, loadFoodCourt, loadNotifications]);
     useEffect(() => {
+        if (!stores.length)
+            return;
+
+        loadIssueAlerts();
+        const issueTimer = setInterval(loadIssueAlerts, REFRESH_MS);
+        return () => clearInterval(issueTimer);
+    }, [stores, loadIssueAlerts]);
+
+    useEffect(() => {
         setSidebarOpen(!isNarrow);
     }, [isNarrow]);
     const toggleFoodCourt = async () => {
@@ -1204,7 +1306,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             return;
         setSwitchingCourt(true);
         try {
-            const data = await callApi(`${API}/api/food-court/toggle`, { method: 'PUT' });
+            const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive`, { method: 'PUT' });
             setFoodCourtOpen(Boolean(data?.is_open));
             pushToast(data?.message || 'อัปเดตสถานะศูนย์อาหารแล้ว');
         }
@@ -1215,30 +1317,125 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             setSwitchingCourt(false);
         }
     };
-    const isRead = (n) => Boolean(n.IsRead) || locallyRead.includes(n.NotifId);
-    const unreadCount = notifications.filter((n) => !isRead(n)).length;
-    const markRead = async (notif) => {
-        if (isRead(notif))
-            return;
-        setLocallyRead((prev) => [...prev, notif.NotifId]);
-        try {
-            await callApi(`${API}/api/notifications/${notif.NotifId}/read`, { method: 'PUT' });
+    const rememberSyntheticRead = useCallback((notifId) => {
+        setLocallyRead((prev) => {
+            if (prev.includes(notifId))
+                return prev;
+            const next = [...prev, notifId].slice(-300);
+            try {
+                window.localStorage.setItem('executiveSyntheticRead', JSON.stringify(next));
+            }
+            catch {}
+            return next;
+        });
+    }, []);
+
+    const isRead = (n) =>
+        n?.Synthetic
+            ? locallyRead.includes(n.NotifId)
+            : Boolean(n?.IsRead);
+
+    const contractAlerts = useMemo(() => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        return stores
+            .filter((store) => store?.ContractEndDate)
+            .map((store) => {
+                const end = parseOrderDate(store.ContractEndDate);
+                if (!end) return null;
+                end.setHours(0, 0, 0, 0);
+                const daysLeft = Math.ceil((end.getTime() - today.getTime()) / 86400000);
+
+                if (daysLeft < 0) {
+                    return {
+                        NotifId: `front-contract-expired-${store.StoreId}-${store.ContractEndDate}`,
+                        Synthetic: true,
+                        StoreId: store.StoreId,
+                        Message: `สัญญาร้าน ${store.StoreName} หมดอายุแล้ว`,
+                        CreatedAt: store.ContractEndDate,
+                        EventType: 'CONTRACT_EXPIRED'
+                    };
+                }
+                if (daysLeft <= 7) {
+                    return {
+                        NotifId: `front-contract-expiring-${store.StoreId}-${store.ContractEndDate}`,
+                        Synthetic: true,
+                        StoreId: store.StoreId,
+                        Message: `สัญญาร้าน ${store.StoreName} ใกล้หมดอายุ (${daysLeft === 0 ? 'วันนี้' : `เหลือ ${daysLeft} วัน`})`,
+                        CreatedAt: store.ContractEndDate,
+                        EventType: 'CONTRACT_EXPIRING'
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean);
+    }, [stores]);
+
+    const displayNotifications = useMemo(() => {
+        return [...issueAlerts, ...contractAlerts, ...notifications]
+            .sort((a, b) => {
+                const ad = parseOrderDate(a.CreatedAt);
+                const bd = parseOrderDate(b.CreatedAt);
+                return (bd?.getTime() || 0) - (ad?.getTime() || 0);
+            })
+            .slice(0, 30);
+    }, [issueAlerts, contractAlerts, notifications]);
+
+    const unreadCount = displayNotifications.filter((n) => !isRead(n)).length;
+
+    const openNotification = async (notif) => {
+        if (notif?.Synthetic) {
+            rememberSyntheticRead(notif.NotifId);
+            if (notif?.EventType === 'ISSUE_REPORT') {
+                setFocusStoreId(String(notif.StoreId || ''));
+                setActiveMenu('store-sales');
+                setSearch('');
+            }
+            else if (notif?.EventType === 'CONTRACT_EXPIRING' || notif?.EventType === 'CONTRACT_EXPIRED') {
+                setFocusStoreId(String(notif.StoreId || ''));
+                setActiveMenu('contract-tracking');
+                setSearch('');
+            }
+        }
+        else if (!isRead(notif)) {
+            try {
+                await callApi(`${API}/api/notifications/${notif.NotifId}/read`, { method: 'PUT' });
+            }
+            catch (err) {
+                console.debug('mark-read endpoint ยังไม่พร้อม:', err.message);
+            }
+        }
+
+        setNotifOpen(false);
+        if (isNarrow)
+            setSidebarOpen(false);
+
+        if (!notif?.Synthetic)
             loadNotifications(true);
-        }
-        catch (err) {
-            console.debug('mark-read endpoint ยังไม่พร้อม:', err.message);
-        }
     };
+
     const markAllRead = async () => {
         const userId = user?.UserId || user?.userId;
-        setLocallyRead(notifications.map((n) => n.NotifId));
+        const syntheticIds = displayNotifications.filter((n) => n?.Synthetic).map((n) => n.NotifId);
+
+        setLocallyRead((prev) => {
+            const next = [...new Set([...prev, ...syntheticIds])].slice(-300);
+            try {
+                window.localStorage.setItem('executiveSyntheticRead', JSON.stringify(next));
+            }
+            catch {}
+            return next;
+        });
+
+        // ของจริงใน Notifications ใช้ endpoint กลางเดิม
         try {
             await callApi(`${API}/api/notifications/${userId}/read-all`, { method: 'PUT' });
             loadNotifications(true);
             pushToast('อ่านแจ้งเตือนทั้งหมดแล้ว');
         }
         catch (err) {
-            pushToast('ทำเครื่องหมายอ่านแล้วเฉพาะหน้าจอนี้ (ยังไม่ได้เพิ่ม endpoint ในหลังบ้าน)', 'warn');
+            pushToast('ทำเครื่องหมายรายการ Executive ว่าอ่านแล้วบนเครื่องนี้', 'warn');
         }
     };
     const accountName = user?.FullName || user?.Username || 'ผู้บริหาร';
@@ -1261,7 +1458,9 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         { id: 'overview', icon: 'overview', label: 'ภาพรวมศูนย์อาหาร', caption: 'สรุปยอดขายทั้งศูนย์' },
         { id: 'store-sales', icon: 'trend', label: 'ยอดขายรายร้าน', caption: 'เจาะรายร้าน/เมนู' },
         { id: 'store-manage', icon: 'store', label: 'จัดการร้านค้า', caption: 'เพิ่ม แก้ไข ปิดร้าน' },
-        { id: 'store-accounts', icon: 'account', label: 'บัญชีร้านค้า', caption: 'บัญชีผู้ใช้ของร้าน' }
+        { id: 'store-accounts', icon: 'account', label: 'บัญชีร้านค้า', caption: 'บัญชีผู้ใช้ของร้าน' },
+        { id: 'contract-tracking', icon: 'calendar', label: 'ติดตามสัญญา', caption: 'ระยะเวลาสัญญาร้านค้า' },
+        { id: 'audit-history', icon: 'history', label: 'ประวัติการดำเนินการ', caption: 'กิจกรรมสำคัญในระบบ' }
     ];
     const PAGE_META = {
         overview: {
@@ -1283,8 +1482,24 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             title: 'บัญชีร้านค้า',
             subtitle: 'ออกบัญชีผู้ใช้ให้ร้านค้าเข้าระบบไปจัดการเมนูและออเดอร์ของตัวเอง',
             searchPlaceholder: 'ค้นหาชื่อผู้ใช้หรือชื่อร้าน...'
+        },
+        'contract-tracking': {
+            title: 'ติดตามระยะเวลาสัญญา',
+            subtitle: 'ตรวจสอบวันเริ่มสัญญา วันสิ้นสุดสัญญา และร้านค้าที่ใกล้หมดอายุ',
+            searchPlaceholder: 'ค้นหาร้านค้า...'
+        },
+        'audit-history': {
+            title: 'ประวัติการดำเนินการ',
+            subtitle: 'ตรวจสอบกิจกรรมสำคัญและการเปลี่ยนแปลงที่เกิดขึ้นภายในระบบ',
+            searchPlaceholder: 'ค้นหาประวัติการดำเนินการ...'
         }
     }[activeMenu];
+    const navigateTo = useCallback((menuId, storeId = '') => {
+        setFocusStoreId(storeId ? String(storeId) : '');
+        setActiveMenu(menuId);
+        setSearch('');
+        if (isNarrow) setSidebarOpen(false);
+    }, [isNarrow]);
     const ctx = {
         API,
         user,
@@ -1295,7 +1510,10 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         pushToast,
         ask,
         reloadStores: loadStores,
-        reloadOrders: loadOrders
+        reloadOrders: loadOrders,
+        focusStoreId,
+        navigateTo,
+        clearFocusStore: () => setFocusStoreId('')
     };
     return (<>
       <style>{`
@@ -1450,10 +1668,10 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                       </Button>)}
                   </div>
                   <div style={{ maxHeight: '340px', overflowY: 'auto' }}>
-                    {notifications.length === 0 && (<div style={{ padding: '26px', textAlign: 'center', color: T.muted, fontSize: '13px' }}>
+                    {displayNotifications.length === 0 && (<div style={{ padding: '26px', textAlign: 'center', color: T.muted, fontSize: '13px' }}>
                         ยังไม่มีการแจ้งเตือน
                       </div>)}
-                    {notifications.map((n) => (<button key={n.NotifId} type="button" onClick={() => markRead(n)} style={{
+                    {displayNotifications.map((n) => (<button key={n.NotifId} type="button" onClick={() => openNotification(n)} style={{
                     ...notifItemStyle,
                     background: isRead(n) ? T.surface : T.primarySoft
                 }}>
@@ -1530,6 +1748,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                 <div style={sidebarLabelStyle}>เมนูหลัก</div>
                 {MENUS.map((m) => (<button key={m.id} type="button" className="of-nav-item" onClick={() => {
                     setActiveMenu(m.id);
+                    setFocusStoreId('');
                     setSearch('');
                     if (isNarrow)
                         setSidebarOpen(false);
@@ -1586,6 +1805,8 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
               {activeMenu === 'store-sales' && <StoreSalesPage ctx={ctx}/>}
               {activeMenu === 'store-manage' && <StoreManagePage ctx={ctx}/>}
               {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx}/>}
+              {activeMenu === 'contract-tracking' && <ContractTrackingPage ctx={ctx}/>}
+              {activeMenu === 'audit-history' && <AuditHistoryPage ctx={ctx}/>}
             </div>
           </main>
         </div>
@@ -1811,6 +2032,251 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} variant="blue" icon="check"/>
       </div>
 
+      <section className="of-card" style={{
+          ...cardStyle,
+          marginTop: '18px',
+          marginBottom: '18px',
+          padding: '0',
+          overflow: 'hidden',
+          border: watchStores.length ? '1px solid #E8552D' : `1px solid ${T.line}`,
+          background: watchStores.length
+              ? `linear-gradient(135deg, ${T.primary} 0%, ${T.primaryDark} 100%)`
+              : T.surface,
+          boxShadow: watchStores.length
+              ? '0 12px 28px rgba(232,85,45,0.18)'
+              : T.shadowSm
+      }}>
+        <div style={{
+            padding: '18px 20px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: '14px',
+            flexWrap: 'wrap',
+            background: watchStores.length
+                ? 'rgba(255,255,255,0.04)'
+                : T.surface,
+            borderBottom: `1px solid ${watchStores.length ? 'rgba(255,255,255,0.20)' : T.line}`
+        }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', minWidth: 0 }}>
+            <div style={{
+                width: '42px',
+                height: '42px',
+                minWidth: '42px',
+                borderRadius: '12px',
+                display: 'grid',
+                placeItems: 'center',
+                background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft
+            }}>
+              <Icon name={watchStores.length ? 'info' : 'check'} size={21}
+                color={watchStores.length ? '#FFFFFF' : T.up}/>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <h3 style={{ ...h3Style, fontSize: '16px', color: watchStores.length ? '#FFFFFF' : T.ink }}>ร้านที่น่าจับตามอง</h3>
+              <p style={{ ...captionStyle, marginTop: '4px', color: watchStores.length ? 'rgba(255,255,255,0.82)' : T.muted }}>
+                คัดจากยอดขายลดลง อัตรายกเลิกสูง หรือร้านที่ถูกระงับสิทธิ์
+              </p>
+            </div>
+          </div>
+
+          <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '7px',
+              padding: '7px 11px',
+              borderRadius: '999px',
+              background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft,
+              color: watchStores.length ? '#FFFFFF' : T.up,
+              fontSize: '12px',
+              fontWeight: 700,
+              whiteSpace: 'nowrap'
+          }}>
+            <span style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: watchStores.length ? '#FFFFFF' : T.up
+            }}/>
+            {watchStores.length ? `พบ ${watchStores.length} ร้าน` : 'สถานะปกติ'}
+          </div>
+        </div>
+
+        <div style={{ padding: watchStores.length ? '16px 20px 20px' : '0 20px' }}>
+          {watchStores.length === 0 ? (
+            <EmptyState text="ยังไม่มีร้านที่มีสัญญาณผิดปกติในช่วงนี้" minHeight="110px"/>
+          ) : (
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))',
+                gap: '12px'
+            }}>
+              {watchStores.map((s) => {
+                const reasons = [];
+                if (s.IsSuspended) reasons.push('ร้านถูกระงับสิทธิ์');
+                if (s.delta !== null && s.delta <= -15 && (s.completedCount > 0 || s.sales > 0)) {
+                    reasons.push(`ยอดขายลดลง ${Math.abs(s.delta).toFixed(1)}% จากช่วงก่อน`);
+                }
+                if (s.cancelRate >= 10) reasons.push(`อัตรายกเลิกสูง ${s.cancelRate.toFixed(1)}%`);
+                if (!reasons.length && s.completedCount === 0 && s.sales === 0) {
+                    reasons.push('ยังไม่มีข้อมูลยอดขายเพียงพอในช่วงนี้');
+                }
+
+                const severe = Boolean(s.IsSuspended) || s.cancelRate >= 15;
+                const accent = severe ? T.down : '#E86532';
+                const soft = severe ? '#FFE5DF' : '#FFEBDD';
+
+                return (
+                  <div key={s.StoreId} style={{
+                      position: 'relative',
+                      overflow: 'hidden',
+                      border: `1px solid ${severe ? '#E89A8B' : '#E8B286'}`,
+                      borderRadius: T.radiusLg,
+                      background: T.surface,
+                      boxShadow: '0 5px 16px rgba(42,44,65,0.05)'
+                  }}>
+                    <span style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: '5px',
+                        background: accent
+                    }}/>
+
+                    <div style={{ padding: '16px 16px 16px 20px' }}>
+                      <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: '12px'
+                      }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{
+                              color: T.ink,
+                              fontSize: '15px',
+                              lineHeight: 1.4,
+                              fontWeight: 700,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                          }}>
+                            {s.StoreName}
+                          </div>
+                          <div style={{
+                              color: T.muted,
+                              fontSize: '11.5px',
+                              marginTop: '3px'
+                          }}>
+                            ร้านค้า #{s.StoreId}
+                          </div>
+                        </div>
+
+                        <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '6px 10px',
+                            borderRadius: '999px',
+                            background: soft,
+                            color: severe ? T.down : '#B34D1D',
+                            fontSize: '11.5px',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap'
+                        }}>
+                          <span style={{
+                              width: '6px',
+                              height: '6px',
+                              borderRadius: '50%',
+                              background: accent
+                          }}/>
+                          {severe ? 'ควรตรวจสอบ' : 'ควรจับตา'}
+                        </span>
+                      </div>
+
+                      <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                          gap: '8px',
+                          marginTop: '15px'
+                      }}>
+                        {[
+                          ['ยอดขาย', `${money(s.sales)} บาท`],
+                          ['ออเดอร์', `${money(s.completedCount)} รายการ`],
+                          ['ยกเลิก', `${s.cancelRate.toFixed(1)}%`]
+                        ].map(([label, value]) => (
+                          <div key={label} style={{
+                              padding: '10px',
+                              borderRadius: T.radiusMd,
+                              background: '#F8F9FC',
+                              border: `1px solid ${T.line}`,
+                              minWidth: 0
+                          }}>
+                            <div style={{
+                                color: T.muted,
+                                fontSize: '10.5px',
+                                whiteSpace: 'nowrap'
+                            }}>{label}</div>
+                            <div style={{
+                                color: label === 'ยกเลิก' && s.cancelRate >= 10 ? T.down : T.ink,
+                                fontSize: '13px',
+                                fontWeight: 700,
+                                marginTop: '3px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                            }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{
+                          marginTop: '12px',
+                          padding: '10px 11px',
+                          borderRadius: T.radiusMd,
+                          background: soft
+                      }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            color: severe ? T.down : '#B34D1D',
+                            fontSize: '11.5px',
+                            fontWeight: 700
+                        }}>
+                          <Icon name="info" size={14} color={severe ? T.down : '#B34D1D'}/>
+                          เหตุผลที่ควรจับตา
+                        </div>
+                        <div style={{
+                            color: T.text,
+                            fontSize: '12px',
+                            lineHeight: 1.6,
+                            marginTop: '5px'
+                        }}>
+                          {reasons.join(' · ')}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => ctx.navigateTo('store-sales', s.StoreId)}
+                        style={{
+                          width: '100%', marginTop: '11px', padding: '9px 12px',
+                          borderRadius: T.radiusMd, border: `1px solid ${T.line}`,
+                          background: T.surface, color: T.primaryDark, fontSize: '12.5px',
+                          fontWeight: 700, cursor: 'pointer', fontFamily: FONT_STACK
+                        }}
+                      >
+                        ดูรายละเอียดร้าน →
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
       <div className="of-kpi-small">
         <KpiCard size="sm" label="ยอดเฉลี่ยต่อออเดอร์" value={money2(report.now.avgOrder)} unit="บาท" delta={changePct(report.now.avgOrder, report.before.avgOrder)} deltaLabel={compareLabel} icon="trend" tone="blue"/>
         <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} icon="ban" tone="amber" invertDelta/>
@@ -1843,26 +2309,6 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         </Card>
       </div>
 
-      <Card title="ร้านที่น่าจับตามอง" subtitle="คัดจากยอดขายลดลง อัตรายกเลิกสูง หรือร้านที่ถูกระงับสิทธิ์" style={{ marginTop: '16px' }}>
-        {watchStores.length === 0 ? <EmptyState text="ยังไม่มีร้านที่มีสัญญาณผิดปกติในช่วงนี้" minHeight="110px"/> : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginTop: '10px' }}>
-            {watchStores.map((s) => {
-              const reasons = [];
-              if (s.IsSuspended) reasons.push('ถูกระงับสิทธิ์');
-              if (s.delta !== null && s.delta <= -15) reasons.push(`ยอดขายลด ${Math.abs(s.delta).toFixed(1)}%`);
-              if (s.cancelRate >= 10) reasons.push(`ยกเลิก ${s.cancelRate.toFixed(1)}%`);
-              return <div key={s.StoreId} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: '14px', background: '#FAFAFC' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                  <strong style={{ color: T.ink, fontSize: '14px' }}>{s.StoreName}</strong>
-                  <Badge tone={s.IsSuspended || s.cancelRate >= 15 ? 'danger' : 'warn'}>จับตา</Badge>
-                </div>
-                <div style={{ ...captionStyle, marginTop: '8px' }}>{reasons.join(' · ')}</div>
-                <div style={{ marginTop: '8px', fontSize: '12.5px', color: T.text }}>ยอดขาย {money(s.sales)} บาท · {money(s.completedCount)} ออเดอร์</div>
-              </div>;
-            })}
-          </div>
-        )}
-      </Card>
 
       <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
         <div style={{ overflowX: 'auto' }}>
@@ -1880,7 +2326,14 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
             <tbody>
               {visibleStoreRows.map((s) => (<tr key={s.StoreId} style={trStyle}>
                   <td style={tdStyle}>
-                    <strong style={{ color: T.ink }}>{s.StoreName}</strong>
+                    <button
+                      type="button"
+                      onClick={() => ctx.navigateTo('store-sales', s.StoreId)}
+                      title={`ดูรายละเอียดยอดขายร้าน ${s.StoreName}`}
+                      style={{ border: 'none', background: 'transparent', padding: 0, color: T.ink, fontWeight: 700, cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left' }}
+                    >
+                      {s.StoreName} <span aria-hidden="true">→</span>
+                    </button>
                   </td>
                   <td style={tdRightStyle}>{money(s.completedCount)}</td>
                   <td style={{ ...tdRightStyle, minWidth: '170px' }}>
@@ -2019,6 +2472,10 @@ function ReviewRow({ review }) {
 function StoreReviewSection({ ctx, storeId, style }) {
     const { API } = ctx;
     const [state, setState] = useState({ loading: false, error: null, data: null });
+    const [ratingFilter, setRatingFilter] = useState('all');
+    useEffect(() => {
+        setRatingFilter('all');
+    }, [storeId]);
     useEffect(() => {
         if (!storeId) {
             setState({ loading: false, error: null, data: null });
@@ -2039,11 +2496,38 @@ function StoreReviewSection({ ctx, storeId, style }) {
             cancelled = true;
         };
     }, [API, storeId]);
-    const summary = state.data?.summary || { total: 0, average: 0 };
-    const reviews = state.data?.reviews || [];
-    return (<Card title="รีวิวจากลูกค้า" subtitle="คะแนนและความคิดเห็นล่าสุดของร้านนี้" style={{ margin: 0, ...style }} right={summary.total > 0 ? (<div style={{ textAlign: 'right' }}>
+    const summary = state.data?.summary || { total: 0, average: 0, breakdown: {} };
+    // รีวิวของร้านเป็นข้อมูลแบบ all-time: ไม่ผูกกับช่วงวันที่ของยอดขายด้านบน
+    // เรียงรีวิวล่าสุดก่อนเสมอ เพื่อให้รีวิวยังคงแสดงแม้วันที่ที่เลือกจะไม่มีรีวิวใหม่
+    const reviews = useMemo(() => {
+        const rows = Array.isArray(state.data?.reviews) ? state.data.reviews : [];
+        return [...rows].sort((a, b) => {
+            const aTime = parseOrderDate(a.CreatedAt)?.getTime() || 0;
+            const bTime = parseOrderDate(b.CreatedAt)?.getTime() || 0;
+            return bTime - aTime;
+        });
+    }, [state.data?.reviews]);
+    const breakdown = summary.breakdown || {};
+    const filteredReviews = useMemo(() => {
+        if (ratingFilter === 'all')
+            return reviews;
+        return reviews.filter((r) => Number(r.Rating) === Number(ratingFilter));
+    }, [reviews, ratingFilter]);
+    const ratingOptions = [5, 4, 3, 2, 1];
+    const filterChip = (active) => ({
+        border: `1px solid ${active ? T.primary : T.line}`,
+        background: active ? T.primarySoft : '#FFF',
+        color: active ? T.primaryDark : T.text,
+        borderRadius: '999px',
+        padding: '7px 12px',
+        fontSize: '12.5px',
+        fontWeight: active ? 700 : 600,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap'
+    });
+    return (<Card title="รีวิวจากลูกค้า" subtitle="รีวิวทั้งหมดของร้านนี้ " style={{ margin: 0, ...style }} right={summary.total > 0 ? (<div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '20px', fontWeight: 700, color: T.ink, lineHeight: 1.2 }}>
-              {summary.average.toFixed(1)}
+              {Number(summary.average || 0).toFixed(1)}
               <span style={{ fontSize: '13px', color: T.muted, fontWeight: 500 }}> / 5</span>
             </div>
             <div style={captionStyle}>{money(summary.total)} รีวิว</div>
@@ -2052,8 +2536,123 @@ function StoreReviewSection({ ctx, storeId, style }) {
       {!state.loading && state.error && <EmptyState text={state.error}/>}
       {!state.loading && !state.error && reviews.length === 0 && (<EmptyState text="ร้านนี้ยังไม่มีรีวิวจากลูกค้า"/>)}
       {!state.loading && !state.error && reviews.length > 0 && (<div>
-          {reviews.map((r) => (<ReviewRow key={r.ReviewId} review={r}/>))}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
+            <span style={{ ...captionStyle, marginRight: '2px' }}>กรองคะแนน:</span>
+            <button type="button" onClick={() => setRatingFilter('all')} style={filterChip(ratingFilter === 'all')}>
+              ทั้งหมด ({money(reviews.length)})
+            </button>
+            {ratingOptions.map((star) => (<button key={star} type="button" onClick={() => setRatingFilter(String(star))} style={filterChip(ratingFilter === String(star))}>
+                {star} ★ ({money(breakdown[String(star)] ?? reviews.filter((r) => Number(r.Rating) === star).length)})
+              </button>))}
+          </div>
+          {filteredReviews.length > 0 ? (<div>
+              {filteredReviews.map((r) => (<ReviewRow key={r.ReviewId ?? r.ReviewID} review={r}/>))}
+            </div>) : (<EmptyState text={`ยังไม่มีรีวิว ${ratingFilter} ดาว`}/>) }
         </div>)}
+    </Card>);
+}
+function StoreIssueReportSection({ ctx, storeId, style }) {
+    const { API } = ctx;
+    const [state, setState] = useState({ loading: false, error: null, rows: [] });
+    const [typeFilter, setTypeFilter] = useState('all');
+
+    useEffect(() => {
+        setTypeFilter('all');
+    }, [storeId]);
+
+    useEffect(() => {
+        if (!storeId) {
+            setState({ loading: false, error: null, rows: [] });
+            return undefined;
+        }
+        let cancelled = false;
+        setState({ loading: true, error: null, rows: [] });
+        callApi(`${API}/api/reports/issue/store/${storeId}`)
+            .then((data) => {
+            if (!cancelled)
+                setState({ loading: false, error: null, rows: Array.isArray(data) ? data : [] });
+        })
+            .catch((err) => {
+            if (!cancelled)
+                setState({ loading: false, error: err.message, rows: [] });
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [API, storeId]);
+
+    // รายงานปัญหาเป็นข้อมูล all-time ของร้าน ไม่ผูกกับตัวกรองวันที่ของยอดขาย
+    const reports = useMemo(() => [...state.rows].sort((a, b) => {
+        const aTime = parseOrderDate(a.CreatedAt)?.getTime() || 0;
+        const bTime = parseOrderDate(b.CreatedAt)?.getTime() || 0;
+        return bTime - aTime;
+    }), [state.rows]);
+
+    const issueTypes = useMemo(() => [...new Set(reports
+        .map((r) => String(r.IssueType || '').trim())
+        .filter(Boolean))], [reports]);
+
+    const filteredReports = useMemo(() => {
+        if (typeFilter === 'all') return reports;
+        return reports.filter((r) => String(r.IssueType || '') === typeFilter);
+    }, [reports, typeFilter]);
+
+    const filterChip = (active) => ({
+        border: `1px solid ${active ? T.primary : T.line}`,
+        background: active ? T.primarySoft : '#FFF',
+        color: active ? T.primaryDark : T.text,
+        borderRadius: '999px',
+        padding: '7px 12px',
+        fontSize: '12.5px',
+        fontWeight: active ? 700 : 600,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap'
+    });
+
+    return (<Card
+      title="รายงานปัญหาจากลูกค้า"
+      subtitle="รายงานทั้งหมดของร้านนี้ "
+      style={{ margin: 0, ...style }}
+      right={reports.length > 0 ? <Badge tone="warning">{money(reports.length)} รายการ</Badge> : null}
+    >
+      {state.loading && <EmptyState text="กำลังโหลดรายงานปัญหา..."/>}
+      {!state.loading && state.error && <EmptyState text={state.error}/>} 
+      {!state.loading && !state.error && reports.length === 0 && <EmptyState text="ร้านนี้ยังไม่มีรายงานปัญหาจากลูกค้า"/>}
+      {!state.loading && !state.error && reports.length > 0 && (<div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
+          <span style={{ ...captionStyle, marginRight: '2px' }}>ประเภทปัญหา:</span>
+          <button type="button" onClick={() => setTypeFilter('all')} style={filterChip(typeFilter === 'all')}>
+            ทั้งหมด ({money(reports.length)})
+          </button>
+          {issueTypes.map((type) => (<button key={type} type="button" onClick={() => setTypeFilter(type)} style={filterChip(typeFilter === type)}>
+            {type} ({money(reports.filter((r) => String(r.IssueType || '') === type).length)})
+          </button>))}
+        </div>
+
+        {filteredReports.length > 0 ? (<div style={{ display: 'grid', gap: '10px' }}>
+          {filteredReports.map((report) => (<div key={report.ReportID} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '13px 14px', background: '#FFF' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <strong style={{ color: T.ink, fontSize: '14px' }}>{report.IssueType || 'ไม่ระบุประเภท'}</strong>
+                  {report.QueueNo && <Badge tone="neutral">คิว {report.QueueNo}</Badge>}
+                </div>
+                <div style={{ ...captionStyle, marginTop: '4px' }}>
+                  ผู้แจ้ง: {report.CustomerName || `User ${report.UserId}`}
+                  {report.OrderID ? ` · Order #${report.OrderID}` : ''}
+                </div>
+              </div>
+              <span style={captionStyle}>{thaiDateTime(report.CreatedAt)}</span>
+            </div>
+            <p style={{ margin: '9px 0 0', color: T.text, fontSize: '13.5px', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
+              {report.Description || '-'}
+            </p>
+            {report.AdminNote && (<div style={{ marginTop: '9px', padding: '9px 11px', borderRadius: T.radiusMd, background: T.deepSoft, color: T.text, fontSize: '13px' }}>
+              <strong>หมายเหตุ:</strong> {report.AdminNote}
+            </div>)}
+          </div>))}
+        </div>) : <EmptyState text={`ยังไม่มีรายงานประเภท “${typeFilter}”`}/>} 
+      </div>)}
     </Card>);
 }
 const CANCEL_REASON_FALLBACK = 'ไม่ระบุเหตุผล';
@@ -2206,11 +2805,45 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
     </Card>);
 }
 function StoreSalesPage({ ctx }) {
-    const { orders, stores, pushToast } = ctx;
-    const [storeId, setStoreId] = useState('');
+    const { orders, stores, pushToast, focusStoreId, navigateTo } = ctx;
+    const [storeId, setStoreId] = useState(focusStoreId || '');
+    useEffect(() => {
+        if (focusStoreId) setStoreId(String(focusStoreId));
+    }, [focusStoreId]);
     const [anchor, setAnchor] = useState(todayISO());
     const [days, setDays] = useState(1);
     const store = stores.find((s) => String(s.StoreId) === String(storeId)) || null;
+
+    const salesContractInfo = (selectedStore) => {
+        if (!selectedStore?.ContractEndDate) {
+            return { label: 'ยังไม่ระบุสัญญา', tone: 'neutral', detail: 'ยังไม่มีวันสิ้นสุดสัญญา' };
+        }
+        const raw = String(selectedStore.ContractEndDate).slice(0, 10);
+        const end = new Date(`${raw}T00:00:00`);
+        if (Number.isNaN(end.getTime())) {
+            return { label: 'ยังไม่ระบุสัญญา', tone: 'neutral', detail: 'ยังไม่มีวันสิ้นสุดสัญญา' };
+        }
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const daysLeft = Math.ceil((end - today) / 86400000);
+
+        if (daysLeft < 0) {
+            return {
+                label: 'สัญญาหมดอายุ',
+                tone: 'danger',
+                detail: `หมดอายุมาแล้ว ${Math.abs(daysLeft)} วัน`
+            };
+        }
+        if (daysLeft === 0) {
+            return { label: 'สัญญาหมดวันนี้', tone: 'danger', detail: 'ควรดำเนินการต่อสัญญา' };
+        }
+        if (daysLeft <= 30) {
+            return { label: `เหลือ ${daysLeft} วัน`, tone: 'warning', detail: 'สัญญาใกล้หมดอายุ' };
+        }
+        return { label: `เหลือ ${daysLeft} วัน`, tone: 'ok', detail: 'สัญญายังมีผล' };
+    };
+    const selectedContract = store ? salesContractInfo(store) : null;
+
     const report = useMemo(() => {
         if (!storeId)
             return null;
@@ -2330,13 +2963,34 @@ function StoreSalesPage({ ctx }) {
                 <h3 style={h3Style}>{store.StoreName}</h3>
                 <p style={captionStyle}>{periodLabel}</p>
               </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+                <Button
+                  variant="ghost"
+                  icon="edit"
+                  onClick={() => navigateTo('store-manage', store.StoreId)}
+                  title="ไปหน้าแก้ไขข้อมูลร้านนี้"
+                  style={{ padding: '7px 12px' }}
+                >
+                  แก้ไขข้อมูลร้าน
+                </Button>
                 <Badge tone={store.IsOpen ? 'ok' : 'neutral'}>
                   {store.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}
                 </Badge>
                 <Badge tone={store.IsSuspended ? 'danger' : 'ok'}>
                   {store.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
                 </Badge>
+                {selectedContract && (
+                  <button
+                    type="button"
+                    onClick={() => navigateTo('contract-tracking', store.StoreId)}
+                    title="ไปจัดการสัญญาร้านนี้"
+                    style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: FONT_STACK }}
+                  >
+                    <Badge tone={selectedContract.tone}>
+                      สัญญา: {selectedContract.label} · จัดการ →
+                    </Badge>
+                  </button>
+                )}
               </div>
             </div>
           </Card>
@@ -2378,6 +3032,7 @@ function StoreSalesPage({ ctx }) {
           <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
             <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={`${store.StoreName} · ${periodLabel}`} showStore={false} style={{ marginTop: 0 }}/>
             <StoreReviewSection ctx={ctx} storeId={storeId}/>
+            <StoreIssueReportSection ctx={ctx} storeId={storeId}/>
           </div>
         </>)}
     </>);
@@ -2392,7 +3047,10 @@ const EMPTY_STORE_FORM = {
     email: '',
     description: '',
     imageData: '',
-    imageName: ''
+    imageName: '',
+    contractStartDate: '',
+    contractDuration: '',
+    contractEndDate: ''
 };
 function looksLikeGarbage(value) {
     const compact = String(value || '').trim().replace(/\s/g, '');
@@ -2474,14 +3132,64 @@ function validateStoreForm(form) {
     if (form.description.trim().length > 300) {
         errors.description = 'คำอธิบายต้องไม่เกิน 300 ตัวอักษร';
     }
+    if (!form.contractStartDate)
+        errors.contractStartDate = 'กรุณาเลือกวันที่เริ่มสัญญา';
+    if (!form.contractDuration)
+        errors.contractDuration = 'กรุณาเลือกระยะเวลาสัญญา';
+    if (!form.contractEndDate)
+        errors.contractEndDate = 'กรุณาระบุวันที่สิ้นสุดสัญญา';
+    if (form.contractStartDate && form.contractEndDate && form.contractEndDate < form.contractStartDate)
+        errors.contractEndDate = 'วันที่สิ้นสุดสัญญาต้องไม่น้อยกว่าวันที่เริ่มสัญญา';
     return errors;
 }
 function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose, onSubmit, saving }) {
     const fileInputRef = useRef(null);
     const [dragOver, setDragOver] = useState(false);
+
+    const calculateContractEnd = (startISO, duration) => {
+        if (!startISO || !duration || duration === 'custom')
+            return '';
+        const [year, month, day] = startISO.split('-').map(Number);
+        if (!year || !month || !day)
+            return '';
+        const monthsToAdd = {
+            '6m': 6,
+            '1y': 12,
+            '2y': 24,
+            '3y': 36
+        }[duration];
+        if (!monthsToAdd)
+            return '';
+
+        const targetMonthIndex = (month - 1) + monthsToAdd;
+        const targetYear = year + Math.floor(targetMonthIndex / 12);
+        const targetMonth = targetMonthIndex % 12;
+        const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+        const safeDay = Math.min(day, lastDay);
+        return `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+    };
+
     const update = (key) => (e) => {
-        setForm((prev) => ({ ...prev, [key]: e.target.value }));
-        setErrors((prev) => ({ ...prev, [key]: undefined }));
+        const value = e.target.value;
+        setForm((prev) => {
+            const next = { ...prev, [key]: value };
+            if (key === 'contractStartDate' && prev.contractDuration && prev.contractDuration !== 'custom') {
+                next.contractEndDate = calculateContractEnd(value, prev.contractDuration);
+            }
+            if (key === 'contractDuration') {
+                next.contractEndDate = value === 'custom'
+                    ? ''
+                    : calculateContractEnd(prev.contractStartDate, value);
+            }
+            return next;
+        });
+        setErrors((prev) => ({
+            ...prev,
+            [key]: undefined,
+            ...(key === 'contractStartDate' || key === 'contractDuration'
+                ? { contractEndDate: undefined }
+                : {})
+        }));
     };
     const triggerPick = () => fileInputRef.current?.click();
     const handleFile = (file) => {
@@ -2534,6 +3242,51 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
             </option>))}
         </select>
       </Field>
+
+      <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '12px'
+      }}>
+        <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
+          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={inputStyle}/>
+        </Field>
+
+        <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
+          <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={inputStyle}>
+            <option value="">— เลือกระยะเวลา —</option>
+            <option value="6m">6 เดือน</option>
+            <option value="1y">1 ปี</option>
+            <option value="2y">2 ปี</option>
+            <option value="3y">3 ปี</option>
+            <option value="custom">กำหนดวันสิ้นสุดเอง</option>
+          </select>
+        </Field>
+
+        <Field
+          label="วันที่สิ้นสุดสัญญา"
+          required
+          error={errors.contractEndDate}
+          hint={form.contractDuration && form.contractDuration !== 'custom'
+              ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ'
+              : form.contractDuration === 'custom'
+                ? 'เลือกวันสิ้นสุดสัญญาได้เอง'
+                : 'เลือกระยะเวลาสัญญาก่อน'}>
+          <input
+            type="date"
+            value={form.contractEndDate || ''}
+            min={form.contractStartDate || undefined}
+            onChange={update('contractEndDate')}
+            disabled={form.contractDuration !== 'custom'}
+            style={{
+                ...inputStyle,
+                background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background,
+                color: form.contractDuration !== 'custom' ? T.muted : T.ink,
+                cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer'
+            }}
+          />
+        </Field>
+      </div>
 
       <div style={twoColStyle}>
         <Field label="ชื่อผู้ติดต่อ" required error={errors.contactName}>
@@ -2626,7 +3379,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
     </Modal>);
 }
 function StoreManagePage({ ctx }) {
-    const { API, user, stores, search, pushToast, ask, reloadStores } = ctx;
+    const { API, user, stores, search, pushToast, ask, reloadStores, focusStoreId, clearFocusStore } = ctx;
     const [details, setDetails] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [mode, setMode] = useState('create');
@@ -2671,11 +3424,26 @@ function StoreManagePage({ ctx }) {
             email: d.ContactEmail || '',
             description: d.Description || '',
             imageData: d.ImageUrl || '',
-            imageName: ''
+            imageName: '',
+            contractStartDate: d.ContractStartDate ? String(d.ContractStartDate).slice(0, 10) : '',
+            contractDuration: d.ContractStartDate && d.ContractEndDate ? 'custom' : '',
+            contractEndDate: d.ContractEndDate ? String(d.ContractEndDate).slice(0, 10) : ''
         });
         setErrors({});
         setModalOpen(true);
     };
+
+    // [CROSS-NAV] มาจากหน้ายอดขายรายร้าน -> เปิดฟอร์มแก้ไขร้านที่เลือกให้ทันที
+    useEffect(() => {
+        if (!focusStoreId || !details.length)
+            return;
+        const targetStore = stores.find((s) => String(s.StoreId) === String(focusStoreId));
+        if (!targetStore)
+            return;
+        openEdit(targetStore);
+        clearFocusStore();
+    }, [focusStoreId, details, stores]);
+
     const submitForm = async () => {
         const found = validateStoreForm(form);
         setErrors(found);
@@ -2692,7 +3460,9 @@ function StoreManagePage({ ctx }) {
             contact_email: form.email.trim(),
             description: form.description.trim(),
             image_url: form.imageData,
-            performed_by: user?.FullName || user?.Username || 'Executive'
+            contract_start_date: form.contractStartDate || null,
+            contract_end_date: form.contractEndDate || null,
+            performed_by: 'Executive'
         };
         const send = async (path, method) => callApi(`${API}${path}`, {
             method,
@@ -2730,6 +3500,10 @@ function StoreManagePage({ ctx }) {
     };
     const toggleStore = async (store) => {
         const closing = Boolean(store.IsOpen);
+        if (!closing && Boolean(store.IsSuspended)) {
+            pushToast(`ร้าน ${store.StoreName} ถูกระงับสิทธิ์ กรุณาปลดระงับก่อนเปิดร้าน`, 'warn');
+            return;
+        }
         const ok = await ask({
             title: closing ? 'ปิดร้านค้า' : 'เปิดร้านค้า',
             message: `ยืนยัน${closing ? 'ปิด' : 'เปิด'}ร้าน "${store.StoreName}" ใช่หรือไม่`,
@@ -2740,7 +3514,7 @@ function StoreManagePage({ ctx }) {
         if (!ok)
             return;
         try {
-            await callApi(`${API}/api/stores/${store.StoreId}/toggle`, { method: 'PUT' });
+            await callApi(`${API}/api/stores/${store.StoreId}/toggle?performed_by=Executive`, { method: 'PUT' });
             pushToast(`${closing ? 'ปิด' : 'เปิด'}ร้าน ${store.StoreName} แล้ว`);
             await reloadStores();
         }
@@ -2762,7 +3536,7 @@ function StoreManagePage({ ctx }) {
         if (!ok)
             return;
         try {
-            await callApi(`${API}/api/stores/${store.StoreId}/suspend`, { method: 'PUT' });
+            await callApi(`${API}/api/stores/${store.StoreId}/suspend?performed_by=Executive`, { method: 'PUT' });
             pushToast(`${suspending ? 'ระงับสิทธิ์' : 'ปลดระงับ'}ร้าน ${store.StoreName} แล้ว`);
             await reloadStores();
         }
@@ -2858,7 +3632,14 @@ function StoreManagePage({ ctx }) {
                         <Button variant="soft" icon="edit" onClick={() => openEdit(s)} style={smallBtn}>
                           แก้ไข
                         </Button>
-                        <Button variant="soft" icon="power" onClick={() => toggleStore(s)} style={smallBtn}>
+                        <Button
+                          variant="soft"
+                          icon="power"
+                          onClick={() => toggleStore(s)}
+                          disabled={!s.IsOpen && Boolean(s.IsSuspended)}
+                          title={!s.IsOpen && Boolean(s.IsSuspended) ? 'กรุณาปลดระงับสิทธิ์ก่อนเปิดร้าน' : undefined}
+                          style={smallBtn}
+                        >
                           {s.IsOpen ? 'ปิดร้าน' : 'เปิดร้าน'}
                         </Button>
                         <Button variant="soft" icon="ban" onClick={() => suspendStore(s)} style={smallBtn}>
@@ -2927,6 +3708,675 @@ function validateAccountForm(form, mode) {
         errors.confirm = 'ยืนยันรหัสผ่านไม่ตรงกัน';
     return errors;
 }
+
+
+function ContractTrackingPage({ ctx }) {
+    const { API, search, pushToast, ask, focusStoreId, clearFocusStore } = ctx;
+    const [stores, setStores] = useState([]);
+    const [loadingContracts, setLoadingContracts] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [renewStore, setRenewStore] = useState(null);
+    const [renewDuration, setRenewDuration] = useState('1y');
+    const [renewCustomEnd, setRenewCustomEnd] = useState('');
+    const [renewSaving, setRenewSaving] = useState(false);
+    const [renewError, setRenewError] = useState('');
+    const [renewAction, setRenewAction] = useState('renew_unsuspend');
+
+    const loadContracts = useCallback(async () => {
+        setLoadingContracts(true);
+        try {
+            const data = await callApi(`${API}/api/stores`);
+            setStores(Array.isArray(data) ? data : []);
+            setLoadError('');
+        }
+        catch (err) {
+            setLoadError(err.message);
+        }
+        finally {
+            setLoadingContracts(false);
+        }
+    }, [API]);
+
+    useEffect(() => {
+        loadContracts();
+    }, [loadContracts]);
+
+    const dateOnly = (value) => {
+        if (!value) return null;
+        const raw = String(value).slice(0, 10);
+        const d = new Date(`${raw}T00:00:00`);
+        return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const formatContractDate = (value) => {
+        const d = dateOnly(value);
+        return d ? d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+    };
+    const nextDayISO = (value) => {
+        const d = dateOnly(value);
+        if (!d) return todayISO();
+        d.setDate(d.getDate() + 1);
+        return toISODate(d);
+    };
+    const renewalBaseDate = (currentEnd) => {
+        const current = dateOnly(currentEnd);
+        const today = dateOnly(todayISO());
+        if (!current) return today;
+        return current > today ? current : today;
+    };
+    const calculateRenewEnd = (currentEnd, duration) => {
+        const base = renewalBaseDate(currentEnd);
+        if (!base || !duration || duration === 'custom') return '';
+        const months = { '6m': 6, '1y': 12, '2y': 24, '3y': 36 }[duration];
+        if (!months) return '';
+        const originalDay = base.getDate();
+        const target = new Date(base.getFullYear(), base.getMonth() + months, 1);
+        const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+        target.setDate(Math.min(originalDay, lastDay));
+        return toISODate(target);
+    };
+    const minimumRenewEnd = (store) => {
+        const base = renewalBaseDate(store?.ContractEndDate);
+        return nextDayISO(toISODate(base));
+    };
+    const openRenew = (store) => {
+        setRenewStore(store);
+        setRenewDuration('1y');
+        setRenewCustomEnd('');
+        setRenewError('');
+        setRenewAction(store?.IsSuspended ? 'renew_unsuspend' : 'renew_only');
+    };
+    const closeRenew = () => {
+        if (!renewSaving) {
+            setRenewStore(null);
+            setRenewDuration('1y');
+            setRenewCustomEnd('');
+            setRenewError('');
+            setRenewAction('renew_unsuspend');
+        }
+    };
+    const renewNewEnd = renewStore
+        ? (renewDuration === 'custom' ? renewCustomEnd : calculateRenewEnd(renewStore.ContractEndDate, renewDuration))
+        : '';
+    const renewBase = renewStore ? renewalBaseDate(renewStore.ContractEndDate) : null;
+    const renewNewStart = renewBase ? nextDayISO(toISODate(renewBase)) : '';
+
+    const suspendExpiredStore = async (store) => {
+        if (!store || store.IsSuspended) return;
+        const ok = await ask({
+            title: 'ไม่ต่อสัญญาและระงับสิทธิ์',
+            message: `สัญญาร้าน "${store.StoreName}" หมดอายุแล้ว ต้องการยุติการให้บริการและระงับสิทธิ์ร้านนี้หรือไม่?`,
+            warning: 'ร้านจะไม่สามารถให้บริการได้จนกว่าผู้บริหารจะปลดระงับสิทธิ์',
+            confirmText: 'ระงับสิทธิ์',
+            danger: true
+        });
+        if (!ok) return;
+
+        try {
+            await callApi(`${API}/api/stores/${store.StoreId}/suspend?performed_by=Executive`, {
+                method: 'PUT'
+            });
+            pushToast(`ระงับสิทธิ์ร้าน ${store.StoreName} แล้ว`);
+            await loadContracts();
+        } catch (err) {
+            pushToast(err.message, 'error');
+        }
+    };
+
+    const submitRenew = async () => {
+        if (!renewStore || !renewNewEnd) {
+            setRenewError('กรุณาเลือกวันสิ้นสุดสัญญาใหม่');
+            return;
+        }
+
+        const newEnd = dateOnly(renewNewEnd);
+        const currentEnd = dateOnly(renewStore.ContractEndDate);
+        const today = dateOnly(todayISO());
+
+        if (!newEnd) {
+            setRenewError('รูปแบบวันสิ้นสุดสัญญาไม่ถูกต้อง');
+            return;
+        }
+        if (newEnd <= today) {
+            setRenewError('วันสิ้นสุดสัญญาใหม่ต้องเป็นวันในอนาคต');
+            return;
+        }
+        if (currentEnd && newEnd <= currentEnd) {
+            setRenewError(`วันสิ้นสุดใหม่ต้องอยู่หลังวันสิ้นสุดสัญญาปัจจุบัน (${formatContractDate(renewStore.ContractEndDate)})`);
+            return;
+        }
+
+        setRenewSaving(true);
+        setRenewError('');
+
+        try {
+            const data = await callApi(`${API}/api/stores/${renewStore.StoreId}/renew-contract`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contract_end_date: renewNewEnd,
+                    performed_by: 'Executive'
+                })
+            });
+
+            if (renewStore.IsSuspended && renewAction === 'renew_unsuspend') {
+                await callApi(
+                    `${API}/api/stores/${renewStore.StoreId}/suspend?performed_by=Executive`,
+                    { method: 'PUT' }
+                );
+            }
+
+            pushToast(
+                renewStore.IsSuspended && renewAction === 'renew_unsuspend'
+                    ? `ต่อสัญญาและปลดระงับสิทธิ์ร้าน ${renewStore.StoreName} เรียบร้อยแล้ว`
+                    : (data?.message || `ต่อสัญญาร้าน ${renewStore.StoreName} เรียบร้อยแล้ว`)
+            );
+
+            setRenewStore(null);
+            setRenewDuration('1y');
+            setRenewCustomEnd('');
+            setRenewAction('renew_unsuspend');
+            await loadContracts();
+        } catch (err) {
+            setRenewError(err.message);
+            pushToast(err.message, 'error');
+        } finally {
+            setRenewSaving(false);
+        }
+    };
+    const contractInfo = (store) => {
+        const end = dateOnly(store.ContractEndDate);
+        if (!end) return { key: 'missing', label: 'ยังไม่ระบุสัญญา', days: null, bg: '#F2F3F7', color: T.muted };
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const days = Math.ceil((end - today) / 86400000);
+        if (days <= 0) return {
+            key: 'expired',
+            label: days === 0 ? 'หมดอายุวันนี้' : 'หมดอายุแล้ว',
+            days,
+            bg: T.redSoft,
+            color: T.down
+        };
+        if (days <= 30) return { key: 'soon', label: 'ใกล้หมดอายุ', days, bg: T.accentSoft, color: T.accentDark };
+        return { key: 'active', label: 'ปกติ', days, bg: T.greenSoft, color: T.up };
+    };
+
+    const enriched = stores.map((s) => ({ ...s, contract: contractInfo(s) }));
+    const filtered = enriched
+        .filter((s) => !focusStoreId || String(s.StoreId) === String(focusStoreId))
+        .filter((s) => statusFilter === 'all' || s.contract.key === statusFilter)
+        .filter((s) => String(s.StoreName || '').toLowerCase().includes(search))
+        .sort((a, b) => {
+            const ae = dateOnly(a.ContractEndDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            const be = dateOnly(b.ContractEndDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            return ae - be;
+        });
+
+    const active = enriched.filter((s) => s.contract.key === 'active').length;
+    const soon = enriched.filter((s) => s.contract.key === 'soon').length;
+    const expired = enriched.filter((s) => s.contract.key === 'expired').length;
+    const missing = enriched.filter((s) => s.contract.key === 'missing').length;
+
+    const filters = [
+        ['all', 'ทั้งหมด'],
+        ['active', 'ปกติ'],
+        ['soon', 'ใกล้หมดอายุ'],
+        ['expired', 'หมดอายุแล้ว'],
+        ['missing', 'ยังไม่ระบุ']
+    ];
+
+    const focusedStore = focusStoreId ? enriched.find((s) => String(s.StoreId) === String(focusStoreId)) : null;
+
+    return (<>
+      {focusedStore && (
+        <div style={{ marginBottom: '16px', padding: '12px 14px', border: `1px solid ${T.primary}`, borderRadius: T.radiusMd, background: T.primarySoft, display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div>
+            <strong style={{ color: T.primaryDark }}>กำลังดูสัญญาร้าน {focusedStore.StoreName}</strong>
+            <div style={{ ...captionStyle, marginTop: '3px' }}>เปิดมาจากหน้ารายละเอียดยอดขายของร้านนี้</div>
+          </div>
+          <Button tone="secondary" onClick={clearFocusStore}>ดูสัญญาทุกร้าน</Button>
+        </div>
+      )}
+      <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(190px, 100%), 1fr))',
+          gap: '16px',
+          marginBottom: '16px'
+      }}>
+        {[
+            ['สัญญาปกติ', active, T.greenSoft, T.up],
+            ['ใกล้หมดอายุ ≤ 30 วัน', soon, T.accentSoft, T.accentDark],
+            ['หมดอายุแล้ว', expired, T.redSoft, T.down],
+            ['ยังไม่ระบุสัญญา', missing, '#F2F3F7', T.muted]
+        ].map(([label, value, bg, color]) => (
+          <Card key={label} style={{ padding: '18px 20px' }}>
+            <div style={{ fontSize: '12.5px', color: T.muted, fontWeight: 600 }}>{label}</div>
+            <div style={{ display: 'flex', alignItems: 'end', gap: '7px', marginTop: '8px' }}>
+              <span style={{ fontSize: '28px', lineHeight: 1, fontWeight: 700, color }}>{value}</span>
+              <span style={{ fontSize: '12px', color: T.muted }}>ร้าน</span>
+            </div>
+            <div style={{ height: '4px', borderRadius: '99px', background: bg, marginTop: '14px' }}/>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ marginBottom: '16px' }}>
+        <div style={{ ...toolbarStyle, gap: '12px', alignItems: 'center' }}>
+          <div>
+            <h3 style={h3Style}>สัญญาร้านค้า</h3>
+            <p style={captionStyle}>ระบบจะจัดสถานะใกล้หมดอายุเมื่อเหลือเวลาไม่เกิน 30 วัน</p>
+          </div>
+          <Button icon="refresh" tone="secondary" onClick={loadContracts} disabled={loadingContracts}>
+            {loadingContracts ? 'กำลังโหลด...' : 'รีเฟรช'}
+          </Button>
+        </div>
+        <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '16px' }}>
+          {filters.map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setStatusFilter(id)} style={{
+                border: `1px solid ${statusFilter === id ? T.primary : T.line}`,
+                background: statusFilter === id ? T.primarySoft : T.surface,
+                color: statusFilter === id ? T.primaryDark : T.text,
+                borderRadius: '999px',
+                padding: '9px 13px',
+                fontSize: '12.5px',
+                fontWeight: 600,
+                cursor: 'pointer'
+            }}>{label}</button>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        {loadError ? (
+          <div style={{ padding: '24px', color: T.down, background: T.redSoft, borderRadius: T.radiusMd }}>{loadError}</div>
+        ) : loadingContracts ? (
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: T.muted }}>กำลังโหลดข้อมูลสัญญา...</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: T.muted }}>ไม่พบข้อมูลสัญญาตามเงื่อนไขที่เลือก</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ ...tableStyle, minWidth: '850px' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>ร้านค้า</th>
+                  <th style={{ ...thStyle, width: '150px' }}>วันที่เริ่มสัญญา</th>
+                  <th style={{ ...thStyle, width: '150px' }}>วันที่สิ้นสุดสัญญา</th>
+                  <th style={{ ...thStyle, width: '150px' }}>ระยะเวลาคงเหลือ</th>
+                  <th style={{ ...thStyle, width: '145px' }}>สถานะสัญญา</th>
+                  <th style={{ ...thStyle, width: '245px', textAlign: 'right' }}>จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((store) => (
+                  <tr key={store.StoreId} style={trStyle}>
+                    <td style={tdStyle}>
+                      <div style={{ fontWeight: 700, color: T.ink }}>{store.StoreName}</div>
+                      <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>Store ID #{store.StoreId}</div>
+                    </td>
+                    <td style={tdStyle}>{formatContractDate(store.ContractStartDate)}</td>
+                    <td style={tdStyle}>{formatContractDate(store.ContractEndDate)}</td>
+                    <td style={tdStyle}>
+                      {store.contract.days === null
+                        ? '—'
+                        : store.contract.days < 0
+                          ? `เกินมา ${Math.abs(store.contract.days)} วัน`
+                          : store.contract.days === 0
+                            ? 'หมดอายุวันนี้'
+                            : `${store.contract.days} วัน`}
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{
+                          display: 'inline-flex',
+                          padding: '6px 10px',
+                          borderRadius: '999px',
+                          background: store.contract.bg,
+                          color: store.contract.color,
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          whiteSpace: 'nowrap'
+                      }}>{store.contract.label}</span>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
+                        <Button tone="secondary" onClick={() => openRenew(store)}>ต่อสัญญา</Button>
+                        {store.contract.key === 'expired' && (
+                          store.IsSuspended ? (
+                            <Badge tone="danger">ระงับสิทธิ์แล้ว</Badge>
+                          ) : (
+                            <Button tone="danger" icon="ban" onClick={() => suspendExpiredStore(store)}>
+                              ไม่ต่อ / ระงับสิทธิ์
+                            </Button>
+                          )
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Modal open={!!renewStore} title="ต่อสัญญาร้านค้า"
+        subtitle={renewStore ? `ร้าน ${renewStore.StoreName}` : ''}
+        onClose={closeRenew} width="620px">
+        {renewStore && (<div>
+          <div style={{ padding:'14px 16px', border:`1px solid ${T.line}`, borderRadius:T.radiusMd, background:'#FAFBFD', marginBottom:'18px' }}>
+            <div style={{ fontSize:'12px', color:T.muted, marginBottom:'5px' }}>สัญญาปัจจุบันสิ้นสุด</div>
+            <div style={{ fontSize:'18px', fontWeight:700, color:T.ink }}>{formatContractDate(renewStore.ContractEndDate)}</div>
+          </div>
+
+          <Field label="ระยะเวลาที่ต้องการต่อ" required>
+            <select value={renewDuration} onChange={(e) => { setRenewDuration(e.target.value); setRenewCustomEnd(''); setRenewError(''); }} style={inputStyle}>
+              <option value="6m">6 เดือน</option>
+              <option value="1y">1 ปี</option>
+              <option value="2y">2 ปี</option>
+              <option value="3y">3 ปี</option>
+              <option value="custom">กำหนดวันสิ้นสุดเอง</option>
+            </select>
+          </Field>
+
+          {renewDuration === 'custom' && (
+            <div style={{ marginTop:'14px' }}>
+              <Field label="วันสิ้นสุดสัญญาใหม่" required hint={`ต้องอยู่หลัง ${formatContractDate(renewStore.ContractEndDate)} และเป็นวันในอนาคต`}>
+                <input
+                  type="date"
+                  value={renewCustomEnd}
+                  min={minimumRenewEnd(renewStore)}
+                  onChange={(e) => { setRenewCustomEnd(e.target.value); setRenewError(''); }}
+                  style={inputStyle}
+                />
+              </Field>
+            </div>
+          )}
+
+          {renewNewEnd && (
+            <div style={{ marginTop:'16px', padding:'15px 16px', borderRadius:T.radiusMd, background:T.accentSoft, border:`1px solid ${T.accentBorder || '#FFD6C9'}` }}>
+              <div style={{ fontSize:'12px', color:T.muted, marginBottom:'6px' }}>ช่วงสัญญาใหม่</div>
+              <div style={{ fontSize:'17px', fontWeight:800, color:T.ink }}>
+                {formatContractDate(renewNewStart)} <span style={{ color:T.muted, padding:'0 7px' }}>→</span> {formatContractDate(renewNewEnd)}
+              </div>
+              <div style={{ fontSize:'12px', color:T.muted, marginTop:'6px' }}>
+                ตรวจสอบช่วงสัญญาให้ถูกต้องก่อนกดยืนยัน
+              </div>
+            </div>
+          )}
+
+          {renewStore.IsSuspended && (
+            <div style={{ marginTop:'16px', padding:'15px 16px', border:`1px solid ${T.line}`, borderRadius:T.radiusMd, background:'#FFF' }}>
+              <div style={{ fontSize:'13px', fontWeight:800, color:T.ink, marginBottom:'5px' }}>ร้านนี้ถูกระงับสิทธิ์อยู่</div>
+              <div style={{ fontSize:'12px', color:T.muted, marginBottom:'12px' }}>เลือกสถานะร้านหลังจากต่อสัญญาสำเร็จ</div>
+
+              <label style={{ display:'flex', gap:'10px', alignItems:'flex-start', padding:'11px 12px', border:`1px solid ${renewAction === 'renew_unsuspend' ? T.accent : T.line}`, borderRadius:T.radiusMd, cursor:'pointer', marginBottom:'8px', background:renewAction === 'renew_unsuspend' ? T.accentSoft : '#FFF' }}>
+                <input
+                  type="radio"
+                  name="renewAction"
+                  checked={renewAction === 'renew_unsuspend'}
+                  onChange={() => setRenewAction('renew_unsuspend')}
+                  style={{ marginTop:'3px' }}
+                />
+                <span>
+                  <span style={{ display:'block', fontSize:'13px', fontWeight:700, color:T.ink }}>ต่อสัญญาและปลดระงับสิทธิ์</span>
+                  <span style={{ display:'block', fontSize:'11.5px', color:T.muted, marginTop:'2px' }}>ร้านจะกลับมาเป็นสิทธิ์ปกติหลังต่อสัญญา</span>
+                </span>
+              </label>
+
+              <label style={{ display:'flex', gap:'10px', alignItems:'flex-start', padding:'11px 12px', border:`1px solid ${renewAction === 'renew_only' ? T.accent : T.line}`, borderRadius:T.radiusMd, cursor:'pointer', background:renewAction === 'renew_only' ? T.accentSoft : '#FFF' }}>
+                <input
+                  type="radio"
+                  name="renewAction"
+                  checked={renewAction === 'renew_only'}
+                  onChange={() => setRenewAction('renew_only')}
+                  style={{ marginTop:'3px' }}
+                />
+                <span>
+                  <span style={{ display:'block', fontSize:'13px', fontWeight:700, color:T.ink }}>ต่อสัญญาอย่างเดียว</span>
+                  <span style={{ display:'block', fontSize:'11.5px', color:T.muted, marginTop:'2px' }}>ร้านจะยังคงถูกระงับสิทธิ์จนกว่าจะปลดระงับภายหลัง</span>
+                </span>
+              </label>
+            </div>
+          )}
+
+          {renewError && (
+            <div style={{ marginTop:'12px', padding:'10px 12px', borderRadius:T.radiusMd, background:T.redSoft, color:T.down, fontSize:'12.5px' }}>
+              {renewError}
+            </div>
+          )}
+
+          <div style={{ display:'flex', justifyContent:'flex-end', gap:'9px', marginTop:'22px', paddingTop:'16px', borderTop:`1px solid ${T.line}` }}>
+            <Button tone="secondary" onClick={closeRenew} disabled={renewSaving}>ยกเลิก</Button>
+            <Button onClick={submitRenew} disabled={renewSaving || !renewNewEnd}>
+              {renewSaving ? 'กำลังต่อสัญญา...' : 'ยืนยันต่อสัญญา'}
+            </Button>
+          </div>
+        </div>)}
+      </Modal>
+    </>);
+}
+
+function AuditHistoryPage({ ctx }) {
+    const { API } = ctx;
+    const [logs, setLogs] = useState([]);
+    const [loadingLogs, setLoadingLogs] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [query, setQuery] = useState('');
+    const [filter, setFilter] = useState('all');
+
+    const loadLogs = useCallback(async () => {
+        setLoadingLogs(true);
+        try {
+            const data = await callApi(`${API}/api/audit-logs`);
+            setLogs(Array.isArray(data) ? data : []);
+            setLoadError('');
+        }
+        catch (err) {
+            setLoadError(err.message);
+        }
+        finally {
+            setLoadingLogs(false);
+        }
+    }, [API]);
+
+    useEffect(() => {
+        loadLogs();
+    }, [loadLogs]);
+
+    const actionMeta = (action) => {
+        const key = String(action || '').toUpperCase();
+        if (key.includes('STORE') || key.includes('SUSPEND')) {
+            return { group: 'store', label: 'ร้านค้า', bg: T.primarySoft, color: T.primaryDark };
+        }
+        if (key.includes('ACCOUNT') || key.includes('USER') || key.includes('STAFF') || key.includes('PASSWORD')) {
+            return { group: 'account', label: 'บัญชีผู้ใช้', bg: T.deepSoft, color: T.deep };
+        }
+        if (key.includes('SLIP') || key.includes('PAYMENT')) {
+            return { group: 'payment', label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark };
+        }
+        if (key.includes('ORDER') || key.includes('CANCEL')) {
+            return { group: 'order', label: 'ออเดอร์', bg: T.greenSoft, color: T.up };
+        }
+        return { group: 'other', label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text };
+    };
+
+    const actionName = (action) => {
+        const names = {
+            CREATE_STORE: 'เพิ่มร้านค้า',
+            UPDATE_STORE: 'แก้ไขข้อมูลร้านค้า',
+            DELETE_STORE: 'ลบร้านค้า',
+            OPEN_STORE: 'เปิดร้านค้า',
+            CLOSE_STORE: 'ปิดร้านค้า',
+            SUSPEND_STORE: 'ระงับสิทธิ์ร้านค้า',
+            UNSUSPEND_STORE: 'ปลดระงับสิทธิ์ร้านค้า',
+            RENEW_CONTRACT: 'ต่อสัญญาร้านค้า',
+            OPEN_FOOD_COURT: 'เปิดศูนย์อาหาร',
+            CLOSE_FOOD_COURT: 'ปิดศูนย์อาหาร',
+            CREATE_ACCOUNT: 'สร้างบัญชีร้านค้า',
+            CREATE_STORE_ACCOUNT: 'สร้างบัญชีร้านค้า',
+            UPDATE_STORE_ACCOUNT: 'แก้ไขบัญชีร้านค้า',
+            DELETE_STORE_ACCOUNT: 'ลบบัญชีร้านค้า',
+            UPDATE_ACCOUNT: 'แก้ไขบัญชีร้านค้า',
+            DELETE_ACCOUNT: 'ลบบัญชีร้านค้า',
+            RESET_PASSWORD: 'เปลี่ยนรหัสผ่าน',
+            VERIFY_SLIP_APPROVE: 'อนุมัติสลิปการชำระเงิน',
+            VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน'
+        };
+        return names[String(action || '').toUpperCase()] || String(action || '-').replaceAll('_', ' ');
+    };
+
+    const filtered = logs.filter((log) => {
+        const meta = actionMeta(log.Action);
+        if (filter !== 'all' && meta.group !== filter)
+            return false;
+        const q = query.trim().toLowerCase();
+        if (!q)
+            return true;
+        return `${actionName(log.Action)} ${log.Action || ''} ${log.PerformedBy || ''} ${log.Details || ''}`
+            .toLowerCase()
+            .includes(q);
+    });
+
+    const filters = [
+        ['all', 'ทั้งหมด'],
+        ['store', 'ร้านค้า'],
+        ['account', 'บัญชีผู้ใช้'],
+        ['order', 'ออเดอร์'],
+        ['payment', 'การชำระเงิน']
+    ];
+
+    return (<>
+      <Card style={{ marginBottom: '16px' }}>
+        <div style={{ ...toolbarStyle, gap: '14px', alignItems: 'center' }}>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={h3Style}>กิจกรรมล่าสุด</h3>
+            <p style={captionStyle}>แสดงประวัติการดำเนินการสำคัญล่าสุดที่ถูกบันทึกไว้ในระบบ</p>
+          </div>
+          <Button icon="refresh" tone="secondary" onClick={loadLogs} disabled={loadingLogs}>
+            {loadingLogs ? 'กำลังโหลด...' : 'รีเฟรช'}
+          </Button>
+        </div>
+
+        <div style={{
+            display: 'flex',
+            gap: '10px',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            marginTop: '18px'
+        }}>
+          <div style={{ position: 'relative', flex: '1 1 280px', minWidth: 0 }}>
+            <Icon name="search" size={17} color={T.muted} style={{
+                position: 'absolute', left: '13px', top: '50%', transform: 'translateY(-50%)'
+            }}/>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="ค้นหาการดำเนินการ ผู้ดำเนินการ หรือรายละเอียด..."
+              style={{ ...inputStyle, width: '100%', paddingLeft: '40px' }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+            {filters.map(([id, label]) => (<button
+              key={id}
+              type="button"
+              onClick={() => setFilter(id)}
+              style={{
+                  border: `1px solid ${filter === id ? T.primary : T.line}`,
+                  background: filter === id ? T.primarySoft : T.surface,
+                  color: filter === id ? T.primaryDark : T.text,
+                  borderRadius: '999px',
+                  padding: '9px 13px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+              }}
+            >{label}</button>))}
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        {loadError ? (<div style={{
+            padding: '24px',
+            borderRadius: T.radiusMd,
+            background: T.redSoft,
+            color: T.down,
+            fontSize: '14px'
+        }}>{loadError}</div>) : loadingLogs ? (<div style={{
+            padding: '48px 20px',
+            textAlign: 'center',
+            color: T.muted,
+            fontSize: '14px'
+        }}>กำลังโหลดประวัติการดำเนินการ...</div>) : filtered.length === 0 ? (<div style={{
+            padding: '48px 20px',
+            textAlign: 'center',
+            color: T.muted
+        }}>
+          <div style={{
+              width: '48px', height: '48px', margin: '0 auto 12px',
+              borderRadius: '50%', background: T.primarySoft,
+              display: 'grid', placeItems: 'center', color: T.primary
+          }}><Icon name="history" size={23}/></div>
+          <div style={{ fontWeight: 600, color: T.text, marginBottom: '4px' }}>ไม่พบประวัติการดำเนินการ</div>
+          <div style={{ fontSize: '13px' }}>ลองเปลี่ยนคำค้นหาหรือตัวกรอง</div>
+        </div>) : (<div style={{ overflowX: 'auto' }}>
+          <table style={{ ...tableStyle, minWidth: '820px' }}>
+            <thead>
+              <tr>
+                <th style={{ ...thStyle, width: '160px' }}>วันและเวลา</th>
+                <th style={{ ...thStyle, width: '190px' }}>การดำเนินการ</th>
+                <th style={{ ...thStyle, width: '150px' }}>ผู้ดำเนินการ</th>
+                <th style={thStyle}>รายละเอียด</th>
+                <th style={{ ...thStyle, width: '120px' }}>ประเภท</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((log) => {
+                  const meta = actionMeta(log.Action);
+                  return (<tr key={log.LogID} style={trStyle}>
+                    <td style={{ ...tdStyle, whiteSpace: 'nowrap', color: T.muted }}>
+                      {thaiDateTime(log.CreatedAt)}
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ fontWeight: 600, color: T.ink }}>{actionName(log.Action)}</div>
+                      <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>
+                        #{log.LogID}
+                      </div>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+                        <span style={{
+                            width: '30px', height: '30px', borderRadius: '50%',
+                            display: 'grid', placeItems: 'center',
+                            background: T.deepSoft, color: T.deep,
+                            fontSize: '12px', fontWeight: 700, flexShrink: 0
+                        }}>{String(log.PerformedBy || 'E').charAt(0).toUpperCase()}</span>
+                        <span style={{ fontWeight: 500, color: T.text }}>{log.PerformedBy || '—'}</span>
+                      </div>
+                    </td>
+                    <td style={{ ...tdStyle, lineHeight: 1.55 }}>{log.Details || '—'}</td>
+                    <td style={tdStyle}>
+                      <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '6px 10px',
+                          borderRadius: '999px',
+                          background: meta.bg,
+                          color: meta.color,
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap'
+                      }}>{meta.label}</span>
+                    </td>
+                  </tr>);
+              })}
+            </tbody>
+          </table>
+        </div>)}
+      </Card>
+    </>);
+}
+
 function StoreAccountsPage({ ctx }) {
     const { API, user, stores, search, pushToast, ask } = ctx;
     const [accounts, setAccounts] = useState([]);
@@ -2997,7 +4447,7 @@ function StoreAccountsPage({ ctx }) {
                         full_name: form.fullName.trim(),
                         role: form.role,
                         store_id: Number(form.storeId),
-                        performed_by: user?.FullName || 'Executive'
+                        performed_by: 'Executive'
                     })
                 });
                 pushToast('อัปเดตบัญชีร้านค้าเรียบร้อยแล้ว');
@@ -3012,7 +4462,7 @@ function StoreAccountsPage({ ctx }) {
                         full_name: form.fullName.trim(),
                         role: form.role,
                         store_id: Number(form.storeId),
-                        performed_by: user?.FullName || 'Executive'
+                        performed_by: 'Executive'
                     })
                 });
                 pushToast('สร้างบัญชีให้ร้านค้าเรียบร้อยแล้ว');

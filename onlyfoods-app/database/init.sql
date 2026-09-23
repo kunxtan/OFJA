@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS Store (
     ContactEmail VARCHAR(100) NULL,
     Description VARCHAR(300) NULL,
     ImageUrl MEDIUMTEXT NULL,
+    ContractStartDate DATE NULL,
+    ContractEndDate DATE NULL,
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -21,7 +23,7 @@ CREATE TABLE IF NOT EXISTS Users (
     UserId INT AUTO_INCREMENT PRIMARY KEY,
     Username VARCHAR(50) NOT NULL UNIQUE,
     GoogleId VARCHAR(255) UNIQUE NULL,
-    Password VARCHAR(50) NULL,
+    Password VARCHAR(255) NULL,
     FullName VARCHAR(100) NOT NULL,
     Role ENUM('Customer', 'Front Staff', 'Kitchen Staff', 'Shop Owner', 'Accountant', 'Executive') NOT NULL,
     StoreId INT NULL,
@@ -71,18 +73,20 @@ CREATE TABLE IF NOT EXISTS OrderDetail (
     Qty INT NOT NULL,
     UnitPrice DECIMAL(10, 2) NOT NULL,
     ItemNote VARCHAR(255),
-    FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE
+    FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE,
+    FOREIGN KEY (ProductId) REFERENCES Product(ProductId) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS Review (
-    ReviewID INT AUTO_INCREMENT PRIMARY KEY,
+    ReviewId INT AUTO_INCREMENT PRIMARY KEY,
     OrderID INT NOT NULL,
     StoreId INT NOT NULL,
     UserId INT NOT NULL,
-    Rating INT NOT NULL,
+    Rating TINYINT NOT NULL,
     Comment TEXT NULL,
     ImageUrl LONGTEXT NULL,
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_review_rating CHECK (Rating BETWEEN 1 AND 5),
     FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE,
     FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE CASCADE,
     FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE CASCADE
@@ -105,6 +109,21 @@ CREATE TABLE IF NOT EXISTS AuditLog (
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS IssueReport (
+    ReportID INT AUTO_INCREMENT PRIMARY KEY,
+    UserId INT NOT NULL,
+    OrderID INT NULL,
+    StoreId INT NULL,
+    IssueType VARCHAR(100) NOT NULL,
+    Description TEXT NOT NULL,
+    Status ENUM('Pending', 'In_Progress', 'Resolved', 'Rejected') DEFAULT 'Pending',
+    AdminNote TEXT NULL,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE CASCADE,
+    FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE SET NULL,
+    FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS FoodCourtSetting (
     SettingId TINYINT PRIMARY KEY,
     IsOpen TINYINT(1) NOT NULL DEFAULT 1,
@@ -120,17 +139,17 @@ INSERT INTO Store (StoreId, StoreName, IsOpen, IsSuspended) VALUES
 (3, 'ก๋วยเตี๋ยวเรือตึกพระเทพ', 1, 0)
 ON DUPLICATE KEY UPDATE StoreName=VALUES(StoreName);
 
-INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points) VALUES
-('uefa01', 'uefa01', 'คุณ ยูฟ่า (ลูกค้า VIP)', 'Customer', NULL, 250),
-('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน (ร้านแกง)', 'Front Staff', 1, 0),
-('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว (ร้านแกง)', 'Kitchen Staff', 1, 0),
-('owner01', 'owner01', 'เสี่ยฟลุ้ค เจ้าของร้านแกง', 'Shop Owner', 1, 0),
-('staff02', 'staff02', 'พนักงานยูฟ่า หน้าร้าน (ชาไทย)', 'Front Staff', 2, 0),
-('kitchen02', 'kitchen02', 'เชฟยูฟ่า ห้องครัว (ชาไทย)', 'Kitchen Staff', 2, 0),
-('staff03', 'staff03', 'พนักงานโฟโต้ หน้าร้าน (ก๋วยเตี๋ยวเรือ)', 'Front Staff', 3, 0),
-('kitchen03', 'kitchen03', 'เชฟโฟโต้ ห้องครัว (ก๋วยเตี๋ยวเรือ)', 'Kitchen Staff', 3, 0),
-('account01', 'account01', 'คุณปัด ฝ่ายบัญชี', 'Accountant', NULL, 0),
-('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0)
+INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points, Phone, Email) VALUES
+('uefa01', 'uefa01', 'คุณ ยูฟ่า (ลูกค้า VIP)', 'Customer', NULL, 250, '0812345678', 'uefa01@example.com'),
+('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน (ร้านแกง)', 'Front Staff', 1, 0, '0823456789', 'staff01@example.com'),
+('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว (ร้านแกง)', 'Kitchen Staff', 1, 0, '0834567890', 'kitchen01@example.com'),
+('owner01', 'owner01', 'เสี่ยฟลุ้ค เจ้าของร้านแกง', 'Shop Owner', 1, 0, '0845678901', 'owner01@example.com'),
+('staff02', 'staff02', 'พนักงานยูฟ่า หน้าร้าน (ชาไทย)', 'Front Staff', 2, 0, '0856789012', 'staff02@example.com'),
+('kitchen02', 'kitchen02', 'เชฟยูฟ่า ห้องครัว (ชาไทย)', 'Kitchen Staff', 2, 0, '0867890123', 'kitchen02@example.com'),
+('staff03', 'staff03', 'พนักงานโฟโต้ หน้าร้าน (ก๋วยเตี๋ยวเรือ)', 'Front Staff', 3, 0, '0878901234', 'staff03@example.com'),
+('kitchen03', 'kitchen03', 'เชฟโฟโต้ ห้องครัว (ก๋วยเตี๋ยวเรือ)', 'Kitchen Staff', 3, 0, '0889012345', 'kitchen03@example.com'),
+('account01', 'account01', 'คุณปัด ฝ่ายบัญชี', 'Accountant', NULL, 0, '0890123456', 'account01@example.com'),
+('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0, '0901234567', 'exec01@example.com')
 ON DUPLICATE KEY UPDATE FullName=VALUES(FullName);
 
 INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock) VALUES 

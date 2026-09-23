@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import KitchenView from './components/KitchenView';
-import CustomerView from './components/CustomerView';
-import CounterView from './components/CounterView';
-import OwnerView from './components/OwnerView';
+import { useEffect, useState } from 'react';
 import AccountantView from './components/AccountantView';
+import CounterView from './components/CounterView';
+import CustomerView from './components/CustomerView';
 import ExecutiveView from './components/ExecutiveView';
+import KitchenView from './components/KitchenView';
+import OwnerView from './components/OwnerView';
 
 const PALETTE = {
   coral: '#FF724C',
@@ -29,10 +29,9 @@ export default function App() {
   const [profileForm, setProfileForm] = useState({ full_name: '', phone: '', profile_img: '' });
 
   const [authTab, setAuthTab] = useState('login');
-  const [authForm, setAuthForm] = useState({ username: '', password: '', name: '' });
+  const [authForm, setAuthForm] = useState({ username: '', password: '', name: '', phone: '' });
   const [authError, setAuthError] = useState('');
 
-  // แก้ไขโค้ดบรรทัดที่ 32
   const API_BASE = "http://localhost:8000";
 
   useEffect(() => {
@@ -140,7 +139,7 @@ export default function App() {
     const endpoint = authTab === 'login' ? '/api/login' : '/api/register';
     const bodyData = authTab === 'login' 
       ? { username: authForm.username, password: authForm.password }
-      : { username: authForm.username, password: authForm.password, name: authForm.name };
+      : { username: authForm.username, password: authForm.password, name: authForm.name, phone: authForm.phone };
 
     try {
       const res = await fetch(`${API_BASE}${endpoint}`, {
@@ -158,10 +157,11 @@ export default function App() {
         username: data.Username,
         role: finalRole,
         FullName: data.FullName, name: data.FullName || data.Username,
+        Phone: data.Phone,
         storeId: data.StoreId,
         Points: data.Points || 0
       });
-      setAuthForm({ username: '', password: '', name: '' });
+      setAuthForm({ username: '', password: '', name: '', phone: '' });
     } catch (err) {
       setAuthError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
     }
@@ -306,19 +306,26 @@ export default function App() {
 
               <form onSubmit={handleAuthSubmit}>
                 {authTab === 'register' && (
-                  <div style={{ position: 'relative', marginBottom: '14px' }}>
-                    <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}>👤</span>
-                    <input type="text" required placeholder="Full Name" className="auth-input-field" value={authForm.name} onChange={e => setAuthForm({ ...authForm, name: e.target.value })} />
-                  </div>
+                  <>
+                    <div style={{ position: 'relative', marginBottom: '14px' }}>
+                      <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}></span>
+                      <input type="text" required placeholder="Full Name (ชื่อ-นามสกุล)" className="auth-input-field" value={authForm.name} onChange={e => setAuthForm({ ...authForm, name: e.target.value })} />
+                    </div>
+
+                    <div style={{ position: 'relative', marginBottom: '14px' }}>
+                      <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}></span>
+                      <input type="tel" required placeholder="Phone Number (เบอร์โทรศัพท์)" className="auth-input-field" value={authForm.phone} onChange={e => setAuthForm({ ...authForm, phone: e.target.value })} />
+                    </div>
+                  </>
                 )}
 
                 <div style={{ position: 'relative', marginBottom: '14px' }}>
-                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}>✉️</span>
+                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}></span>
                   <input type="text" required placeholder="E-mail / Username" className="auth-input-field" value={authForm.username} onChange={e => setAuthForm({ ...authForm, username: e.target.value })} />
                 </div>
 
                 <div style={{ position: 'relative', marginBottom: '20px' }}>
-                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}>🔒</span>
+                  <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: PALETTE.coral }}></span>
                   <input type="password" required placeholder="Password" className="auth-input-field" value={authForm.password} onChange={e => setAuthForm({ ...authForm, password: e.target.value })} />
                 </div>
 
@@ -352,7 +359,7 @@ export default function App() {
               <span style={{ fontSize: '11px', fontWeight: 700, color: foodCourtOpen ? PALETTE.dark : PALETTE.white, background: foodCourtOpen ? PALETTE.yellow : 'rgba(0,0,0,0.3)', padding: '6px 16px', borderRadius: '20px', display: 'inline-block' }}>{foodCourtOpen ? '● ศูนย์อาหารเปิดให้บริการ' : '● ปิดให้บริการชั่วคราว'}</span>
               
               <div style={{ marginTop: '20px', padding: '10px 14px', background: 'rgba(0, 0, 0, 0.15)', borderRadius: '14px', fontSize: '11px', textAlign: 'left', width: '100%', maxWidth: '260px' }}>
-                <div style={{ fontWeight: 700, color: PALETTE.yellow, marginBottom: '2px' }}>🔑 Test Staff Accounts (Pass = Username)</div>
+                <div style={{ fontWeight: 700, color: PALETTE.yellow, marginBottom: '2px' }}> Test Staff Accounts (Pass = Username)</div>
                 <div>• หน้าร้าน: <code>staff01</code> | ครัว: <code>kitchen01</code></div>
                 <div>• เจ้าของร้าน: <code>owner01</code> | ผู้บริหาร: <code>exec01</code></div>
                 <div>• ลูกค้าทั่วไป: สมัครใหม่ หรือใช้ Gmail</div>
