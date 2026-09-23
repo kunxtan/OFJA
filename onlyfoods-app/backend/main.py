@@ -944,7 +944,22 @@ def delete_product(product_id: int, db=Depends(get_db)):
 @app.put("/api/products/{product_id}/toggle-stock")
 def toggle_stock(product_id: int, db=Depends(get_db)):
     with db.cursor() as cur:
-        cur.execute("UPDATE Product SET IsOutOfStock = NOT IsOutOfStock WHERE ProductId = %s", (product_id,))
+        # 1. ดึงข้อมูลสินค้าเพื่อดูสถานะปัจจุบัน
+        cur.execute("SELECT StoreId, ProductName, IsOutOfStock FROM Product WHERE ProductId = %s", (product_id,))
+        prod = cur.fetchone()
+        
+        if prod:
+            # 2. สลับสถานะ (ถ้า 1 ให้เป็น 0, ถ้า 0 ให้เป็น 1)
+            new_status = 0 if prod['IsOutOfStock'] else 1
+            cur.execute("UPDATE Product SET IsOutOfStock = %s WHERE ProductId = %s", (new_status, product_id))
+            
+            # 3. ถ้าสถานะใหม่คือ "ของหมด" (1) ให้ส่งแจ้งเตือนหาเจ้าของร้าน
+            if new_status == 1:
+                cur.execute("SELECT UserId FROM Users WHERE StoreId = %s AND Role = 'Shop Owner'", (prod['StoreId'],))
+                owners = cur.fetchall()
+                for owner in owners:
+                    send_notif(db, owner['UserId'], f"⚠️ สินค้าหมด: หน้าร้านเพิ่งปรับเมนู '{prod['ProductName']}' เป็นของหมด")
+        
         db.commit()
         return {"success": True}
 
