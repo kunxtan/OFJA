@@ -1,9 +1,14 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-export default function CustomerView({ user, apiBase }) {
-  // USER
+export default function CustomerView({ user, apiBase, onLogout }) {
   const userId = user?.UserId || user?.id;
-  const fullName = user?.FullName || user?.name || "Customer";
+  
+  // State ข้อมูลส่วนตัวและการแก้ไข
+  const [fullName, setFullName] = useState(user?.FullName || user?.name || "Customer");
+  const [phone, setPhone] = useState(user?.Phone || "");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(fullName);
+  const [editPhone, setEditPhone] = useState(phone);
 
   // PROFILE AVATAR STATE
   const [profileImage, setProfileImage] = useState(user?.ProfileImage || user?.avatar || null);
@@ -128,7 +133,8 @@ export default function CustomerView({ user, apiBase }) {
         if (
           prev &&
           storesWithReviews.some(
-            store => Number(store.StoreId) === Number(prev)
+            store =>
+              Number(store.StoreId) === Number(prev)
           )
         ) {
           return prev;
@@ -197,6 +203,7 @@ export default function CustomerView({ user, apiBase }) {
 
     try {
       const res = await fetch(`${apiBase}/api/stores/${storeId}/reviews`);
+
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -242,24 +249,17 @@ export default function CustomerView({ user, apiBase }) {
     }
   }, [selectedStore, apiBase]);
 
-  // 🟢 ปรับปรุงการเช็ค State ของ Modal ของหมด เพื่อให้ปิดลงเมื่อสถานะออเดอร์ถูกอัปเดตแล้ว
   useEffect(() => {
     const pendingOutOfStock = myOrders.find(
       (ord) => ord.Status === "Pending_Cancellation" || ord.Status === "OutOfStock_Pending" || ord.Status === "Item_Unavailable"
     );
-
-    if (pendingOutOfStock) {
-      if (!outOfStockOrder || outOfStockOrder.OrderID !== pendingOutOfStock.OrderID) {
-        setOutOfStockOrder(pendingOutOfStock);
-        if (pendingOutOfStock.StoreID || pendingOutOfStock.store_id) {
-          setSelectedStore(pendingOutOfStock.StoreID || pendingOutOfStock.store_id);
-        }
+    if (pendingOutOfStock && !outOfStockOrder) {
+      setOutOfStockOrder(pendingOutOfStock);
+      if (pendingOutOfStock.StoreID || pendingOutOfStock.store_id) {
+        setSelectedStore(pendingOutOfStock.StoreID || pendingOutOfStock.store_id);
       }
-    } else {
-      setOutOfStockOrder(null);
-      setIsChangeMenuMode(false);
     }
-  }, [myOrders]);
+  }, [myOrders, outOfStockOrder]);
 
   const getNotifKey = (n) => n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
 
@@ -271,61 +271,43 @@ export default function CustomerView({ user, apiBase }) {
     }
   }, [notifs, isInitialized]);
 
-  // 🟢 ขอยกเลิกออเดอร์พร้อมปิด Modal ทันที
   const handleCancelOutOfStockOrder = async () => {
     if (!outOfStockOrder) return;
     try {
-      const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/customer-cancel`, {
+      const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/cancel`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          user_id: userId,
-          reason: "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด" 
-        })
+        body: JSON.stringify({ reason: "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด" })
       });
       if (res.ok) {
         alert("ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบกำลังดำเนินการคืนเงิน");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
-        await fetchMyOrders();
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        alert(errData.detail || "ไม่สามารถยกเลิกออเดอร์ได้");
+        fetchMyOrders();
       }
     } catch (error) {
       console.error("Error cancelling order:", error);
     }
   };
 
-const handleChangeOrderMenu = async () => {
+  const handleChangeOrderMenu = async () => {
     if (!outOfStockOrder || !newSelectedProduct) return;
-
-    // หาเมนูเดิมในออเดอร์เพื่อระบุ ID แนบไปฝั่ง Backend
-    const originalItem = (outOfStockOrder.items || [])[0];
-
     try {
       const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/change-item`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: userId,
-          detail_id: originalItem?.DetailID || originalItem?.DetailId || null,
-          product_id: originalItem?.ProductId || null,
           new_product_id: newSelectedProduct.ProductId,
           new_product_name: newSelectedProduct.ProductName,
           unit_price: newSelectedProduct.UnitPrice
         })
       });
-
       if (res.ok) {
         alert("เปลี่ยนเมนูสำเร็จ! ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
-        await fetchMyOrders();
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        alert(errData.detail || "ไม่สามารถเปลี่ยนเมนูได้");
+        fetchMyOrders();
       }
     } catch (error) {
       console.error("Error changing menu:", error);
@@ -465,6 +447,29 @@ const handleChangeOrderMenu = async () => {
   const handleRemoveProfileImage = () => {
     if (window.confirm("คุณต้องการลบรูปโปรไฟล์ใช่หรือไม่?")) {
       setProfileImage(null);
+    }
+  };
+
+  const handleSaveProfileData = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${apiBase}/api/users/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          full_name: editName,
+          phone: editPhone
+        })
+      });
+      if (!res.ok) throw new Error("แก้ไขข้อมูลไม่สำเร็จ");
+      const updatedUser = await res.json();
+      setFullName(updatedUser.FullName || editName);
+      setPhone(updatedUser.Phone || editPhone);
+      setIsEditing(false);
+      alert("อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว!");
+    } catch (err) {
+      alert(err.message);
     }
   };
 
@@ -623,7 +628,7 @@ const handleChangeOrderMenu = async () => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return alert(data.detail || "ไม่สามารถส่งรีวิวได้");
 
-      alert("ส่งรีวิวเรียบร้อยแล้ว");
+      alert("ส่งรีวิวเรียบร้อยแล้ว ");
       setReviewedOrderIds(prev => ({
         ...prev,
         [reviewOrder.OrderID]: {
@@ -669,7 +674,7 @@ const handleChangeOrderMenu = async () => {
         {viewMode === "stores" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ </h2>
+              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ 🏬</h2>
               {isFoodCourtOpen && <span style={{ fontSize: "13px", color: COLORS.gray }}>{filteredStores.length} ร้านค้า</span>}
             </div>
 
@@ -734,7 +739,7 @@ const handleChangeOrderMenu = async () => {
                           style={{ 
                             display: "flex", 
                             alignItems: "center", 
-                            justifyContent: "space-between", 
+                            justify: "space-between", 
                             background: "#FFF9F0", 
                             padding: "8px 12px", 
                             borderRadius: "12px", 
@@ -805,7 +810,7 @@ const handleChangeOrderMenu = async () => {
               <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ร้าน: {activeStore.StoreName}</h2>
             </div>
 
-            {activeStore.IsSuspended && (
+            {Boolean(activeStore.IsSuspended) && (
               <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "15px", borderRadius: "15px", marginBottom: "20px", textAlign: "center", fontWeight: "700" }}>
                 ร้านค้านี้ถูกระงับการจำหน่ายชั่วคราว
               </div>
@@ -820,9 +825,9 @@ const handleChangeOrderMenu = async () => {
               {filteredProducts.map(product => (
                 <div key={product.ProductId} style={{ ...cardStyle, display: "flex", flexDirection: "column", minWidth: 0 }}>
                   <img
-                    src={product.ImageUrl || "https://via.placeholder.com/400x280?text=Food"}
+                    src={product.img || product.ImageUrl || "https://via.placeholder.com/400x280?text=Food"}
                     alt={product.ProductName}
-                    style={{ width: "100%", height: "175px", objectFit: "cover", borderRadius: "15px" }}
+                    style={{ width: "100%", height: "175px", objectFit: "cover", borderRadius: "15px 15px 0 0" }}
                   />
                   <div style={{ padding: "5px 2px 0" }}>
                     <div style={{ fontSize: "17px", fontWeight: "900", marginTop: "7px" }}>{product.ProductName}</div>
@@ -832,7 +837,7 @@ const handleChangeOrderMenu = async () => {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px", gap: "8px" }}>
                       <span style={{ color: COLORS.orange, fontSize: "19px", fontWeight: "900" }}>{product.UnitPrice} ฿</span>
                       {product.IsOutOfStock ? (
-                        <span style={{ color: COLORS.red, fontSize: "12px", fontWeight: "800" }}> สินค้าหมด</span>
+                        <span style={{ color: COLORS.red, fontSize: "12px", fontWeight: "800" }}>❌ สินค้าหมด</span>
                       ) : (
                         <button
                           onClick={() => addToCart(product)}
@@ -860,7 +865,7 @@ const handleChangeOrderMenu = async () => {
 
   const renderProfile = () => (
     <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน 👤</h2>
+      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน </h2>
       <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", maxWidth: "750px", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}` }}>
         <div style={{ textAlign: "center", position: "relative" }}>
           <div style={{ position: "relative", width: "120px", height: "120px", margin: "0 auto 15px" }}>
@@ -896,7 +901,7 @@ const handleChangeOrderMenu = async () => {
               }}
               title="เปลี่ยนรูปโปรไฟล์"
             >
-              📷
+               📷
             </label>
             <input
               id="profile-upload-input"
@@ -929,17 +934,97 @@ const handleChangeOrderMenu = async () => {
           <div style={{ color: COLORS.gray, fontSize: "13px", marginTop: "4px" }}>Customer</div>
         </div>
 
-        <div style={{ marginTop: "25px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-            <span> ชื่อผู้ใช้</span><strong>{fullName}</strong>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-            <span> สั่งซื้อทั้งหมด</span><strong>{myOrders.length} รายการ</strong>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-            <span> ยอดใช้จ่ายสะสมรวม</span><strong style={{ color: COLORS.green }}>{totalSpentAmount.toFixed(2)} ฿</strong>
-          </div>
-        </div>
+        {isEditing ? (
+          <form onSubmit={handleSaveProfileData} style={{ marginTop: "25px" }}>
+            <div style={{ marginBottom: "15px", textAlign: "left" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "5px" }}>ชื่อ-นามสกุล</label>
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
+                required
+              />
+            </div>
+            <div style={{ marginBottom: "20px", textAlign: "left" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "5px" }}>เบอร์โทรศัพท์</label>
+              <input
+                type="tel"
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+                placeholder="08X-XXX-XXXX"
+                style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                type="submit"
+                style={{ flex: 1, padding: "11px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+              >
+                บันทึกข้อมูล
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                style={{ flex: 1, padding: "11px", background: COLORS.lightGray, color: COLORS.navy, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <div style={{ marginTop: "25px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
+                <span> ชื่อผู้ใช้</span><strong>{fullName}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
+                <span> เบอร์โทรศัพท์</span><strong>{phone || "ยังไม่ได้ระบุ"}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
+                <span> สั่งซื้อทั้งหมด</span><strong>{myOrders.length} รายการ</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
+                <span> ยอดใช้จ่ายสะสมรวม</span><strong style={{ color: COLORS.green }}>{totalSpentAmount.toFixed(2)} ฿</strong>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "20px" }}>
+              <button
+                onClick={() => {
+                  setEditName(fullName);
+                  setEditPhone(phone);
+                  setIsEditing(true);
+                }}
+                style={{ width: "100%", padding: "12px", background: COLORS.navy, color: COLORS.white, border: "none", borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+              >
+                 แก้ไขข้อมูลส่วนตัว
+              </button>
+
+              {/* เพิ่มปุ่มออกจากระบบ (Log out) */}
+              <button
+                onClick={() => {
+                  if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
+                    if (onLogout) onLogout();
+                  }
+                }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  background: "#FFF0ED",
+                  color: COLORS.red,
+                  border: `1px solid ${COLORS.red}40`,
+                  borderRadius: "12px",
+                  fontWeight: "800",
+                  cursor: "pointer",
+                  fontFamily: "inherit"
+                }}
+              >
+                 ออกจากระบบ
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       <div style={{ maxWidth: "750px", margin: "0 auto" }}>
@@ -970,7 +1055,7 @@ const handleChangeOrderMenu = async () => {
                   </div>
 
                   <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "8px" }}>
-                    เวลาสั่งซื้อ: {order.OrderTime || order.order_time || order.CreatedAt || "-"}
+                    🕐 เวลาสั่งซื้อ: {order.OrderTime || order.order_time || order.CreatedAt || "-"}
                   </div>
 
                   {order.items && order.items.length > 0 && (
@@ -979,7 +1064,7 @@ const handleChangeOrderMenu = async () => {
                         <div key={item.OrderDetailID || index} style={{ display: "flex", justifyContent: "space-between", gap: "10px", padding: "4px 0", fontSize: "13px" }}>
                           <div>
                             <b>• {item.ProductName}</b> <span style={{ color: COLORS.orange, fontWeight: "700" }}>x{item.Qty}</span>
-                            {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "11px", marginLeft: "10px" }}> {item.ItemNote}</div>}
+                            {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "11px", marginLeft: "10px" }}>📝 {item.ItemNote}</div>}
                           </div>
                           <span>{(Number(item.UnitPrice || 0) * Number(item.Qty || 1)).toFixed(2)} ฿</span>
                         </div>
@@ -1008,7 +1093,7 @@ const handleChangeOrderMenu = async () => {
                           fontFamily: "inherit"
                         }}
                       >
-                        {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
+                         {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
                       </button>
                     )}
                   </div>
@@ -1023,7 +1108,7 @@ const handleChangeOrderMenu = async () => {
 
   const renderOrders = () => (
     <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
+      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน 📋</h2>
       {myOrders.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}>🛒</div>ยังไม่มีคำสั่งซื้อ
@@ -1043,12 +1128,12 @@ const handleChangeOrderMenu = async () => {
               </div>
               {(order.OrderTime || order.CreatedAt || order.order_time) && (
                 <div style={{ marginTop: "12px", fontSize: "12px", color: COLORS.gray }}>
-                  เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}
+                   เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}
                 </div>
               )}
               {(order.PickupTime || order.pickup_time) && (
                 <div style={{ marginTop: "5px", fontSize: "12px", color: COLORS.gray }}>
-                  เวลารับอาหาร: {order.PickupTime || order.pickup_time}
+                   เวลารับอาหาร: {order.PickupTime || order.pickup_time}
                 </div>
               )}
               {order.items && order.items.length > 0 && (
@@ -1057,7 +1142,7 @@ const handleChangeOrderMenu = async () => {
                     <div key={item.OrderDetailID || index} style={{ display: "flex", justifyContent: "space-between", gap: "15px", padding: "7px 0", fontSize: "13px" }}>
                       <div>
                         <b>{item.ProductName}</b> x{item.Qty}
-                        {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "12px", marginTop: "3px" }}>📝 {item.ItemNote}</div>}
+                        {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "12px", marginTop: "3px" }}> {item.ItemNote}</div>}
                       </div>
                       <span>{(Number(item.UnitPrice) * Number(item.Qty)).toFixed(2)} ฿</span>
                     </div>
@@ -1073,7 +1158,7 @@ const handleChangeOrderMenu = async () => {
                   onClick={() => handleOpenReviewModal(order)}
                   style={{ width: "100%", marginTop: "15px", padding: "11px", border: "none", borderRadius: "12px", background: COLORS.yellow, color: COLORS.navy, fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
                 >
-                  {order.IsReviewed || order.review || reviewedOrderIds[order.OrderID] ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
+                   {order.IsReviewed || order.review || reviewedOrderIds[order.OrderID] ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
                 </button>
               )}
             </div>
@@ -1127,7 +1212,7 @@ const handleChangeOrderMenu = async () => {
                   <div key={item.cartItemId || `${item.ProductId}-${index}`} style={{ padding: "15px", marginBottom: "14px", borderRadius: "17px", background: "#FFF9F5", border: `1px solid ${COLORS.border}` }}>
                     <div style={{ fontSize: "11px", fontWeight: "800", color: COLORS.orange, marginBottom: "10px" }}>รายการที่ {index + 1}</div>
                     <div style={{ display: "flex", gap: "12px" }}>
-                      <img src={item.ImageUrl || "https://via.placeholder.com/80?text=Food"} alt="" style={{ width: "70px", height: "70px", objectFit: "cover", borderRadius: "13px", flexShrink: 0 }} />
+                      <img src={item.img || item.ImageUrl || "https://via.placeholder.com/80?text=Food"} alt="" style={{ width: "70px", height: "70px", objectFit: "cover", borderRadius: "13px", flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: "900", fontSize: "15px" }}>{item.ProductName}</div>
                         <div style={{ color: COLORS.orange, fontWeight: "900", marginTop: "3px" }}>{Number(item.UnitPrice).toFixed(2)} ฿</div>
@@ -1161,9 +1246,10 @@ const handleChangeOrderMenu = async () => {
                 </div>
 
                 <div style={{ marginBottom: "15px" }}>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>วิธีชำระเงิน</label>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> วิธีชำระเงิน</label>
                   <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} style={{ width: "100%", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }}>
                     <option value="PromptPay">สแกน QR Code (PromptPay)</option>
+                    <option value="CreditCard">บัตรเครดิต / เดบิต</option>
                     <option value="TrueMoney">TrueMoney Wallet</option>
                   </select>
                 </div>
@@ -1190,7 +1276,7 @@ const handleChangeOrderMenu = async () => {
                     fontFamily: "inherit" 
                   }}
                 >
-                  {isFoodCourtOpen ? "ชำระเงิน" : "ศูนย์อาหารปิดให้บริการชั่วคราว"}
+                  {isFoodCourtOpen ? "ถัดไป: ชำระเงิน ➔" : "ศูนย์อาหารปิดให้บริการชั่วคราว"}
                 </button>
               </div>
             </>
@@ -1208,7 +1294,7 @@ const handleChangeOrderMenu = async () => {
         <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(440px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center" }}>
           
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}>ชำระเงินผ่าน QR Code</h3>
+            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}> ชำระเงินผ่าน QR Code</h3>
             <button onClick={() => setIsPaymentModalOpen(false)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
           </div>
 
@@ -1283,7 +1369,7 @@ const handleChangeOrderMenu = async () => {
       <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }} onClick={() => setReviewOrder(null)}>
         <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(420px, 100%)", borderRadius: "22px", padding: "25px", boxSizing: "border-box" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, fontSize: "20px" }}>{isReadOnlyReview ? " รีวิวของคุณ" : " ให้คะแนนร้าน"}</h3>
+            <h3 style={{ margin: 0, fontSize: "20px" }}>{isReadOnlyReview ? "📝 รีวิวของคุณ" : "⭐ ให้คะแนนร้าน"}</h3>
             <button onClick={() => setReviewOrder(null)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
           </div>
           <p style={{ color: COLORS.gray, fontSize: "13px" }}>คิว #{reviewOrder.QueueNo} • {reviewOrder.StoreName}</p>
@@ -1373,19 +1459,8 @@ const handleChangeOrderMenu = async () => {
     );
   };
 
-const renderOutOfStockModal = () => {
+  const renderOutOfStockModal = () => {
     if (!outOfStockOrder) return null;
-
-    // ดึง ID เมนูเดิมในออเดอร์เพื่อป้องกันการเลือกซ้ำ
-    const originalProductIds = (outOfStockOrder.items || []).map(item => Number(item.ProductId));
-
-    // กรองสินค้า: ต้องเป็นสินค้าของร้านนั้น + ไม่หมด (IsOutOfStock != 1) + ไม่ใช่เมนูเดิม
-    const availableProducts = products.filter((p) => {
-      const isSameStore = Number(p.StoreId) === Number(outOfStockOrder.StoreId || outOfStockOrder.StoreID);
-      const isAvailable = !p.IsOutOfStock && Number(p.IsOutOfStock) !== 1;
-      const isNotOriginal = !originalProductIds.includes(Number(p.ProductId));
-      return isAvailable && isNotOriginal;
-    });
 
     return (
       <div
@@ -1451,16 +1526,13 @@ const renderOutOfStockModal = () => {
           ) : (
             <div style={{ marginTop: "20px", textAlign: "left" }}>
               <label style={{ fontSize: "13px", fontWeight: "800", color: COLORS.navy, display: "block", marginBottom: "8px" }}>
-                เลือกเมนูทดแทนที่พร้อมเสิร์ฟจากร้าน {outOfStockOrder.StoreName}:
+                เลือกเมนูทดแทนจากร้าน {outOfStockOrder.StoreName}:
               </label>
 
               <div style={{ maxHeight: "220px", overflowY: "auto", display: "grid", gap: "8px", marginBottom: "15px" }}>
-                {availableProducts.length === 0 ? (
-                  <div style={{ textAlign: "center", color: COLORS.gray, padding: "20px", fontSize: "13px" }}>
-                    ไม่มีเมนูอื่นที่สามารถเลือกทดแทนได้ในขณะนี้
-                  </div>
-                ) : (
-                  availableProducts.map((product) => (
+                {products
+                  .filter((p) => !p.IsOutOfStock)
+                  .map((product) => (
                     <div
                       key={product.ProductId}
                       onClick={() => setNewSelectedProduct(product)}
@@ -1483,8 +1555,7 @@ const renderOutOfStockModal = () => {
                         <span style={{ color: COLORS.orange, fontWeight: "900" }}>✓ เลือก</span>
                       )}
                     </div>
-                  ))
-                )}
+                  ))}
               </div>
 
               <div style={{ display: "flex", gap: "10px" }}>
@@ -1498,7 +1569,8 @@ const renderOutOfStockModal = () => {
                     background: COLORS.lightGray,
                     color: COLORS.navy,
                     fontWeight: "800",
-                    cursor: "pointer"
+                    cursor: "pointer",
+                    fontFamily: "inherit"
                   }}
                 >
                   ย้อนกลับ
@@ -1514,7 +1586,8 @@ const renderOutOfStockModal = () => {
                     background: newSelectedProduct ? COLORS.green : "#CCCCCC",
                     color: COLORS.white,
                     fontWeight: "900",
-                    cursor: newSelectedProduct ? "pointer" : "not-allowed"
+                    cursor: newSelectedProduct ? "pointer" : "not-allowed",
+                    fontFamily: "inherit"
                   }}
                 >
                   ยืนยันเปลี่ยนเมนู
@@ -1630,7 +1703,7 @@ const renderOutOfStockModal = () => {
           {activeTab === "menu" && (
             <input
               type="text"
-              placeholder={viewMode === "stores" ? " ค้นหาร้านอาหาร..." : " ค้นหาเมนูอาหาร..."}
+              placeholder={viewMode === "stores" ? "🔍 ค้นหาร้านอาหาร..." : "🔍 ค้นหาเมนูอาหาร..."}
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={searchStyle}
@@ -1670,10 +1743,10 @@ const renderOutOfStockModal = () => {
       {/* BOTTOM NAVIGATION */}
       <div style={{ position: "fixed", left: "50%", bottom: "18px", transform: "translateX(-50%)", background: COLORS.navy, borderRadius: "35px", padding: "7px", display: "flex", alignItems: "center", gap: "4px", zIndex: 600, boxShadow: "0 10px 35px rgba(42,44,65,0.25)", maxWidth: "calc(100vw - 30px)", overflowX: "auto" }}>
         <button onClick={() => handleSelectTab("menu")} style={{ border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "menu" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "menu" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
-          🏠 <span className="nav-text">หน้าแรก</span>
+           <span className="nav-text">หน้าแรก</span>
         </button>
         <button onClick={() => handleSelectTab("orders")} style={{ border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "orders" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "orders" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
-          📋 <span className="nav-text">ออเดอร์</span>
+           <span className="nav-text">ออเดอร์</span>
         </button>
         <button onClick={() => handleSelectTab("notifs")} style={{ position: "relative", border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "notifs" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "notifs" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
           🔔
@@ -1684,7 +1757,7 @@ const renderOutOfStockModal = () => {
           )}
         </button>
         <button onClick={() => handleSelectTab("profile")} style={{ border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "profile" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "profile" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
-          👤 <span className="nav-text">โปรไฟล์</span>
+           <span className="nav-text">โปรไฟล์</span>
         </button>
       </div>
 

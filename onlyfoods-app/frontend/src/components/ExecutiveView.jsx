@@ -284,7 +284,8 @@ const ICON_PATHS = {
     info: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 11v5M12 8h.01',
     refresh: 'M4 12a8 8 0 0113.7-5.7L20 8M20 4v4h-4M20 12a8 8 0 01-13.7 5.7L4 16M4 20v-4h4',
     settings: 'M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.7 1.7 0 002.5 1.1c1.6-.9 3.4.8 2.4 2.4a1.7 1.7 0 001.1 2.6c1.7.4 1.7 2.9 0 3.3a1.7 1.7 0 00-1.1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 00-2.5 1c-.4 1.8-2.9 1.8-3.4 0a1.7 1.7 0 00-2.5-1c-1.6.9-3.3-.9-2.4-2.4a1.7 1.7 0 00-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 001-2.6c-.9-1.6.8-3.3 2.4-2.4a1.7 1.7 0 002.5-1.1zM9 12a3 3 0 106 0 3 3 0 00-6 0',
-    logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3'
+    logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3',
+    history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2'
 };
 function greetingText() {
     const h = new Date().getHours();
@@ -1261,7 +1262,9 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         { id: 'overview', icon: 'overview', label: 'ภาพรวมศูนย์อาหาร', caption: 'สรุปยอดขายทั้งศูนย์' },
         { id: 'store-sales', icon: 'trend', label: 'ยอดขายรายร้าน', caption: 'เจาะรายร้าน/เมนู' },
         { id: 'store-manage', icon: 'store', label: 'จัดการร้านค้า', caption: 'เพิ่ม แก้ไข ปิดร้าน' },
-        { id: 'store-accounts', icon: 'account', label: 'บัญชีร้านค้า', caption: 'บัญชีผู้ใช้ของร้าน' }
+        { id: 'store-accounts', icon: 'account', label: 'บัญชีร้านค้า', caption: 'บัญชีผู้ใช้ของร้าน' },
+        { id: 'contract-tracking', icon: 'calendar', label: 'ติดตามสัญญา', caption: 'ระยะเวลาสัญญาร้านค้า' },
+        { id: 'audit-history', icon: 'history', label: 'ประวัติการดำเนินการ', caption: 'กิจกรรมสำคัญในระบบ' }
     ];
     const PAGE_META = {
         overview: {
@@ -1283,6 +1286,16 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             title: 'บัญชีร้านค้า',
             subtitle: 'ออกบัญชีผู้ใช้ให้ร้านค้าเข้าระบบไปจัดการเมนูและออเดอร์ของตัวเอง',
             searchPlaceholder: 'ค้นหาชื่อผู้ใช้หรือชื่อร้าน...'
+        },
+        'contract-tracking': {
+            title: 'ติดตามระยะเวลาสัญญา',
+            subtitle: 'ตรวจสอบวันเริ่มสัญญา วันสิ้นสุดสัญญา และร้านค้าที่ใกล้หมดอายุ',
+            searchPlaceholder: 'ค้นหาร้านค้า...'
+        },
+        'audit-history': {
+            title: 'ประวัติการดำเนินการ',
+            subtitle: 'ตรวจสอบกิจกรรมสำคัญและการเปลี่ยนแปลงที่เกิดขึ้นภายในระบบ',
+            searchPlaceholder: 'ค้นหาประวัติการดำเนินการ...'
         }
     }[activeMenu];
     const ctx = {
@@ -1586,6 +1599,8 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
               {activeMenu === 'store-sales' && <StoreSalesPage ctx={ctx}/>}
               {activeMenu === 'store-manage' && <StoreManagePage ctx={ctx}/>}
               {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx}/>}
+              {activeMenu === 'contract-tracking' && <ContractTrackingPage ctx={ctx}/>}
+              {activeMenu === 'audit-history' && <AuditHistoryPage ctx={ctx}/>}
             </div>
           </main>
         </div>
@@ -1811,6 +1826,238 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} variant="blue" icon="check"/>
       </div>
 
+      <section className="of-card" style={{
+          ...cardStyle,
+          marginTop: '18px',
+          marginBottom: '18px',
+          padding: '0',
+          overflow: 'hidden',
+          border: watchStores.length ? '1px solid #E8552D' : `1px solid ${T.line}`,
+          background: watchStores.length
+              ? `linear-gradient(135deg, ${T.primary} 0%, ${T.primaryDark} 100%)`
+              : T.surface,
+          boxShadow: watchStores.length
+              ? '0 12px 28px rgba(232,85,45,0.18)'
+              : T.shadowSm
+      }}>
+        <div style={{
+            padding: '18px 20px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: '14px',
+            flexWrap: 'wrap',
+            background: watchStores.length
+                ? 'rgba(255,255,255,0.04)'
+                : T.surface,
+            borderBottom: `1px solid ${watchStores.length ? 'rgba(255,255,255,0.20)' : T.line}`
+        }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', minWidth: 0 }}>
+            <div style={{
+                width: '42px',
+                height: '42px',
+                minWidth: '42px',
+                borderRadius: '12px',
+                display: 'grid',
+                placeItems: 'center',
+                background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft
+            }}>
+              <Icon name={watchStores.length ? 'info' : 'check'} size={21}
+                color={watchStores.length ? '#FFFFFF' : T.up}/>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <h3 style={{ ...h3Style, fontSize: '16px', color: watchStores.length ? '#FFFFFF' : T.ink }}>ร้านที่น่าจับตามอง</h3>
+              <p style={{ ...captionStyle, marginTop: '4px', color: watchStores.length ? 'rgba(255,255,255,0.82)' : T.muted }}>
+                คัดจากยอดขายลดลง อัตรายกเลิกสูง หรือร้านที่ถูกระงับสิทธิ์
+              </p>
+            </div>
+          </div>
+
+          <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '7px',
+              padding: '7px 11px',
+              borderRadius: '999px',
+              background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft,
+              color: watchStores.length ? '#FFFFFF' : T.up,
+              fontSize: '12px',
+              fontWeight: 700,
+              whiteSpace: 'nowrap'
+          }}>
+            <span style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: watchStores.length ? '#FFFFFF' : T.up
+            }}/>
+            {watchStores.length ? `พบ ${watchStores.length} ร้าน` : 'สถานะปกติ'}
+          </div>
+        </div>
+
+        <div style={{ padding: watchStores.length ? '16px 20px 20px' : '0 20px' }}>
+          {watchStores.length === 0 ? (
+            <EmptyState text="ยังไม่มีร้านที่มีสัญญาณผิดปกติในช่วงนี้" minHeight="110px"/>
+          ) : (
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))',
+                gap: '12px'
+            }}>
+              {watchStores.map((s) => {
+                const reasons = [];
+                if (s.IsSuspended) reasons.push('ร้านถูกระงับสิทธิ์');
+                if (s.delta !== null && s.delta <= -15 && (s.completedCount > 0 || s.sales > 0)) {
+                    reasons.push(`ยอดขายลดลง ${Math.abs(s.delta).toFixed(1)}% จากช่วงก่อน`);
+                }
+                if (s.cancelRate >= 10) reasons.push(`อัตรายกเลิกสูง ${s.cancelRate.toFixed(1)}%`);
+                if (!reasons.length && s.completedCount === 0 && s.sales === 0) {
+                    reasons.push('ยังไม่มีข้อมูลยอดขายเพียงพอในช่วงนี้');
+                }
+
+                const severe = Boolean(s.IsSuspended) || s.cancelRate >= 15;
+                const accent = severe ? T.down : '#E86532';
+                const soft = severe ? '#FFE5DF' : '#FFEBDD';
+
+                return (
+                  <div key={s.StoreId} style={{
+                      position: 'relative',
+                      overflow: 'hidden',
+                      border: `1px solid ${severe ? '#E89A8B' : '#E8B286'}`,
+                      borderRadius: T.radiusLg,
+                      background: T.surface,
+                      boxShadow: '0 5px 16px rgba(42,44,65,0.05)'
+                  }}>
+                    <span style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: '5px',
+                        background: accent
+                    }}/>
+
+                    <div style={{ padding: '16px 16px 16px 20px' }}>
+                      <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: '12px'
+                      }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{
+                              color: T.ink,
+                              fontSize: '15px',
+                              lineHeight: 1.4,
+                              fontWeight: 700,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                          }}>
+                            {s.StoreName}
+                          </div>
+                          <div style={{
+                              color: T.muted,
+                              fontSize: '11.5px',
+                              marginTop: '3px'
+                          }}>
+                            ร้านค้า #{s.StoreId}
+                          </div>
+                        </div>
+
+                        <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '6px 10px',
+                            borderRadius: '999px',
+                            background: soft,
+                            color: severe ? T.down : '#B34D1D',
+                            fontSize: '11.5px',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap'
+                        }}>
+                          <span style={{
+                              width: '6px',
+                              height: '6px',
+                              borderRadius: '50%',
+                              background: accent
+                          }}/>
+                          {severe ? 'ควรตรวจสอบ' : 'ควรจับตา'}
+                        </span>
+                      </div>
+
+                      <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                          gap: '8px',
+                          marginTop: '15px'
+                      }}>
+                        {[
+                          ['ยอดขาย', `${money(s.sales)} บาท`],
+                          ['ออเดอร์', `${money(s.completedCount)} รายการ`],
+                          ['ยกเลิก', `${s.cancelRate.toFixed(1)}%`]
+                        ].map(([label, value]) => (
+                          <div key={label} style={{
+                              padding: '10px',
+                              borderRadius: T.radiusMd,
+                              background: '#F8F9FC',
+                              border: `1px solid ${T.line}`,
+                              minWidth: 0
+                          }}>
+                            <div style={{
+                                color: T.muted,
+                                fontSize: '10.5px',
+                                whiteSpace: 'nowrap'
+                            }}>{label}</div>
+                            <div style={{
+                                color: label === 'ยกเลิก' && s.cancelRate >= 10 ? T.down : T.ink,
+                                fontSize: '13px',
+                                fontWeight: 700,
+                                marginTop: '3px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                            }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{
+                          marginTop: '12px',
+                          padding: '10px 11px',
+                          borderRadius: T.radiusMd,
+                          background: soft
+                      }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            color: severe ? T.down : '#B34D1D',
+                            fontSize: '11.5px',
+                            fontWeight: 700
+                        }}>
+                          <Icon name="info" size={14} color={severe ? T.down : '#B34D1D'}/>
+                          เหตุผลที่ควรจับตา
+                        </div>
+                        <div style={{
+                            color: T.text,
+                            fontSize: '12px',
+                            lineHeight: 1.6,
+                            marginTop: '5px'
+                        }}>
+                          {reasons.join(' · ')}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
       <div className="of-kpi-small">
         <KpiCard size="sm" label="ยอดเฉลี่ยต่อออเดอร์" value={money2(report.now.avgOrder)} unit="บาท" delta={changePct(report.now.avgOrder, report.before.avgOrder)} deltaLabel={compareLabel} icon="trend" tone="blue"/>
         <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} icon="ban" tone="amber" invertDelta/>
@@ -1843,26 +2090,6 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         </Card>
       </div>
 
-      <Card title="ร้านที่น่าจับตามอง" subtitle="คัดจากยอดขายลดลง อัตรายกเลิกสูง หรือร้านที่ถูกระงับสิทธิ์" style={{ marginTop: '16px' }}>
-        {watchStores.length === 0 ? <EmptyState text="ยังไม่มีร้านที่มีสัญญาณผิดปกติในช่วงนี้" minHeight="110px"/> : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginTop: '10px' }}>
-            {watchStores.map((s) => {
-              const reasons = [];
-              if (s.IsSuspended) reasons.push('ถูกระงับสิทธิ์');
-              if (s.delta !== null && s.delta <= -15) reasons.push(`ยอดขายลด ${Math.abs(s.delta).toFixed(1)}%`);
-              if (s.cancelRate >= 10) reasons.push(`ยกเลิก ${s.cancelRate.toFixed(1)}%`);
-              return <div key={s.StoreId} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusLg, padding: '14px', background: '#FAFAFC' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                  <strong style={{ color: T.ink, fontSize: '14px' }}>{s.StoreName}</strong>
-                  <Badge tone={s.IsSuspended || s.cancelRate >= 15 ? 'danger' : 'warn'}>จับตา</Badge>
-                </div>
-                <div style={{ ...captionStyle, marginTop: '8px' }}>{reasons.join(' · ')}</div>
-                <div style={{ marginTop: '8px', fontSize: '12.5px', color: T.text }}>ยอดขาย {money(s.sales)} บาท · {money(s.completedCount)} ออเดอร์</div>
-              </div>;
-            })}
-          </div>
-        )}
-      </Card>
 
       <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
         <div style={{ overflowX: 'auto' }}>
@@ -2392,7 +2619,10 @@ const EMPTY_STORE_FORM = {
     email: '',
     description: '',
     imageData: '',
-    imageName: ''
+    imageName: '',
+    contractStartDate: '',
+    contractDuration: '',
+    contractEndDate: ''
 };
 function looksLikeGarbage(value) {
     const compact = String(value || '').trim().replace(/\s/g, '');
@@ -2474,14 +2704,64 @@ function validateStoreForm(form) {
     if (form.description.trim().length > 300) {
         errors.description = 'คำอธิบายต้องไม่เกิน 300 ตัวอักษร';
     }
+    if (!form.contractStartDate)
+        errors.contractStartDate = 'กรุณาเลือกวันที่เริ่มสัญญา';
+    if (!form.contractDuration)
+        errors.contractDuration = 'กรุณาเลือกระยะเวลาสัญญา';
+    if (!form.contractEndDate)
+        errors.contractEndDate = 'กรุณาระบุวันที่สิ้นสุดสัญญา';
+    if (form.contractStartDate && form.contractEndDate && form.contractEndDate < form.contractStartDate)
+        errors.contractEndDate = 'วันที่สิ้นสุดสัญญาต้องไม่น้อยกว่าวันที่เริ่มสัญญา';
     return errors;
 }
 function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose, onSubmit, saving }) {
     const fileInputRef = useRef(null);
     const [dragOver, setDragOver] = useState(false);
+
+    const calculateContractEnd = (startISO, duration) => {
+        if (!startISO || !duration || duration === 'custom')
+            return '';
+        const [year, month, day] = startISO.split('-').map(Number);
+        if (!year || !month || !day)
+            return '';
+        const monthsToAdd = {
+            '6m': 6,
+            '1y': 12,
+            '2y': 24,
+            '3y': 36
+        }[duration];
+        if (!monthsToAdd)
+            return '';
+
+        const targetMonthIndex = (month - 1) + monthsToAdd;
+        const targetYear = year + Math.floor(targetMonthIndex / 12);
+        const targetMonth = targetMonthIndex % 12;
+        const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+        const safeDay = Math.min(day, lastDay);
+        return `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+    };
+
     const update = (key) => (e) => {
-        setForm((prev) => ({ ...prev, [key]: e.target.value }));
-        setErrors((prev) => ({ ...prev, [key]: undefined }));
+        const value = e.target.value;
+        setForm((prev) => {
+            const next = { ...prev, [key]: value };
+            if (key === 'contractStartDate' && prev.contractDuration && prev.contractDuration !== 'custom') {
+                next.contractEndDate = calculateContractEnd(value, prev.contractDuration);
+            }
+            if (key === 'contractDuration') {
+                next.contractEndDate = value === 'custom'
+                    ? ''
+                    : calculateContractEnd(prev.contractStartDate, value);
+            }
+            return next;
+        });
+        setErrors((prev) => ({
+            ...prev,
+            [key]: undefined,
+            ...(key === 'contractStartDate' || key === 'contractDuration'
+                ? { contractEndDate: undefined }
+                : {})
+        }));
     };
     const triggerPick = () => fileInputRef.current?.click();
     const handleFile = (file) => {
@@ -2534,6 +2814,51 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
             </option>))}
         </select>
       </Field>
+
+      <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '12px'
+      }}>
+        <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
+          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={inputStyle}/>
+        </Field>
+
+        <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
+          <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={inputStyle}>
+            <option value="">— เลือกระยะเวลา —</option>
+            <option value="6m">6 เดือน</option>
+            <option value="1y">1 ปี</option>
+            <option value="2y">2 ปี</option>
+            <option value="3y">3 ปี</option>
+            <option value="custom">กำหนดวันสิ้นสุดเอง</option>
+          </select>
+        </Field>
+
+        <Field
+          label="วันที่สิ้นสุดสัญญา"
+          required
+          error={errors.contractEndDate}
+          hint={form.contractDuration && form.contractDuration !== 'custom'
+              ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ'
+              : form.contractDuration === 'custom'
+                ? 'เลือกวันสิ้นสุดสัญญาได้เอง'
+                : 'เลือกระยะเวลาสัญญาก่อน'}>
+          <input
+            type="date"
+            value={form.contractEndDate || ''}
+            min={form.contractStartDate || undefined}
+            onChange={update('contractEndDate')}
+            disabled={form.contractDuration !== 'custom'}
+            style={{
+                ...inputStyle,
+                background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background,
+                color: form.contractDuration !== 'custom' ? T.muted : T.ink,
+                cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer'
+            }}
+          />
+        </Field>
+      </div>
 
       <div style={twoColStyle}>
         <Field label="ชื่อผู้ติดต่อ" required error={errors.contactName}>
@@ -2671,7 +2996,10 @@ function StoreManagePage({ ctx }) {
             email: d.ContactEmail || '',
             description: d.Description || '',
             imageData: d.ImageUrl || '',
-            imageName: ''
+            imageName: '',
+            contractStartDate: d.ContractStartDate ? String(d.ContractStartDate).slice(0, 10) : '',
+            contractDuration: d.ContractStartDate && d.ContractEndDate ? 'custom' : '',
+            contractEndDate: d.ContractEndDate ? String(d.ContractEndDate).slice(0, 10) : ''
         });
         setErrors({});
         setModalOpen(true);
@@ -2692,6 +3020,8 @@ function StoreManagePage({ ctx }) {
             contact_email: form.email.trim(),
             description: form.description.trim(),
             image_url: form.imageData,
+            contract_start_date: form.contractStartDate || null,
+            contract_end_date: form.contractEndDate || null,
             performed_by: user?.FullName || user?.Username || 'Executive'
         };
         const send = async (path, method) => callApi(`${API}${path}`, {
@@ -2927,6 +3257,495 @@ function validateAccountForm(form, mode) {
         errors.confirm = 'ยืนยันรหัสผ่านไม่ตรงกัน';
     return errors;
 }
+
+
+function ContractTrackingPage({ ctx }) {
+    const { API, search } = ctx;
+    const [stores, setStores] = useState([]);
+    const [loadingContracts, setLoadingContracts] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [renewStore, setRenewStore] = useState(null);
+    const [renewDuration, setRenewDuration] = useState('1y');
+    const [renewCustomEnd, setRenewCustomEnd] = useState('');
+    const [renewSaving, setRenewSaving] = useState(false);
+    const [renewError, setRenewError] = useState('');
+
+    const loadContracts = useCallback(async () => {
+        setLoadingContracts(true);
+        try {
+            const data = await callApi(`${API}/api/stores`);
+            setStores(Array.isArray(data) ? data : []);
+            setLoadError('');
+        }
+        catch (err) {
+            setLoadError(err.message);
+        }
+        finally {
+            setLoadingContracts(false);
+        }
+    }, [API]);
+
+    useEffect(() => {
+        loadContracts();
+    }, [loadContracts]);
+
+    const dateOnly = (value) => {
+        if (!value) return null;
+        const raw = String(value).slice(0, 10);
+        const d = new Date(`${raw}T00:00:00`);
+        return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const formatContractDate = (value) => {
+        const d = dateOnly(value);
+        return d ? d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+    };
+    const calculateRenewEnd = (currentEnd, duration) => {
+        const base = dateOnly(currentEnd);
+        if (!base || !duration || duration === 'custom') return '';
+        const months = { '6m': 6, '1y': 12, '2y': 24, '3y': 36 }[duration];
+        if (!months) return '';
+        const originalDay = base.getDate();
+        const target = new Date(base.getFullYear(), base.getMonth() + months, 1);
+        const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+        target.setDate(Math.min(originalDay, lastDay));
+        return `${target.getFullYear()}-${String(target.getMonth()+1).padStart(2,'0')}-${String(target.getDate()).padStart(2,'0')}`;
+    };
+    const openRenew = (store) => {
+        setRenewStore(store);
+        setRenewDuration('1y');
+        setRenewCustomEnd('');
+        setRenewError('');
+    };
+    const closeRenew = () => {
+        if (!renewSaving) setRenewStore(null);
+    };
+    const renewNewEnd = renewStore
+        ? (renewDuration === 'custom' ? renewCustomEnd : calculateRenewEnd(renewStore.ContractEndDate, renewDuration))
+        : '';
+    const submitRenew = async () => {
+        if (!renewStore || !renewNewEnd) {
+            setRenewError('กรุณาระบุวันสิ้นสุดสัญญาใหม่');
+            return;
+        }
+        const oldEnd = String(renewStore.ContractEndDate || '').slice(0, 10);
+        if (oldEnd && renewNewEnd <= oldEnd) {
+            setRenewError('วันสิ้นสุดสัญญาใหม่ต้องมากกว่าวันสิ้นสุดสัญญาปัจจุบัน');
+            return;
+        }
+        setRenewSaving(true);
+        setRenewError('');
+        try {
+            await callApi(`${API}/api/stores/${renewStore.StoreId}/renew-contract`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contract_end_date: renewNewEnd, performed_by: 'Executive' })
+            });
+            setRenewStore(null);
+            await loadContracts();
+        } catch (err) {
+            setRenewError(err.message);
+        } finally {
+            setRenewSaving(false);
+        }
+    };
+    const contractInfo = (store) => {
+        const end = dateOnly(store.ContractEndDate);
+        if (!end) return { key: 'missing', label: 'ยังไม่ระบุสัญญา', days: null, bg: '#F2F3F7', color: T.muted };
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const days = Math.ceil((end - today) / 86400000);
+        if (days < 0) return { key: 'expired', label: 'หมดอายุแล้ว', days, bg: T.redSoft, color: T.down };
+        if (days <= 30) return { key: 'soon', label: 'ใกล้หมดอายุ', days, bg: T.accentSoft, color: T.accentDark };
+        return { key: 'active', label: 'ปกติ', days, bg: T.greenSoft, color: T.up };
+    };
+
+    const enriched = stores.map((s) => ({ ...s, contract: contractInfo(s) }));
+    const filtered = enriched
+        .filter((s) => statusFilter === 'all' || s.contract.key === statusFilter)
+        .filter((s) => String(s.StoreName || '').toLowerCase().includes(search))
+        .sort((a, b) => {
+            const ae = dateOnly(a.ContractEndDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            const be = dateOnly(b.ContractEndDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            return ae - be;
+        });
+
+    const active = enriched.filter((s) => s.contract.key === 'active').length;
+    const soon = enriched.filter((s) => s.contract.key === 'soon').length;
+    const expired = enriched.filter((s) => s.contract.key === 'expired').length;
+    const missing = enriched.filter((s) => s.contract.key === 'missing').length;
+
+    const filters = [
+        ['all', 'ทั้งหมด'],
+        ['active', 'ปกติ'],
+        ['soon', 'ใกล้หมดอายุ'],
+        ['expired', 'หมดอายุแล้ว'],
+        ['missing', 'ยังไม่ระบุ']
+    ];
+
+    return (<>
+      <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(190px, 100%), 1fr))',
+          gap: '16px',
+          marginBottom: '16px'
+      }}>
+        {[
+            ['สัญญาปกติ', active, T.greenSoft, T.up],
+            ['ใกล้หมดอายุ ≤ 30 วัน', soon, T.accentSoft, T.accentDark],
+            ['หมดอายุแล้ว', expired, T.redSoft, T.down],
+            ['ยังไม่ระบุสัญญา', missing, '#F2F3F7', T.muted]
+        ].map(([label, value, bg, color]) => (
+          <Card key={label} style={{ padding: '18px 20px' }}>
+            <div style={{ fontSize: '12.5px', color: T.muted, fontWeight: 600 }}>{label}</div>
+            <div style={{ display: 'flex', alignItems: 'end', gap: '7px', marginTop: '8px' }}>
+              <span style={{ fontSize: '28px', lineHeight: 1, fontWeight: 700, color }}>{value}</span>
+              <span style={{ fontSize: '12px', color: T.muted }}>ร้าน</span>
+            </div>
+            <div style={{ height: '4px', borderRadius: '99px', background: bg, marginTop: '14px' }}/>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ marginBottom: '16px' }}>
+        <div style={{ ...toolbarStyle, gap: '12px', alignItems: 'center' }}>
+          <div>
+            <h3 style={h3Style}>สัญญาร้านค้า</h3>
+            <p style={captionStyle}>ระบบจะจัดสถานะใกล้หมดอายุเมื่อเหลือเวลาไม่เกิน 30 วัน</p>
+          </div>
+          <Button icon="refresh" tone="secondary" onClick={loadContracts} disabled={loadingContracts}>
+            {loadingContracts ? 'กำลังโหลด...' : 'รีเฟรช'}
+          </Button>
+        </div>
+        <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '16px' }}>
+          {filters.map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setStatusFilter(id)} style={{
+                border: `1px solid ${statusFilter === id ? T.primary : T.line}`,
+                background: statusFilter === id ? T.primarySoft : T.surface,
+                color: statusFilter === id ? T.primaryDark : T.text,
+                borderRadius: '999px',
+                padding: '9px 13px',
+                fontSize: '12.5px',
+                fontWeight: 600,
+                cursor: 'pointer'
+            }}>{label}</button>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        {loadError ? (
+          <div style={{ padding: '24px', color: T.down, background: T.redSoft, borderRadius: T.radiusMd }}>{loadError}</div>
+        ) : loadingContracts ? (
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: T.muted }}>กำลังโหลดข้อมูลสัญญา...</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: T.muted }}>ไม่พบข้อมูลสัญญาตามเงื่อนไขที่เลือก</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ ...tableStyle, minWidth: '850px' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>ร้านค้า</th>
+                  <th style={{ ...thStyle, width: '150px' }}>วันที่เริ่มสัญญา</th>
+                  <th style={{ ...thStyle, width: '150px' }}>วันที่สิ้นสุดสัญญา</th>
+                  <th style={{ ...thStyle, width: '150px' }}>ระยะเวลาคงเหลือ</th>
+                  <th style={{ ...thStyle, width: '145px' }}>สถานะสัญญา</th>
+                  <th style={{ ...thStyle, width: '120px', textAlign: 'right' }}>จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((store) => (
+                  <tr key={store.StoreId} style={trStyle}>
+                    <td style={tdStyle}>
+                      <div style={{ fontWeight: 700, color: T.ink }}>{store.StoreName}</div>
+                      <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>Store ID #{store.StoreId}</div>
+                    </td>
+                    <td style={tdStyle}>{formatContractDate(store.ContractStartDate)}</td>
+                    <td style={tdStyle}>{formatContractDate(store.ContractEndDate)}</td>
+                    <td style={tdStyle}>
+                      {store.contract.days === null
+                        ? '—'
+                        : store.contract.days < 0
+                          ? `เกินมา ${Math.abs(store.contract.days)} วัน`
+                          : store.contract.days === 0
+                            ? 'หมดอายุวันนี้'
+                            : `${store.contract.days} วัน`}
+                    </td>
+                    <td style={tdStyle}>
+                      <span style={{
+                          display: 'inline-flex',
+                          padding: '6px 10px',
+                          borderRadius: '999px',
+                          background: store.contract.bg,
+                          color: store.contract.color,
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          whiteSpace: 'nowrap'
+                      }}>{store.contract.label}</span>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}>
+                      <Button tone="secondary" onClick={() => openRenew(store)}>ต่อสัญญา</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Modal open={!!renewStore} title="ต่อสัญญาร้านค้า"
+        subtitle={renewStore ? `ร้าน ${renewStore.StoreName}` : ''}
+        onClose={closeRenew} width="560px">
+        {renewStore && (<div>
+          <div style={{ padding:'14px 16px', border:`1px solid ${T.line}`, borderRadius:T.radiusMd, background:'#FAFBFD', marginBottom:'18px' }}>
+            <div style={{ fontSize:'12px', color:T.muted, marginBottom:'5px' }}>สัญญาปัจจุบันสิ้นสุด</div>
+            <div style={{ fontSize:'18px', fontWeight:700, color:T.ink }}>{formatContractDate(renewStore.ContractEndDate)}</div>
+          </div>
+          <Field label="ระยะเวลาที่ต้องการต่อ" required>
+            <select value={renewDuration} onChange={(e) => { setRenewDuration(e.target.value); setRenewError(''); }} style={inputStyle}>
+              <option value="6m">6 เดือน</option>
+              <option value="1y">1 ปี</option>
+              <option value="2y">2 ปี</option>
+              <option value="3y">3 ปี</option>
+              <option value="custom">กำหนดวันสิ้นสุดเอง</option>
+            </select>
+          </Field>
+          <div style={{ marginTop:'14px' }}>
+            <Field label="วันสิ้นสุดสัญญาใหม่" required
+              hint={renewDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาใหม่' : 'ระบบคำนวณต่อจากวันสิ้นสุดสัญญาปัจจุบันอัตโนมัติ'}>
+              <input type="date" value={renewNewEnd}
+                min={renewStore.ContractEndDate ? String(renewStore.ContractEndDate).slice(0,10) : undefined}
+                onChange={(e) => { if (renewDuration === 'custom') { setRenewCustomEnd(e.target.value); setRenewError(''); } }}
+                disabled={renewDuration !== 'custom'}
+                style={{ ...inputStyle, background:renewDuration !== 'custom' ? '#F7F8FB' : inputStyle.background,
+                  color:renewDuration !== 'custom' ? T.muted : T.ink,
+                  cursor:renewDuration !== 'custom' ? 'not-allowed' : 'pointer' }}/>
+            </Field>
+          </div>
+          {renewError && <div style={{ marginTop:'12px', padding:'10px 12px', borderRadius:T.radiusSm, background:T.redSoft, color:T.down, fontSize:'12.5px' }}>{renewError}</div>}
+          <div style={{ display:'flex', justifyContent:'flex-end', gap:'9px', marginTop:'22px', paddingTop:'16px', borderTop:`1px solid ${T.line}` }}>
+            <Button tone="secondary" onClick={closeRenew} disabled={renewSaving}>ยกเลิก</Button>
+            <Button onClick={submitRenew} disabled={renewSaving}>{renewSaving ? 'กำลังต่อสัญญา...' : 'ยืนยันต่อสัญญา'}</Button>
+          </div>
+        </div>)}
+      </Modal>
+    </>);
+}
+
+function AuditHistoryPage({ ctx }) {
+    const { API } = ctx;
+    const [logs, setLogs] = useState([]);
+    const [loadingLogs, setLoadingLogs] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [query, setQuery] = useState('');
+    const [filter, setFilter] = useState('all');
+
+    const loadLogs = useCallback(async () => {
+        setLoadingLogs(true);
+        try {
+            const data = await callApi(`${API}/api/audit-logs`);
+            setLogs(Array.isArray(data) ? data : []);
+            setLoadError('');
+        }
+        catch (err) {
+            setLoadError(err.message);
+        }
+        finally {
+            setLoadingLogs(false);
+        }
+    }, [API]);
+
+    useEffect(() => {
+        loadLogs();
+    }, [loadLogs]);
+
+    const actionMeta = (action) => {
+        const key = String(action || '').toUpperCase();
+        if (key.includes('STORE') || key.includes('SUSPEND')) {
+            return { group: 'store', label: 'ร้านค้า', bg: T.primarySoft, color: T.primaryDark };
+        }
+        if (key.includes('ACCOUNT') || key.includes('USER') || key.includes('STAFF') || key.includes('PASSWORD')) {
+            return { group: 'account', label: 'บัญชีผู้ใช้', bg: T.deepSoft, color: T.deep };
+        }
+        if (key.includes('SLIP') || key.includes('PAYMENT')) {
+            return { group: 'payment', label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark };
+        }
+        if (key.includes('ORDER') || key.includes('CANCEL')) {
+            return { group: 'order', label: 'ออเดอร์', bg: T.greenSoft, color: T.up };
+        }
+        return { group: 'other', label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text };
+    };
+
+    const actionName = (action) => {
+        const names = {
+            CREATE_STORE: 'เพิ่มร้านค้า',
+            UPDATE_STORE: 'แก้ไขข้อมูลร้านค้า',
+            DELETE_STORE: 'ลบร้านค้า',
+            SUSPEND_STORE: 'เปลี่ยนสถานะระงับสิทธิ์ร้านค้า',
+            CREATE_ACCOUNT: 'สร้างบัญชีร้านค้า',
+            UPDATE_ACCOUNT: 'แก้ไขบัญชีร้านค้า',
+            DELETE_ACCOUNT: 'ลบบัญชีร้านค้า',
+            RESET_PASSWORD: 'เปลี่ยนรหัสผ่าน',
+            VERIFY_SLIP_APPROVE: 'อนุมัติสลิปการชำระเงิน',
+            VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน'
+        };
+        return names[String(action || '').toUpperCase()] || String(action || '-').replaceAll('_', ' ');
+    };
+
+    const filtered = logs.filter((log) => {
+        const meta = actionMeta(log.Action);
+        if (filter !== 'all' && meta.group !== filter)
+            return false;
+        const q = query.trim().toLowerCase();
+        if (!q)
+            return true;
+        return `${actionName(log.Action)} ${log.Action || ''} ${log.PerformedBy || ''} ${log.Details || ''}`
+            .toLowerCase()
+            .includes(q);
+    });
+
+    const filters = [
+        ['all', 'ทั้งหมด'],
+        ['store', 'ร้านค้า'],
+        ['account', 'บัญชีผู้ใช้'],
+        ['order', 'ออเดอร์'],
+        ['payment', 'การชำระเงิน']
+    ];
+
+    return (<>
+      <Card style={{ marginBottom: '16px' }}>
+        <div style={{ ...toolbarStyle, gap: '14px', alignItems: 'center' }}>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={h3Style}>กิจกรรมล่าสุด</h3>
+            <p style={captionStyle}>แสดงประวัติการดำเนินการสำคัญล่าสุดที่ถูกบันทึกไว้ในระบบ</p>
+          </div>
+          <Button icon="refresh" tone="secondary" onClick={loadLogs} disabled={loadingLogs}>
+            {loadingLogs ? 'กำลังโหลด...' : 'รีเฟรช'}
+          </Button>
+        </div>
+
+        <div style={{
+            display: 'flex',
+            gap: '10px',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            marginTop: '18px'
+        }}>
+          <div style={{ position: 'relative', flex: '1 1 280px', minWidth: 0 }}>
+            <Icon name="search" size={17} color={T.muted} style={{
+                position: 'absolute', left: '13px', top: '50%', transform: 'translateY(-50%)'
+            }}/>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="ค้นหาการดำเนินการ ผู้ดำเนินการ หรือรายละเอียด..."
+              style={{ ...inputStyle, width: '100%', paddingLeft: '40px' }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+            {filters.map(([id, label]) => (<button
+              key={id}
+              type="button"
+              onClick={() => setFilter(id)}
+              style={{
+                  border: `1px solid ${filter === id ? T.primary : T.line}`,
+                  background: filter === id ? T.primarySoft : T.surface,
+                  color: filter === id ? T.primaryDark : T.text,
+                  borderRadius: '999px',
+                  padding: '9px 13px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+              }}
+            >{label}</button>))}
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        {loadError ? (<div style={{
+            padding: '24px',
+            borderRadius: T.radiusMd,
+            background: T.redSoft,
+            color: T.down,
+            fontSize: '14px'
+        }}>{loadError}</div>) : loadingLogs ? (<div style={{
+            padding: '48px 20px',
+            textAlign: 'center',
+            color: T.muted,
+            fontSize: '14px'
+        }}>กำลังโหลดประวัติการดำเนินการ...</div>) : filtered.length === 0 ? (<div style={{
+            padding: '48px 20px',
+            textAlign: 'center',
+            color: T.muted
+        }}>
+          <div style={{
+              width: '48px', height: '48px', margin: '0 auto 12px',
+              borderRadius: '50%', background: T.primarySoft,
+              display: 'grid', placeItems: 'center', color: T.primary
+          }}><Icon name="history" size={23}/></div>
+          <div style={{ fontWeight: 600, color: T.text, marginBottom: '4px' }}>ไม่พบประวัติการดำเนินการ</div>
+          <div style={{ fontSize: '13px' }}>ลองเปลี่ยนคำค้นหาหรือตัวกรอง</div>
+        </div>) : (<div style={{ overflowX: 'auto' }}>
+          <table style={{ ...tableStyle, minWidth: '820px' }}>
+            <thead>
+              <tr>
+                <th style={{ ...thStyle, width: '160px' }}>วันและเวลา</th>
+                <th style={{ ...thStyle, width: '190px' }}>การดำเนินการ</th>
+                <th style={{ ...thStyle, width: '150px' }}>ผู้ดำเนินการ</th>
+                <th style={thStyle}>รายละเอียด</th>
+                <th style={{ ...thStyle, width: '120px' }}>ประเภท</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((log) => {
+                  const meta = actionMeta(log.Action);
+                  return (<tr key={log.LogID} style={trStyle}>
+                    <td style={{ ...tdStyle, whiteSpace: 'nowrap', color: T.muted }}>
+                      {thaiDateTime(log.CreatedAt)}
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ fontWeight: 600, color: T.ink }}>{actionName(log.Action)}</div>
+                      <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>
+                        #{log.LogID}
+                      </div>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+                        <span style={{
+                            width: '30px', height: '30px', borderRadius: '50%',
+                            display: 'grid', placeItems: 'center',
+                            background: T.deepSoft, color: T.deep,
+                            fontSize: '12px', fontWeight: 700, flexShrink: 0
+                        }}>{String(log.PerformedBy || 'E').charAt(0).toUpperCase()}</span>
+                        <span style={{ fontWeight: 500, color: T.text }}>{log.PerformedBy || '—'}</span>
+                      </div>
+                    </td>
+                    <td style={{ ...tdStyle, lineHeight: 1.55 }}>{log.Details || '—'}</td>
+                    <td style={tdStyle}>
+                      <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '6px 10px',
+                          borderRadius: '999px',
+                          background: meta.bg,
+                          color: meta.color,
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap'
+                      }}>{meta.label}</span>
+                    </td>
+                  </tr>);
+              })}
+            </tbody>
+          </table>
+        </div>)}
+      </Card>
+    </>);
+}
+
 function StoreAccountsPage({ ctx }) {
     const { API, user, stores, search, pushToast, ask } = ctx;
     const [accounts, setAccounts] = useState([]);
