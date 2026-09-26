@@ -81,7 +81,9 @@ STORE_EXTRA_COLUMNS = {
     "Description": "VARCHAR(300) NULL",
     "ImageUrl": "MEDIUMTEXT NULL",
     "ContractStartDate": "DATE NULL",
+    "CurrentContractStartDate": "DATE NULL",
     "ContractEndDate": "DATE NULL",
+    
 }
 _store_columns_ready = False
 
@@ -345,6 +347,9 @@ class StoreFullSchema(BaseModel):
     performed_by: Optional[str] = "Executive"
     contract_start_date: Optional[str] = None
     contract_end_date: Optional[str] = None
+    owner_full_name: Optional[str] = None
+    owner_username: Optional[str] = None
+    owner_password: Optional[str] = None
 
 class ProductCreateSchema(BaseModel):
     StoreId: int
@@ -616,26 +621,78 @@ def update_store(store_id: int, data: StoreUpdateSchema, db=Depends(get_db)):
 @app.post("/api/stores/full", status_code=201)
 def create_store_full(data: StoreFullSchema, db=Depends(get_db)):
     ensure_store_columns(db)
+    ensure_user_columns(db)
     name = data.store_name.strip()
+    owner_full_name = (data.owner_full_name or "").strip()
+    owner_username = (data.owner_username or "").strip()
+    owner_password = data.owner_password or ""
     if not name:
         raise HTTPException(status_code=400, detail="กรุณากรอกชื่อร้านค้า")
     if not data.category:
         raise HTTPException(status_code=400, detail="กรุณาเลือกประเภทอาหาร")
+    if not owner_full_name:
+        raise HTTPException(status_code=400, detail="กรุณากรอกชื่อเจ้าของร้าน")
 
+    if len(owner_full_name) > 100:
+        raise HTTPException(status_code=400, detail="ชื่อเจ้าของร้านต้องไม่เกิน 100 ตัวอักษร")
+
+    if not owner_username:
+        raise HTTPException(status_code=400, detail="กรุณากรอกชื่อผู้ใช้")
+
+    if not (4 <= len(owner_username) <= 20):
+        raise HTTPException(
+            status_code=400,
+            detail="ชื่อผู้ใช้ต้องมีความยาว 4–20 ตัว"
+        )
+
+    if not all(
+        ch.isascii() and (ch.isalnum() or ch == "_")
+        for ch in owner_username
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="ชื่อผู้ใช้ใช้ได้เฉพาะ a-z, 0-9 และ _"
+        )
+
+    if len(owner_password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านต้องยาวอย่างน้อย 6 ตัว"
+        )
+
+    if len(owner_password) > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านต้องไม่เกิน 50 ตัวอักษร"
+        )
+
+    if any(ch.isspace() for ch in owner_password):
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านห้ามมีช่องว่าง" )
     try:
         with db.cursor() as cur:
             cur.execute("SELECT StoreId FROM Store WHERE StoreName = %s", (name,))
             if cur.fetchone():
                 raise HTTPException(status_code=400, detail="มีชื่อร้านค้านี้อยู่แล้ว")
+            cur.execute(
+                "SELECT UserId FROM Users WHERE Username = %s",
+                (owner_username,)
+            )
 
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=400,
+                    detail="ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว"
+                )
             cur.execute(
                 """
                 INSERT INTO Store
                     (
                         StoreName, IsOpen, IsSuspended, Category, ContactName, ContactPhone,
-                        ContactLine, ContactEmail, Description, ImageUrl, ContractStartDate, ContractEndDate
+                        ContactLine, ContactEmail, Description, ImageUrl, ContractStartDate, CurrentContractStartDate, ContractEndDate
                     )
-                VALUES (%s, 1, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, 1, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s , %s)
                 """,
                 (
                     name,
@@ -647,13 +704,33 @@ def create_store_full(data: StoreFullSchema, db=Depends(get_db)):
                     clean_text(data.description),
                     data.image_url or None,
                     data.contract_start_date or None,
+                    data.contract_start_date or None,
                     data.contract_end_date or None,
                 ),
             )
             store_id = cur.lastrowid
+            cur.execute(
+                """
+                INSERT INTO Users
+                    (Username,Password,FullName,Role,StoreId,Points
+                    )
+                VALUES(%s, %s, %s, %s, %s, 0)
+                """,
+                (
+                    owner_username,
+                    owner_password,
+                    owner_full_name,
+                    "Shop Owner",
+                    store_id,
+                ),
+            )
+
+            user_id = cur.lastrowid
             log_audit(db, "CREATE_STORE", data.performed_by or "Executive", f"เพิ่มร้าน {name} (ID {store_id})")
+            log_audit(db,"CREATE_STORE_ACCOUNT",data.performed_by or "Executive",f"สร้างบัญชี {owner_username} (Shop Owner) ให้ร้าน {name} (ID {store_id})")
+
         db.commit()
-        return {"success": True, "store_id": store_id, "message": "เพิ่มร้านค้าเรียบร้อยแล้ว"}
+        return {"success": True, "store_id": store_id,  "user_id": user_id, "message": "เพิ่มร้านค้าและบัญชีเจ้าของร้านเรียบร้อยแล้ว"}
     except HTTPException:
         db.rollback()
         raise
@@ -742,12 +819,17 @@ def delete_store(store_id: int, db=Depends(get_db)):
 def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(get_db)):
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT StoreName, IsOpen FROM Store WHERE StoreId = %s", (store_id,))
+            cur.execute("SELECT StoreName, IsOpen, IsSuspended FROM Store WHERE StoreId = %s", (store_id,))
             store = cur.fetchone()
             if not store:
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
 
             new_status = not bool(store["IsOpen"])
+            if new_status and store["IsSuspended"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ร้านถูกระงับสิทธิ์ ไม่สามารถเปิดร้านได้"
+                )
             cur.execute("UPDATE Store SET IsOpen = %s WHERE StoreId = %s", (1 if new_status else 0, store_id))
             actor = performed_by or "Shop Owner"
             log_audit(db, "OPEN_STORE" if new_status else "CLOSE_STORE", actor, f"{'เปิดร้าน' if new_status else 'ปิดร้าน'} {store['StoreName']}")
@@ -796,10 +878,17 @@ def renew_store_contract(store_id: int, data: RenewContractSchema, db=Depends(ge
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้านี้")
 
             old_end = store["ContractEndDate"]
-            cur.execute("UPDATE Store SET ContractEndDate = %s WHERE StoreId = %s", (data.contract_end_date, store_id))
+            new_end = datetime.strptime(data.contract_end_date,"%Y-%m-%d").date()
+            new_start = old_end + timedelta(days=2)
+            if new_end < new_start:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"วันสิ้นสุดสัญญาใหม่ต้องไม่ก่อนวันเริ่มสัญญาใหม่ ({new_start})" )
+            cur.execute("UPDATE Store SET CurrentContractStartDate = %s,ContractEndDate = %s WHERE StoreId = %s", ( new_start,new_end,store_id))
             log_audit(db, "RENEW_CONTRACT", data.performed_by or "Executive", f"ต่อสัญญาร้าน {store['StoreName']} จาก {old_end} เป็น {data.contract_end_date}")
             db.commit()
-            return {"success": True, "message": "ต่อสัญญาเรียบร้อยแล้ว", "contract_end_date": data.contract_end_date}
+            return {"success": True, "message": "ต่อสัญญาเรียบร้อยแล้ว", "current_contract_start_date": new_start.isoformat(),
+                "contract_end_date": new_end.isoformat()}
     except HTTPException:
         db.rollback()
         raise

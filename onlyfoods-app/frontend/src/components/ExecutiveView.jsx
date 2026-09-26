@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// ===== ตั้งค่าหลักของหน้า Executive =====
 const ORDER_TIME_IS_UTC = true;
 const MAX_IMAGE_MB = 5;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const REFRESH_MS = 15000;
+const REFRESH_MS = 2000;
 const FOOD_CATEGORIES = [
     'อาหารจานเดียว',
     'ก๋วยเตี๋ยว / เส้น',
@@ -46,6 +47,7 @@ const T = {
 };
 const TOPBAR_H = 80;
 const FONT_STACK = '"Roboto","Sarabun","IBM Plex Sans Thai","Noto Sans Thai","Segoe UI",system-ui,sans-serif';
+// ===== ฟังก์ชันช่วยจัดรูปแบบวันที่ ยอดเงิน และคำนวณข้อมูล =====
 const intFmt = new Intl.NumberFormat('th-TH');
 const money = (v) => intFmt.format(Math.round(Number(v) || 0));
 const money2 = (v) => new Intl.NumberFormat('th-TH', {
@@ -115,6 +117,25 @@ function previousBounds(anchorISO, days) {
     prevStart.setDate(prevStart.getDate() - days);
     return { start: prevStart, end: prevEnd };
 }
+function customPeriodBounds(startISO, endISO) {
+    const start = new Date(`${startISO}T00:00:00`);
+    const end = new Date(`${endISO}T00:00:00`);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+}
+function rangeDayCount(startISO, endISO) {
+    const start = new Date(`${startISO}T00:00:00`);
+    const end = new Date(`${endISO}T00:00:00`);
+    return Math.max(1, Math.round((end - start) / 86400000) + 1);
+}
+function previousBoundsForRange(startISO, endISO) {
+    const days = rangeDayCount(startISO, endISO);
+    const current = customPeriodBounds(startISO, endISO);
+    const previousEnd = new Date(current.start);
+    const previousStart = new Date(previousEnd);
+    previousStart.setDate(previousStart.getDate() - days);
+    return { start: previousStart, end: previousEnd };
+}
 const statusIs = (order, status) => String(order?.Status || '').toLowerCase() === status.toLowerCase();
 function inRange(order, bounds, storeId = null) {
     const at = parseOrderDate(order.CreatedAt);
@@ -140,8 +161,10 @@ function summarize(orders) {
     const cancelled = orders.filter((o) => statusIs(o, 'Cancelled'));
     const finished = completed.length + cancelled.length;
     const sales = sumAmount(completed);
+    const grossSales = sumAmount([...completed, ...cancelled]);
     return {
         sales,
+        grossSales,
         completedCount: completed.length,
         cancelledCount: cancelled.length,
         cancelRate: finished ? (cancelled.length / finished) * 100 : 0,
@@ -189,6 +212,27 @@ function buildBuckets(completedOrders, anchorISO, days) {
     });
     return buckets;
 }
+function buildBucketsForRange(completedOrders, startISO, endISO) {
+    const days = rangeDayCount(startISO, endISO);
+    if (days === 1) return buildBuckets(completedOrders, endISO, 1);
+    const buckets = [];
+    const indexByKey = {};
+    const start = new Date(`${startISO}T00:00:00`);
+    for (let i = 0; i < days; i += 1) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        const key = toISODate(d);
+        indexByKey[key] = i;
+        buckets.push({ key, label: `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`, sales: 0, count: 0, byStore: {} });
+    }
+    completedOrders.forEach((o) => {
+        const at = parseOrderDate(o.CreatedAt);
+        if (!at) return;
+        const idx = indexByKey[toISODate(at)];
+        if (idx !== undefined) addToBucket(buckets[idx], o);
+    });
+    return buckets;
+}
 function addToBucket(bucket, order) {
     if (!bucket)
         return;
@@ -229,6 +273,7 @@ function summarizeMenus(completedOrders) {
     });
     return rows.sort((a, b) => b.amount - a.amount);
 }
+// ===== เรียก API และจัดการข้อผิดพลาดจาก Backend =====
 async function callApi(url, options = {}) {
     let response;
     try {
@@ -242,7 +287,7 @@ async function callApi(url, options = {}) {
         response = await fetch(url, requestOptions);
     }
     catch (err) {
-        throw new Error('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจสอบว่า backend รันอยู่');
+        throw new Error('ไม่สามารถดำเนินการได้ กรุณาลองใหม่อีกครั้ง');
     }
     let data = null;
     const raw = await response.text();
@@ -270,6 +315,7 @@ function useIsNarrow(breakpoint = 960) {
     }, [breakpoint]);
     return narrow;
 }
+// ===== ไอคอนที่ใช้ในหน้า Executive =====
 const ICON_PATHS = {
     overview: 'M3 3h7v7H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 14h7v7H3z',
     trend: 'M3 17l6-6 4 4 8-8M21 7v5h-5',
@@ -308,6 +354,7 @@ function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.7, styl
       <path d={d}/>
     </svg>);
 }
+// ===== ส่งออกข้อมูลเป็น CSV / Excel =====
 function saveBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -326,210 +373,39 @@ function exportCsv(filename, rows) {
     const csv = rows.map((r) => r.map(escape).join(',')).join('\r\n');
     saveBlob(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }), filename);
 }
-const PDF_W = 595;
-const PDF_H = 842;
-const CANVAS_W = 1190;
-const CANVAS_H = 1684;
-function dataUrlToBytes(dataUrl) {
-    const base64 = dataUrl.split(',')[1];
-    const bin = atob(base64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i += 1)
-        out[i] = bin.charCodeAt(i);
-    return out;
-}
-function buildPdfBlob(jpegPages) {
-    const encoder = new TextEncoder();
-    const chunks = [];
-    let length = 0;
-    const offsets = [];
-    const push = (u8) => {
-        chunks.push(u8);
-        length += u8.length;
+function exportXlsx(filename, rows, sheetName = 'Report') {
+    const enc = new TextEncoder();
+    const xml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const col = (n) => { let s = ''; for (n += 1; n; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
+    const cells = rows.map((row, r) => `<row r="${r + 1}">${row.map((v, c) => {
+        const ref = `${col(c)}${r + 1}`;
+        return typeof v === 'number' && Number.isFinite(v)
+            ? `<c r="${ref}"><v>${v}</v></c>`
+            : `<c r="${ref}" t="inlineStr"><is><t>${xml(v)}</t></is></c>`;
+    }).join('')}</row>`).join('');
+    const files = {
+        '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+        '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+        'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xml(sheetName.slice(0,31))}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+        'xl/_rels/workbook.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+        'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${cells}</sheetData></worksheet>`
     };
-    const pushText = (s) => push(encoder.encode(s));
-    const mark = (n) => {
-        offsets[n] = length;
-    };
-    const objectCount = 2 + jpegPages.length * 3;
-    pushText('%PDF-1.4\n');
-    mark(1);
-    pushText('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
-    const kids = jpegPages.map((_, i) => `${3 + i * 3} 0 R`).join(' ');
-    mark(2);
-    pushText(`2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${jpegPages.length} >>\nendobj\n`);
-    jpegPages.forEach((jpeg, i) => {
-        const pageNo = 3 + i * 3;
-        const imgNo = pageNo + 1;
-        const contentNo = pageNo + 2;
-        const content = `q ${PDF_W} 0 0 ${PDF_H} 0 0 cm /Im0 Do Q\n`;
-        mark(pageNo);
-        pushText(`${pageNo} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PDF_W} ${PDF_H}] ` +
-            `/Resources << /XObject << /Im0 ${imgNo} 0 R >> >> /Contents ${contentNo} 0 R >>\nendobj\n`);
-        mark(imgNo);
-        pushText(`${imgNo} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${CANVAS_W} ` +
-            `/Height ${CANVAS_H} /ColorSpace /DeviceRGB /BitsPerComponent 8 ` +
-            `/Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
-        push(jpeg);
-        pushText('\nendstream\nendobj\n');
-        mark(contentNo);
-        pushText(`${contentNo} 0 obj\n<< /Length ${content.length} >>\nstream\n${content}endstream\nendobj\n`);
+    const crcTable = Array.from({ length: 256 }, (_, n) => { let c=n; for(let k=0;k<8;k++) c=(c&1)?0xEDB88320^(c>>>1):c>>>1; return c>>>0; });
+    const crc32 = (u8) => { let c=0xFFFFFFFF; for(const b of u8) c=crcTable[(c^b)&255]^(c>>>8); return (c^0xFFFFFFFF)>>>0; };
+    const u16=(n)=>new Uint8Array([n&255,(n>>>8)&255]), u32=(n)=>new Uint8Array([n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]);
+    const join=(parts)=>{ const n=parts.reduce((a,p)=>a+p.length,0), z=new Uint8Array(n); let o=0; parts.forEach(p=>{z.set(p,o);o+=p.length;}); return z; };
+    const local=[], central=[]; let offset=0;
+    Object.entries(files).forEach(([name, content]) => {
+        const nb=enc.encode(name), data=enc.encode(content), crc=crc32(data);
+        const lh=join([u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(nb.length),u16(0),nb,data]);
+        local.push(lh);
+        central.push(join([u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(nb.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset),nb]));
+        offset += lh.length;
     });
-    const xrefPos = length;
-    let xref = `xref\n0 ${objectCount + 1}\n0000000000 65535 f \n`;
-    for (let i = 1; i <= objectCount; i += 1) {
-        xref += `${String(offsets[i] || 0).padStart(10, '0')} 00000 n \n`;
-    }
-    xref += `trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
-    pushText(xref);
-    const out = new Uint8Array(length);
-    let pos = 0;
-    chunks.forEach((c) => {
-        out.set(c, pos);
-        pos += c.length;
-    });
-    return new Blob([out], { type: 'application/pdf' });
+    const cd=join(central), body=join(local), end=join([u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cd.length),u32(body.length),u16(0)]);
+    saveBlob(new Blob([body, cd, end], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename);
 }
-function drawReportPage({ title, subtitle, kpis, tableTitle, columns, rows, pageNo, pageCount }) {
-    const canvas = document.createElement('canvas');
-    canvas.width = CANVAS_W;
-    canvas.height = CANVAS_H;
-    const ctx = canvas.getContext('2d');
-    const font = (size, weight = 'normal') => {
-        ctx.font = `${weight} ${size}px ${FONT_STACK}`;
-    };
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-    ctx.fillStyle = T.primary;
-    ctx.fillRect(0, 0, CANVAS_W, 14);
-    const M = 70;
-    let y = 92;
-    ctx.fillStyle = T.ink;
-    font(38, 'bold');
-    ctx.fillText(title, M, y);
-    y += 34;
-    ctx.fillStyle = T.muted;
-    font(20);
-    ctx.fillText(subtitle, M, y);
-    y += 22;
-    ctx.fillText(`ออกรายงานเมื่อ ${nowStamp()} น. · Only Foods Food Court`, M, y);
-    if (kpis && kpis.length) {
-        y += 40;
-        const cardW = (CANVAS_W - M * 2 - 24 * 2) / 3;
-        kpis.forEach((k, i) => {
-            const col = i % 3;
-            const row = Math.floor(i / 3);
-            const x = M + col * (cardW + 24);
-            const cy = y + row * 150;
-            ctx.fillStyle = '#FAFAFC';
-            ctx.strokeStyle = T.line;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.rect(x, cy, cardW, 126);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = T.muted;
-            font(19);
-            ctx.fillText(k.label, x + 22, cy + 40);
-            ctx.fillStyle = T.ink;
-            font(32, 'bold');
-            ctx.fillText(k.value, x + 22, cy + 82);
-            if (k.note) {
-                ctx.fillStyle = k.tone === 'up' ? T.up : k.tone === 'down' ? T.down : T.muted;
-                font(18);
-                ctx.fillText(k.note, x + 22, cy + 110);
-            }
-        });
-        y += Math.ceil(kpis.length / 3) * 150 + 20;
-    }
-    if (tableTitle) {
-        y += 24;
-        ctx.fillStyle = T.ink;
-        font(26, 'bold');
-        ctx.fillText(tableTitle, M, y);
-        y += 26;
-    }
-    if (columns && columns.length) {
-        const tableW = CANVAS_W - M * 2;
-        const colW = columns.map((c) => tableW * c.width);
-        const colX = [];
-        let acc = M;
-        colW.forEach((w) => {
-            colX.push(acc);
-            acc += w;
-        });
-        ctx.fillStyle = '#F3F3F8';
-        ctx.fillRect(M, y, tableW, 46);
-        ctx.fillStyle = T.text;
-        font(20, 'bold');
-        columns.forEach((c, i) => {
-            const tx = c.align === 'right' ? colX[i] + colW[i] - 16 : colX[i] + 16;
-            ctx.textAlign = c.align === 'right' ? 'right' : 'left';
-            ctx.fillText(c.title, tx, y + 30);
-        });
-        ctx.textAlign = 'left';
-        y += 46;
-        rows.forEach((row, ri) => {
-            if (ri % 2 === 1) {
-                ctx.fillStyle = '#FAFAFD';
-                ctx.fillRect(M, y, tableW, 42);
-            }
-            ctx.fillStyle = T.text;
-            font(19);
-            row.forEach((cell, i) => {
-                const c = columns[i];
-                const tx = c.align === 'right' ? colX[i] + colW[i] - 16 : colX[i] + 16;
-                ctx.textAlign = c.align === 'right' ? 'right' : 'left';
-                ctx.fillText(String(cell), tx, y + 28);
-            });
-            ctx.textAlign = 'left';
-            ctx.strokeStyle = T.line;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(M, y + 42);
-            ctx.lineTo(M + tableW, y + 42);
-            ctx.stroke();
-            y += 42;
-        });
-    }
-    ctx.fillStyle = T.muted;
-    font(17);
-    ctx.fillText(`หน้า ${pageNo}/${pageCount}`, M, CANVAS_H - 50);
-    ctx.textAlign = 'right';
-    ctx.fillText('รายงานสร้างจากระบบ Only Foods', CANVAS_W - M, CANVAS_H - 50);
-    ctx.textAlign = 'left';
-    return canvas;
-}
-function exportPdf(filename, spec) {
-    const ROWS_FIRST_PAGE = 14;
-    const ROWS_PER_PAGE = 26;
-    const rows = spec.rows || [];
-    const pagesRows = [];
-    if (rows.length <= ROWS_FIRST_PAGE) {
-        pagesRows.push(rows);
-    }
-    else {
-        pagesRows.push(rows.slice(0, ROWS_FIRST_PAGE));
-        for (let i = ROWS_FIRST_PAGE; i < rows.length; i += ROWS_PER_PAGE) {
-            pagesRows.push(rows.slice(i, i + ROWS_PER_PAGE));
-        }
-    }
-    const pageCount = pagesRows.length;
-    const jpegs = pagesRows.map((chunkRows, i) => {
-        const canvas = drawReportPage({
-            title: spec.title,
-            subtitle: i === 0 ? spec.subtitle : `${spec.subtitle} (ต่อ)`,
-            kpis: i === 0 ? spec.kpis : null,
-            tableTitle: i === 0 ? spec.tableTitle : `${spec.tableTitle} (ต่อ)`,
-            columns: spec.columns,
-            rows: chunkRows,
-            pageNo: i + 1,
-            pageCount
-        });
-        return dataUrlToBytes(canvas.toDataURL('image/jpeg', 0.92));
-    });
-    saveBlob(buildPdfBlob(jpegs), filename);
-}
+// ===== UI Components กลาง เช่น Card, Button, Modal, Toast =====
 function Card({ title, subtitle, right, children, style }) {
     return (<section className="of-card" style={{ ...cardStyle, ...style }}>
       {(title || right) && (<header style={cardHeadStyle}>
@@ -587,103 +463,36 @@ function KpiCard({ label, value, unit, delta, deltaLabel, hint, highlight, varia
         green: { bg: T.greenSoft, fg: T.up }
     };
     const iconTone = iconTones[tone] || iconTones.blue;
-    return (<div className="of-card" style={{
-            ...cardStyle,
-            padding: small ? '18px 20px' : '22px',
-            minHeight: solid ? '172px' : small ? '116px' : '150px',
-            height: '100%',
-            background: solid ? solidBg : T.surface,
-            color: solid ? '#FFFFFF' : T.text,
-            overflow: 'hidden',
-            position: 'relative',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-        }}>
+    return (<div className="of-card" style={{...cardStyle,padding:small? '18px 20px': '22px',minHeight:solid? '172px':small? '116px': '150px',height: '100%',background:solid?solidBg:T.surface,color:solid? '#FFFFFF':T.text,overflow: 'hidden',position: 'relative',display: 'flex',flexDirection: 'column',justifyContent: 'center'}}>
       {kind === 'purple' && <CardDecorCircles color={T.primaryDark}/>}
       {kind === 'blue' && <CardDecorWave />}
       {kind === 'blue' && <CardDecorCircles color={T.deepDark}/>}
 
       <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', gap: '14px' }}>
-        {solid ? (<CardIconBox icon={icon} background={kind === 'purple' ? T.primaryDark : T.deepDark}/>) : (<div style={{
-                width: small ? '44px' : '48px',
-                height: small ? '44px' : '48px',
-                minWidth: small ? '44px' : '48px',
-                borderRadius: T.radiusMd,
-                background: iconTone.bg,
-                color: iconTone.fg,
-                display: 'grid',
-                placeItems: 'center'
-            }}>
+        {solid ? (<CardIconBox icon={icon} background={kind === 'purple' ? T.primaryDark : T.deepDark}/>) : (<div style={{width:small? '44px': '48px',height:small? '44px': '48px',minWidth:small? '44px': '48px',borderRadius:T.radiusMd,background:iconTone.bg,color:iconTone.fg,display: 'grid',placeItems: 'center'}}>
             <Icon name={icon} size={22} color={iconTone.fg}/>
           </div>)}
 
         <div style={{ minWidth: 0 }}>
-          <div style={{
-            fontSize: small ? '22px' : '26px',
-            fontWeight: 700,
-            lineHeight: 1.2,
-            color: solid ? '#FFFFFF' : T.ink
-        }}>
+          <div style={{fontSize:small? '22px': '26px',fontWeight:700,lineHeight:1.2,color:solid? '#FFFFFF':T.ink}}>
             {value}
-            {unit && (<span style={{
-                fontSize: '13.5px',
-                fontWeight: 500,
-                marginLeft: '5px',
-                color: solid ? 'rgba(255,255,255,.80)' : T.muted
-            }}>
+            {unit && (<span style={{fontSize: '13.5px',fontWeight:500,marginLeft: '5px',color:solid? 'rgba(255,255,255,.80)':T.muted}}>
                 {unit}
               </span>)}
           </div>
-          <div style={{
-            marginTop: '3px',
-            fontSize: '13px',
-            color: solid ? 'rgba(255,255,255,.85)' : T.muted
-        }}>
+          <div style={{marginTop: '3px',fontSize: '13px',color:solid? 'rgba(255,255,255,.85)':T.muted}}>
             {label}
           </div>
         </div>
       </div>
 
-      {hasDelta ? (<div style={{
-                position: 'relative',
-                zIndex: 2,
-                marginTop: small ? '10px' : '14px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                alignSelf: 'flex-start',
-                padding: '5px 10px',
-                borderRadius: '999px',
-                fontSize: '12.5px',
-                fontWeight: 700,
-                background: delta === 0
-                    ? (solid ? 'rgba(255,255,255,.18)' : '#F1F3F7')
-                    : positive
-                        ? (solid ? 'rgba(220,252,231,.96)' : T.greenSoft)
-                        : (solid ? 'rgba(254,226,226,.96)' : T.redSoft),
-                color: delta === 0
-                    ? (solid ? '#FFFFFF' : T.muted)
-                    : positive ? T.up : T.down
-            }}>
+      {hasDelta ? (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',display: 'inline-flex',alignItems: 'center',gap: '6px',alignSelf: 'flex-start',padding: '5px 10px',borderRadius: '999px',fontSize: '12.5px',fontWeight:700,background:delta===0?(solid? 'rgba(255,255,255,.18)': '#F1F3F7'):positive?(solid? 'rgba(220,252,231,.96)':T.greenSoft):(solid? 'rgba(254,226,226,.96)':T.redSoft),color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
           <span aria-hidden="true">{delta === 0 ? '→' : rising ? '↗' : '↘'}</span>
           {delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}%
-          <span style={{
-              fontWeight: 500,
-              opacity: solid && delta === 0 ? 0.85 : 1,
-              color: delta === 0
-                  ? (solid ? '#FFFFFF' : T.muted)
-                  : positive ? T.up : T.down
-          }}>
+          <span style={{fontWeight:500,opacity:solid&&delta===0?0.85:1,color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
             {deltaLabel}
           </span>
-        </div>) : (<div style={{
-                position: 'relative',
-                zIndex: 2,
-                marginTop: small ? '10px' : '14px',
-                fontSize: '12.5px',
-                color: solid ? 'rgba(255,255,255,.80)' : T.muted
-            }}>
+        </div>) : (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',fontSize: '12.5px',color:solid? 'rgba(255,255,255,.80)':T.muted}}>
           {hint || 'ไม่มีข้อมูลช่วงก่อนหน้าให้เทียบ'}
         </div>)}
     </div>);
@@ -695,15 +504,7 @@ function Badge({ tone = 'neutral', children }) {
         danger: { color: T.down, background: T.redSoft },
         neutral: { color: T.muted, background: T.trackSoft }
     }[tone];
-    return (<span style={{
-            ...palette,
-            padding: '4px 11px',
-            borderRadius: '999px',
-            fontSize: '12px',
-            fontWeight: 700,
-            whiteSpace: 'nowrap',
-            display: 'inline-block'
-        }}>
+    return (<span style={{...palette,padding: '4px 11px',borderRadius: '999px',fontSize: '12px',fontWeight:700,whiteSpace: 'nowrap',display: 'inline-block'}}>
       {children}
     </span>);
 }
@@ -716,20 +517,7 @@ function Button({ variant = 'primary', icon, children, style, ...rest }) {
         danger: { background: T.redSoft, color: T.down, border: `1px solid ${T.redSoft}` },
         dark: { background: T.deep, color: '#FFFFFF', border: `1px solid ${T.deep}` }
     };
-    return (<button type="button" {...rest} style={{
-            ...variants[variant],
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '7px',
-            padding: '10px 18px',
-            borderRadius: T.radiusMd,
-            fontSize: '13.5px',
-            fontWeight: 600,
-            fontFamily: FONT_STACK,
-            cursor: rest.disabled ? 'not-allowed' : 'pointer',
-            opacity: rest.disabled ? 0.55 : 1,
-            ...style
-        }}>
+    return (<button type="button" {...rest} style={{...variants[variant],display: 'inline-flex',alignItems: 'center',gap: '7px',padding: '10px 18px',borderRadius:T.radiusMd,fontSize: '13.5px',fontWeight:600,fontFamily:FONT_STACK,cursor:rest.disabled? 'not-allowed': 'pointer',opacity:rest.disabled?0.55:1,...style}}>
       {icon && <Icon name={icon} size={16}/>}
       {children}
     </button>);
@@ -815,13 +603,7 @@ function Field({ label, required, error, hint, children }) {
     </label>);
 }
 function EmptyState({ text, minHeight = '200px' }) {
-    return (<div style={{
-            minHeight,
-            display: 'grid',
-            placeItems: 'center',
-            color: T.muted,
-            fontSize: '13.5px'
-        }}>
+    return (<div style={{minHeight,display: 'grid',placeItems: 'center',color:T.muted,fontSize: '13.5px'}}>
       {text}
     </div>);
 }
@@ -832,31 +614,14 @@ function PeriodPicker({ anchor, setAnchor, days, setDays, style }) {
         <input type="date" value={anchor} max={todayISO()} onChange={(e) => setAnchor(e.target.value || todayISO())} style={dateInputStyle} aria-label="เลือกวันที่ที่ต้องการดู"/>
       </div>
 
-      <div style={{
-            display: 'flex',
-            gap: '4px',
-            flexWrap: 'wrap',
-            background: T.primarySoft,
-            padding: '4px',
-            borderRadius: T.radiusMd
-        }}>
-        {[1, 7, 14, 30].map((v) => (<button key={v} type="button" onClick={() => setDays(v)} style={{
-                padding: '7px 14px',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: 600,
-                fontFamily: FONT_STACK,
-                cursor: 'pointer',
-                border: 'none',
-                background: days === v ? T.surface : 'transparent',
-                color: days === v ? T.primary : T.muted,
-                boxShadow: days === v ? '0 1px 3px rgba(18,25,38,.12)' : 'none'
-            }}>
+      <div style={{display: 'flex',gap: '4px',flexWrap: 'wrap',background:T.primarySoft,padding: '4px',borderRadius:T.radiusMd}}>
+        {[1, 7, 14, 30].map((v) => (<button key={v} type="button" onClick={() => setDays(v)} style={{padding: '7px 14px',borderRadius: '6px',fontSize: '13px',fontWeight:600,fontFamily:FONT_STACK,cursor: 'pointer',border: 'none',background:days===v?T.surface: 'transparent',color:days===v?T.primary:T.muted,boxShadow:days===v? '0 1px 3px rgba(18,25,38,.12)': 'none'}}>
             {v === 1 ? 'วันนี้' : `${v} วัน`}
           </button>))}
       </div>
     </div>);
 }
+// ===== กราฟและตัวเลือกสำหรับแสดงข้อมูลยอดขาย =====
 function SalesLineChart({ buckets, showStoreDetail = true }) {
     const [hover, setHover] = useState(null);
     const data = buckets || [];
@@ -949,14 +714,7 @@ function StoreBarChart({ rows, valueKey = 'sales', suffix = 'บาท' }) {
             const value = Number(r[valueKey]) || 0;
             return (<div key={r.StoreId ?? r.name ?? i}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-              <span style={{
-                    color: T.text,
-                    fontSize: '13px',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    maxWidth: '60%'
-                }}>
+              <span style={{color:T.text,fontSize: '13px',overflow: 'hidden',textOverflow: 'ellipsis',whiteSpace: 'nowrap',maxWidth: '60%'}}>
                 {r.StoreName || r.name}
               </span>
               <strong style={{ color: T.ink, fontSize: '13px' }}>
@@ -989,16 +747,7 @@ function StoreDonutChart({ rows }) {
     const radius = 72;
     const circumference = 2 * Math.PI * radius;
     let offset = 0;
-    return (<div style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '18px',
-            alignItems: 'center',
-            marginTop: '8px',
-            width: '100%',
-            minWidth: 0,
-            overflow: 'hidden'
-        }}>
+    return (<div style={{display: 'flex',flexWrap: 'wrap',gap: '18px',alignItems: 'center',marginTop: '8px',width: '100%',minWidth:0,overflow: 'hidden'}}>
       <div style={{ position: 'relative', width: '100%', maxWidth: '250px', margin: '0 auto', flex: '1 1 220px', minWidth: 0 }}>
         <svg viewBox="0 0 200 200" style={{ width: '100%', display: 'block', transform: 'rotate(-90deg)' }} aria-label="สัดส่วนยอดขายแยกร้าน">
           <circle cx="100" cy="100" r={radius} fill="none" stroke={T.trackSoft} strokeWidth="30"/>
@@ -1094,6 +843,7 @@ function MenuRankList({ rows, tone = 'primary', emptyText }) {
         </div>))}
     </div>);
 }
+// ===== หน้าหลัก Executive: โหลดข้อมูล เมนู แจ้งเตือน และควบคุมศูนย์อาหาร =====
 export default function ExecutiveView({ apiBase, user, onLogout }) {
     const API = apiBase || 'http://localhost:8000';
     const isNarrow = useIsNarrow();
@@ -1101,10 +851,13 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const [activeMenu, setActiveMenu] = useState('overview');
     // [CROSS-NAV] เก็บร้านที่ผู้บริหารคลิกมาจากอีกหน้า เพื่อเปิดรายละเอียดร้านเดิมต่อเนื่อง
     const [focusStoreId, setFocusStoreId] = useState('');
+    const [scrollToStoreIssues, setScrollToStoreIssues] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [search, setSearch] = useState('');
     const searchRef = useRef(null);
     const [stores, setStores] = useState([]);
+    const storesRef = useRef(stores);
+    useEffect(() => { storesRef.current = stores; }, [stores]);
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [foodCourtOpen, setFoodCourtOpen] = useState(true);
@@ -1209,14 +962,15 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         }
     }, [API, pushToast]);
     const loadIssueAlerts = useCallback(async () => {
-        if (!Array.isArray(stores) || stores.length === 0) {
+        const currentStores = storesRef.current;
+        if (!Array.isArray(currentStores) || currentStores.length === 0) {
             setIssueAlerts([]);
             return;
         }
 
         try {
             const results = await Promise.all(
-                stores.map(async (store) => {
+                currentStores.map(async (store) => {
                     try {
                         const rows = await callApi(`${API}/api/reports/issue/store/${store.StoreId}`);
                         return (Array.isArray(rows) ? rows : []).map((report) => ({
@@ -1248,7 +1002,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         catch (err) {
             console.debug('โหลดรายงานปัญหาสำหรับกระดิ่งไม่สำเร็จ:', err.message);
         }
-    }, [API, stores]);
+    }, [API]);
 
     const loadNotifications = useCallback(async (silent = true) => {
         const userId = user?.UserId || user?.userId;
@@ -1282,7 +1036,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             return;
 
         loadIssueAlerts();
-        const issueTimer = setInterval(loadIssueAlerts, REFRESH_MS);
+        const issueTimer = setInterval(loadIssueAlerts, 30000);
         return () => clearInterval(issueTimer);
     }, [stores, loadIssueAlerts]);
 
@@ -1389,6 +1143,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             rememberSyntheticRead(notif.NotifId);
             if (notif?.EventType === 'ISSUE_REPORT') {
                 setFocusStoreId(String(notif.StoreId || ''));
+                setScrollToStoreIssues(true);
                 setActiveMenu('store-sales');
                 setSearch('');
             }
@@ -1494,8 +1249,9 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             searchPlaceholder: 'ค้นหาประวัติการดำเนินการ...'
         }
     }[activeMenu];
-    const navigateTo = useCallback((menuId, storeId = '') => {
+    const navigateTo = useCallback((menuId, storeId = '', shouldScrollToIssues = false) => {
         setFocusStoreId(storeId ? String(storeId) : '');
+        setScrollToStoreIssues(Boolean(shouldScrollToIssues));
         setActiveMenu(menuId);
         setSearch('');
         if (isNarrow) setSidebarOpen(false);
@@ -1512,6 +1268,8 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         reloadStores: loadStores,
         reloadOrders: loadOrders,
         focusStoreId,
+        scrollToStoreIssues,
+        clearScrollToStoreIssues: () => setScrollToStoreIssues(false),
         navigateTo,
         clearFocusStore: () => setFocusStoreId('')
     };
@@ -1594,11 +1352,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
       `}</style>
       <div style={{ ...shellStyle, fontFamily: FONT_STACK }}>
 
-        <header style={{
-            ...topbarStyle,
-            padding: isPhone ? '10px 12px' : topbarStyle.padding,
-            gap: isPhone ? '8px' : topbarStyle.gap
-        }}>
+        <header style={{...topbarStyle,padding:isPhone? '10px 12px':topbarStyle.padding,gap:isPhone? '8px':topbarStyle.gap}}>
           <button type="button" className="of-icon-btn purple" onClick={() => setSidebarOpen((v) => !v)} style={iconButtonStyle} aria-label={sidebarOpen ? 'ซ่อนแถบเมนู' : 'แสดงแถบเมนู'}>
             <Icon name="menu" size={19} color={T.primary}/>
           </button>
@@ -1610,13 +1364,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             </div>
             {!isPhone && (<div style={brandSubtitleStyle}>
                 สถานะศูนย์อาหาร:
-                <span style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: foodCourtOpen ? T.up : T.down,
-                display: 'inline-block'
-            }}/>
+                <span style={{width: '8px',height: '8px',borderRadius: '50%',background:foodCourtOpen?T.up:T.down,display: 'inline-block'}}/>
                 <span style={{ color: foodCourtOpen ? T.up : T.down, fontWeight: 600 }}>
                   {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
                 </span>
@@ -1638,13 +1386,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
 
           <div style={{ flex: 1, minWidth: '8px' }}/>
 
-          {isPhone && (<div style={{
-                ...courtPillStyle,
-                padding: '6px 9px',
-                fontSize: '11.5px',
-                background: foodCourtOpen ? T.greenSoft : T.redSoft,
-                color: foodCourtOpen ? T.up : T.down
-            }}>
+          {isPhone && (<div style={{...courtPillStyle,padding: '6px 9px',fontSize: '11.5px',background:foodCourtOpen?T.greenSoft:T.redSoft,color:foodCourtOpen?T.up:T.down}}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor' }}/>
               {foodCourtOpen ? 'ศูนย์อาหารเปิด' : 'ศูนย์อาหารปิด'}
             </div>)}
@@ -1671,17 +1413,8 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                     {displayNotifications.length === 0 && (<div style={{ padding: '26px', textAlign: 'center', color: T.muted, fontSize: '13px' }}>
                         ยังไม่มีการแจ้งเตือน
                       </div>)}
-                    {displayNotifications.map((n) => (<button key={n.NotifId} type="button" onClick={() => openNotification(n)} style={{
-                    ...notifItemStyle,
-                    background: isRead(n) ? T.surface : T.primarySoft
-                }}>
-                        <span style={{
-                    width: '8px',
-                    height: '8px',
-                    borderRadius: '50%',
-                    marginTop: '6px',
-                    background: isRead(n) ? T.line : T.primary
-                }}/>
+                    {displayNotifications.map((n) => (<button key={n.NotifId} type="button" onClick={() => openNotification(n)} style={{...notifItemStyle,background:isRead(n)?T.surface:T.primarySoft}}>
+                        <span style={{width: '8px',height: '8px',borderRadius: '50%',marginTop: '6px',background:isRead(n)?T.line:T.primary}}/>
                         <span style={{ minWidth: 0 }}>
                           <span style={{ display: 'block', color: T.text, fontSize: '13px' }}>{n.Message}</span>
                           <span style={{ display: 'block', color: T.muted, fontSize: '11.5px', marginTop: '3px' }}>
@@ -1732,61 +1465,33 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
 
         <div style={shellBodyStyle}>
 
-          {sidebarOpen && (<aside style={{
-                ...sidebarStyle,
-                width: isNarrow ? 'min(84vw, 290px)' : sidebarStyle.width,
-                minWidth: isNarrow ? 'min(84vw, 290px)' : sidebarStyle.minWidth,
-                position: isNarrow ? 'absolute' : 'relative',
-                left: isNarrow ? 0 : 'auto',
-                top: isNarrow ? 0 : 'auto',
-                bottom: isNarrow ? 0 : 'auto',
-                alignSelf: isNarrow ? 'auto' : 'stretch',
-                boxShadow: isNarrow ? '4px 0 24px rgba(18,25,38,.10)' : sidebarStyle.boxShadow,
-                zIndex: isNarrow ? 60 : 20
-            }}>
+          {(!isNarrow || sidebarOpen) && (<aside style={{...sidebarStyle,width:isNarrow? 'min(84vw, 290px)':sidebarOpen? '260px':'76px',minWidth:isNarrow? 'min(84vw, 290px)':sidebarOpen? '260px':'76px',padding:isNarrow || sidebarOpen? sidebarStyle.padding:'16px 8px 12px',position:isNarrow? 'absolute': 'relative',left:isNarrow?0: 'auto',top:isNarrow?0: 'auto',bottom:isNarrow?0: 'auto',alignSelf:isNarrow? 'auto': 'stretch',boxShadow:isNarrow? '4px 0 24px rgba(18,25,38,.10)':sidebarStyle.boxShadow,zIndex:isNarrow?60:20}}>
               <nav style={{ flex: 1 }}>
-                <div style={sidebarLabelStyle}>เมนูหลัก</div>
-                {MENUS.map((m) => (<button key={m.id} type="button" className="of-nav-item" onClick={() => {
+                {sidebarOpen && <div style={sidebarLabelStyle}>เมนูหลัก</div>}
+                {MENUS.map((m) => (<button key={m.id} type="button" className="of-nav-item" title={!sidebarOpen ? m.label : undefined} aria-label={m.label} onClick={() => {
                     setActiveMenu(m.id);
                     setFocusStoreId('');
                     setSearch('');
                     if (isNarrow)
                         setSidebarOpen(false);
-                }} style={{
-                    ...sidebarItemStyle,
-                    background: activeMenu === m.id ? T.sideActive : 'transparent',
-                    color: activeMenu === m.id ? T.primary : T.sideText
-                }}>
+                }} style={{...sidebarItemStyle,justifyContent:sidebarOpen?'flex-start':'center',gap:sidebarOpen?'16px':'0',padding:sidebarOpen?'10px 16px':'12px 0',background:activeMenu===m.id?T.sideActive: 'transparent',color:activeMenu===m.id?T.primary:T.sideText}}>
                     <Icon name={m.icon} size={20}/>
-                    <span style={{ minWidth: 0, textAlign: 'left' }}>
+                    {sidebarOpen && <span style={{ minWidth: 0, textAlign: 'left' }}>
                       <span style={{ display: 'block', fontSize: '14px', fontWeight: activeMenu === m.id ? 600 : 500 }}>
                         {m.label}
                       </span>
-                      <span className="of-nav-caption" style={{
-                    display: 'block',
-                    fontSize: '11.5px',
-                    marginTop: '2px',
-                    color: activeMenu === m.id ? T.primary : T.muted,
-                    opacity: activeMenu === m.id ? 0.8 : 1
-                }}>
+                      <span className="of-nav-caption" style={{display: 'block',fontSize: '11.5px',marginTop: '2px',color:activeMenu===m.id?T.primary:T.muted,opacity:activeMenu===m.id?0.8:1}}>
                         {m.caption}
                       </span>
-                    </span>
+                    </span>}
                   </button>))}
               </nav>
 
-              <div style={sidebarFootStyle}>
-                <div style={avatarStyle}>{String(accountName).charAt(0).toUpperCase()}</div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={ellipsisStyle}>{accountName}</div>
-                  <div style={{ fontSize: '11.5px', color: T.muted }}>{accountRole}</div>
-                </div>
-              </div>
             </aside>)}
 
           {isNarrow && sidebarOpen && (<div style={backdropStyle} onClick={() => setSidebarOpen(false)}/>)}
 
-          <main style={mainScrollStyle}>
+          <main id="executive-main-scroll" style={mainScrollStyle}>
 
             <div style={{ ...contentStyle, padding: isPhone ? '14px 10px 22px' : isNarrow ? '18px 14px 24px' : contentStyle.padding }}>
               <div style={{ marginBottom: '18px' }}>
@@ -1816,11 +1521,44 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
       </div>
     </>);
 }
+// ===== ภาพรวมศูนย์อาหาร: สรุปยอดขาย ออเดอร์ ร้านค้า และกราฟ =====
 function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
-    const { orders, stores, loading, pushToast } = ctx;
+    const { API, orders, stores, loading, pushToast, navigateTo } = ctx;
     const [anchor, setAnchor] = useState(todayISO());
     const [days, setDays] = useState(1);
     const [exportPreview, setExportPreview] = useState(null);
+    const [issueReports, setIssueReports] = useState([]);
+    const [issueLoading, setIssueLoading] = useState(true);
+    const [showAllIssueStores, setShowAllIssueStores] = useState(false);
+
+    useEffect(() => {
+        if (!Array.isArray(stores) || stores.length === 0) {
+            setIssueReports([]);
+            setIssueLoading(false);
+            return undefined;
+        }
+        let cancelled = false;
+        Promise.all(stores.map(async (store) => {
+            try {
+                const rows = await callApi(`${API}/api/reports/issue/store/${store.StoreId}`);
+                return (Array.isArray(rows) ? rows : []).map((item) => ({
+                    ...item,
+                    StoreId: item.StoreId || store.StoreId,
+                    StoreName: item.StoreName || store.StoreName || `ร้าน #${store.StoreId}`
+                }));
+            } catch (err) {
+                console.debug(`โหลดรายงานปัญหาของร้าน ${store.StoreId} ไม่สำเร็จ:`, err.message);
+                return [];
+            }
+        })).then((results) => {
+            if (!cancelled) setIssueReports(results.flat());
+        }).finally(() => {
+            if (!cancelled) setIssueLoading(false);
+        });
+        return () => { cancelled = true; };
+    }, [API, stores]);
+
+    useEffect(() => { setShowAllIssueStores(false); }, [days, anchor]);
     const report = useMemo(() => {
         const bounds = periodBounds(anchor, days);
         const prevBounds = previousBounds(anchor, days);
@@ -1866,10 +1604,27 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         };
     }, [orders, stores, anchor, days]);
     const periodLabel = days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
-    const compareLabel = days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
+    const compareLabel = days === 1 ? 'ยอดขายเทียบวันก่อนหน้า' : `ยอดขายเทียบ ${days} วันก่อนหน้า`;
     const visibleStoreRows = report.storeRows;
+    const issueBounds = periodBounds(anchor, days);
+    const periodIssueReports = issueReports.filter((item) => {
+        const at = parseOrderDate(item.CreatedAt);
+        return at && at >= issueBounds.start && at < issueBounds.end;
+    }).sort((a, b) => (parseOrderDate(b.CreatedAt)?.getTime() || 0) - (parseOrderDate(a.CreatedAt)?.getTime() || 0));
+    const issueCountsByStore = Object.values(periodIssueReports.reduce((acc, item) => {
+        const id = String(item.StoreId || 'unknown');
+        if (!acc[id]) acc[id] = { StoreId: item.StoreId, StoreName: item.StoreName || `ร้าน #${id}`, count: 0 };
+        acc[id].count += 1;
+        return acc;
+    }, {})).sort((a, b) => b.count - a.count || String(a.StoreName).localeCompare(String(b.StoreName), 'th'));
     const maxStoreSales = Math.max(...report.storeRows.map((s) => Number(s.sales) || 0), 1);
     const bestStore = report.storeRows.find((s) => s.sales > 0) || null;
+    const storeStatus = useMemo(() => ({
+        open: stores.filter((s) => s.IsOpen && !s.IsSuspended).length,
+        closed: stores.filter((s) => !s.IsOpen && !s.IsSuspended).length,
+        suspended: stores.filter((s) => s.IsSuspended).length,
+        total: stores.length
+    }), [stores]);
     const watchStores = report.storeRows
         .filter((s) => s.IsSuspended || (s.delta !== null && s.delta <= -15) || s.cancelRate >= 10)
         .sort((a, b) => (Number(b.IsSuspended) - Number(a.IsSuspended)) || (b.cancelRate - a.cancelRate) || ((a.delta ?? 0) - (b.delta ?? 0)))
@@ -1907,105 +1662,210 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         setExportPreview(null);
         pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
     };
-    const savePdf = () => {
+    const saveXlsx = () => {
         try {
-            exportPdf(`onlyfoods-overview-${anchor}-${days}d.pdf`, {
-                title: 'รายงานภาพรวมศูนย์อาหาร',
-                subtitle: `ช่วงข้อมูล: ${periodLabel}`,
-                kpis: [
-                    {
-                        label: 'ยอดขายสุทธิ',
-                        value: `${money(report.now.sales)} บาท`,
-                        note: describeDelta(changePct(report.now.sales, report.before.sales), compareLabel),
-                        tone: toneOf(changePct(report.now.sales, report.before.sales))
-                    },
-                    {
-                        label: 'ออเดอร์สำเร็จ',
-                        value: `${money(report.now.completedCount)} ออเดอร์`,
-                        note: describeDelta(changePct(report.now.completedCount, report.before.completedCount), compareLabel),
-                        tone: toneOf(changePct(report.now.completedCount, report.before.completedCount))
-                    },
-                    {
-                        label: 'ยอดเฉลี่ยต่อออเดอร์',
-                        value: `${money2(report.now.avgOrder)} บาท`,
-                        note: `${money(report.activeStores)} ร้านเปิดให้บริการ`
-                    },
-                    {
-                        label: 'ออเดอร์ยกเลิก',
-                        value: `${money(report.now.cancelledCount)} ออเดอร์`,
-                        note: `อัตรายกเลิก ${report.now.cancelRate.toFixed(1)}%`,
-                        tone: report.now.cancelRate > 10 ? 'down' : 'flat'
-                    },
-                    {
-                        label: 'ร้านขายดีที่สุด',
-                        value: bestStore ? bestStore.StoreName : '-',
-                        note: bestStore ? `${money(bestStore.sales)} บาท` : 'ยังไม่มียอดขาย'
-                    },
-                    {
-                        label: 'ช่วงเวลาขายดี',
-                        value: report.peakHour === null ? '-' : `${pad2(report.peakHour)}:00 น.`,
-                        note: report.peakHour === null ? 'ยังไม่มีข้อมูล' : `${money(report.peakSales)} บาท`
-                    }
-                ],
-                tableTitle: 'สรุปผลรายร้าน',
-                columns: [
-                    { title: 'ร้านค้า', width: 0.34 },
-                    { title: 'ออเดอร์สำเร็จ', width: 0.15, align: 'right' },
-                    { title: 'ยอดขาย (บาท)', width: 0.19, align: 'right' },
-                    { title: 'ยกเลิก', width: 0.12, align: 'right' },
-                    { title: 'เทียบช่วงก่อน', width: 0.2, align: 'right' }
-                ],
-                rows: report.storeRows.map((s) => [
-                    s.StoreName,
-                    money(s.completedCount),
-                    money(s.sales),
-                    money(s.cancelledCount),
-                    s.delta === null ? '-' : `${s.delta >= 0 ? '+' : ''}${s.delta.toFixed(1)}%`
-                ])
-            });
+            exportXlsx(`onlyfoods-overview-${anchor}-${days}d.xlsx`, csvRows(), 'ภาพรวมศูนย์อาหาร');
             setExportPreview(null);
-            pushToast('บันทึกไฟล์ PDF เรียบร้อยแล้ว');
-        }
-        catch (err) {
-            pushToast('สร้างไฟล์ PDF ไม่สำเร็จ', 'error');
+            pushToast('บันทึกไฟล์ XLSX เรียบร้อยแล้ว');
+        } catch (err) {
+            pushToast('สร้างไฟล์ XLSX ไม่สำเร็จ', 'error');
         }
     };
     return (<>
 
-      <Card style={{ marginBottom: '18px' }}>
-        <div style={courtControlStyle}>
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', minWidth: 0 }}>
-
+      <div
+        className="of-control-status-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+          gap: '18px',
+          marginBottom: '18px'
+        }}
+      >
+        {/* การควบคุมศูนย์อาหาร */}
+        <Card style={{ marginBottom: '0' }}>
+          <div style={{
+            ...courtControlStyle,
+            minHeight: '132px',
+            padding: '18px 20px'
+          }}>
             <div style={{
-            width: '48px',
-            height: '48px',
-            minWidth: '48px',
-            borderRadius: T.radiusMd,
-            display: 'grid',
-            placeItems: 'center',
-            background: foodCourtOpen ? T.greenSoft : T.redSoft,
-            color: foodCourtOpen ? T.up : T.down
-        }}>
-              <Icon name="power" size={22} color={foodCourtOpen ? T.up : T.down}/>
+              display: 'flex',
+              gap: '16px',
+              alignItems: 'flex-start',
+              minWidth: 0
+            }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                minWidth: '48px',
+                borderRadius: T.radiusMd,
+                display: 'grid',
+                placeItems: 'center',
+                background: foodCourtOpen ? T.greenSoft : T.redSoft,
+                color: foodCourtOpen ? T.up : T.down
+              }}>
+                <Icon
+                  name="power"
+                  size={22}
+                  color={foodCourtOpen ? T.up : T.down}
+                />
+              </div>
+
+              <div style={{ minWidth: 0 }}>
+                <h3 style={h3Style}>การควบคุมศูนย์อาหาร</h3>
+                <p style={{ ...bodyStyle, margin: '6px 0 0' }}>
+                  สถานะปัจจุบัน:{' '}
+                  <strong style={{ color: foodCourtOpen ? T.up : T.down }}>
+                    {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
+                  </strong>
+                </p>
+                <p style={captionStyle}>
+                  สถานะนี้เก็บในฐานข้อมูล ทุกโรลจึงเห็นตรงกัน และระบบจะบล็อกการสั่งอาหารให้อัตโนมัติเมื่อปิด
+                </p>
+              </div>
             </div>
-            <div style={{ minWidth: 0 }}>
-            <h3 style={h3Style}>การควบคุมศูนย์อาหาร</h3>
-            <p style={{ ...bodyStyle, margin: '6px 0 0' }}>
-              สถานะปัจจุบัน:{' '}
-              <strong style={{ color: foodCourtOpen ? T.up : T.down }}>
-                {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
-              </strong>
-            </p>
-            <p style={captionStyle}>
-              สถานะนี้เก็บในฐานข้อมูล ทุกโรลจึงเห็นตรงกัน และระบบจะบล็อกการสั่งอาหารให้อัตโนมัติเมื่อปิด
-            </p>
+
+            <Button
+              variant={foodCourtOpen ? 'danger' : 'primary'}
+              icon="power"
+              onClick={onToggleCourt}
+              disabled={switchingCourt}
+            >
+              {switchingCourt ? 'กำลังบันทึก...' : foodCourtOpen ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร'}
+            </Button>
+          </div>
+        </Card>
+
+        {/* สถานะร้านค้า */}
+        <Card style={{ marginBottom: '0' }}>
+          <div style={{
+            ...courtControlStyle,
+            minHeight: '132px',
+            padding: '18px 20px'
+          }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '52px minmax(0, 0.9fr) minmax(0, 1.6fr)',
+              columnGap: 'clamp(8px, 1.5vw, 16px)',
+              width: '100%',
+              alignItems: 'stretch',
+              minHeight: '96px'
+            }}>
+              {/* Icon */}
+              <div style={{
+                width: '52px',
+                height: '52px',
+                minWidth: '52px',
+                borderRadius: T.radiusMd,
+                display: 'grid',
+                placeItems: 'center',
+                background: T.primarySoft,
+                color: T.primaryDark
+              }}>
+                <Icon name="store" size={28} color={T.primaryDark}/>
+              </div>
+
+              {/* Title */}
+              <div style={{
+                minWidth: 0,
+                paddingTop: '1px'
+              }}>
+                <h3 style={h3Style}>สถานะร้านค้า</h3>
+                <p style={{ ...bodyStyle, margin: '6px 0 0' }}>
+                  ร้านค้าทั้งหมด{' '}
+                  <strong style={{ color: T.ink }}>
+                    {money(storeStatus.total)} ร้าน
+                  </strong>
+                </p>
+                  </div>
+
+              {/* Status numbers — กลางการ์ดยาวไปทางขวา */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                gap: 'clamp(8px, 2vw, 24px)',
+                alignItems: 'center',
+                minWidth: 0,
+                paddingRight: '8px'
+              }}>
+                {[
+                  { key: 'open', label: 'เปิดให้บริการ', value: storeStatus.open, color: T.up },
+                  { key: 'closed', label: 'ปิดทำการ', value: storeStatus.closed, color: T.muted },
+                  { key: 'suspended', label: 'ระงับสิทธิ์', value: storeStatus.suspended, color: T.down }
+                ].map((item) => (
+                  <div key={item.key} style={{
+                    minWidth: 0
+                  }}>
+                    <div style={{
+                      color: T.ink,
+                      fontSize: '32px',
+                      lineHeight: 1,
+                      fontWeight: 800,
+                      letterSpacing: '-0.8px'
+                    }}>
+                      {money(item.value)}
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      marginTop: '6px',
+                      minWidth: 0,
+                      flexWrap: 'wrap'
+                    }}>
+                      <span style={{
+                        width: '7px',
+                        height: '7px',
+                        minWidth: '7px',
+                        borderRadius: '50%',
+                        background: item.color
+                      }}/>
+
+                      <span style={{
+                        color: T.muted,
+                        fontSize: '12px',
+                        lineHeight: 1.2,
+                        fontWeight: 500
+                      }}>
+                        {item.label}
+                      </span>
+                    </div>
+
+                    <div style={{
+                      color: T.muted,
+                      fontSize: '10px',
+                      marginTop: '2px'
+                    }}>
+                      
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+            </div>
+
+            <div style={{ marginTop: '-18px' }}>
+              <Button
+                variant="danger"
+                icon="store"
+                onClick={() => ctx.navigateTo('store-manage')}
+              >
+                จัดการร้านค้า
+              </Button>
             </div>
           </div>
-          <Button variant={foodCourtOpen ? 'danger' : 'primary'} icon="power" onClick={onToggleCourt} disabled={switchingCourt}>
-            {switchingCourt ? 'กำลังบันทึก...' : foodCourtOpen ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร'}
-          </Button>
-        </div>
-      </Card>
+        </Card>
+      </div>
+
+      <style>{`
+        @media (max-width: 900px) {
+          .of-control-status-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
 
       <Card style={{ marginBottom: '18px' }}>
         <div style={toolbarStyle}>
@@ -2020,8 +1880,8 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
             <Button variant="ghost" icon="download" onClick={() => setExportPreview('csv')}>
               CSV
             </Button>
-            <Button variant="dark" icon="download" onClick={() => setExportPreview('pdf')}>
-              PDF
+            <Button variant="dark" icon="download" onClick={() => setExportPreview('xlsx')}>
+              XLSX
             </Button>
           </div>
         </div>
@@ -2032,253 +1892,8 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} variant="blue" icon="check"/>
       </div>
 
-      <section className="of-card" style={{
-          ...cardStyle,
-          marginTop: '18px',
-          marginBottom: '18px',
-          padding: '0',
-          overflow: 'hidden',
-          border: watchStores.length ? '1px solid #E8552D' : `1px solid ${T.line}`,
-          background: watchStores.length
-              ? `linear-gradient(135deg, ${T.primary} 0%, ${T.primaryDark} 100%)`
-              : T.surface,
-          boxShadow: watchStores.length
-              ? '0 12px 28px rgba(232,85,45,0.18)'
-              : T.shadowSm
-      }}>
-        <div style={{
-            padding: '18px 20px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: '14px',
-            flexWrap: 'wrap',
-            background: watchStores.length
-                ? 'rgba(255,255,255,0.04)'
-                : T.surface,
-            borderBottom: `1px solid ${watchStores.length ? 'rgba(255,255,255,0.20)' : T.line}`
-        }}>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', minWidth: 0 }}>
-            <div style={{
-                width: '42px',
-                height: '42px',
-                minWidth: '42px',
-                borderRadius: '12px',
-                display: 'grid',
-                placeItems: 'center',
-                background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft
-            }}>
-              <Icon name={watchStores.length ? 'info' : 'check'} size={21}
-                color={watchStores.length ? '#FFFFFF' : T.up}/>
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <h3 style={{ ...h3Style, fontSize: '16px', color: watchStores.length ? '#FFFFFF' : T.ink }}>ร้านที่น่าจับตามอง</h3>
-              <p style={{ ...captionStyle, marginTop: '4px', color: watchStores.length ? 'rgba(255,255,255,0.82)' : T.muted }}>
-                คัดจากยอดขายลดลง อัตรายกเลิกสูง หรือร้านที่ถูกระงับสิทธิ์
-              </p>
-            </div>
-          </div>
-
-          <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '7px',
-              padding: '7px 11px',
-              borderRadius: '999px',
-              background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft,
-              color: watchStores.length ? '#FFFFFF' : T.up,
-              fontSize: '12px',
-              fontWeight: 700,
-              whiteSpace: 'nowrap'
-          }}>
-            <span style={{
-                width: '7px',
-                height: '7px',
-                borderRadius: '50%',
-                background: watchStores.length ? '#FFFFFF' : T.up
-            }}/>
-            {watchStores.length ? `พบ ${watchStores.length} ร้าน` : 'สถานะปกติ'}
-          </div>
-        </div>
-
-        <div style={{ padding: watchStores.length ? '16px 20px 20px' : '0 20px' }}>
-          {watchStores.length === 0 ? (
-            <EmptyState text="ยังไม่มีร้านที่มีสัญญาณผิดปกติในช่วงนี้" minHeight="110px"/>
-          ) : (
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))',
-                gap: '12px'
-            }}>
-              {watchStores.map((s) => {
-                const reasons = [];
-                if (s.IsSuspended) reasons.push('ร้านถูกระงับสิทธิ์');
-                if (s.delta !== null && s.delta <= -15 && (s.completedCount > 0 || s.sales > 0)) {
-                    reasons.push(`ยอดขายลดลง ${Math.abs(s.delta).toFixed(1)}% จากช่วงก่อน`);
-                }
-                if (s.cancelRate >= 10) reasons.push(`อัตรายกเลิกสูง ${s.cancelRate.toFixed(1)}%`);
-                if (!reasons.length && s.completedCount === 0 && s.sales === 0) {
-                    reasons.push('ยังไม่มีข้อมูลยอดขายเพียงพอในช่วงนี้');
-                }
-
-                const severe = Boolean(s.IsSuspended) || s.cancelRate >= 15;
-                const accent = severe ? T.down : '#E86532';
-                const soft = severe ? '#FFE5DF' : '#FFEBDD';
-
-                return (
-                  <div key={s.StoreId} style={{
-                      position: 'relative',
-                      overflow: 'hidden',
-                      border: `1px solid ${severe ? '#E89A8B' : '#E8B286'}`,
-                      borderRadius: T.radiusLg,
-                      background: T.surface,
-                      boxShadow: '0 5px 16px rgba(42,44,65,0.05)'
-                  }}>
-                    <span style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        bottom: 0,
-                        width: '5px',
-                        background: accent
-                    }}/>
-
-                    <div style={{ padding: '16px 16px 16px 20px' }}>
-                      <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'flex-start',
-                          gap: '12px'
-                      }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{
-                              color: T.ink,
-                              fontSize: '15px',
-                              lineHeight: 1.4,
-                              fontWeight: 700,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap'
-                          }}>
-                            {s.StoreName}
-                          </div>
-                          <div style={{
-                              color: T.muted,
-                              fontSize: '11.5px',
-                              marginTop: '3px'
-                          }}>
-                            ร้านค้า #{s.StoreId}
-                          </div>
-                        </div>
-
-                        <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '6px 10px',
-                            borderRadius: '999px',
-                            background: soft,
-                            color: severe ? T.down : '#B34D1D',
-                            fontSize: '11.5px',
-                            fontWeight: 700,
-                            whiteSpace: 'nowrap'
-                        }}>
-                          <span style={{
-                              width: '6px',
-                              height: '6px',
-                              borderRadius: '50%',
-                              background: accent
-                          }}/>
-                          {severe ? 'ควรตรวจสอบ' : 'ควรจับตา'}
-                        </span>
-                      </div>
-
-                      <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                          gap: '8px',
-                          marginTop: '15px'
-                      }}>
-                        {[
-                          ['ยอดขาย', `${money(s.sales)} บาท`],
-                          ['ออเดอร์', `${money(s.completedCount)} รายการ`],
-                          ['ยกเลิก', `${s.cancelRate.toFixed(1)}%`]
-                        ].map(([label, value]) => (
-                          <div key={label} style={{
-                              padding: '10px',
-                              borderRadius: T.radiusMd,
-                              background: '#F8F9FC',
-                              border: `1px solid ${T.line}`,
-                              minWidth: 0
-                          }}>
-                            <div style={{
-                                color: T.muted,
-                                fontSize: '10.5px',
-                                whiteSpace: 'nowrap'
-                            }}>{label}</div>
-                            <div style={{
-                                color: label === 'ยกเลิก' && s.cancelRate >= 10 ? T.down : T.ink,
-                                fontSize: '13px',
-                                fontWeight: 700,
-                                marginTop: '3px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-                            }}>{value}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div style={{
-                          marginTop: '12px',
-                          padding: '10px 11px',
-                          borderRadius: T.radiusMd,
-                          background: soft
-                      }}>
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            color: severe ? T.down : '#B34D1D',
-                            fontSize: '11.5px',
-                            fontWeight: 700
-                        }}>
-                          <Icon name="info" size={14} color={severe ? T.down : '#B34D1D'}/>
-                          เหตุผลที่ควรจับตา
-                        </div>
-                        <div style={{
-                            color: T.text,
-                            fontSize: '12px',
-                            lineHeight: 1.6,
-                            marginTop: '5px'
-                        }}>
-                          {reasons.join(' · ')}
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => ctx.navigateTo('store-sales', s.StoreId)}
-                        style={{
-                          width: '100%', marginTop: '11px', padding: '9px 12px',
-                          borderRadius: T.radiusMd, border: `1px solid ${T.line}`,
-                          background: T.surface, color: T.primaryDark, fontSize: '12.5px',
-                          fontWeight: 700, cursor: 'pointer', fontFamily: FONT_STACK
-                        }}
-                      >
-                        ดูรายละเอียดร้าน →
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
-
       <div className="of-kpi-small">
-        <KpiCard size="sm" label="ยอดเฉลี่ยต่อออเดอร์" value={money2(report.now.avgOrder)} unit="บาท" delta={changePct(report.now.avgOrder, report.before.avgOrder)} deltaLabel={compareLabel} icon="trend" tone="blue"/>
+        <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" hint="รวมมูลค่าออเดอร์สำเร็จและออเดอร์ที่ถูกยกเลิก" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} icon="wallet" tone="blue"/>
         <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} icon="ban" tone="amber" invertDelta/>
         <KpiCard size="sm" label="อัตราการยกเลิก" value={`${report.now.cancelRate.toFixed(1)}%`} delta={changePct(report.now.cancelRate, report.before.cancelRate)} deltaLabel={compareLabel} icon="info" tone="amber" invertDelta/>
         <KpiCard size="sm" label="ช่วงเวลาขายดี" value={report.peakHour === null ? '—' : `${pad2(report.peakHour)}:00`} unit={report.peakHour === null ? '' : 'น.'} hint={report.peakHour === null ? 'ยังไม่มียอดขาย' : `ทำยอดได้ ${money(report.peakSales)} บาท`} delta={null} icon="calendar" tone="purple"/>
@@ -2309,7 +1924,6 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         </Card>
       </div>
 
-
       <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
@@ -2318,8 +1932,9 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
                 <th style={thStyle}>ร้านค้า</th>
                 <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
                 <th style={thRightStyle}>ยอดขาย</th>
-                <th style={thRightStyle}>{compareLabel}</th>
+                <th style={thRightStyle} title="เปรียบเทียบยอดขายกับช่วงก่อนหน้า">{compareLabel}</th>
                 <th style={thRightStyle}>ยกเลิก</th>
+                <th style={thRightStyle}>อัตรายกเลิก</th>
                 <th style={thStyle}>สถานะ</th>
               </tr>
             </thead>
@@ -2340,14 +1955,7 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
                     <div style={{ display: 'flex', justifyContent: 'flex-end', color: T.ink, fontWeight: 700 }}>
                       {money(s.sales)} บาท
                     </div>
-                    <div style={{ height: '6px', background: T.trackSoft, borderRadius: '999px', marginTop: '6px', overflow: 'hidden' }}>
-                      <div style={{
-                height: '100%',
-                width: `${Math.max((Number(s.sales || 0) / maxStoreSales) * 100, s.sales > 0 ? 3 : 0)}%`,
-                borderRadius: '999px',
-                background: T.primary
-            }}/>
-                    </div>
+
                   </td>
                   <td style={tdRightStyle}>
                     {s.delta === null ? (<span style={{ color: T.muted }}>—</span>) : (<span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 9px', borderRadius: '999px', background: s.delta >= 0 ? T.greenSoft : T.redSoft, color: s.delta >= 0 ? T.up : T.down, fontWeight: 700 }}>
@@ -2355,6 +1963,7 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
                       </span>)}
                   </td>
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
+                  <td style={tdRightStyle}>{s.cancelRate.toFixed(1)}%</td>
                   <td style={tdStyle}>
                     <Badge tone={s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
                       {s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
@@ -2362,7 +1971,7 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
                   </td>
                 </tr>))}
               {visibleStoreRows.length === 0 && (<tr>
-                  <td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
+                  <td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
                     ไม่พบร้านค้าที่ตรงกับคำค้นหา
                   </td>
                 </tr>)}
@@ -2371,11 +1980,45 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         </div>
       </Card>
 
-      <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={periodLabel} loading={loading} showStore/>
+      <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={periodLabel} loading={loading} showStore onStoreClick={(storeId) => ctx.navigateTo('store-sales', storeId)}/>
+
+      <Card title="รายงานปัญหาจากลูกค้า" subtitle={days === 1 ? `รายงานที่แจ้งในวันที่ ${thaiDate(anchor)}` : `จำนวนรายงานแยกตามร้าน · ${periodLabel}`} style={{ marginTop: '16px' }} right={<Badge tone="warning">{money(periodIssueReports.length)} รายการ</Badge>}>
+        {issueLoading ? <EmptyState text="กำลังโหลดรายงานปัญหา..."/> : periodIssueReports.length === 0 ? (
+          <EmptyState text="ไม่มีรายงานปัญหาในช่วงเวลาที่เลือก"/>
+        ) : days === 1 ? (
+          <div style={{ display: 'grid', gap: '10px' }}>
+            {periodIssueReports.slice(0, 5).map((item) => (
+              <button key={item.ReportID} type="button" onClick={() => navigateTo('store-sales', item.StoreId, true)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', width: '100%', textAlign: 'left', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '13px 14px', background: '#FFF', cursor: 'pointer', fontFamily: FONT_STACK }}>
+                <span style={{ minWidth: 0 }}>
+                  <strong style={{ display: 'block', color: T.ink, fontSize: '14px' }}>{item.StoreName}</strong>
+                  <span style={{ display: 'block', color: T.text, fontSize: '13px', marginTop: '4px' }}>{item.IssueType || 'ไม่ระบุประเภท'}</span>
+                  <span style={{ display: 'block', color: T.muted, fontSize: '12px', marginTop: '4px' }}>
+                    {item.QueueNo ? `คิว ${item.QueueNo}` : ''}{item.OrderID ? `${item.QueueNo ? ' · ' : ''}Order #${item.OrderID}` : ''}
+                  </span>
+                </span>
+                <span style={{ color: T.muted, fontSize: '12px', whiteSpace: 'nowrap' }}>{thaiDateTime(item.CreatedAt)}</span>
+              </button>
+            ))}
+            {periodIssueReports.length > 5 && <p style={{ ...captionStyle, margin: 0 }}>แสดง 5 จาก {money(periodIssueReports.length)} รายการล่าสุด</p>}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: '8px' }}>
+            <p style={{ ...captionStyle, margin: '0 0 4px' }}>เรียงตามจำนวนรายงานจากมากไปน้อย · คลิกชื่อร้านเพื่อดูรายละเอียดรายงาน</p>
+            {(showAllIssueStores ? issueCountsByStore : issueCountsByStore.slice(0, 5)).map((item) => (
+              <div key={item.StoreId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '11px 13px' }}>
+                <button type="button" onClick={() => navigateTo('store-sales', item.StoreId, true)} style={{ border: 0, background: 'transparent', padding: 0, color: T.ink, fontWeight: 700, cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left' }}>{item.StoreName}</button>
+                <Badge tone="warning">{money(item.count)} ครั้ง</Badge>
+              </div>
+            ))}
+            {issueCountsByStore.length > 5 && <Button variant="ghost" onClick={() => setShowAllIssueStores((v) => !v)}>{showAllIssueStores ? 'แสดงน้อยลง' : `แสดงทุกร้าน (${issueCountsByStore.length})`}</Button>}
+          </div>
+        )}
+      </Card>
+
 
       <Modal open={Boolean(exportPreview)} title={`พรีวิวก่อนบันทึก ${String(exportPreview || '').toUpperCase()}`} subtitle={`รายงานภาพรวมศูนย์อาหาร · ${periodLabel}`} onClose={() => setExportPreview(null)} width={820} footer={<>
             <Button variant="ghost" onClick={() => setExportPreview(null)}>ยกเลิก</Button>
-            <Button variant={exportPreview === 'pdf' ? 'dark' : 'primary'} icon="download" onClick={exportPreview === 'pdf' ? savePdf : saveCsv}>
+            <Button variant={exportPreview === 'xlsx' ? 'dark' : 'primary'} icon="download" onClick={exportPreview === 'xlsx' ? saveXlsx : saveCsv}>
               บันทึก {String(exportPreview || '').toUpperCase()}
             </Button>
           </>}>
@@ -2386,7 +2029,7 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
                 <h3 style={{ ...h3Style, margin: 0 }}>รายงานภาพรวมศูนย์อาหาร</h3>
                 <p style={{ ...captionStyle, marginTop: '5px' }}>{periodLabel}</p>
               </div>
-              <Badge tone="neutral">{exportPreview === 'pdf' ? 'PDF · รายงานจัดหน้า A4' : 'CSV · เปิดต่อใน Excel ได้'}</Badge>
+              <Badge tone="neutral">{exportPreview === 'xlsx' ? 'XLSX · ไฟล์ Excel' : 'CSV · เปิดต่อใน Excel ได้'}</Badge>
             </div>
           </div>
           <div style={{ padding: '16px 20px' }}>
@@ -2449,13 +2092,7 @@ function StarRating({ value, size = 14 }) {
 }
 function ReviewRow({ review }) {
     return (<div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
-      <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: '10px',
-            flexWrap: 'wrap'
-        }}>
+      <div style={{display: 'flex',justifyContent: 'space-between',alignItems: 'center',gap: '10px',flexWrap: 'wrap'}}>
         <div style={{ fontWeight: 700, fontSize: '13.5px', color: T.ink }}>
           {review.ReviewerName || 'ลูกค้าไม่ระบุชื่อ'}
         </div>
@@ -2469,6 +2106,7 @@ function ReviewRow({ review }) {
         </p>)}
     </div>);
 }
+// ===== รีวิวร้านค้า: คะแนนและความพึงพอใจของผู้ใช้ =====
 function StoreReviewSection({ ctx, storeId, style }) {
     const { API } = ctx;
     const [state, setState] = useState({ loading: false, error: null, data: null });
@@ -2551,6 +2189,7 @@ function StoreReviewSection({ ctx, storeId, style }) {
         </div>)}
     </Card>);
 }
+// ===== รายงานปัญหาร้านค้า: ตรวจสอบข้อร้องเรียนของแต่ละร้าน =====
 function StoreIssueReportSection({ ctx, storeId, style }) {
     const { API } = ctx;
     const [state, setState] = useState({ loading: false, error: null, rows: [] });
@@ -2672,7 +2311,8 @@ function summarizeCancelReasons(cancelledOrders) {
     });
     return rows.sort((a, b) => b.count - a.count);
 }
-function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, loading = false, style }) {
+// ===== ออเดอร์ยกเลิก: สรุปและตรวจสอบรายการที่ถูกยกเลิก =====
+function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, loading = false, style, onStoreClick }) {
     const [reasonFilter, setReasonFilter] = useState('');
     const [openId, setOpenId] = useState(null);
     const [showAll, setShowAll] = useState(false);
@@ -2754,7 +2394,7 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
                               <Badge tone="neutral">หน้าร้าน</Badge>
                             </span>)}
                         </td>
-                        {showStore && <td style={tdStyle}>{o.StoreName || `ร้าน #${o.StoreId}`}</td>}
+                        {showStore && <td style={tdStyle}>{onStoreClick ? (<button type="button" onClick={(event) => { event.stopPropagation(); onStoreClick(o.StoreId); }} title={`ดูยอดขายรายร้าน ${o.StoreName || `ร้าน #${o.StoreId}`}`} style={{ border: 'none', background: 'transparent', padding: 0, color: T.ink, fontWeight: 600, cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: '3px' }}>{o.StoreName || `ร้าน #${o.StoreId}`}</button>) : (o.StoreName || `ร้าน #${o.StoreId}`)}</td>}
                         <td style={tdStyle}>{o.PaymentMethod || '-'}</td>
                         <td style={{ ...tdRightStyle, color: T.down, fontWeight: 600 }}>
                           {money(o.TotalAmount)} บาท
@@ -2804,14 +2444,65 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
         </>)}
     </Card>);
 }
+function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom, startDate, setStartDate, endDate, setEndDate }) {
+    const choosePreset = (value) => { setCustom(false); setDays(value); };
+    const inputStyle = { ...dateInputStyle, width: '145px' };
+    return (<div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', background: T.primarySoft, padding: '4px', borderRadius: T.radiusMd }}>
+        {[1, 7, 14, 30].map((v) => (<button key={v} type="button" onClick={() => choosePreset(v)} style={{ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: !custom && days === v ? T.surface : 'transparent', color: !custom && days === v ? T.primary : T.muted, boxShadow: !custom && days === v ? '0 1px 3px rgba(18,25,38,.12)' : 'none' }}>{v === 1 ? 'วันนี้' : `${v} วัน`}</button>))}
+        <button type="button" onClick={() => setCustom(true)} style={{ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: custom ? T.surface : 'transparent', color: custom ? T.primary : T.muted, boxShadow: custom ? '0 1px 3px rgba(18,25,38,.12)' : 'none' }}>กำหนดเอง</button>
+      </div>
+      {custom ? (<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface, boxShadow: '0 1px 2px rgba(42,44,65,0.03)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: T.text, fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          ตั้งแต่วันที่
+          <input type="date" value={startDate} max={endDate || todayISO()} onChange={(e) => { const value = e.target.value || todayISO(); setStartDate(value); if (value > endDate) setEndDate(value); }} style={{ ...inputStyle, width: '136px', minWidth: '136px', boxSizing: 'border-box', padding: '8px 9px', border: `1px solid ${T.line}`, borderRadius: '7px', background: '#FFFFFF', color: T.ink, fontSize: '12.5px' }} aria-label="ตั้งแต่วันที่" />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: T.text, fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          ถึงวันที่
+          <input type="date" value={endDate} min={startDate} max={todayISO()} onChange={(e) => setEndDate(e.target.value || todayISO())} style={{ ...inputStyle, width: '136px', minWidth: '136px', boxSizing: 'border-box', padding: '8px 9px', border: `1px solid ${T.line}`, borderRadius: '7px', background: '#FFFFFF', color: T.ink, fontSize: '12.5px' }} aria-label="ถึงวันที่" />
+        </label>
+      </div>) : (<div style={dateWrapStyle}><Icon name="calendar" size={16} color={T.muted}/><input type="date" value={anchor} max={todayISO()} onChange={(e) => setAnchor(e.target.value || todayISO())} style={dateInputStyle} aria-label="เลือกวันที่สิ้นสุด" /></div>)}
+    </div>);
+}
+// ===== ยอดขายรายร้าน: เลือกร้าน ดูยอดขาย และอันดับเมนู =====
 function StoreSalesPage({ ctx }) {
-    const { orders, stores, pushToast, focusStoreId, navigateTo } = ctx;
+    const { orders, stores, pushToast, focusStoreId, scrollToStoreIssues, clearScrollToStoreIssues, navigateTo } = ctx;
     const [storeId, setStoreId] = useState(focusStoreId || '');
     useEffect(() => {
         if (focusStoreId) setStoreId(String(focusStoreId));
     }, [focusStoreId]);
+    // เมื่อเข้าหน้ายอดขายรายร้านจากการ์ด/รายการทั่วไป ให้กลับไปด้านบนสุด
+    // ยกเว้นการเข้ามาจากรายงานปัญหา ซึ่งต้องเลื่อนไปยังการ์ดรายงานโดยตรง
+    useEffect(() => {
+        if (!focusStoreId || scrollToStoreIssues) return undefined;
+        const timer = window.setTimeout(() => {
+            const main = document.getElementById('executive-main-scroll');
+            if (main) main.scrollTo({ top: 0, behavior: 'auto' });
+        }, 0);
+        return () => window.clearTimeout(timer);
+    }, [focusStoreId]);
+    // เลื่อนภายในพื้นที่ main โดยตรง เพื่อไม่ให้ scrollIntoView ไปเลื่อนผิด container
+    // และไม่ใส่ callback จาก ctx ใน dependency เพราะ ctx ถูกสร้างใหม่ทุก render
+    const scrollMainToCard = (elementId) => {
+        const main = document.getElementById('executive-main-scroll');
+        const target = document.getElementById(elementId);
+        if (!main || !target) return;
+        const top = target.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop - 20;
+        main.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    };
+    useEffect(() => {
+        if (!focusStoreId || !scrollToStoreIssues) return undefined;
+        const timer = window.setTimeout(() => {
+            scrollMainToCard('store-issue-reports');
+            clearScrollToStoreIssues?.();
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [focusStoreId, storeId, scrollToStoreIssues]);
     const [anchor, setAnchor] = useState(todayISO());
     const [days, setDays] = useState(1);
+    const [customRange, setCustomRange] = useState(false);
+    const [customStart, setCustomStart] = useState(todayISO());
+    const [customEnd, setCustomEnd] = useState(todayISO());
     const store = stores.find((s) => String(s.StoreId) === String(storeId)) || null;
 
     const salesContractInfo = (selectedStore) => {
@@ -2847,8 +2538,11 @@ function StoreSalesPage({ ctx }) {
     const report = useMemo(() => {
         if (!storeId)
             return null;
-        const bounds = periodBounds(anchor, days);
-        const prevBounds = previousBounds(anchor, days);
+        const effectiveStart = customRange ? customStart : toISODate(new Date(new Date(`${anchor}T00:00:00`).setDate(new Date(`${anchor}T00:00:00`).getDate() - days + 1)));
+        const effectiveEnd = customRange ? customEnd : anchor;
+        const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
+        const bounds = customRange ? customPeriodBounds(customStart, customEnd) : periodBounds(anchor, days);
+        const prevBounds = customRange ? previousBoundsForRange(customStart, customEnd) : previousBounds(anchor, days);
         const current = orders.filter((o) => inRange(o, bounds, storeId));
         const previous = orders.filter((o) => inRange(o, prevBounds, storeId));
         const now = summarize(current);
@@ -2857,81 +2551,44 @@ function StoreSalesPage({ ctx }) {
         return {
             now,
             before,
-            buckets: buildBuckets(now.completed, anchor, days),
+            buckets: customRange ? buildBucketsForRange(now.completed, customStart, customEnd) : buildBuckets(now.completed, anchor, days),
             bestMenus: menus.slice(0, 2),
-            worstMenus: [...menus].reverse().slice(0, 2),
+            // เมนูขายได้น้อยต้องไม่ซ้ำกับรายการขายดี
+            // ถ้ามีข้อมูลไม่พอสำหรับเปรียบเทียบ จะได้เป็น [] และ UI เดิมจะแสดง empty state
+            worstMenus: menus
+                .filter((menu) => !menus.slice(0, 2).some((best) => best.name === menu.name))
+                .reverse()
+                .slice(0, 2),
             menuCount: menus.length
         };
-    }, [orders, storeId, anchor, days]);
-    const periodLabel = days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
-    const compareLabel = days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
+    }, [orders, storeId, anchor, days, customRange, customStart, customEnd]);
+    const effectiveStart = customRange ? customStart : toISODate(new Date(new Date(`${anchor}T00:00:00`).setDate(new Date(`${anchor}T00:00:00`).getDate() - days + 1)));
+    const effectiveEnd = customRange ? customEnd : anchor;
+    const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
+    const periodLabel = customRange ? `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+    const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
+    const salesExportRows = () => [
+        [`รายงานยอดขายร้าน ${store.StoreName}`],
+        ['ช่วงข้อมูล', periodLabel], ['ออกรายงานเมื่อ', nowStamp()], [],
+        ['ตัวชี้วัด', 'ค่า', 'ช่วงก่อนหน้า'],
+        ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales), Math.round(report.before.sales)],
+        ['ออเดอร์สำเร็จ', report.now.completedCount, report.before.completedCount],
+        ['ออเดอร์ยกเลิก', report.now.cancelledCount, report.before.cancelledCount],
+        ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales), Math.round(report.before.grossSales)], [],
+        ['เมนู', 'จำนวนที่ขายได้', 'ยอดขาย (บาท)', 'สัดส่วนของยอดร้าน (%)'],
+        ...summarizeMenus(report.now.completed).map((m) => [m.name, m.qty, Math.round(m.amount), Number(m.share.toFixed(1))]), [],
+        [(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
+        ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count])
+    ];
     const handleCsv = () => {
-        if (!report || !store)
-            return;
-        exportCsv(`onlyfoods-${store.StoreName}-${anchor}-${days}d.csv`, [
-            [`รายงานยอดขายร้าน ${store.StoreName}`],
-            ['ช่วงข้อมูล', periodLabel],
-            ['ออกรายงานเมื่อ', nowStamp()],
-            [],
-            ['ตัวชี้วัด', 'ค่า', 'ช่วงก่อนหน้า'],
-            ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales), Math.round(report.before.sales)],
-            ['ออเดอร์สำเร็จ', report.now.completedCount, report.before.completedCount],
-            ['ออเดอร์ยกเลิก', report.now.cancelledCount, report.before.cancelledCount],
-            ['ยอดเฉลี่ยต่อออเดอร์', report.now.avgOrder.toFixed(2), report.before.avgOrder.toFixed(2)],
-            [],
-            ['เมนู', 'จำนวนที่ขายได้', 'ยอดขาย (บาท)', 'สัดส่วนของยอดร้าน (%)'],
-            ...summarizeMenus(report.now.completed).map((m) => [
-                m.name,
-                m.qty,
-                Math.round(m.amount),
-                m.share.toFixed(1)
-            ]),
-            [],
-            [days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
-            ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count])
-        ]);
+        if (!report || !store) return;
+        exportCsv(`onlyfoods-${store.StoreName}-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.csv`, salesExportRows());
         pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
     };
-    const handlePdf = () => {
-        if (!report || !store)
-            return;
-        exportPdf(`onlyfoods-${store.StoreName}-${anchor}-${days}d.pdf`, {
-            title: `รายงานยอดขาย · ${store.StoreName}`,
-            subtitle: `ช่วงข้อมูล: ${periodLabel}`,
-            kpis: [
-                {
-                    label: 'ยอดขายสุทธิ',
-                    value: `${money(report.now.sales)} บาท`,
-                    note: describeDelta(changePct(report.now.sales, report.before.sales), compareLabel),
-                    tone: toneOf(changePct(report.now.sales, report.before.sales))
-                },
-                {
-                    label: 'ออเดอร์สำเร็จ',
-                    value: `${money(report.now.completedCount)} ออเดอร์`,
-                    note: describeDelta(changePct(report.now.completedCount, report.before.completedCount), compareLabel),
-                    tone: toneOf(changePct(report.now.completedCount, report.before.completedCount))
-                },
-                {
-                    label: 'ยอดเฉลี่ยต่อออเดอร์',
-                    value: `${money2(report.now.avgOrder)} บาท`,
-                    note: `ยกเลิก ${report.now.cancelledCount} ออเดอร์`
-                }
-            ],
-            tableTitle: 'ยอดขายแยกตามเมนู',
-            columns: [
-                { title: 'เมนู', width: 0.46 },
-                { title: 'จำนวน', width: 0.16, align: 'right' },
-                { title: 'ยอดขาย (บาท)', width: 0.2, align: 'right' },
-                { title: 'สัดส่วน', width: 0.18, align: 'right' }
-            ],
-            rows: summarizeMenus(report.now.completed).map((m) => [
-                m.name,
-                money(m.qty),
-                money(m.amount),
-                `${m.share.toFixed(1)}%`
-            ])
-        });
-        pushToast('บันทึกไฟล์ PDF เรียบร้อยแล้ว');
+    const handleXlsx = () => {
+        if (!report || !store) return;
+        exportXlsx(`onlyfoods-${store.StoreName}-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.xlsx`, salesExportRows(), 'ยอดขายรายร้าน');
+        pushToast('บันทึกไฟล์ XLSX เรียบร้อยแล้ว');
     };
     return (<>
       <Card style={{ marginBottom: '16px', zIndex: 40 }}>
@@ -2945,8 +2602,8 @@ function StoreSalesPage({ ctx }) {
             <Button variant="ghost" icon="download" onClick={handleCsv} disabled={!storeId}>
               CSV
             </Button>
-            <Button variant="dark" icon="download" onClick={handlePdf} disabled={!storeId}>
-              PDF
+            <Button variant="dark" icon="download" onClick={handleXlsx} disabled={!storeId}>
+              XLSX
             </Button>
           </div>
         </div>
@@ -2968,10 +2625,10 @@ function StoreSalesPage({ ctx }) {
                   variant="ghost"
                   icon="edit"
                   onClick={() => navigateTo('store-manage', store.StoreId)}
-                  title="ไปหน้าแก้ไขข้อมูลร้านนี้"
+                  title="ไปหน้าจัดการร้านค้านี้"
                   style={{ padding: '7px 12px' }}
                 >
-                  แก้ไขข้อมูลร้าน
+                  จัดการร้านค้า
                 </Button>
                 <Badge tone={store.IsOpen ? 'ok' : 'neutral'}>
                   {store.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}
@@ -3001,7 +2658,7 @@ function StoreSalesPage({ ctx }) {
           </div>
 
           <div className="of-kpi-small">
-            <KpiCard size="sm" label="ยอดเฉลี่ยต่อออเดอร์" value={money2(report.now.avgOrder)} unit="บาท" delta={changePct(report.now.avgOrder, report.before.avgOrder)} deltaLabel={compareLabel} icon="trend" tone="blue"/>
+            <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} icon="trend" tone="blue"/>
             <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} icon="ban" tone="amber" invertDelta/>
           </div>
 
@@ -3009,9 +2666,9 @@ function StoreSalesPage({ ctx }) {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div style={{ color: T.muted, fontSize: '14px', fontWeight: 500 }}>
-                  {days === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}
+                  {(customRange ? effectiveDays : days) === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}
                 </div>
-                <PeriodPicker anchor={anchor} setAnchor={setAnchor} days={days} setDays={setDays}/>
+                <StorePeriodPicker anchor={anchor} setAnchor={setAnchor} days={days} setDays={setDays} custom={customRange} setCustom={setCustomRange} startDate={customStart} setStartDate={setCustomStart} endDate={customEnd} setEndDate={setCustomEnd}/>
               </div>
               <h3 style={{ margin: '6px 0 0', fontSize: '24px', fontWeight: 700, color: T.ink }}>
                 {money(report.now.sales)} บาท
@@ -3032,7 +2689,9 @@ function StoreSalesPage({ ctx }) {
           <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
             <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={`${store.StoreName} · ${periodLabel}`} showStore={false} style={{ marginTop: 0 }}/>
             <StoreReviewSection ctx={ctx} storeId={storeId}/>
-            <StoreIssueReportSection ctx={ctx} storeId={storeId}/>
+            <div id="store-issue-reports" style={{ scrollMarginTop: '20px' }}>
+              <StoreIssueReportSection ctx={ctx} storeId={storeId}/>
+            </div>
           </div>
         </>)}
     </>);
@@ -3050,7 +2709,11 @@ const EMPTY_STORE_FORM = {
     imageName: '',
     contractStartDate: '',
     contractDuration: '',
-    contractEndDate: ''
+    contractEndDate: '',
+    ownerFullName: '',
+    ownerUsername: '',
+    ownerPassword: '',
+    ownerConfirm: ''
 };
 function looksLikeGarbage(value) {
     const compact = String(value || '').trim().replace(/\s/g, '');
@@ -3068,7 +2731,7 @@ function looksLikeGarbage(value) {
     return false;
 }
 const EMAIL_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
-function validateStoreForm(form) {
+function validateStoreForm(form, mode = 'create') {
     const errors = {};
     const name = form.name.trim();
     if (!name)
@@ -3140,8 +2803,34 @@ function validateStoreForm(form) {
         errors.contractEndDate = 'กรุณาระบุวันที่สิ้นสุดสัญญา';
     if (form.contractStartDate && form.contractEndDate && form.contractEndDate < form.contractStartDate)
         errors.contractEndDate = 'วันที่สิ้นสุดสัญญาต้องไม่น้อยกว่าวันที่เริ่มสัญญา';
+
+    if (mode === 'create') {
+        const ownerFullName = String(form.ownerFullName || '').trim();
+        const ownerUsername = String(form.ownerUsername || '').trim();
+        const ownerPassword = String(form.ownerPassword || '');
+        const ownerConfirm = String(form.ownerConfirm || '');
+        if (!ownerFullName)
+            errors.ownerFullName = 'กรุณากรอกชื่อเจ้าของร้าน';
+        else if (ownerFullName.length > 100)
+            errors.ownerFullName = 'ชื่อต้องไม่เกิน 100 ตัวอักษร';
+        if (!ownerUsername)
+            errors.ownerUsername = 'กรุณากรอกชื่อผู้ใช้';
+        else if (!/^[a-zA-Z0-9_]{4,20}$/.test(ownerUsername))
+            errors.ownerUsername = 'ใช้ได้เฉพาะ a-z, 0-9 และ _ ความยาว 4–20 ตัว';
+        if (!ownerPassword)
+            errors.ownerPassword = 'กรุณากรอกรหัสผ่าน';
+        else if (ownerPassword.length < 6)
+            errors.ownerPassword = 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร';
+        else if (ownerPassword.length > 50)
+            errors.ownerPassword = 'รหัสผ่านต้องไม่เกิน 50 ตัวอักษร';
+        else if (/\s/.test(ownerPassword))
+            errors.ownerPassword = 'รหัสผ่านห้ามมีช่องว่าง';
+        if (ownerConfirm !== ownerPassword)
+            errors.ownerConfirm = 'ยืนยันรหัสผ่านไม่ตรงกัน';
+    }
     return errors;
 }
+// ===== ฟอร์มเพิ่ม/แก้ไขข้อมูลร้านค้า =====
 function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose, onSubmit, saving }) {
     const fileInputRef = useRef(null);
     const [dragOver, setDragOver] = useState(false);
@@ -3243,11 +2932,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
       </Field>
 
-      <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-          gap: '12px'
-      }}>
+      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',gap: '12px'}}>
         <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
           <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={inputStyle}/>
         </Field>
@@ -3278,12 +2963,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
             min={form.contractStartDate || undefined}
             onChange={update('contractEndDate')}
             disabled={form.contractDuration !== 'custom'}
-            style={{
-                ...inputStyle,
-                background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background,
-                color: form.contractDuration !== 'custom' ? T.muted : T.ink,
-                cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer'
-            }}
+            style={{...inputStyle,background:form.contractDuration!== 'custom'? '#F7F8FB':inputStyle.background,color:form.contractDuration!== 'custom'?T.muted:T.ink,cursor:form.contractDuration!== 'custom'? 'not-allowed': 'pointer'}}
           />
         </Field>
       </div>
@@ -3307,6 +2987,27 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
           <input type="email" value={form.email} onChange={update('email')} maxLength={100} placeholder="shop@example.com" style={inputStyle}/>
         </Field>
       </div>
+
+      {mode === 'create' && (<div style={{ marginTop: '6px', padding: '16px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: '#FAFBFD' }}>
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{ color: T.ink, fontSize: '14px', fontWeight: 700 }}>บัญชีเจ้าของร้าน</div>
+          <div style={{ color: T.muted, fontSize: '12px', marginTop: '3px' }}>สร้างบัญชีเจ้าของร้านพร้อมกับร้านค้าในขั้นตอนเดียว</div>
+        </div>
+        <Field label="ชื่อเจ้าของร้าน" required error={errors.ownerFullName}>
+          <input value={form.ownerFullName || ''} onChange={update('ownerFullName')} maxLength={100} placeholder="ชื่อ-นามสกุลเจ้าของร้าน" style={inputStyle}/>
+        </Field>
+        <div style={twoColStyle}>
+          <Field label="ชื่อผู้ใช้" required error={errors.ownerUsername} hint="a-z, 0-9 และ _ ความยาว 4–20 ตัว">
+            <input value={form.ownerUsername || ''} onChange={update('ownerUsername')} maxLength={20} autoComplete="off" placeholder="เช่น owner_shop" style={inputStyle}/>
+          </Field>
+          <Field label="รหัสผ่าน" required error={errors.ownerPassword} hint="อย่างน้อย 6 ตัว">
+            <input type="password" value={form.ownerPassword || ''} onChange={update('ownerPassword')} maxLength={50} autoComplete="new-password" placeholder="ตั้งรหัสผ่าน" style={inputStyle}/>
+          </Field>
+        </div>
+        <Field label="ยืนยันรหัสผ่าน" required error={errors.ownerConfirm}>
+          <input type="password" value={form.ownerConfirm || ''} onChange={update('ownerConfirm')} maxLength={50} autoComplete="new-password" placeholder="กรอกรหัสผ่านอีกครั้ง" style={inputStyle}/>
+        </Field>
+      </div>)}
 
       <Field label="คำอธิบายร้าน" error={errors.description} hint={`${form.description.length}/300 ตัวอักษร`}>
         <textarea value={form.description} onChange={update('description')} maxLength={300} rows={3} placeholder="จุดเด่นของร้าน เมนูแนะนำ ฯลฯ" style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_STACK }}/>
@@ -3378,8 +3079,9 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
       </Field>
     </Modal>);
 }
+// ===== จัดการร้านค้า: เพิ่ม แก้ไข เปิด/ปิด ระงับ และลบร้าน =====
 function StoreManagePage({ ctx }) {
-    const { API, user, stores, search, pushToast, ask, reloadStores, focusStoreId, clearFocusStore } = ctx;
+    const { API, user, stores, search, pushToast, ask, reloadStores, focusStoreId, clearFocusStore, navigateTo } = ctx;
     const [details, setDetails] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [mode, setMode] = useState('create');
@@ -3400,7 +3102,9 @@ function StoreManagePage({ ctx }) {
         loadDetails();
     }, [loadDetails]);
     const detailOf = (storeId) => details.find((d) => String(d.StoreId) === String(storeId)) || {};
-    const rows = stores.filter((s) => String(s.StoreName || '').toLowerCase().includes(search));
+    const rows = stores
+        .filter((s) => !focusStoreId || String(s.StoreId) === String(focusStoreId))
+        .filter((s) => String(s.StoreName || '').toLowerCase().includes(search));
     const openCreate = () => {
         if (!quickName.trim()) {
             pushToast('กรุณากรอกชื่อร้านค้าก่อน จึงจะเปิดฟอร์มเพิ่มร้านได้', 'warn');
@@ -3433,19 +3137,10 @@ function StoreManagePage({ ctx }) {
         setModalOpen(true);
     };
 
-    // [CROSS-NAV] มาจากหน้ายอดขายรายร้าน -> เปิดฟอร์มแก้ไขร้านที่เลือกให้ทันที
-    useEffect(() => {
-        if (!focusStoreId || !details.length)
-            return;
-        const targetStore = stores.find((s) => String(s.StoreId) === String(focusStoreId));
-        if (!targetStore)
-            return;
-        openEdit(targetStore);
-        clearFocusStore();
-    }, [focusStoreId, details, stores]);
+    // [CROSS-NAV] หากเข้ามาจากหน้ายอดขายรายร้าน ให้กรองตารางไว้ที่ร้านนั้น โดยไม่เปิดฟอร์มแก้ไขอัตโนมัติ
 
     const submitForm = async () => {
-        const found = validateStoreForm(form);
+        const found = validateStoreForm(form, mode);
         setErrors(found);
         if (Object.keys(found).length) {
             pushToast('ยังกรอกข้อมูลไม่ครบหรือไม่ถูกต้อง กรุณาตรวจสอบช่องที่มีข้อความสีแดง', 'error');
@@ -3462,7 +3157,12 @@ function StoreManagePage({ ctx }) {
             image_url: form.imageData,
             contract_start_date: form.contractStartDate || null,
             contract_end_date: form.contractEndDate || null,
-            performed_by: 'Executive'
+            performed_by: 'Executive',
+            ...(mode === 'create' ? {
+                owner_full_name: form.ownerFullName.trim(),
+                owner_username: form.ownerUsername.trim(),
+                owner_password: form.ownerPassword
+            } : {})
         };
         const send = async (path, method) => callApi(`${API}${path}`, {
             method,
@@ -3475,15 +3175,21 @@ function StoreManagePage({ ctx }) {
             const fullPath = isEdit ? `/api/stores/${form.StoreId}/full` : '/api/stores/full';
             const basicPath = isEdit ? `/api/stores/${form.StoreId}` : '/api/stores';
             const method = isEdit ? 'PUT' : 'POST';
-            try {
-                await send(fullPath, method);
-                pushToast(isEdit ? 'บันทึกการแก้ไขร้านค้าแล้ว' : 'เพิ่มร้านค้าเข้าระบบเรียบร้อยแล้ว');
+            if (isEdit) {
+                try {
+                    await send(fullPath, method);
+                    pushToast('บันทึกการแก้ไขร้านค้าแล้ว');
+                }
+                catch (fullError) {
+                    if (!/endpoint/i.test(fullError.message))
+                        throw fullError;
+                    await send(basicPath, method);
+                    pushToast('บันทึกได้เฉพาะชื่อร้าน — เพิ่มโค้ดจาก main_additions.py ในหลังบ้านก่อน จึงจะเก็บข้อมูลรายละเอียดได้', 'warn');
+                }
             }
-            catch (fullError) {
-                if (!/endpoint/i.test(fullError.message))
-                    throw fullError;
-                await send(basicPath, method);
-                pushToast('บันทึกได้เฉพาะชื่อร้าน — เพิ่มโค้ดจาก main_additions.py ในหลังบ้านก่อน จึงจะเก็บประเภทอาหาร/ช่องทางติดต่อ/รูปได้', 'warn');
+            else {
+                await send(fullPath, method);
+                pushToast('เพิ่มร้านค้าและบัญชีเจ้าของร้านเรียบร้อยแล้ว');
             }
             if (!isEdit)
                 setQuickName('');
@@ -3564,7 +3270,27 @@ function StoreManagePage({ ctx }) {
             pushToast(err.message, 'error');
         }
     };
+    const focusedStore = focusStoreId ? stores.find((s) => String(s.StoreId) === String(focusStoreId)) : null;
+
     return (<>
+      {focusedStore && (<div style={{ marginBottom: '16px', padding: '12px 14px', border: `1px solid ${T.primary}`, borderRadius: T.radiusMd, background: T.primarySoft, display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div>
+          <strong style={{ color: T.primaryDark }}>กำลังจัดการร้าน {focusedStore.StoreName}</strong>
+          <div style={{ ...captionStyle, marginTop: '3px' }}>แสดงร้านที่เลือกจากหน้ายอดขายรายร้าน · เลือกแก้ไขจากปุ่มในตารางได้</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <Button
+            variant="ghost"
+            icon="arrow-left"
+            onClick={() => navigateTo('store-sales', focusedStore.StoreId)}
+            title={`กลับไปดูยอดขายของร้าน ${focusedStore.StoreName}`}
+            style={{ padding: '9px 14px', fontWeight: 600, borderColor: T.line, boxShadow: '0 1px 2px rgba(18,25,38,.04)' }}
+          >
+            กลับไปยอดขายรายร้าน
+          </Button>
+          <Button variant="ghost" onClick={clearFocusStore} style={{ padding: '9px 14px' }}>แสดงร้านค้าทั้งหมด</Button>
+        </div>
+      </div>)}
       <Card title="เพิ่มร้านค้าใหม่" subtitle="พิมพ์ชื่อร้านก่อน แล้วกดต่อเพื่อกรอกรายละเอียดให้ครบ" style={{ marginBottom: '16px' }}>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
           <input value={quickName} onChange={(e) => setQuickName(e.target.value)} onKeyDown={(e) => {
@@ -3588,7 +3314,6 @@ function StoreManagePage({ ctx }) {
                 <th style={thStyle}>ประเภท</th>
                 <th style={thStyle}>ติดต่อ</th>
                 <th style={thStyle}>สถานะ</th>
-                <th style={thRightStyle}>ยอดขายสะสม</th>
                 <th style={thStyle}>จัดการ</th>
               </tr>
             </thead>
@@ -3626,7 +3351,6 @@ function StoreManagePage({ ctx }) {
                         {Boolean(s.IsSuspended) && <Badge tone="danger">ระงับสิทธิ์</Badge>}
                       </div>
                     </td>
-                    <td style={tdRightStyle}>{money(s.net_sales)} บาท</td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         <Button variant="soft" icon="edit" onClick={() => openEdit(s)} style={smallBtn}>
@@ -3653,7 +3377,7 @@ function StoreManagePage({ ctx }) {
                   </tr>);
         })}
               {rows.length === 0 && (<tr>
-                  <td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
+                  <td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
                     ไม่พบร้านค้าที่ตรงกับคำค้นหา
                   </td>
                 </tr>)}
@@ -3710,6 +3434,7 @@ function validateAccountForm(form, mode) {
 }
 
 
+// ===== ติดตามสัญญา: ตรวจสอบสถานะและต่ออายุสัญญาร้าน =====
 function ContractTrackingPage({ ctx }) {
     const { API, search, pushToast, ask, focusStoreId, clearFocusStore } = ctx;
     const [stores, setStores] = useState([]);
@@ -3752,32 +3477,44 @@ function ContractTrackingPage({ ctx }) {
         const d = dateOnly(value);
         return d ? d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
     };
-    const nextDayISO = (value) => {
+    const addDaysISO = (value, days) => {
         const d = dateOnly(value);
         if (!d) return todayISO();
-        d.setDate(d.getDate() + 1);
+        d.setDate(d.getDate() + days);
         return toISODate(d);
+    };
+    const nextDayISO = (value) => addDaysISO(value, 1);
+    const twoDaysAfterISO = (value) => addDaysISO(value, 2);
+    const currentContractStart = (store) =>
+        store?.CurrentContractStartDate || store?.ContractStartDate || null;
+    const hasRenewedContract = (store) => {
+        const first = dateOnly(store?.ContractStartDate);
+        const current = dateOnly(currentContractStart(store));
+        return !!(first && current && current.getTime() > first.getTime());
     };
     const renewalBaseDate = (currentEnd) => {
         const current = dateOnly(currentEnd);
-        const today = dateOnly(todayISO());
-        if (!current) return today;
-        return current > today ? current : today;
+        return current || dateOnly(todayISO());
+    };
+    const renewalStartDate = (currentEnd) => {
+        const base = renewalBaseDate(currentEnd);
+        return base ? new Date(`${twoDaysAfterISO(toISODate(base))}T00:00:00`) : null;
     };
     const calculateRenewEnd = (currentEnd, duration) => {
-        const base = renewalBaseDate(currentEnd);
-        if (!base || !duration || duration === 'custom') return '';
+        const start = renewalStartDate(currentEnd);
+        if (!start || !duration || duration === 'custom') return '';
         const months = { '6m': 6, '1y': 12, '2y': 24, '3y': 36 }[duration];
         if (!months) return '';
-        const originalDay = base.getDate();
-        const target = new Date(base.getFullYear(), base.getMonth() + months, 1);
+        const originalDay = start.getDate();
+        const target = new Date(start.getFullYear(), start.getMonth() + months, 1);
         const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
         target.setDate(Math.min(originalDay, lastDay));
+        target.setDate(target.getDate() - 1);
         return toISODate(target);
     };
     const minimumRenewEnd = (store) => {
-        const base = renewalBaseDate(store?.ContractEndDate);
-        return nextDayISO(toISODate(base));
+        const start = renewalStartDate(store?.ContractEndDate);
+        return start ? toISODate(start) : todayISO();
     };
     const openRenew = (store) => {
         setRenewStore(store);
@@ -3799,7 +3536,7 @@ function ContractTrackingPage({ ctx }) {
         ? (renewDuration === 'custom' ? renewCustomEnd : calculateRenewEnd(renewStore.ContractEndDate, renewDuration))
         : '';
     const renewBase = renewStore ? renewalBaseDate(renewStore.ContractEndDate) : null;
-    const renewNewStart = renewBase ? nextDayISO(toISODate(renewBase)) : '';
+    const renewNewStart = renewBase ? twoDaysAfterISO(toISODate(renewBase)) : '';
 
     const suspendExpiredStore = async (store) => {
         if (!store || store.IsSuspended) return;
@@ -3937,12 +3674,7 @@ function ContractTrackingPage({ ctx }) {
           <Button tone="secondary" onClick={clearFocusStore}>ดูสัญญาทุกร้าน</Button>
         </div>
       )}
-      <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(min(190px, 100%), 1fr))',
-          gap: '16px',
-          marginBottom: '16px'
-      }}>
+      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(min(190px, 100%), 1fr))',gap: '16px',marginBottom: '16px'}}>
         {[
             ['สัญญาปกติ', active, T.greenSoft, T.up],
             ['ใกล้หมดอายุ ≤ 30 วัน', soon, T.accentSoft, T.accentDark],
@@ -3999,8 +3731,8 @@ function ContractTrackingPage({ ctx }) {
               <thead>
                 <tr>
                   <th style={thStyle}>ร้านค้า</th>
-                  <th style={{ ...thStyle, width: '150px' }}>วันที่เริ่มสัญญา</th>
-                  <th style={{ ...thStyle, width: '150px' }}>วันที่สิ้นสุดสัญญา</th>
+                  <th style={{ ...thStyle, width: '175px' }}>วันเริ่มสัญญาครั้งแรก</th>
+                  <th style={{ ...thStyle, width: '245px' }}>ช่วงสัญญาปัจจุบัน</th>
                   <th style={{ ...thStyle, width: '150px' }}>ระยะเวลาคงเหลือ</th>
                   <th style={{ ...thStyle, width: '145px' }}>สถานะสัญญา</th>
                   <th style={{ ...thStyle, width: '245px', textAlign: 'right' }}>จัดการ</th>
@@ -4013,8 +3745,21 @@ function ContractTrackingPage({ ctx }) {
                       <div style={{ fontWeight: 700, color: T.ink }}>{store.StoreName}</div>
                       <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>Store ID #{store.StoreId}</div>
                     </td>
-                    <td style={tdStyle}>{formatContractDate(store.ContractStartDate)}</td>
-                    <td style={tdStyle}>{formatContractDate(store.ContractEndDate)}</td>
+                    <td style={tdStyle}>
+                      <div>{formatContractDate(store.ContractStartDate)}</div>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display:'flex', alignItems:'center', gap:'7px', flexWrap:'wrap' }}>
+                        <span style={{ fontWeight:700, color:T.ink }}>
+                          {formatContractDate(currentContractStart(store))}
+                        </span>
+                        <span style={{ color:T.muted }}>-</span>
+                        <span style={{ fontWeight:700, color:T.ink }}>
+                          {formatContractDate(store.ContractEndDate)}
+                        </span>
+
+                      </div>
+                    </td>
                     <td style={tdStyle}>
                       {store.contract.days === null
                         ? '—'
@@ -4025,16 +3770,7 @@ function ContractTrackingPage({ ctx }) {
                             : `${store.contract.days} วัน`}
                     </td>
                     <td style={tdStyle}>
-                      <span style={{
-                          display: 'inline-flex',
-                          padding: '6px 10px',
-                          borderRadius: '999px',
-                          background: store.contract.bg,
-                          color: store.contract.color,
-                          fontSize: '11.5px',
-                          fontWeight: 700,
-                          whiteSpace: 'nowrap'
-                      }}>{store.contract.label}</span>
+                      <span style={{display: 'inline-flex',padding: '6px 10px',borderRadius: '999px',background:store.contract.bg,color:store.contract.color,fontSize: '11.5px',fontWeight:700,whiteSpace: 'nowrap'}}>{store.contract.label}</span>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
@@ -4095,10 +3831,10 @@ function ContractTrackingPage({ ctx }) {
             <div style={{ marginTop:'16px', padding:'15px 16px', borderRadius:T.radiusMd, background:T.accentSoft, border:`1px solid ${T.accentBorder || '#FFD6C9'}` }}>
               <div style={{ fontSize:'12px', color:T.muted, marginBottom:'6px' }}>ช่วงสัญญาใหม่</div>
               <div style={{ fontSize:'17px', fontWeight:800, color:T.ink }}>
-                {formatContractDate(renewNewStart)} <span style={{ color:T.muted, padding:'0 7px' }}>→</span> {formatContractDate(renewNewEnd)}
+                {formatContractDate(renewNewStart)} <span style={{ color:T.muted, padding:'0 7px' }}>-</span> {formatContractDate(renewNewEnd)}
               </div>
               <div style={{ fontSize:'12px', color:T.muted, marginTop:'6px' }}>
-                ตรวจสอบช่วงสัญญาให้ถูกต้องก่อนกดยืนยัน
+                รอบใหม่จะเริ่ม 2 วันหลังจากวันสิ้นสุดสัญญาปัจจุบัน เพื่อเผื่อเวลาเตรียมการ
               </div>
             </div>
           )}
@@ -4155,6 +3891,7 @@ function ContractTrackingPage({ ctx }) {
     </>);
 }
 
+// ===== ประวัติการดำเนินการ: ตรวจสอบกิจกรรมสำคัญในระบบ =====
 function AuditHistoryPage({ ctx }) {
     const { API } = ctx;
     const [logs, setLogs] = useState([]);
@@ -4256,17 +3993,9 @@ function AuditHistoryPage({ ctx }) {
           </Button>
         </div>
 
-        <div style={{
-            display: 'flex',
-            gap: '10px',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            marginTop: '18px'
-        }}>
+        <div style={{display: 'flex',gap: '10px',alignItems: 'center',flexWrap: 'wrap',marginTop: '18px'}}>
           <div style={{ position: 'relative', flex: '1 1 280px', minWidth: 0 }}>
-            <Icon name="search" size={17} color={T.muted} style={{
-                position: 'absolute', left: '13px', top: '50%', transform: 'translateY(-50%)'
-            }}/>
+            <Icon name="search" size={17} color={T.muted} style={{position: 'absolute',left: '13px',top: '50%',transform: 'translateY(-50%)'}}/>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -4296,27 +4025,8 @@ function AuditHistoryPage({ ctx }) {
       </Card>
 
       <Card>
-        {loadError ? (<div style={{
-            padding: '24px',
-            borderRadius: T.radiusMd,
-            background: T.redSoft,
-            color: T.down,
-            fontSize: '14px'
-        }}>{loadError}</div>) : loadingLogs ? (<div style={{
-            padding: '48px 20px',
-            textAlign: 'center',
-            color: T.muted,
-            fontSize: '14px'
-        }}>กำลังโหลดประวัติการดำเนินการ...</div>) : filtered.length === 0 ? (<div style={{
-            padding: '48px 20px',
-            textAlign: 'center',
-            color: T.muted
-        }}>
-          <div style={{
-              width: '48px', height: '48px', margin: '0 auto 12px',
-              borderRadius: '50%', background: T.primarySoft,
-              display: 'grid', placeItems: 'center', color: T.primary
-          }}><Icon name="history" size={23}/></div>
+        {loadError ? (<div style={{padding: '24px',borderRadius:T.radiusMd,background:T.redSoft,color:T.down,fontSize: '14px'}}>{loadError}</div>) : loadingLogs ? (<div style={{padding: '48px 20px',textAlign: 'center',color:T.muted,fontSize: '14px'}}>กำลังโหลดประวัติการดำเนินการ...</div>) : filtered.length === 0 ? (<div style={{padding: '48px 20px',textAlign: 'center',color:T.muted}}>
+          <div style={{width: '48px',height: '48px',margin: '0 auto 12px',borderRadius: '50%',background:T.primarySoft,display: 'grid',placeItems: 'center',color:T.primary}}><Icon name="history" size={23}/></div>
           <div style={{ fontWeight: 600, color: T.text, marginBottom: '4px' }}>ไม่พบประวัติการดำเนินการ</div>
           <div style={{ fontSize: '13px' }}>ลองเปลี่ยนคำค้นหาหรือตัวกรอง</div>
         </div>) : (<div style={{ overflowX: 'auto' }}>
@@ -4345,28 +4055,13 @@ function AuditHistoryPage({ ctx }) {
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-                        <span style={{
-                            width: '30px', height: '30px', borderRadius: '50%',
-                            display: 'grid', placeItems: 'center',
-                            background: T.deepSoft, color: T.deep,
-                            fontSize: '12px', fontWeight: 700, flexShrink: 0
-                        }}>{String(log.PerformedBy || 'E').charAt(0).toUpperCase()}</span>
+                        <span style={{width: '30px',height: '30px',borderRadius: '50%',display: 'grid',placeItems: 'center',background:T.deepSoft,color:T.deep,fontSize: '12px',fontWeight:700,flexShrink:0}}>{String(log.PerformedBy || 'E').charAt(0).toUpperCase()}</span>
                         <span style={{ fontWeight: 500, color: T.text }}>{log.PerformedBy || '—'}</span>
                       </div>
                     </td>
                     <td style={{ ...tdStyle, lineHeight: 1.55 }}>{log.Details || '—'}</td>
                     <td style={tdStyle}>
-                      <span style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '6px 10px',
-                          borderRadius: '999px',
-                          background: meta.bg,
-                          color: meta.color,
-                          fontSize: '11.5px',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap'
-                      }}>{meta.label}</span>
+                      <span style={{display: 'inline-flex',alignItems: 'center',padding: '6px 10px',borderRadius: '999px',background:meta.bg,color:meta.color,fontSize: '11.5px',fontWeight:600,whiteSpace: 'nowrap'}}>{meta.label}</span>
                     </td>
                   </tr>);
               })}
@@ -4377,6 +4072,7 @@ function AuditHistoryPage({ ctx }) {
     </>);
 }
 
+// ===== บัญชีร้านค้า: สร้างและจัดการบัญชีผู้ใช้ของร้าน =====
 function StoreAccountsPage({ ctx }) {
     const { API, user, stores, search, pushToast, ask } = ctx;
     const [accounts, setAccounts] = useState([]);
@@ -4555,7 +4251,7 @@ function StoreAccountsPage({ ctx }) {
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                       <Button variant="ghost" icon="key" onClick={() => openResetPassword(a)} style={smallBtn}>
-                        แก้ไข / ตั้งรหัสใหม่
+                        ตั้งรหัสใหม่
                       </Button>
                       <Button variant="danger" icon="trash" onClick={() => removeAccount(a)} style={smallBtn}>
                         ลบ
@@ -4724,14 +4420,6 @@ const sidebarItemStyle = {
     fontFamily: FONT_STACK,
     transition: 'background .18s ease, color .18s ease'
 };
-const sidebarFootStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '16px 10px 6px',
-    marginTop: '12px',
-    borderTop: `1px solid ${T.line}`
-};
 const avatarStyle = {
     width: '34px',
     height: '34px',
@@ -4758,7 +4446,8 @@ const topbarStyle = {
     gap: '16px',
     background: T.surface,
     borderBottom: `1px solid ${T.line}`,
-    position: 'relative',
+    position: 'sticky',
+    top: 0,
     zIndex: 70,
     flexShrink: 0,
     boxSizing: 'border-box',
@@ -4905,9 +4594,9 @@ const dropdownItemStyle = {
 };
 const contentStyle = {
     width: '100%',
-    maxWidth: '1540px',
+    maxWidth: 'none',
     minWidth: 0,
-    margin: '0 auto',
+    margin: 0,
     padding: 'clamp(16px, 2.2vw, 24px)',
     minHeight: `calc(100dvh - ${TOPBAR_H}px)`,
     boxSizing: 'border-box',
