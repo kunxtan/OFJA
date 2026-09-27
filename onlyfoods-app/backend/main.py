@@ -1324,17 +1324,23 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM `Order` WHERE OrderID=%s", (order_id,))
         ord_data = cur.fetchone()
-        if not ord_data: 
+        if not ord_data:
             raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อ")
-        
+        if ord_data['Status'] != 'Verifying_Slip':
+            raise HTTPException(status_code=400, detail=f"ออเดอร์นี้ถูกตรวจสอบไปแล้ว (สถานะปัจจุบัน: {ord_data['Status']})")
+
         if payload.approved:
             cur.execute("UPDATE `Order` SET Status='Pending' WHERE OrderID=%s", (order_id,))
-            send_notif(db, ord_data['UserId'], f"✅ สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
+            if ord_data.get('UserId'):
+                send_notif(db, ord_data['UserId'], f"✅ สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
             log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id}")
         else:
-            cur.execute("UPDATE `Order` SET Status='Cancelled', CancelReason=%s WHERE OrderID=%s", (payload.reason or 'สลิปไม่ถูกต้อง', order_id))
-            send_notif(db, ord_data['UserId'], f"❌ สลิปคิว {ord_data['QueueNo']} ถูกปฏิเสธ: {payload.reason}")
-        
+            reason = payload.reason or 'สลิปไม่ถูกต้อง'
+            cur.execute("UPDATE `Order` SET Status='Cancelled', CancelReason=%s WHERE OrderID=%s", (reason, order_id))
+            if ord_data.get('UserId'):
+                send_notif(db, ord_data['UserId'], f"❌ สลิปคิว {ord_data['QueueNo']} ถูกปฏิเสธ: {reason}")
+            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id}: {reason}")
+
         db.commit()
         return {"success": True}
 
@@ -1671,6 +1677,20 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
     ensure_order_columns(db)
     try:
         with db.cursor() as cur:
+            cur.execute("SELECT Status FROM `Order` WHERE OrderID=%s", (order_id,))
+            current = cur.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="ไม่พบออเดอร์นี้")
+
+            current_status = current['Status']
+            terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
+            if current_status in terminal_statuses and payload.status != current_status:
+                raise HTTPException(status_code=400, detail=f"ออเดอร์สถานะ {current_status} ไม่สามารถเปลี่ยนสถานะได้")
+
+            # เมื่ออาหารพร้อมรับแล้ว ห้ามย้อนกลับไปเป็นของหมด/ยกเลิก
+            if current_status == 'Ready' and payload.status in {'Pending_Cancellation', 'Cancelled'}:
+                raise HTTPException(status_code=400, detail="อาหารเสร็จแล้ว ไม่สามารถยกเลิกหรือแจ้งของหมดกับออเดอร์นี้ได้")
+
             if payload.status == 'Ready':
                 cur.execute(
                     "UPDATE `Order` SET Status=%s, CancelReason=%s, ReadyAt=%s WHERE OrderID=%s", 
