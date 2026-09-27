@@ -328,6 +328,7 @@ const ICON_PATHS = {
     download: 'M12 3v12M7 11l5 5 5-5M4 21h16',
     calendar: 'M7 3v4M17 3v4M3 9h18M5 5h14v16H5z',
     edit: 'M4 20h4l10-10-4-4L4 16zM14 6l4 4',
+    eye: 'M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6zM12 15a3 3 0 100-6 3 3 0 000 6z',
     trash: 'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14',
     power: 'M12 3v9M7 6a8 8 0 1010 0',
     ban: 'M12 21a9 9 0 100-18 9 9 0 000 18zM5.6 5.6l12.8 12.8',
@@ -704,35 +705,7 @@ function SalesLineChart({ buckets, showStoreDetail = true }) {
         </div>)}
     </div>);
 }
-function StoreBarChart({ rows, valueKey = 'sales', suffix = 'บาท' }) {
-    const list = (rows || []).slice(0, 8);
-    if (!list.length)
-        return <EmptyState text="ยังไม่มีข้อมูลร้านค้า"/>;
-    const maxValue = Math.max(...list.map((r) => Number(r[valueKey]) || 0), 1);
-    return (<div style={{ display: 'flex', flexDirection: 'column', gap: '13px', marginTop: '12px' }}>
-      {list.map((r, i) => {
-            const value = Number(r[valueKey]) || 0;
-            return (<div key={r.StoreId ?? r.name ?? i}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-              <span style={{color:T.text,fontSize: '13px',overflow: 'hidden',textOverflow: 'ellipsis',whiteSpace: 'nowrap',maxWidth: '60%'}}>
-                {r.StoreName || r.name}
-              </span>
-              <strong style={{ color: T.ink, fontSize: '13px' }}>
-                {money(value)} {suffix}
-              </strong>
-            </div>
-            <div style={{ height: '10px', background: T.trackSoft, borderRadius: '999px', marginTop: '6px' }}>
-              <div style={{
-                    height: '100%',
-                    width: `${Math.max((value / maxValue) * 100, value > 0 ? 3 : 0)}%`,
-                    borderRadius: '999px',
-                    background: i === 0 ? T.primary : i === list.length - 1 ? T.accent : '#FF9E84'
-                }}/>
-            </div>
-          </div>);
-        })}
-    </div>);
-}
+
 function StoreDonutChart({ rows }) {
     const raw = (rows || []).filter((r) => Number(r.sales) > 0);
     if (!raw.length)
@@ -837,9 +810,7 @@ function MenuRankList({ rows, tone = 'primary', emptyText }) {
                 background: tone === 'primary' ? T.primary : T.accent
             }}/>
           </div>
-          <div style={{ ...captionStyle, marginTop: '4px' }}>
-            ขายได้ {money(r.qty)} จาน · คิดเป็น {r.share.toFixed(1)}% ของยอดขายร้าน
-          </div>
+          
         </div>))}
     </div>);
 }
@@ -2073,16 +2044,7 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
       </Modal>
     </>);
 }
-function toneOf(delta) {
-    if (delta === null || delta === undefined)
-        return 'flat';
-    return delta >= 0 ? 'up' : 'down';
-}
-function describeDelta(delta, label) {
-    if (delta === null || delta === undefined)
-        return 'ไม่มีข้อมูลช่วงก่อนหน้า';
-    return `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}% ${label}`;
-}
+
 function StarRating({ value, size = 14 }) {
     const rounded = Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
     return (<span style={{ fontSize: size, letterSpacing: '1px', whiteSpace: 'nowrap' }} aria-label={`${value} จาก 5 ดาว`}>
@@ -2354,9 +2316,6 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
               <strong style={{ ...cancelStatValueStyle, fontSize: '15px' }}>
                 {topReason ? topReason.reason : '-'}
               </strong>
-              {topReason && (<span style={captionStyle}>
-                  {money(topReason.count)} ครั้ง · {topReason.share.toFixed(0)}% ของการยกเลิกทั้งหมด
-                </span>)}
             </div>
           </div>
 
@@ -2679,10 +2638,10 @@ function StoreSalesPage({ ctx }) {
           </Card>
 
           <div style={{ ...chartGridStyle, marginBottom: '16px' }}>
-            <Card title="เมนูขายดี 2 อันดับแรก" subtitle="ดูว่าเมนูไหนเป็นตัวทำรายได้หลักของร้าน">
+            <Card title="เมนูขายดี 2 อันดับแรก" >
               <MenuRankList rows={report.bestMenus} emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้"/>
             </Card>
-            <Card title="เมนูที่ขายได้น้อย 2 อันดับ" subtitle="ใช้ตัดสินใจว่าควรปรับราคา จัดโปรฯ หรือถอดเมนูออก">
+            <Card title="เมนูที่ขายได้น้อย 2 อันดับ" >
               <MenuRankList rows={report.worstMenus} tone="accent" emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้"/>
             </Card>
           </div>
@@ -3079,12 +3038,62 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
       </Field>
     </Modal>);
 }
+// ดูร้าน
+function StoreDetailModal({ open, store, detail, onClose }) {
+    if (!store) return null;
+
+    const item = (label, value) => (
+        <div style={{
+            padding: '12px 0',
+            borderBottom: `1px solid ${T.line}`
+        }}>
+            <div style={{
+                ...captionStyle,
+                marginBottom: '4px'
+            }}>
+                {label}
+            </div>
+            <div style={{
+                ...bodyStyle,
+                color: value ? T.ink : T.muted
+            }}>
+                {value || '—'}
+            </div>
+        </div>
+    );
+
+    return (
+        <Modal
+            open={open}
+            title="ข้อมูลร้านค้า"
+            subtitle={store.StoreName}
+            onClose={onClose}
+            width={680}
+            footer={
+                <Button variant="ghost" onClick={onClose}>
+                    ปิด
+                </Button>
+            }
+        >
+            <div>
+                {item('ชื่อร้านค้า', store.StoreName)}
+                {item('ประเภท', detail.Category)}
+                {item('ชื่อผู้ติดต่อ', detail.ContactName)}
+                {item('เบอร์โทรศัพท์', detail.ContactPhone)}
+                {item('LINE', detail.ContactLine)}
+                {item('อีเมล', detail.ContactEmail)}
+                {item('รายละเอียดร้าน', detail.Description)}
+            </div>
+        </Modal>
+    );
+}
 // ===== จัดการร้านค้า: เพิ่ม แก้ไข เปิด/ปิด ระงับ และลบร้าน =====
 function StoreManagePage({ ctx }) {
     const { API, user, stores, search, pushToast, ask, reloadStores, focusStoreId, clearFocusStore, navigateTo } = ctx;
     const [details, setDetails] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [mode, setMode] = useState('create');
+    const [viewStoreId, setViewStoreId] = useState(null);
     const [form, setForm] = useState(EMPTY_STORE_FORM);
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
@@ -3102,6 +3111,7 @@ function StoreManagePage({ ctx }) {
         loadDetails();
     }, [loadDetails]);
     const detailOf = (storeId) => details.find((d) => String(d.StoreId) === String(storeId)) || {};
+    const openView = (store) => {setViewStoreId(store.StoreId);};
     const rows = stores
         .filter((s) => !focusStoreId || String(s.StoreId) === String(focusStoreId))
         .filter((s) => String(s.StoreName || '').toLowerCase().includes(search));
@@ -3353,6 +3363,9 @@ function StoreManagePage({ ctx }) {
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <Button variant="soft" icon="eye" onClick={() => openView(s)}style={smallBtn} title="ดูข้อมูลร้าน">
+                          ดู
+                        </Button>
                         <Button variant="soft" icon="edit" onClick={() => openEdit(s)} style={smallBtn}>
                           แก้ไข
                         </Button>
@@ -3387,6 +3400,9 @@ function StoreManagePage({ ctx }) {
       </Card>
 
       <StoreFormModal open={modalOpen} mode={mode} form={form} setForm={setForm} errors={errors} setErrors={setErrors} saving={saving} onClose={() => setModalOpen(false)} onSubmit={submitForm}/>
+        <StoreDetailModal store={rows.find((s) => String(s.StoreId) === String(viewStoreId))} detail={detailOf(viewStoreId)}open={Boolean(viewStoreId)}
+    onClose={() => setViewStoreId(null)}
+/>
     </>);
 }
 const STORE_ROLES = ['Shop Owner'];
@@ -3485,13 +3501,8 @@ function ContractTrackingPage({ ctx }) {
     };
     const nextDayISO = (value) => addDaysISO(value, 1);
     const twoDaysAfterISO = (value) => addDaysISO(value, 2);
-    const currentContractStart = (store) =>
-        store?.CurrentContractStartDate || store?.ContractStartDate || null;
-    const hasRenewedContract = (store) => {
-        const first = dateOnly(store?.ContractStartDate);
-        const current = dateOnly(currentContractStart(store));
-        return !!(first && current && current.getTime() > first.getTime());
-    };
+    
+    
     const renewalBaseDate = (currentEnd) => {
         const current = dateOnly(currentEnd);
         return current || dateOnly(todayISO());
@@ -3731,7 +3742,6 @@ function ContractTrackingPage({ ctx }) {
               <thead>
                 <tr>
                   <th style={thStyle}>ร้านค้า</th>
-                  <th style={{ ...thStyle, width: '175px' }}>วันเริ่มสัญญาครั้งแรก</th>
                   <th style={{ ...thStyle, width: '245px' }}>ช่วงสัญญาปัจจุบัน</th>
                   <th style={{ ...thStyle, width: '150px' }}>ระยะเวลาคงเหลือ</th>
                   <th style={{ ...thStyle, width: '145px' }}>สถานะสัญญา</th>
@@ -3745,13 +3755,11 @@ function ContractTrackingPage({ ctx }) {
                       <div style={{ fontWeight: 700, color: T.ink }}>{store.StoreName}</div>
                       <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>Store ID #{store.StoreId}</div>
                     </td>
-                    <td style={tdStyle}>
-                      <div>{formatContractDate(store.ContractStartDate)}</div>
-                    </td>
+                   
                     <td style={tdStyle}>
                       <div style={{ display:'flex', alignItems:'center', gap:'7px', flexWrap:'wrap' }}>
                         <span style={{ fontWeight:700, color:T.ink }}>
-                          {formatContractDate(currentContractStart(store))}
+                          {formatContractDate(store.CurrentContractStartDate || store.ContractStartDate)}
                         </span>
                         <span style={{ color:T.muted }}>-</span>
                         <span style={{ fontWeight:700, color:T.ink }}>
@@ -3839,7 +3847,7 @@ function ContractTrackingPage({ ctx }) {
             </div>
           )}
 
-          {renewStore.IsSuspended && (
+          {Boolean ( renewStore.IsSuspended) && (
             <div style={{ marginTop:'16px', padding:'15px 16px', border:`1px solid ${T.line}`, borderRadius:T.radiusMd, background:'#FFF' }}>
               <div style={{ fontSize:'13px', fontWeight:800, color:T.ink, marginBottom:'5px' }}>ร้านนี้ถูกระงับสิทธิ์อยู่</div>
               <div style={{ fontSize:'12px', color:T.muted, marginBottom:'12px' }}>เลือกสถานะร้านหลังจากต่อสัญญาสำเร็จ</div>
