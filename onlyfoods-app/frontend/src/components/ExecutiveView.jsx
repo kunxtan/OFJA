@@ -3039,15 +3039,18 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
     </Modal>);
 }
 // ดูร้าน
-function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, onSaveAccount, saving }) {
+function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, onSaveAccount, saving , pushToast }) {
+    const imageInputRef = useRef(null);
     const [editing, setEditing] = useState(null);
     const [value, setValue] = useState('');
     const [accountValue, setAccountValue] = useState('');
+    const [imageValue, setImageValue] = useState('');
     useEffect(() => {
         if (!open) {
             setEditing(null);
             setValue('');
             setAccountValue('');
+            setImageValue('');
         }
     }, [open, store?.StoreId]);
 
@@ -3061,6 +3064,63 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
     const startEdit = (key) => {
         setEditing(key);
         setValue(String(storeValue(key) || ''));
+    };
+
+        const startImageEdit = () => {
+        setEditing('ImageUrl');
+        setImageValue(detail?.ImageUrl || '');
+    };
+
+    const handleImageChange = (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+
+        if (!file) return;
+
+        if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+            pushToast('รองรับเฉพาะไฟล์ JPG, PNG และ WebP', 'error');
+            return;
+        }
+
+        if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+            pushToast(`ไฟล์ใหญ่เกินกำหนด อัปโหลดได้ไม่เกิน ${MAX_IMAGE_MB} MB`, 'error');
+            return;
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            setImageValue(String(reader.result));
+        };
+
+        reader.readAsDataURL(file);
+    };
+
+    const saveImage = async () => {
+        const current = detail?.ImageUrl || '';
+
+        if (imageValue === current) {
+            setEditing(null);
+            return;
+        }
+
+        const patch = {
+            StoreName: store.StoreName,
+            Category: detail?.Category || '',
+            ContactName: detail?.ContactName || '',
+            ContactPhone: detail?.ContactPhone || '',
+            ContactLine: detail?.ContactLine || '',
+            ContactEmail: detail?.ContactEmail || '',
+            Description: detail?.Description || '',
+            ImageUrl: imageValue
+        };
+
+        const ok = await onSaveStore(patch);
+
+        if (ok) {
+            setEditing(null);
+            setImageValue('');
+        }
     };
 
     const saveStoreField = async (key) => {
@@ -3186,9 +3246,134 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                 {editableStoreItem('ContactEmail', 'อีเมล')}
                 {editableStoreItem('Description', 'รายละเอียดร้าน')}
 
-                <div style={{ marginTop: '22px', marginBottom: '4px', color: T.ink, fontWeight: 700, fontSize: '15px' }}>
-                    บัญชีเจ้าของร้าน
+                <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+        <div style={{ ...captionStyle, marginBottom: '4px' }}>
+            รูปหน้าร้าน
+        </div>
+
+        {editing !== 'ImageUrl' && (
+            <button
+                type="button"
+                onClick={startImageEdit}
+                style={inlineEditButtonStyle}
+                aria-label="แก้ไขรูปหน้าร้าน"
+            >
+                <Icon name="edit" size={15} color={T.primary}/>
+            </button>
+        )}
+    </div>
+
+    {editing === 'ImageUrl' ? (
+        <div style={{ marginTop: '8px' }}>
+            <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleImageChange}
+                style={{ display: 'none' }}
+            />
+
+            {imageValue ? (
+                <img
+                    src={imageValue}
+                    alt="ตัวอย่างรูปร้าน"
+                    style={{
+                        width: '100%',
+                        maxWidth: '320px',
+                        height: '180px',
+                        objectFit: 'cover',
+                        borderRadius: T.radiusMd,
+                        border: `1px solid ${T.line}`,
+                        display: 'block',
+                        marginBottom: '10px'
+                    }}
+                />
+            ) : (
+                <div style={{
+                    width: '100%',
+                    maxWidth: '320px',
+                    height: '180px',
+                    border: `1px dashed ${T.line}`,
+                    borderRadius: T.radiusMd,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: T.muted,
+                    marginBottom: '10px'
+                }}>
+                    ไม่มีรูปหน้าร้าน
                 </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <Button
+                    variant="soft"
+                    icon="edit"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={saving}
+                >
+                    {imageValue ? 'เปลี่ยนรูป' : 'เลือกรูป'}
+                </Button>
+
+                {imageValue && (
+                    <Button
+                        variant="danger"
+                        icon="trash"
+                        onClick={() => setImageValue('')}
+                        disabled={saving}
+                    >
+                        ลบรูป
+                    </Button>
+                )}
+
+                <Button
+                    variant="primary"
+                    icon="check"
+                    onClick={saveImage}
+                    disabled={saving}
+                >
+                    บันทึก
+                </Button>
+
+                <Button
+                    variant="ghost"
+                    onClick={() => {
+                        setEditing(null);
+                        setImageValue('');
+                    }}
+                    disabled={saving}
+                >
+                    ยกเลิก
+                </Button>
+            </div>
+        </div>
+    ) : (
+        detail?.ImageUrl ? (
+            <img
+                src={detail.ImageUrl}
+                alt="รูปร้าน"
+                style={{
+                    width: '100%',
+                    maxWidth: '320px',
+                    height: '180px',
+                    objectFit: 'cover',
+                    borderRadius: T.radiusMd,
+                    border: `1px solid ${T.line}`,
+                    display: 'block'
+                }}
+            />
+        ) : (
+            <div style={{ ...bodyStyle, color: T.muted }}>
+                ยังไม่มีรูปหน้าร้าน
+            </div>
+        )
+    )}
+</div>
+
+<div style={{ marginTop: '22px', marginBottom: '4px', color: T.ink, fontWeight: 700, fontSize: '15px' }}>
+    บัญชีเจ้าของร้าน
+</div>
                 {accountItem('FullName', 'ชื่อ-นามสกุล')}
                 {accountItem('Username', 'Username')}
                 <div style={{ padding: '12px 0' }}>
@@ -3336,7 +3521,9 @@ function StoreManagePage({ ctx }) {
             contact_line: patch.ContactLine,
             contact_email: patch.ContactEmail,
             description: patch.Description,
-            image_url: d.ImageUrl || '',
+            image_url: patch.ImageUrl !== undefined
+            ? patch.ImageUrl
+            : (d.ImageUrl || ''),
             contract_start_date: d.ContractStartDate ? String(d.ContractStartDate).slice(0, 10) : null,
             contract_end_date: d.ContractEndDate ? String(d.ContractEndDate).slice(0, 10) : null,
             performed_by: 'Executive'
@@ -3579,6 +3766,7 @@ function StoreManagePage({ ctx }) {
         open={Boolean(viewStoreId)}
         onClose={() => setViewStoreId(null)}
         saving={saving}
+        pushToast={pushToast}
         onSaveStore={(patch) => saveStoreField(rows.find((s) => String(s.StoreId) === String(viewStoreId)), patch)}
         onSaveAccount={(key, value) => saveAccountField(accountOf(viewStoreId), key, value)}
       />
