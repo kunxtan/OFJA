@@ -296,10 +296,10 @@ class AccountCreateSchema(BaseModel):
     performed_by: Optional[str] = "Executive"
 
 class AccountUpdateSchema(BaseModel):
-    password: str
-    full_name: str
-    role: str
-    store_id: int
+    password: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    store_id: Optional[int] = None
     performed_by: Optional[str] = "Executive"
 
 class OrderItemSchema(BaseModel):
@@ -1080,34 +1080,133 @@ def create_store_account(data: AccountCreateSchema, db=Depends(get_db)):
 
 @app.put("/api/store-accounts/{user_id}/password")
 def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get_db)):
-    if len(data.password) < 6 or " " in data.password:
-        raise HTTPException(status_code=400, detail="รหัสผ่านต้องยาวอย่างน้อย 6 ตัว และห้ามมีช่องว่าง")
-    if data.role not in ALLOWED_STORE_ROLES:
-        raise HTTPException(status_code=400, detail="ตำแหน่งไม่ถูกต้อง")
-
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT Username FROM Users WHERE UserId = %s", (user_id,))
+            cur.execute(
+                """
+                SELECT UserId, Username, FullName, Role, StoreId
+                FROM Users
+                WHERE UserId = %s
+                """,
+                (user_id,),
+            )
             account = cur.fetchone()
+
             if not account:
                 raise HTTPException(status_code=404, detail="ไม่พบบัญชีผู้ใช้นี้")
 
-            cur.execute(
-                """
-                UPDATE Users SET Password = %s, FullName = %s, Role = %s, StoreId = %s
+            updates = []
+            values = []
+
+            
+            # -----------------------------
+            # Password
+            # -----------------------------
+            if data.password is not None:
+                if len(data.password) < 6 or " " in data.password:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="รหัสผ่านต้องยาวอย่างน้อย 6 ตัว และห้ามมีช่องว่าง",
+                    )
+
+                updates.append("Password = %s")
+                values.append(data.password)
+
+            # -----------------------------
+            # Full name
+            # -----------------------------
+            if data.full_name is not None:
+                full_name = data.full_name.strip()
+
+                if not full_name:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="กรุณากรอกชื่อ-นามสกุลผู้ใช้",
+                    )
+
+                if len(full_name) > 100:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="ชื่อ-นามสกุลต้องไม่เกิน 100 ตัวอักษร",
+                    )
+
+                updates.append("FullName = %s")
+                values.append(full_name)
+
+            # -----------------------------
+            # Role
+            # -----------------------------
+            if data.role is not None:
+                if data.role not in ALLOWED_STORE_ROLES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="ตำแหน่งไม่ถูกต้อง",
+                    )
+
+                updates.append("Role = %s")
+                values.append(data.role)
+
+            # -----------------------------
+            # Store
+            # -----------------------------
+            if data.store_id is not None:
+                cur.execute(
+                    "SELECT StoreId FROM Store WHERE StoreId = %s",
+                    (data.store_id,),
+                )
+
+                if not cur.fetchone():
+                    raise HTTPException(
+                        status_code=404,
+                        detail="ไม่พบร้านค้าที่เลือก",
+                    )
+
+                updates.append("StoreId = %s")
+                values.append(data.store_id)
+
+            # -----------------------------
+            # ไม่มีอะไรให้แก้
+            # -----------------------------
+            if not updates:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ไม่มีข้อมูลที่ต้องการแก้ไข",
+                )
+
+            values.append(user_id)
+
+            query = f"""
+                UPDATE Users
+                SET {", ".join(updates)}
                 WHERE UserId = %s
-                """,
-                (data.password, data.full_name.strip(), data.role, data.store_id, user_id),
+            """
+
+            cur.execute(query, tuple(values))
+
+            log_audit(
+                db,
+                "UPDATE_STORE_ACCOUNT",
+                data.performed_by or "Executive",
+                f"แก้ไขบัญชี {account['Username']} (ID {user_id})",
             )
-            log_audit(db, "UPDATE_STORE_ACCOUNT", data.performed_by or "Executive", f"แก้ไขบัญชี {account['Username']} (ID {user_id})")
+
         db.commit()
-        return {"success": True, "message": "อัปเดตบัญชีเรียบร้อยแล้ว"}
+
+        return {
+            "success": True,
+            "message": "อัปเดตบัญชีเรียบร้อยแล้ว",
+        }
+
     except HTTPException:
         db.rollback()
         raise
+
     except Exception as error:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(error))
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
 
 @app.delete("/api/store-accounts/{user_id}")
 def delete_store_account(user_id: int, db=Depends(get_db)):

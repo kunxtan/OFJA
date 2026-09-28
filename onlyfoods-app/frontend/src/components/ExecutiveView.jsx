@@ -3039,50 +3039,167 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
     </Modal>);
 }
 // ดูร้าน
-function StoreDetailModal({ open, store, detail, onClose }) {
+function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, onSaveAccount, saving }) {
+    const [editing, setEditing] = useState(null);
+    const [value, setValue] = useState('');
+    const [accountValue, setAccountValue] = useState('');
+    useEffect(() => {
+        if (!open) {
+            setEditing(null);
+            setValue('');
+            setAccountValue('');
+        }
+    }, [open, store?.StoreId]);
+
     if (!store) return null;
 
-    const item = (label, value) => (
-        <div style={{
-            padding: '12px 0',
-            borderBottom: `1px solid ${T.line}`
-        }}>
-            <div style={{
-                ...captionStyle,
-                marginBottom: '4px'
-            }}>
-                {label}
+    const storeValue = (key) => {
+        if (key === 'StoreName') return store.StoreName || '';
+        return detail?.[key] || '';
+    };
+
+    const startEdit = (key) => {
+        setEditing(key);
+        setValue(String(storeValue(key) || ''));
+    };
+
+    const saveStoreField = async (key) => {
+        const next = value.trim();
+        const current = String(storeValue(key) || '').trim();
+        if (next === current) {
+            setEditing(null);
+            return;
+        }
+        const patch = {
+            StoreName: key === 'StoreName' ? next : store.StoreName,
+            Category: key === 'Category' ? next : (detail.Category || ''),
+            ContactName: key === 'ContactName' ? next : (detail.ContactName || ''),
+            ContactPhone: key === 'ContactPhone' ? next : (detail.ContactPhone || ''),
+            ContactLine: key === 'ContactLine' ? next : (detail.ContactLine || ''),
+            ContactEmail: key === 'ContactEmail' ? next : (detail.ContactEmail || ''),
+            Description: key === 'Description' ? next : (detail.Description || '')
+        };
+        const ok = await onSaveStore(patch);
+        if (ok) setEditing(null);
+    };
+
+    const startAccountEdit = (key) => {
+        setEditing(`account:${key}`);
+        setAccountValue(key === 'Password' ? '' : String(account?.[key] || ''));
+    };
+
+    const saveAccountField = async (key) => {
+        const next = accountValue.trim();
+        if (key === 'Password' && next.length < 6) {
+            throw new Error('รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร');
+        }
+        const current = String(account?.[key] || '').trim();
+        if (key !== 'Password' && next === current) {
+            setEditing(null);
+            return;
+        }
+        const ok = await onSaveAccount(key, next);
+        if (ok) {
+            setEditing(null);
+            setAccountValue('');
+        }
+    };
+
+    const editableStoreItem = (key, label) => {
+        const current = storeValue(key);
+        const isEditing = editing === key;
+        return (
+            <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+                    <div style={{ ...captionStyle, marginBottom: '4px' }}>{label}</div>
+                    {!isEditing && (
+                        <button type="button" onClick={() => startEdit(key)} style={inlineEditButtonStyle} aria-label={`แก้ไข${label}`}>
+                            <Icon name="edit" size={15} color={T.primary}/>
+                        </button>
+                    )}
+                </div>
+                {isEditing ? (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
+                        <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
+                        <Button variant="primary" icon="check" disabled={saving} onClick={() => saveStoreField(key)}>บันทึก</Button>
+                        <Button variant="ghost" disabled={saving} onClick={() => setEditing(null)}>ยกเลิก</Button>
+                    </div>
+                ) : (
+                    <div style={{ ...bodyStyle, color: current ? T.ink : T.muted }}>{current || '—'}</div>
+                )}
             </div>
-            <div style={{
-                ...bodyStyle,
-                color: value ? T.ink : T.muted
-            }}>
-                {value || '—'}
+        );
+    };
+
+    const accountItem = (key, label, masked = false) => {
+        const isEditing = editing === `account:${key}`;
+        const shown = key === 'Password' ? '••••••••' : (account?.[key] || '—');
+        return (
+            <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+                    <div style={{ ...captionStyle, marginBottom: '4px' }}>{label}</div>
+                    {account && !isEditing && key !== 'Username' && (
+                        <button type="button" onClick={() => startAccountEdit(key)} style={inlineEditButtonStyle} aria-label={`แก้ไข${label}`}>
+                            <Icon name="edit" size={15} color={T.primary}/>
+                        </button>
+                    )}
+                </div>
+                {isEditing ? (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
+                        <input
+                            autoFocus
+                            type={key === 'Password' ? 'password' : 'text'}
+                            value={accountValue}
+                            onChange={(e) => setAccountValue(e.target.value)}
+                            placeholder={key === 'Password' ? 'ตั้งรหัสผ่านใหม่' : ''}
+                            style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+                        />
+                        <Button variant="primary" icon="check" disabled={saving} onClick={() => saveAccountField(key)}>บันทึก</Button>
+                        <Button variant="ghost" disabled={saving} onClick={() => setEditing(null)}>ยกเลิก</Button>
+                    </div>
+                ) : (
+                  <>
+                    <div style={{ ...bodyStyle, color: account ? T.ink : T.muted }}>
+                        {account ? shown : 'ยังไม่มีบัญชีเจ้าของร้าน'}
+                    </div>
+
+                    {key === 'Username' && account && (
+                        <div style={{ ...captionStyle, fontSize: '11.5px' }}>
+                            แก้ชื่อผู้ใช้ไม่ได้
+                        </div>
+                    )}
+                  </>
+                )}
             </div>
-        </div>
-    );
+        );
+    };
 
     return (
-        <Modal
-            open={open}
-            title="ข้อมูลร้านค้า"
-            subtitle={store.StoreName}
-            onClose={onClose}
-            width={680}
-            footer={
-                <Button variant="ghost" onClick={onClose}>
-                    ปิด
-                </Button>
-            }
-        >
+        <Modal open={open} title="ข้อมูลร้านค้า" subtitle={store.StoreName} onClose={onClose} width={720}
+            footer={<Button variant="ghost" onClick={onClose}>ปิด</Button>}>
             <div>
-                {item('ชื่อร้านค้า', store.StoreName)}
-                {item('ประเภท', detail.Category)}
-                {item('ชื่อผู้ติดต่อ', detail.ContactName)}
-                {item('เบอร์โทรศัพท์', detail.ContactPhone)}
-                {item('LINE', detail.ContactLine)}
-                {item('อีเมล', detail.ContactEmail)}
-                {item('รายละเอียดร้าน', detail.Description)}
+                {editableStoreItem('StoreName', 'ชื่อร้านค้า')}
+                {editableStoreItem('Category', 'ประเภท')}
+                {editableStoreItem('ContactName', 'ชื่อผู้ติดต่อ')}
+                {editableStoreItem('ContactPhone', 'เบอร์โทรศัพท์')}
+                {editableStoreItem('ContactLine', 'LINE')}
+                {editableStoreItem('ContactEmail', 'อีเมล')}
+                {editableStoreItem('Description', 'รายละเอียดร้าน')}
+
+                <div style={{ marginTop: '22px', marginBottom: '4px', color: T.ink, fontWeight: 700, fontSize: '15px' }}>
+                    บัญชีเจ้าของร้าน
+                </div>
+                {accountItem('FullName', 'ชื่อ-นามสกุล')}
+                {accountItem('Username', 'Username')}
+                <div style={{ padding: '12px 0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+                        <div style={{ ...captionStyle, marginBottom: '4px' }}>ตำแหน่ง</div>
+                    </div>
+                    <div style={{ ...bodyStyle, color: account ? T.ink : T.muted }}>
+                        {account?.Role === 'Shop Owner' ? 'เจ้าของร้าน' : (account?.Role || '—')}
+                    </div>
+                </div>
+                {accountItem('Password', 'รหัสผ่าน')}
             </div>
         </Modal>
     );
@@ -3094,6 +3211,7 @@ function StoreManagePage({ ctx }) {
     const [modalOpen, setModalOpen] = useState(false);
     const [mode, setMode] = useState('create');
     const [viewStoreId, setViewStoreId] = useState(null);
+    const [storeAccounts, setStoreAccounts] = useState([]);
     const [form, setForm] = useState(EMPTY_STORE_FORM);
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
@@ -3107,9 +3225,20 @@ function StoreManagePage({ ctx }) {
             console.debug('โหลดรายละเอียดร้านไม่สำเร็จ:', err.message);
         }
     }, [API]);
+    const loadStoreAccounts = useCallback(async () => {
+        try {
+            const data = await callApi(`${API}/api/store-accounts`);
+            setStoreAccounts(Array.isArray(data) ? data : []);
+        }
+        catch (err) {
+            console.debug('โหลดบัญชีเจ้าของร้านไม่สำเร็จ:', err.message);
+        }
+    }, [API]);
+
     useEffect(() => {
         loadDetails();
-    }, [loadDetails]);
+        loadStoreAccounts();
+    }, [loadDetails, loadStoreAccounts]);
     const detailOf = (storeId) => details.find((d) => String(d.StoreId) === String(storeId)) || {};
     const openView = (store) => {setViewStoreId(store.StoreId);};
     const rows = stores
@@ -3125,28 +3254,6 @@ function StoreManagePage({ ctx }) {
         setErrors({});
         setModalOpen(true);
     };
-    const openEdit = (store) => {
-        const d = detailOf(store.StoreId);
-        setMode('edit');
-        setForm({
-            StoreId: store.StoreId,
-            name: store.StoreName || '',
-            category: d.Category || '',
-            contactName: d.ContactName || '',
-            phone: d.ContactPhone || '',
-            lineId: d.ContactLine || '',
-            email: d.ContactEmail || '',
-            description: d.Description || '',
-            imageData: d.ImageUrl || '',
-            imageName: '',
-            contractStartDate: d.ContractStartDate ? String(d.ContractStartDate).slice(0, 10) : '',
-            contractDuration: d.ContractStartDate && d.ContractEndDate ? 'custom' : '',
-            contractEndDate: d.ContractEndDate ? String(d.ContractEndDate).slice(0, 10) : ''
-        });
-        setErrors({});
-        setModalOpen(true);
-    };
-
     // [CROSS-NAV] หากเข้ามาจากหน้ายอดขายรายร้าน ให้กรองตารางไว้ที่ร้านนั้น โดยไม่เปิดฟอร์มแก้ไขอัตโนมัติ
 
     const submitForm = async () => {
@@ -3206,6 +3313,7 @@ function StoreManagePage({ ctx }) {
             setModalOpen(false);
             await reloadStores();
             await loadDetails();
+            await loadStoreAccounts();
         }
         catch (err) {
             pushToast(err.message, 'error');
@@ -3214,6 +3322,73 @@ function StoreManagePage({ ctx }) {
             setSaving(false);
         }
     };
+    const accountOf = (storeId) =>
+        storeAccounts.find((a) => String(a.StoreId) === String(storeId) && a.Role === 'Shop Owner') || null;
+
+    const saveStoreField = async (store, patch) => {
+        if (!store) return false;
+        const d = detailOf(store.StoreId);
+        const payload = {
+            store_name: patch.StoreName,
+            category: patch.Category,
+            contact_name: patch.ContactName,
+            contact_phone: patch.ContactPhone,
+            contact_line: patch.ContactLine,
+            contact_email: patch.ContactEmail,
+            description: patch.Description,
+            image_url: d.ImageUrl || '',
+            contract_start_date: d.ContractStartDate ? String(d.ContractStartDate).slice(0, 10) : null,
+            contract_end_date: d.ContractEndDate ? String(d.ContractEndDate).slice(0, 10) : null,
+            performed_by: 'Executive'
+        };
+        setSaving(true);
+        try {
+            await callApi(`${API}/api/stores/${store.StoreId}/full`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            pushToast(`บันทึกข้อมูลร้าน ${store.StoreName} แล้ว`);
+            await reloadStores();
+            await loadDetails();
+            return true;
+        }
+        catch (err) {
+            pushToast(err.message, 'error');
+            return false;
+        }
+        finally {
+            setSaving(false);
+        }
+    };
+
+    const saveAccountField = async (account, key, value) => {
+        if (!account) return false;
+        const payload = { performed_by: 'Executive' };
+        if (key === 'FullName') payload.full_name = value;
+        if (key === 'Username') payload.username = value;
+        if (key === 'Password') payload.password = value;
+        setSaving(true);
+        try {
+            await callApi(`${API}/api/store-accounts/${account.UserId}/password`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            pushToast('บันทึกบัญชีเจ้าของร้านแล้ว');
+            const data = await callApi(`${API}/api/store-accounts`);
+            setStoreAccounts(Array.isArray(data) ? data : []);
+            return true;
+        }
+        catch (err) {
+            pushToast(err.message, 'error');
+            return false;
+        }
+        finally {
+            setSaving(false);
+        }
+    };
+
     const toggleStore = async (store) => {
         const closing = Boolean(store.IsOpen);
         if (!closing && Boolean(store.IsSuspended)) {
@@ -3366,9 +3541,6 @@ function StoreManagePage({ ctx }) {
                         <Button variant="soft" icon="eye" onClick={() => openView(s)}style={smallBtn} title="ดูข้อมูลร้าน">
                           ดู
                         </Button>
-                        <Button variant="soft" icon="edit" onClick={() => openEdit(s)} style={smallBtn}>
-                          แก้ไข
-                        </Button>
                         <Button
                           variant="soft"
                           icon="power"
@@ -3400,9 +3572,16 @@ function StoreManagePage({ ctx }) {
       </Card>
 
       <StoreFormModal open={modalOpen} mode={mode} form={form} setForm={setForm} errors={errors} setErrors={setErrors} saving={saving} onClose={() => setModalOpen(false)} onSubmit={submitForm}/>
-        <StoreDetailModal store={rows.find((s) => String(s.StoreId) === String(viewStoreId))} detail={detailOf(viewStoreId)}open={Boolean(viewStoreId)}
-    onClose={() => setViewStoreId(null)}
-/>
+        <StoreDetailModal
+        store={rows.find((s) => String(s.StoreId) === String(viewStoreId))}
+        detail={detailOf(viewStoreId)}
+        account={accountOf(viewStoreId)}
+        open={Boolean(viewStoreId)}
+        onClose={() => setViewStoreId(null)}
+        saving={saving}
+        onSaveStore={(patch) => saveStoreField(rows.find((s) => String(s.StoreId) === String(viewStoreId)), patch)}
+        onSaveAccount={(key, value) => saveAccountField(accountOf(viewStoreId), key, value)}
+      />
     </>);
 }
 const STORE_ROLES = ['Shop Owner'];
@@ -4762,6 +4941,7 @@ const twoColStyle = {
     gap: '0 14px'
 };
 const smallBtn = { padding: '7px 10px', fontSize: '12.5px' };
+const inlineEditButtonStyle = { border: 'none', background: 'transparent', padding: '4px', borderRadius: '6px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
 const storeImagePreviewStyle = {
     width: '100%',
     height: '100%',
