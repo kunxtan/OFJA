@@ -650,7 +650,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // STYLES
-  const pageStyle = { minHeight: "100vh", background: COLORS.bg, color: COLORS.text, fontFamily: "'Prompt', 'Kanit', Arial, sans-serif" };
+  const pageStyle = { minHeight: "100vh", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif"}
   const containerStyle = { width: "100%", maxWidth: "1450px", margin: "0 auto", padding: "20px 20px 110px", boxSizing: "border-box" };
   const headerStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "15px", marginBottom: "25px", flexWrap: "wrap" };
   const logoStyle = { fontSize: "27px", fontWeight: "900", color: COLORS.navy, whiteSpace: "nowrap", cursor: "pointer" };
@@ -675,7 +675,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         {viewMode === "stores" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ 🏬</h2>
+              <h2 style={{ margin: 0, fontSize: "23px", fontWeight: "900" }}>ร้านอาหารแนะนำ </h2>
               {isFoodCourtOpen && <span style={{ fontSize: "13px", color: COLORS.gray }}>{filteredStores.length} ร้านค้า</span>}
             </div>
 
@@ -690,7 +690,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   borderRadius: "24px"
                 }}
               >
-                <div style={{ fontSize: "55px", marginBottom: "12px" }}>🛑</div>
+                <div style={{ fontSize: "55px", marginBottom: "12px" }}></div>
                 <h3 style={{ fontSize: "22px", fontWeight: "900", color: COLORS.red, margin: "0 0 8px 0" }}>
                   ไม่สามารถสั่งอาหารได้เนื่องจากศูนย์อาหารปิด
                 </h3>
@@ -1842,12 +1842,20 @@ const handleSubmitReport = async () => {
 };
 
   return (
-    <div style={pageStyle}>
+    <div className="customer-view" style={pageStyle}>
+      <style>
+        {`
+          @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
+          .customer-view,
+          .customer-view * {
+            font-family: 'Sarabun', sans-serif !important;
+          }
+        `}
+      </style>
       <div style={containerStyle}>
         <header style={headerStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <div style={logoStyle} onClick={() => handleSelectTab("menu")}>Only<span style={{ color: COLORS.orange }}>Foods</span></div>
-            
             <div
               style={{
                 display: "flex",
@@ -1878,7 +1886,7 @@ const handleSubmitReport = async () => {
           {activeTab === "menu" && (
             <input
               type="text"
-              placeholder={viewMode === "stores" ? "🔍 ค้นหาร้านอาหาร..." : "🔍 ค้นหาเมนูอาหาร..."}
+              placeholder={viewMode === "stores" ? " ค้นหาร้านอาหาร..." : " ค้นหาเมนูอาหาร..."}
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={searchStyle}
