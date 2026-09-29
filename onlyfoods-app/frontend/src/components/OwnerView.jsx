@@ -306,6 +306,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   }, []);
 
   const storeId = user?.storeId || 1;
+  const uid = user?.id || user?.UserId;
   const [dash, setDash] = useState({});
   const [cancels, setCancels] = useState([]);
   const [products, setProducts] = useState([]);
@@ -323,6 +324,13 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
+
+  // --- เพิ่ม State และ Ref สำหรับจัดการกล่องแจ้งเตือน ---
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef(null);
+
+  const [notifications, setNotifications] = useState([]);
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
 
   // --- ระบบนับจำนวนแจ้งเตือน ---
   const [unreadCancels, setUnreadCancels] = useState(0);
@@ -343,6 +351,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     function handleClickOutside(event) {
       if (profileRef.current && !profileRef.current.contains(event.target)) {
         setProfileOpen(false);
+      }
+      // เพิ่มส่วนนี้เพื่อเช็คการคลิกนอกกล่องแจ้งเตือน
+      if (notifRef.current && !notifRef.current.contains(event.target)) {
+        setNotifOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -365,13 +377,23 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => r.json()).then(setProducts);
     fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => r.json()).then(setHistory).catch(err => console.error(err));
     fetch(`${apiBase}/api/stores/${storeId}/staff`).then(r => r.json()).then(setStaffList).catch(err => console.error(err));
+
+    if (uid) {
+      fetch(`${apiBase}/api/notifications/${uid}`)
+        .then(r => r.json())
+        .then(data => {
+          const arr = Array.isArray(data) ? data : [];
+          setNotifications(arr);
+          setUnreadNotifs(arr.filter(n => !n.IsRead).length);
+        }).catch(err => console.error(err));
+    }
   };
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 4000);
     return () => clearInterval(interval);
-  }, [storeId, apiBase]);
+  }, [storeId, apiBase, uid]);
 
   useEffect(() => {
     if (history) {
@@ -395,6 +417,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       setKnownCancelsCount(cancels.length);
     }
   }, [page, cancels.length]);
+
+  const markNotifRead = (notifId) => {
+    fetch(`${apiBase}/api/notifications/${notifId}/read`, { method: 'PUT' }).then(() => fetchData());
+  };
 
   const showToast = (msg) => {
     setToast({ show: true, msg });
@@ -550,6 +576,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
   ];
 
+  const totalBadgeUnread = unreadCancels + unreadNotifs;
+
   return (
     <div className="berry-root">
       <style>{BERRY_STYLES}</style>
@@ -575,8 +603,89 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         </div>
 
         <div className="berry-topbar-right">
-          <button className="berry-icon-btn amber-light"><Icon name="bell" size={20} /></button>
           
+          {/* เริ่มส่วนแจ้งเตือน */}
+          <div className="berry-notif-container" ref={notifRef} style={{ position: 'relative' }}>
+            <button 
+              className="berry-icon-btn amber-light" 
+              onClick={() => setNotifOpen(!notifOpen)}
+              style={{ position: 'relative' }}
+            >
+              <Icon name="bell" size={20} />
+              {totalBadgeUnread > 0 && (
+                <span className="notif-badge-top">
+                  {totalBadgeUnread}
+                </span>
+              )}
+            </button>
+
+            {notifOpen && (
+              <div className="berry-profile-dropdown" style={{ right: '0', width: '320px', padding: '0', zIndex: 1000 }}>
+                <div className="dropdown-header" style={{ padding: '16px', borderBottom: '1px solid var(--berry-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    การแจ้งเตือน
+                    {totalBadgeUnread > 0 && <Badge tone="danger">{totalBadgeUnread} ใหม่</Badge>}
+                  </h4>
+                </div>
+                
+                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                  {notifications.length > 0 || cancels.length > 0 ? (
+                    <>
+                      {/* แจ้งเตือนของหมด / แจ้งเตือนระบบ */}
+                      {notifications.map(n => (
+                        <div 
+                          key={`notif-${n.NotifId}`} 
+                          style={{ padding: '12px 16px', borderBottom: '1px solid var(--berry-border)', cursor: 'pointer', background: n.IsRead ? 'transparent' : 'var(--berry-purple-light)' }} 
+                          className="notif-item-hover"
+                          onClick={() => markNotifRead(n.NotifId)}
+                        >
+                          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>
+                            {n.Message}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--berry-text-muted)', marginTop: '6px' }}>
+                            {n.CreatedAt ? new Date(n.CreatedAt).toLocaleString('th-TH') : '-'}
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* แจ้งเตือนออเดอร์ที่ถูกยกเลิก (แสดง 5 รายการล่าสุด) */}
+                      {cancels.slice(0, 5).map(c => (
+                        <div 
+                          key={`cancel-${c.OrderID}`} 
+                          style={{ padding: '12px 16px', borderBottom: '1px solid var(--berry-border)', cursor: 'pointer' }} 
+                          className="notif-item-hover"
+                          onClick={() => { setPage('cancel'); setNotifOpen(false); }}
+                        >
+                          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>
+                            ออเดอร์ถูกยกเลิก (คิว: {c.QueueNo})
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--berry-text-muted)', marginTop: '4px' }}>
+                            เหตุผล: {c.CancelReason || '-'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--berry-text-muted)', marginTop: '6px' }}>
+                            {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--berry-text-muted)', fontSize: '13px' }}>
+                      ไม่มีการแจ้งเตือนใหม่
+                    </div>
+                  )}
+                </div>
+                
+                <div 
+                  style={{ padding: '12px', textAlign: 'center', fontSize: '13px', color: 'var(--berry-purple)', cursor: 'pointer', fontWeight: '600', borderTop: '1px solid var(--berry-border)' }} 
+                  onClick={() => { setPage('cancel'); setNotifOpen(false); }}
+                >
+                  ดูประวัติยกเลิกทั้งหมด
+                </div>
+              </div>
+            )}
+          </div>
+          {/* สิ้นสุดส่วนแจ้งเตือน */}
+
           <div className="berry-profile-container" ref={profileRef}>
             <div className="berry-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
               <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--berry-blue-dark)', padding: '0 8px' }}>
@@ -1639,5 +1748,27 @@ body, html {
 @media (max-width: 768px) {
   .berry-stat-row { grid-template-columns: 1fr; }
   .berry-stat-col { grid-column: span 1; flex-direction: column; }
+}
+
+/* แจ้งเตือนกระดิ่ง */
+.notif-badge-top {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: var(--berry-red);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  height: 18px;
+  min-width: 18px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 2px solid var(--berry-paper);
+}
+.notif-item-hover:hover {
+  background: var(--berry-purple-light);
 }
 `;

@@ -225,6 +225,28 @@ def ensure_food_court_setting(db):
         """)
     db.commit()
 
+_issue_report_table_ready = False
+def ensure_issue_report_table(db):
+    global _issue_report_table_ready
+    if _issue_report_table_ready:
+        return
+    with db.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS IssueReport (
+                ReportID INT AUTO_INCREMENT PRIMARY KEY,
+                UserId INT NULL,
+                OrderID INT NULL,
+                StoreId INT NOT NULL,
+                IssueType VARCHAR(100) NOT NULL,
+                Description TEXT NULL,
+                AdminNote TEXT NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    db.commit()
+    _issue_report_table_ready = True
+
 # =====================================================================
 # Pydantic Request Schemas
 # =====================================================================
@@ -276,10 +298,10 @@ class AccountCreateSchema(BaseModel):
     performed_by: Optional[str] = "Executive"
 
 class AccountUpdateSchema(BaseModel):
-    password: str
-    full_name: str
-    role: str
-    store_id: int
+    password: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    store_id: Optional[int] = None
     performed_by: Optional[str] = "Executive"
 
 class OrderItemSchema(BaseModel):
@@ -327,6 +349,9 @@ class StoreFullSchema(BaseModel):
     performed_by: Optional[str] = "Executive"
     contract_start_date: Optional[str] = None
     contract_end_date: Optional[str] = None
+    owner_full_name: Optional[str] = None
+    owner_username: Optional[str] = None
+    owner_password: Optional[str] = None
 
 class ProductCreateSchema(BaseModel):
     StoreId: int
@@ -355,11 +380,11 @@ class NotifyOutStockSchema(BaseModel):
     response_window_minutes: int
 
 class CustomerCancelSchema(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     reason: Optional[str] = "ลูกค้ายืนยันยกเลิก เนื่องจากเมนูหมด"
 
 class CustomerChangeItemSchema(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
     detail_id: Optional[int] = None
     product_id: Optional[int] = None
     new_product_id: int
@@ -369,6 +394,13 @@ class CustomerChangeItemSchema(BaseModel):
 class RenewContractSchema(BaseModel):
     contract_end_date: str
     performed_by: Optional[str] = "Executive"
+
+class CreateIssueReportSchema(BaseModel):
+    user_id: Optional[int] = None
+    order_id: Optional[int] = None
+    store_id: int
+    issue_type: str
+    description: Optional[str] = ""
 
 ALLOWED_STORE_ROLES = ("Shop Owner", "Front Staff", "Kitchen Staff")
 
@@ -419,11 +451,10 @@ def logout():
 def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
     ensure_user_columns(db)
     
-    # แปลงค่าให้ใช้ได้ไม่ว่าจะส่งแบบ camelCase หรือ snake_case
     uid = data.user_id if data.user_id is not None else data.userId
     name = data.full_name or data.fullName or data.name
     phone = data.phone
-    img = data.profile_img or data.profileImg
+    img = data.profile_img if data.profile_img is not None else data.profileImg
 
     if not uid:
         raise HTTPException(status_code=400, detail="ไม่พบ user_id ในคำขอ")
@@ -437,10 +468,10 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                 UPDATE Users 
                 SET FullName = %s, 
                     Phone = %s, 
-                    ProfileImg = COALESCE(%s, ProfileImg)
+                    ProfileImg = %s
                 WHERE UserId = %s
                 """,
-                (name, phone, img, uid)
+                (name, phone, img if img != "" else None, uid)
             )
             db.commit()
 
@@ -592,58 +623,116 @@ def update_store(store_id: int, data: StoreUpdateSchema, db=Depends(get_db)):
 @app.post("/api/stores/full", status_code=201)
 def create_store_full(data: StoreFullSchema, db=Depends(get_db)):
     ensure_store_columns(db)
+    ensure_user_columns(db)
     name = data.store_name.strip()
+    owner_full_name = (data.owner_full_name or "").strip()
+    owner_username = (data.owner_username or "").strip()
+    owner_password = data.owner_password or ""
     if not name:
         raise HTTPException(status_code=400, detail="กรุณากรอกชื่อร้านค้า")
     if not data.category:
         raise HTTPException(status_code=400, detail="กรุณาเลือกประเภทอาหาร")
+    if not owner_full_name:
+        raise HTTPException(status_code=400, detail="กรุณากรอกชื่อเจ้าของร้าน")
 
+    if len(owner_full_name) > 100:
+        raise HTTPException(status_code=400, detail="ชื่อเจ้าของร้านต้องไม่เกิน 100 ตัวอักษร")
+
+    if not owner_username:
+        raise HTTPException(status_code=400, detail="กรุณากรอกชื่อผู้ใช้")
+
+    if not (4 <= len(owner_username) <= 20):
+        raise HTTPException(
+            status_code=400,
+            detail="ชื่อผู้ใช้ต้องมีความยาว 4–20 ตัว"
+        )
+
+    if not all(
+        ch.isascii() and (ch.isalnum() or ch == "_")
+        for ch in owner_username
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="ชื่อผู้ใช้ใช้ได้เฉพาะ a-z, 0-9 และ _"
+        )
+
+    if len(owner_password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านต้องยาวอย่างน้อย 6 ตัว"
+        )
+
+    if len(owner_password) > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านต้องไม่เกิน 50 ตัวอักษร"
+        )
+
+    if any(ch.isspace() for ch in owner_password):
+        raise HTTPException(
+            status_code=400,
+            detail="รหัสผ่านห้ามมีช่องว่าง" )
     try:
         with db.cursor() as cur:
             cur.execute("SELECT StoreId FROM Store WHERE StoreName = %s", (name,))
             if cur.fetchone():
                 raise HTTPException(status_code=400, detail="มีชื่อร้านค้านี้อยู่แล้ว")
-
             cur.execute(
-    """
-    INSERT INTO Store
-        (
-            StoreName,
-            IsOpen,
-            IsSuspended,
-            Category,
-            ContactName,
-            ContactPhone,
-            ContactLine,
-            ContactEmail,
-            Description,
-            ImageUrl,
-            ContractStartDate,
-            ContractEndDate
-        )
-    VALUES (
-        %s, 1, 0,
-        %s, %s, %s, %s, %s, %s, %s,
-        %s, %s
-    )
-    """,
-    (
-        name,
-        clean_text(data.category),
-        clean_text(data.contact_name),
-        clean_text(data.contact_phone),
-        clean_text(data.contact_line),
-        clean_text(data.contact_email),
-        clean_text(data.description),
-        data.image_url or None,
-        data.contract_start_date or None,
-        data.contract_end_date or None,
-    ),
-)
+                "SELECT UserId FROM Users WHERE Username = %s",
+                (owner_username,)
+            )
+
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=400,
+                    detail="ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว"
+                )
+            cur.execute(
+                """
+                INSERT INTO Store
+                    (
+                        StoreName, IsOpen, IsSuspended, Category, ContactName, ContactPhone,
+                        ContactLine, ContactEmail, Description, ImageUrl, ContractStartDate, CurrentContractStartDate, ContractEndDate
+                    )
+                VALUES (%s, 1, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s , %s)
+                """,
+                (
+                    name,
+                    clean_text(data.category),
+                    clean_text(data.contact_name),
+                    clean_text(data.contact_phone),
+                    clean_text(data.contact_line),
+                    clean_text(data.contact_email),
+                    clean_text(data.description),
+                    data.image_url or None,
+                    data.contract_start_date or None,
+                    data.contract_start_date or None,
+                    data.contract_end_date or None,
+                ),
+            )
             store_id = cur.lastrowid
+            cur.execute(
+                """
+                INSERT INTO Users
+                    (Username,Password,FullName,Role,StoreId,Points
+                    )
+                VALUES(%s, %s, %s, %s, %s, 0)
+                """,
+                (
+                    owner_username,
+                    owner_password,
+                    owner_full_name,
+                    "Shop Owner",
+                    store_id,
+                ),
+            )
+
+            user_id = cur.lastrowid
             log_audit(db, "CREATE_STORE", data.performed_by or "Executive", f"เพิ่มร้าน {name} (ID {store_id})")
+            log_audit(db,"CREATE_STORE_ACCOUNT",data.performed_by or "Executive",f"สร้างบัญชี {owner_username} (Shop Owner) ให้ร้าน {name} (ID {store_id})")
+
         db.commit()
-        return {"success": True, "store_id": store_id, "message": "เพิ่มร้านค้าเรียบร้อยแล้ว"}
+        return {"success": True, "store_id": store_id,  "user_id": user_id, "message": "เพิ่มร้านค้าและบัญชีเจ้าของร้านเรียบร้อยแล้ว"}
     except HTTPException:
         db.rollback()
         raise
@@ -669,35 +758,28 @@ def update_store_full(store_id: int, data: StoreFullSchema, db=Depends(get_db)):
                 raise HTTPException(status_code=400, detail="มีชื่อร้านค้านี้อยู่แล้ว")
 
             cur.execute(
-    """
-    UPDATE Store SET
-        StoreName = %s,
-        Category = %s,
-        ContactName = %s,
-        ContactPhone = %s,
-        ContactLine = %s,
-        ContactEmail = %s,
-        Description = %s,
-        ImageUrl = %s,
-        ContractStartDate = %s,
-        ContractEndDate = %s
-    WHERE StoreId = %s
-    """,
-    (
-        name,
-        clean_text(data.category),
-        clean_text(data.contact_name),
-        clean_text(data.contact_phone),
-        clean_text(data.contact_line),
-        clean_text(data.contact_email),
-        clean_text(data.description),
-        data.image_url or None,
-        data.contract_start_date or None,
-        data.contract_end_date or None,
-        store_id,
-    ),
-)
-            log_audit(db, "UPDATE_STORE", data.performed_by or "Executive", f"แก้ไขร้าน ID {store_id}")
+                """
+                UPDATE Store SET
+                    StoreName = %s, Category = %s, ContactName = %s, ContactPhone = %s,
+                    ContactLine = %s, ContactEmail = %s, Description = %s, ImageUrl = %s,
+                    ContractStartDate = %s, ContractEndDate = %s
+                WHERE StoreId = %s
+                """,
+                (
+                    name,
+                    clean_text(data.category),
+                    clean_text(data.contact_name),
+                    clean_text(data.contact_phone),
+                    clean_text(data.contact_line),
+                    clean_text(data.contact_email),
+                    clean_text(data.description),
+                    data.image_url or None,
+                    data.contract_start_date or None,
+                    data.contract_end_date or None,
+                    store_id,
+                ),
+            )
+            log_audit(db, "UPDATE_STORE", data.performed_by or "Executive", f"แก้ไขข้อมูลร้าน {name}")
         db.commit()
         return {"success": True, "message": "บันทึกข้อมูลร้านค้าเรียบร้อยแล้ว"}
     except HTTPException:
@@ -736,91 +818,85 @@ def delete_store(store_id: int, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(error))
 
 @app.put("/api/stores/{store_id}/toggle")
-def toggle_store(store_id: int, db=Depends(get_db)):
-    with db.cursor() as cur:
-        cur.execute("UPDATE Store SET IsOpen = NOT IsOpen WHERE StoreId = %s", (store_id,))
-        db.commit()
-        return {"success": True}
-
-@app.put("/api/stores/{store_id}/suspend")
-def suspend_store(store_id: int, db=Depends(get_db)):
-    with db.cursor() as cur:
-        cur.execute("UPDATE Store SET IsSuspended = NOT IsSuspended WHERE StoreId = %s", (store_id,))
-        log_audit(db, "SUSPEND_STORE", "Executive", f"เปลี่ยนสถานะระงับสิทธิ์ร้านค้า ID: {store_id}")
-        db.commit()
-        return {"success": True}
-    
-   
-    
-@app.put("/api/stores/{store_id}/renew-contract")    
-def renew_store_contract(
-    store_id: int,
-    data: RenewContractSchema,
-    db=Depends(get_db)
-):
-    ensure_store_columns(db)
-
+def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(get_db)):
     try:
         with db.cursor() as cur:
-
-            cur.execute(
-                """
-                SELECT StoreName, ContractEndDate
-                FROM Store
-                WHERE StoreId = %s
-                """,
-                (store_id,)
-            )
-
+            cur.execute("SELECT StoreName, IsOpen, IsSuspended FROM Store WHERE StoreId = %s", (store_id,))
             store = cur.fetchone()
-
             if not store:
+                raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
+
+            new_status = not bool(store["IsOpen"])
+            if new_status and store["IsSuspended"]:
                 raise HTTPException(
-                    status_code=404,
-                    detail="ไม่พบร้านค้านี้"
+                    status_code=400,
+                    detail="ร้านถูกระงับสิทธิ์ ไม่สามารถเปิดร้านได้"
                 )
-
-            old_end = store["ContractEndDate"]
-
-            cur.execute(
-                """
-                UPDATE Store
-                SET ContractEndDate = %s
-                WHERE StoreId = %s
-                """,
-                (
-                    data.contract_end_date,
-                    store_id
-                )
-            )
-
-            log_audit(
-                db,
-                "RENEW_CONTRACT",
-                data.performed_by or "Executive",
-                f"ต่อสัญญาร้าน {store['StoreName']} "
-                f"จาก {old_end} เป็น {data.contract_end_date}"
-            )
-
-            db.commit()
-
-            return {
-                "success": True,
-                "message": "ต่อสัญญาเรียบร้อยแล้ว",
-                "contract_end_date": data.contract_end_date
-            }
-
+            cur.execute("UPDATE Store SET IsOpen = %s WHERE StoreId = %s", (1 if new_status else 0, store_id))
+            actor = performed_by or "Shop Owner"
+            log_audit(db, "OPEN_STORE" if new_status else "CLOSE_STORE", actor, f"{'เปิดร้าน' if new_status else 'ปิดร้าน'} {store['StoreName']}")
+        db.commit()
+        return {"success": True, "is_open": new_status}
     except HTTPException:
         db.rollback()
         raise
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(error))
 
+@app.put("/api/stores/{store_id}/suspend")
+def suspend_store(store_id: int, performed_by: Optional[str] = None, db=Depends(get_db)):
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT StoreName, IsSuspended FROM Store WHERE StoreId = %s", (store_id,))
+            store = cur.fetchone()
+            if not store:
+                raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
+
+            new_status = not bool(store["IsSuspended"])
+            if new_status:
+                cur.execute("UPDATE Store SET IsSuspended = 1, IsOpen = 0 WHERE StoreId = %s", (store_id,))
+            else:
+                cur.execute("UPDATE Store SET IsSuspended = 0 WHERE StoreId = %s", (store_id,))
+
+            log_audit(db, "SUSPEND_STORE" if new_status else "UNSUSPEND_STORE", performed_by or "Executive", f"{'ระงับสิทธิ์ร้าน' if new_status else 'ปลดระงับสิทธิ์ร้าน'} {store['StoreName']}")
+        db.commit()
+        return {"success": True, "is_suspended": new_status}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(error))
+
+@app.put("/api/stores/{store_id}/renew-contract")    
+def renew_store_contract(store_id: int, data: RenewContractSchema, db=Depends(get_db)):
+    ensure_store_columns(db)
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT StoreName, ContractEndDate FROM Store WHERE StoreId = %s", (store_id,))
+            store = cur.fetchone()
+            if not store:
+                raise HTTPException(status_code=404, detail="ไม่พบร้านค้านี้")
+
+            old_end = store["ContractEndDate"]
+            new_end = datetime.strptime(data.contract_end_date,"%Y-%m-%d").date()
+            new_start = old_end + timedelta(days=2)
+            if new_end < new_start:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"วันสิ้นสุดสัญญาใหม่ต้องไม่ก่อนวันเริ่มสัญญาใหม่ ({new_start})" )
+            cur.execute("UPDATE Store SET CurrentContractStartDate = %s,ContractEndDate = %s WHERE StoreId = %s", ( new_start,new_end,store_id))
+            log_audit(db, "RENEW_CONTRACT", data.performed_by or "Executive", f"ต่อสัญญาร้าน {store['StoreName']} จาก {old_end} เป็น {data.contract_end_date}")
+            db.commit()
+            return {"success": True, "message": "ต่อสัญญาเรียบร้อยแล้ว", "current_contract_start_date": new_start.isoformat(),
+                "contract_end_date": new_end.isoformat()}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
+        raise HTTPException(status_code=500, detail=str(e))
 
 # =====================================================================
 # Review Management Endpoints
@@ -1006,34 +1082,133 @@ def create_store_account(data: AccountCreateSchema, db=Depends(get_db)):
 
 @app.put("/api/store-accounts/{user_id}/password")
 def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get_db)):
-    if len(data.password) < 6 or " " in data.password:
-        raise HTTPException(status_code=400, detail="รหัสผ่านต้องยาวอย่างน้อย 6 ตัว และห้ามมีช่องว่าง")
-    if data.role not in ALLOWED_STORE_ROLES:
-        raise HTTPException(status_code=400, detail="ตำแหน่งไม่ถูกต้อง")
-
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT Username FROM Users WHERE UserId = %s", (user_id,))
+            cur.execute(
+                """
+                SELECT UserId, Username, FullName, Role, StoreId
+                FROM Users
+                WHERE UserId = %s
+                """,
+                (user_id,),
+            )
             account = cur.fetchone()
+
             if not account:
                 raise HTTPException(status_code=404, detail="ไม่พบบัญชีผู้ใช้นี้")
 
-            cur.execute(
-                """
-                UPDATE Users SET Password = %s, FullName = %s, Role = %s, StoreId = %s
+            updates = []
+            values = []
+
+            
+            # -----------------------------
+            # Password
+            # -----------------------------
+            if data.password is not None:
+                if len(data.password) < 6 or " " in data.password:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="รหัสผ่านต้องยาวอย่างน้อย 6 ตัว และห้ามมีช่องว่าง",
+                    )
+
+                updates.append("Password = %s")
+                values.append(data.password)
+
+            # -----------------------------
+            # Full name
+            # -----------------------------
+            if data.full_name is not None:
+                full_name = data.full_name.strip()
+
+                if not full_name:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="กรุณากรอกชื่อ-นามสกุลผู้ใช้",
+                    )
+
+                if len(full_name) > 100:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="ชื่อ-นามสกุลต้องไม่เกิน 100 ตัวอักษร",
+                    )
+
+                updates.append("FullName = %s")
+                values.append(full_name)
+
+            # -----------------------------
+            # Role
+            # -----------------------------
+            if data.role is not None:
+                if data.role not in ALLOWED_STORE_ROLES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="ตำแหน่งไม่ถูกต้อง",
+                    )
+
+                updates.append("Role = %s")
+                values.append(data.role)
+
+            # -----------------------------
+            # Store
+            # -----------------------------
+            if data.store_id is not None:
+                cur.execute(
+                    "SELECT StoreId FROM Store WHERE StoreId = %s",
+                    (data.store_id,),
+                )
+
+                if not cur.fetchone():
+                    raise HTTPException(
+                        status_code=404,
+                        detail="ไม่พบร้านค้าที่เลือก",
+                    )
+
+                updates.append("StoreId = %s")
+                values.append(data.store_id)
+
+            # -----------------------------
+            # ไม่มีอะไรให้แก้
+            # -----------------------------
+            if not updates:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ไม่มีข้อมูลที่ต้องการแก้ไข",
+                )
+
+            values.append(user_id)
+
+            query = f"""
+                UPDATE Users
+                SET {", ".join(updates)}
                 WHERE UserId = %s
-                """,
-                (data.password, data.full_name.strip(), data.role, data.store_id, user_id),
+            """
+
+            cur.execute(query, tuple(values))
+
+            log_audit(
+                db,
+                "UPDATE_STORE_ACCOUNT",
+                data.performed_by or "Executive",
+                f"แก้ไขบัญชี {account['Username']} (ID {user_id})",
             )
-            log_audit(db, "UPDATE_STORE_ACCOUNT", data.performed_by or "Executive", f"แก้ไขบัญชี {account['Username']} (ID {user_id})")
+
         db.commit()
-        return {"success": True, "message": "อัปเดตบัญชีเรียบร้อยแล้ว"}
+
+        return {
+            "success": True,
+            "message": "อัปเดตบัญชีเรียบร้อยแล้ว",
+        }
+
     except HTTPException:
         db.rollback()
         raise
+
     except Exception as error:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(error))
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
 
 @app.delete("/api/store-accounts/{user_id}")
 def delete_store_account(user_id: int, db=Depends(get_db)):
@@ -1124,7 +1299,22 @@ def delete_product(product_id: int, db=Depends(get_db)):
 @app.put("/api/products/{product_id}/toggle-stock")
 def toggle_stock(product_id: int, db=Depends(get_db)):
     with db.cursor() as cur:
-        cur.execute("UPDATE Product SET IsOutOfStock = NOT IsOutOfStock WHERE ProductId = %s", (product_id,))
+        # 1. ดึงข้อมูลสินค้าเพื่อดูสถานะปัจจุบัน
+        cur.execute("SELECT StoreId, ProductName, IsOutOfStock FROM Product WHERE ProductId = %s", (product_id,))
+        prod = cur.fetchone()
+        
+        if prod:
+            # 2. สลับสถานะ (ถ้า 1 ให้เป็น 0, ถ้า 0 ให้เป็น 1)
+            new_status = 0 if prod['IsOutOfStock'] else 1
+            cur.execute("UPDATE Product SET IsOutOfStock = %s WHERE ProductId = %s", (new_status, product_id))
+            
+            # 3. ถ้าสถานะใหม่คือ "ของหมด" (1) ให้ส่งแจ้งเตือนหาเจ้าของร้าน
+            if new_status == 1:
+                cur.execute("SELECT UserId FROM Users WHERE StoreId = %s AND Role = 'Shop Owner'", (prod['StoreId'],))
+                owners = cur.fetchall()
+                for owner in owners:
+                    send_notif(db, owner['UserId'], f"⚠️ สินค้าหมด: หน้าร้านเพิ่งปรับเมนู '{prod['ProductName']}' เป็นของหมด")
+        
         db.commit()
         return {"success": True}
 
@@ -1235,17 +1425,23 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM `Order` WHERE OrderID=%s", (order_id,))
         ord_data = cur.fetchone()
-        if not ord_data: 
+        if not ord_data:
             raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อ")
-        
+        if ord_data['Status'] != 'Verifying_Slip':
+            raise HTTPException(status_code=400, detail=f"ออเดอร์นี้ถูกตรวจสอบไปแล้ว (สถานะปัจจุบัน: {ord_data['Status']})")
+
         if payload.approved:
             cur.execute("UPDATE `Order` SET Status='Pending' WHERE OrderID=%s", (order_id,))
-            send_notif(db, ord_data['UserId'], f"✅ สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
+            if ord_data.get('UserId'):
+                send_notif(db, ord_data['UserId'], f"✅ สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
             log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id}")
         else:
-            cur.execute("UPDATE `Order` SET Status='Cancelled', CancelReason=%s WHERE OrderID=%s", (payload.reason or 'สลิปไม่ถูกต้อง', order_id))
-            send_notif(db, ord_data['UserId'], f"❌ สลิปคิว {ord_data['QueueNo']} ถูกปฏิเสธ: {payload.reason}")
-        
+            reason = payload.reason or 'สลิปไม่ถูกต้อง'
+            cur.execute("UPDATE `Order` SET Status='Cancelled', CancelReason=%s WHERE OrderID=%s", (reason, order_id))
+            if ord_data.get('UserId'):
+                send_notif(db, ord_data['UserId'], f"❌ สลิปคิว {ord_data['QueueNo']} ถูกปฏิเสธ: {reason}")
+            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id}: {reason}")
+
         db.commit()
         return {"success": True}
 
@@ -1294,8 +1490,9 @@ def customer_change_order_item(
             if not order:
                 raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อนี้")
 
-            if order["UserId"] is None or int(order["UserId"]) != int(payload.user_id):
-                raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์แก้ไขคำสั่งซื้อนี้")
+            if payload.user_id and order["UserId"] is not None:
+                if int(order["UserId"]) != int(payload.user_id):
+                    raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์แก้ไขคำสั่งซื้อนี้")
 
             if order["Status"] != "Pending_Cancellation":
                 raise HTTPException(
@@ -1498,8 +1695,9 @@ def customer_cancel_order(
             if not order:
                 raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อนี้")
 
-            if order["UserId"] is None or int(order["UserId"]) != int(payload.user_id):
-                raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์ยกเลิกคำสั่งซื้อนี้")
+            if payload.user_id and order["UserId"] is not None:
+                if int(order["UserId"]) != int(payload.user_id):
+                    raise HTTPException(status_code=403, detail="คุณไม่มีสิทธิ์ดำเนินการกับคำสั่งซื้อนี้")
 
             if order["Status"] != "Pending_Cancellation":
                 raise HTTPException(
@@ -1554,6 +1752,14 @@ def customer_cancel_order(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.put("/api/orders/{order_id}/cancel")
+def customer_cancel_order_alias(
+    order_id: int,
+    payload: CustomerCancelSchema,
+    db=Depends(get_db)
+):
+    return customer_cancel_order(order_id, payload, db)
+
 @app.get("/api/orders/kitchen-summary")
 def get_kitchen_summary(store_id: int, db=Depends(get_db)):
     with db.cursor() as cur:
@@ -1572,6 +1778,20 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
     ensure_order_columns(db)
     try:
         with db.cursor() as cur:
+            cur.execute("SELECT Status FROM `Order` WHERE OrderID=%s", (order_id,))
+            current = cur.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="ไม่พบออเดอร์นี้")
+
+            current_status = current['Status']
+            terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
+            if current_status in terminal_statuses and payload.status != current_status:
+                raise HTTPException(status_code=400, detail=f"ออเดอร์สถานะ {current_status} ไม่สามารถเปลี่ยนสถานะได้")
+
+            # เมื่ออาหารพร้อมรับแล้ว ห้ามย้อนกลับไปเป็นของหมด/ยกเลิก
+            if current_status == 'Ready' and payload.status in {'Pending_Cancellation', 'Cancelled'}:
+                raise HTTPException(status_code=400, detail="อาหารเสร็จแล้ว ไม่สามารถยกเลิกหรือแจ้งของหมดกับออเดอร์นี้ได้")
+
             if payload.status == 'Ready':
                 cur.execute(
                     "UPDATE `Order` SET Status=%s, CancelReason=%s, ReadyAt=%s WHERE OrderID=%s", 
@@ -1622,6 +1842,18 @@ def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_d
         db.commit()
         return {"success": True}
 
+@app.post("/api/reports/issue", status_code=201)
+def create_issue_report(data: CreateIssueReportSchema, db=Depends(get_db)):
+    ensure_issue_report_table(db)
+    with db.cursor() as cur:
+        cur.execute("""
+            INSERT INTO IssueReport (UserId, OrderID, StoreId, IssueType, Description)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (data.user_id, data.order_id, data.store_id, data.issue_type, data.description))
+        report_id = cur.lastrowid
+        db.commit()
+        return {"success": True, "report_id": report_id, "message": "ส่งรายงานปัญหาเรียบร้อยแล้ว"}
+
 # =====================================================================
 # Food Court Global Settings Endpoints
 # =====================================================================
@@ -1635,7 +1867,7 @@ def get_food_court_status(db=Depends(get_db)):
         return {"is_open": bool(result["IsOpen"])}
 
 @app.put("/api/food-court/toggle")
-def toggle_food_court(db=Depends(get_db)):
+def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
     ensure_food_court_setting(db)
     try:
         with db.cursor() as cur:
@@ -1643,13 +1875,22 @@ def toggle_food_court(db=Depends(get_db)):
             cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
             result = cur.fetchone()
             is_open = bool(result["IsOpen"])
-            db.commit()
 
-            return {
-                "success": True,
-                "is_open": is_open,
-                "message": "เปิดศูนย์อาหารเรียบร้อยแล้ว" if is_open else "ปิดศูนย์อาหารเรียบร้อยแล้ว"
-            }
+            log_audit(
+                db,
+                "OPEN_FOOD_COURT" if is_open else "CLOSE_FOOD_COURT",
+                performed_by or "Executive",
+                "เปิดศูนย์อาหาร" if is_open else "ปิดศูนย์อาหาร"
+            )
+
+        db.commit()
+
+        return {
+            "success": True,
+            "is_open": is_open,
+            "message": "เปิดศูนย์อาหารเรียบร้อยแล้ว" if is_open else "ปิดศูนย์อาหารเรียบร้อยแล้ว"
+        }
+
     except Exception as error:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(error))
@@ -1686,4 +1927,30 @@ def get_cancellations(store_id: Optional[int] = None, db=Depends(get_db)):
 def get_logs(db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM AuditLog ORDER BY LogID DESC LIMIT 50")
+        return cur.fetchall()
+    
+@app.get("/api/reports/issue/store/{store_id}")
+def get_store_issue_reports(store_id: int, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT
+                r.ReportID,
+                r.UserId,
+                r.OrderID,
+                r.StoreId,
+                r.IssueType,
+                r.Description,
+                r.AdminNote,
+                r.CreatedAt,
+                u.FullName AS CustomerName,
+                s.StoreName,
+                o.QueueNo
+            FROM IssueReport r
+            LEFT JOIN Users u ON r.UserId = u.UserId
+            LEFT JOIN Store s ON r.StoreId = s.StoreId
+            LEFT JOIN `Order` o ON r.OrderID = o.OrderID
+            WHERE r.StoreId = %s
+            ORDER BY r.CreatedAt DESC, r.ReportID DESC
+        """, (store_id,))
+
         return cur.fetchall()

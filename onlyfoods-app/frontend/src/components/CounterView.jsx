@@ -61,6 +61,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const profileRef = useRef(null);
 
   const [viewingSlip, setViewingSlip] = useState(null);
+  const [rejectSlipModal, setRejectSlipModal] = useState(null);
+  const [rejectSlipReason, setRejectSlipReason] = useState('สลิปไม่ถูกต้อง');
+  const [foodCourtOpen, setFoodCourtOpen] = useState(true);
+  const [reportData, setReportData] = useState(null);
+  const [reportCancellations, setReportCancellations] = useState([]);
   const [viewingCustomer, setViewingCustomer] = useState(null);
   const [toast, setToast] = useState({ show: false, msg: '' });
 
@@ -92,6 +97,24 @@ export default function CounterView({ user, apiBase, onLogout }) {
       .then(r => r.json())
       .then(d => setProducts(Array.isArray(d) ? d : []))
       .catch(err => console.error("Error products:", err));
+
+    // ซิงก์สถานะโรงอาหารกับ Counter ทุกครั้งที่ refresh
+    fetch(`${apiBase}/api/food-court/status`)
+      .then(r => r.json())
+      .then(d => setFoodCourtOpen(Boolean(d?.is_open)))
+      .catch(err => console.error("Error food court status:", err));
+  };
+
+  const fetchReports = () => {
+    Promise.all([
+      fetch(`${apiBase}/api/reports/dashboard?store_id=${activeStoreId}`).then(r => r.json()),
+      fetch(`${apiBase}/api/reports/cancellations?store_id=${activeStoreId}`).then(r => r.json())
+    ])
+      .then(([dashboard, cancellations]) => {
+        setReportData(Array.isArray(dashboard) ? dashboard[0] || null : null);
+        setReportCancellations(Array.isArray(cancellations) ? cancellations : []);
+      })
+      .catch(err => console.error("Error reports:", err));
   };
 
   useEffect(() => {
@@ -103,6 +126,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
     const interval = setInterval(fetchData, 3500);
     return () => clearInterval(interval);
   }, [activeStoreId, apiBase]);
+
+  useEffect(() => {
+    if (activeTab === 'reports') fetchReports();
+  }, [activeTab, activeStoreId, apiBase]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -117,26 +144,47 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const currentStore = stores.find(s => s.StoreId === activeStoreId);
 
   // --- Handlers ---
-  const verifySlip = (id, approved) => {
-    const reason = approved ? '' : prompt('ระบุเหตุผลที่ปฏิเสธสลิป:');
-    if (!approved && !reason) return;
+  const verifySlip = (id, approved, reason = '') => {
     fetch(`${apiBase}/api/orders/${id}/verify-slip`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approved, reason })
-    }).then(() => {
+    }).then(async res => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.detail || 'ไม่สามารถตรวจสอบสลิปได้');
+        return;
+      }
       showToast(approved ? 'อนุมัติสลิปแล้ว ส่งคิวเข้าครัว' : 'ปฏิเสธสลิปแล้ว');
+      setViewingSlip(null);
+      setRejectSlipModal(null);
       fetchData();
-    });
+    }).catch(() => showToast('เชื่อมต่อระบบตรวจสลิปไม่สำเร็จ'));
+  };
+
+  const openRejectSlip = (order) => {
+    setViewingSlip(null);
+    setRejectSlipReason('สลิปไม่ถูกต้อง');
+    setRejectSlipModal(order);
+  };
+
+  const submitRejectSlip = () => {
+    if (!rejectSlipModal || !rejectSlipReason.trim()) return;
+    verifySlip(rejectSlipModal.OrderID, false, rejectSlipReason.trim());
   };
 
   const updateStatus = (id, status, cancelReason = null) => {
     fetch(`${apiBase}/api/orders/${id}/status`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, user_role: 'Front Staff', cancel_reason: cancelReason })
-    }).then(() => {
+    }).then(async res => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.detail || 'ไม่สามารถเปลี่ยนสถานะออเดอร์ได้');
+        return;
+      }
       showToast(`อัปเดตสถานะเป็น "${status}" สำเร็จ`);
       fetchData();
-    });
+    }).catch(() => showToast('เชื่อมต่อระบบออเดอร์ไม่สำเร็จ'));
   };
 
   const printStub = (queueNo) => alert(`🖨️ กำลังพิมพ์ใบตั๋วอาหาร สำหรับคิว: ${queueNo}`);
@@ -188,6 +236,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
 
   const toggleStock = (product) => {
+    // การปิดเมนูเป็นการจัดการ stock ระดับเมนู ไม่ผูกกับออเดอร์ที่ทำเสร็จแล้ว
+
     const turningOutOfStock = !product.IsOutOfStock;
     if (turningOutOfStock) {
       const affected = orders.filter(o =>
@@ -219,6 +269,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const totalAmount = cart.reduce((sum, item) => sum + Number(item.UnitPrice), 0);
 
   const submitWalkInOrder = () => {
+    if (!foodCourtOpen) return showToast('โรงอาหารปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้');
+    if (currentStore?.IsSuspended) return showToast('ร้านถูกระงับการขายชั่วคราว');
+    if (currentStore && !currentStore.IsOpen) return showToast('ร้านปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้');
     if (cart.length === 0) return alert('กรุณาเลือกอาหารก่อนกดสั่งซื้อ');
     fetch(`${apiBase}/api/orders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -285,6 +338,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     { id: 'stale', label: 'Stale Orders', caption: 'ออเดอร์ตกค้าง (120น.)', icon: 'stale', badge: staleOrders.length || null },
     { id: 'walkin', label: 'Walk-in POS', caption: 'แคชเชียร์สั่งอาหารหน้าร้าน', icon: 'walkin' },
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
+    { id: 'reports', label: 'Reports', caption: 'รายงานการขายและปัญหา', icon: 'orders' },
   ];
 
   const quickReasons = [
@@ -309,7 +363,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <span>Only Foods</span>
             </div>
             <div className="brand-subtitle">
-              จุดบริการ: <span className="status-dot"></span> <span className="status-text">หน้าร้านพร้อมบริการ</span>
+              โรงอาหาร: <span className={`status-dot ${foodCourtOpen ? 'open' : 'closed'}`}></span>
+              <span className={`status-text ${foodCourtOpen ? 'open' : 'closed'}`}>{foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}</span>
             </div>
           </div>
 
@@ -322,6 +377,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
           <div className="cv-store-chip">
             <Icon name="store" size={16} />
             <span>{currentStore?.StoreName || `ร้านค้า #${activeStoreId}`}</span>
+            <span className={`store-status-pill ${currentStore?.IsOpen && !currentStore?.IsSuspended ? 'open' : 'closed'}`}>
+              {currentStore?.IsSuspended ? 'ระงับ' : currentStore?.IsOpen ? 'เปิด' : 'ปิด'}
+            </span>
           </div>
 
           <button className="cv-icon-btn yellow-light" onClick={() => setActiveTab('orders')} title="สลิปรอตรวจ">
@@ -384,6 +442,18 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
         {/* ===== CONTENT AREA ===== */}
         <main className="cv-content">
+          {!foodCourtOpen && (
+            <div className="foodcourt-closed-banner">
+              <span>🔒</span>
+              <div><b>โรงอาหารปิดให้บริการ</b><small>ระบบยังจัดการออเดอร์เดิมได้ แต่ไม่สามารถเปิดออเดอร์ Walk-in ใหม่ได้</small></div>
+            </div>
+          )}
+          {foodCourtOpen && currentStore && (!currentStore.IsOpen || currentStore.IsSuspended) && (
+            <div className="store-closed-banner">
+              <span>⚠️</span>
+              <div><b>{currentStore.IsSuspended ? 'ร้านถูกระงับการขาย' : 'ร้านปิดให้บริการ'}</b><small>ไม่สามารถเปิดออเดอร์ Walk-in ใหม่ได้</small></div>
+            </div>
+          )}
           
           {/* TAB 1: QUEUE & SLIPS */}
           {activeTab === 'orders' && (
@@ -438,17 +508,20 @@ export default function CounterView({ user, apiBase, onLogout }) {
                             <td className="bold" style={{ color: PALETTE.coral, fontSize: '16px' }}>฿{fmtMoney(o.TotalAmount)}</td>
                             <td>
                               {o.SlipUrl ? (
-                                <div onClick={() => setViewingSlip(o.SlipUrl)} className="slip-thumb">
+                                <div onClick={() => setViewingSlip(o)} className="slip-thumb">
                                   <img src={o.SlipUrl} alt="Slip" />
-                                  <span>คลิกดูรูป</span>
+                                  <span>ตรวจสลิป + รายการอาหาร</span>
                                 </div>
                               ) : <span style={{ color: PALETTE.red, fontWeight: 'bold' }}>ไม่มีสลิป</span>}
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <button onClick={() => verifySlip(o.OrderID, true)} className="cv-btn btn-success-light" style={{ marginRight: '8px' }}>
-                                ✅ ยืนยันสลิป
+                              <button onClick={() => setViewingSlip(o)} className="cv-btn btn-dark" style={{ marginRight: '8px' }}>
+                                🔎 ตรวจรายการ
                               </button>
-                              <button onClick={() => verifySlip(o.OrderID, false)} className="cv-btn btn-danger-light">
+                              <button onClick={() => verifySlip(o.OrderID, true)} className="cv-btn btn-success-light" style={{ marginRight: '8px' }}>
+                                ✅ ยืนยัน
+                              </button>
+                              <button onClick={() => openRejectSlip(o)} className="cv-btn btn-danger-light">
                                 ❌ ปฏิเสธ
                               </button>
                             </td>
@@ -517,15 +590,20 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                   <button onClick={() => printStub(o.QueueNo)} className="cv-btn-icon" title="พิมพ์ตั๋วคิว"><Icon name="print" size={16} /></button>
                                   <button onClick={() => viewCustomerProfile(o)} className="cv-btn-icon" title="ข้อมูลลูกค้า"><Icon name="user" size={16} /></button>
                                   
-                                  {/* 🔴 ปุ่มเรียก Modal ยกเลิก/ของหมด */}
-                                  {!isPendingCancel && (
+                                  {/* ของหมด/ยกเลิกใช้ได้เฉพาะคิวที่ยังไม่เสร็จ */}
+                                  {!isPendingCancel && ['Pending', 'Cooking'].includes(o.Status) && (
                                     <button onClick={() => openCancelModal(o, 'window')} className="cv-btn btn-warning-light">
                                       ⚠️ ของหมด
                                     </button>
                                   )}
-                                  <button onClick={() => openCancelModal(o, 'immediate')} className="cv-btn btn-danger-light">
-                                    ❌ ยกเลิก
-                                  </button>
+                                  {['Pending', 'Cooking'].includes(o.Status) && (
+                                    <button onClick={() => openCancelModal(o, 'immediate')} className="cv-btn btn-danger-light">
+                                      ❌ ยกเลิก
+                                    </button>
+                                  )}
+                                  {o.Status === 'Ready' && (
+                                    <span className="action-lock-note">อาหารเสร็จแล้ว</span>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -595,7 +673,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="cv-card-head">
                   <div>
                     <h3>เมนูอาหารพร้อมจำหน่าย</h3>
-                    <div className="caption">เลือกเมนูเพื่อเพิ่มลงตะกร้า Walk-in</div>
+                    <div className="caption">เลือกเมนูเพื่อเพิ่มลงตะกร้า Walk-in {(!foodCourtOpen || currentStore?.IsSuspended || currentStore?.IsOpen === false) && '• ขณะนี้ปิดรับออเดอร์'}</div>
                   </div>
                 </div>
                 <div className="cv-product-grid">
@@ -664,8 +742,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
                       style={{ marginBottom: '14px' }}
                     />
 
-                    <button onClick={submitWalkInOrder} className="cv-btn btn-dark" style={{ width: '100%', padding: '14px', fontSize: '16px' }}>
-                      💰 รับเงินสด & ออกคิวทันที
+                    <button disabled={!foodCourtOpen || currentStore?.IsSuspended || currentStore?.IsOpen === false} onClick={submitWalkInOrder} className="cv-btn btn-dark" style={{ width: '100%', padding: '14px', fontSize: '16px' }}>
+                      {!foodCourtOpen ? '🔒 โรงอาหารปิด — เปิดคิวไม่ได้' : currentStore?.IsSuspended ? '🔒 ร้านถูกระงับ' : currentStore?.IsOpen === false ? '🔒 ร้านปิด — เปิดคิวไม่ได้' : '💰 รับเงินสด & ออกคิวทันที'}
                     </button>
                   </div>
                 )}
@@ -673,7 +751,42 @@ export default function CounterView({ user, apiBase, onLogout }) {
             </div>
           )}
 
-          {/* TAB 4: MENU & STOCK */}
+          {/* TAB 4: REPORTS */}
+          {activeTab === 'reports' && (
+            <div className="cv-stack">
+              <div className="cv-card">
+                <div className="cv-card-head">
+                  <div>
+                    <h3>📊 รายงานหน้าร้าน</h3>
+                    <div className="caption">สรุปข้อมูลจากระบบของร้านนี้</div>
+                  </div>
+                  <button onClick={fetchReports} className="cv-btn btn-ghost">↻ รีเฟรช</button>
+                </div>
+                <div className="report-grid">
+                  <div className="report-card"><span>ยอดขายสุทธิ</span><b>฿{fmtMoney(reportData?.net_sales)}</b><small>Completed + No-Show ตาม API รายงาน</small></div>
+                  <div className="report-card"><span>จำนวนออเดอร์</span><b>{reportData?.total_orders ?? 0}</b><small>ออเดอร์ที่ถูกนับในรายงาน</small></div>
+                  <div className="report-card"><span>ยกเลิก</span><b>{reportCancellations.length}</b><small>รายการสถานะ Cancelled</small></div>
+                  <div className="report-card"><span>เมนูหมดตอนนี้</span><b>{products.filter(p => p.IsOutOfStock).length}</b><small>สถานะจาก Menu & Stock</small></div>
+                </div>
+              </div>
+
+              <div className="cv-card">
+                <div className="cv-card-head"><div><h3>ประวัติการยกเลิก</h3><div className="caption">ใช้ตรวจสอบปัญหาออเดอร์และเหตุผลที่ยกเลิก</div></div></div>
+                <div className="cv-table-wrapper">
+                  <table className="cv-table">
+                    <thead><tr><th>คิว</th><th>ยอดเงิน</th><th>เหตุผล</th><th>Order ID</th></tr></thead>
+                    <tbody>
+                      {reportCancellations.length === 0 ? <tr><td colSpan="4" className="empty-state">ยังไม่มีประวัติการยกเลิก</td></tr> : reportCancellations.slice(0, 20).map(o => (
+                        <tr key={o.OrderID}><td><span className="queue-pill">{o.QueueNo}</span></td><td>฿{fmtMoney(o.TotalAmount)}</td><td>{o.CancelReason || '-'}</td><td>#{o.OrderID}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: MENU & STOCK */}
           {activeTab === 'menu' && (
             <div className="cv-card">
               <div className="cv-card-head">
@@ -806,16 +919,58 @@ export default function CounterView({ user, apiBase, onLogout }) {
         </div>
       )}
 
-      {/* ===== MODAL: SLIP ===== */}
+      {/* ===== MODAL: SLIP + ORDER ITEMS ===== */}
       {viewingSlip && (
         <div className="cv-modal-overlay" onClick={() => setViewingSlip(null)}>
-          <div className="cv-modal" onClick={e => e.stopPropagation()}>
+          <div className="cv-modal cv-slip-review-modal" onClick={e => e.stopPropagation()}>
             <div className="cv-modal-head">
-              <h3>📄 หลักฐานการโอนเงิน</h3>
+              <div><h3>🧾 ตรวจสอบสลิปและรายการอาหาร</h3><div className="caption">คิว <b style={{ color: PALETTE.coral }}>{viewingSlip.QueueNo}</b></div></div>
               <button onClick={() => setViewingSlip(null)} className="cv-modal-close">✖</button>
             </div>
-            <img src={viewingSlip} alt="Full Slip" className="slip-full-img" />
-            <button onClick={() => setViewingSlip(null)} className="cv-btn btn-dark" style={{ width: '100%', marginTop: '16px' }}>ปิดหน้าต่าง</button>
+
+            <div className="slip-order-summary">
+              <div className="receipt-title">รายการที่ลูกค้าสั่ง</div>
+              {viewingSlip.items?.map((it, idx) => (
+                <div key={idx} className="receipt-item-row">
+                  <span>{it.ProductName} × {it.Qty}</span>
+                  <b>฿{fmtMoney(Number(it.UnitPrice) * Number(it.Qty))}</b>
+                </div>
+              ))}
+              <div className="receipt-divider" />
+              <div className="receipt-total-row"><span>ยอดรวม</span><span className="receipt-total-val">฿{fmtMoney(viewingSlip.TotalAmount)}</span></div>
+            </div>
+
+            {viewingSlip.SlipUrl ? <img src={viewingSlip.SlipUrl} alt="Slip" className="slip-full-img" /> : <div className="empty-state">ไม่มีรูปสลิป</div>}
+
+            <div className="modal-footer-btns">
+              <button onClick={() => openRejectSlip(viewingSlip)} className="cv-btn btn-danger-light">❌ ปฏิเสธสลิป</button>
+              <button onClick={() => verifySlip(viewingSlip.OrderID, true)} className="cv-btn btn-success">✅ ยืนยันสลิปและส่งเข้าครัว</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== MODAL: REJECT SLIP ===== */}
+      {rejectSlipModal && (
+        <div className="cv-modal-overlay" onClick={() => setRejectSlipModal(null)}>
+          <div className="cv-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-modal-head">
+              <div><h3>❌ ปฏิเสธสลิป</h3><div className="caption">คิว {rejectSlipModal.QueueNo} • ฿{fmtMoney(rejectSlipModal.TotalAmount)}</div></div>
+              <button onClick={() => setRejectSlipModal(null)} className="cv-modal-close">✖</button>
+            </div>
+            <div className="reason-section">
+              <label className="reason-label">เหตุผลที่ปฏิเสธ</label>
+              <div className="reason-chips">
+                {['สลิปไม่ถูกต้อง', 'ยอดเงินไม่ตรง', 'ไม่พบรายการโอนเงิน', 'สลิปซ้ำ', 'รูปสลิปไม่ชัดเจน', 'เหตุผลอื่นๆ'].map(r => (
+                  <button key={r} type="button" className={`reason-chip ${rejectSlipReason === r ? 'active' : ''}`} onClick={() => setRejectSlipReason(r)}>{r}</button>
+                ))}
+              </div>
+              <textarea value={rejectSlipReason} onChange={e => setRejectSlipReason(e.target.value)} className="cv-textarea" rows={3} placeholder="ระบุเหตุผลเพิ่มเติม" />
+            </div>
+            <div className="modal-footer-btns">
+              <button onClick={() => setRejectSlipModal(null)} className="cv-btn btn-ghost">กลับ</button>
+              <button onClick={submitRejectSlip} className="cv-btn btn-danger-solid">ยืนยันการปฏิเสธ</button>
+            </div>
           </div>
         </div>
       )}
@@ -878,6 +1033,26 @@ const CV_STYLES = `
   z-index: 1000;
 }
 
+
+.store-status-pill { font-size: 10px; font-weight: 800; padding: 3px 7px; border-radius: 999px; }
+.store-status-pill.open { background: ${PALETTE.greenLight}; color: #065F46; }
+.store-status-pill.closed { background: ${PALETTE.redLight}; color: #991B1B; }
+.foodcourt-closed-banner, .store-closed-banner { display: flex; gap: 12px; align-items: center; padding: 13px 16px; border-radius: 12px; margin-bottom: 16px; border: 1px solid; }
+.foodcourt-closed-banner { background: ${PALETTE.redLight}; border-color: #FECACA; color: #991B1B; }
+.store-closed-banner { background: ${PALETTE.yellowLight}; border-color: #FDE68A; color: #92400E; }
+.foodcourt-closed-banner b, .store-closed-banner b { display: block; font-size: 14px; }
+.foodcourt-closed-banner small, .store-closed-banner small { display: block; margin-top: 2px; opacity: .85; }
+.action-lock-note { font-size: 11px; color: ${PALETTE.textSub}; font-weight: 700; padding: 6px 8px; }
+.report-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.report-card { background: ${PALETTE.bg}; border: 1px solid ${PALETTE.border}; border-radius: 12px; padding: 16px; }
+.report-card span, .report-card small { display: block; color: ${PALETTE.textSub}; }
+.report-card b { display: block; font-size: 25px; margin: 6px 0; color: ${PALETTE.dark}; }
+.report-card small { font-size: 10.5px; }
+.slip-order-summary { background: ${PALETTE.bg}; border: 1px dashed ${PALETTE.border}; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+.cv-slip-review-modal { max-width: 560px; max-height: 90vh; overflow-y: auto; }
+.cv-btn:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 900px) { .report-grid { grid-template-columns: repeat(2, 1fr); } }
+
 /* Topbar */
 .cv-topbar {
   height: 72px;
@@ -895,7 +1070,9 @@ const CV_STYLES = `
 .brand-title { font-size: 19px; font-weight: 800; color: ${PALETTE.coral}; display: flex; align-items: center; gap: 8px; }
 .brand-subtitle { font-size: 11.5px; color: ${PALETTE.textSub}; display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: ${PALETTE.green}; }
+.status-dot.closed { background: ${PALETTE.red}; }
 .status-text { color: ${PALETTE.green}; font-weight: 700; }
+.status-text.closed { color: ${PALETTE.red}; }
 
 .cv-icon-btn {
   width: 36px; height: 36px; border-radius: 10px; border: none;
@@ -912,7 +1089,7 @@ const CV_STYLES = `
 
 .cv-topbar-right { display: flex; align-items: center; gap: 14px; }
 .cv-store-chip {
-  display: flex; align-items: center; gap: 6px; background: ${PALETTE.bg};
+  display: flex; align-items: center; gap: 8px; background: ${PALETTE.bg};
   border: 1px solid ${PALETTE.border}; padding: 6px 14px; border-radius: 20px;
   font-size: 13px; font-weight: 700; color: ${PALETTE.dark};
 }
