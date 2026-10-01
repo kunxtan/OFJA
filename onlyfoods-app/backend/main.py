@@ -1431,7 +1431,7 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
         if payload.approved:
             cur.execute("UPDATE `Order` SET Status='Pending' WHERE OrderID=%s", (order_id,))
             if ord_data.get('UserId'):
-                send_notif(db, ord_data['UserId'], f"✅ สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
+                send_notif(db, ord_data['UserId'], f"สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
             log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id}")
         else:
             reason = payload.reason or 'สลิปไม่ถูกต้อง'
@@ -1642,7 +1642,7 @@ def customer_change_order_item(
             send_notif(
                 db,
                 order["UserId"],
-                f"✅ คิว {order['QueueNo']} เปลี่ยนเมนูจาก '{old_name}' "
+                f"คิว {order['QueueNo']} เปลี่ยนเมนูจาก '{old_name}' "
                 f"เป็น '{new_product['ProductName']}' เรียบร้อยแล้ว"
             )
 
@@ -1811,7 +1811,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                     'Cancelled': f'ถูกยกเลิก: {payload.cancel_reason}',
                     'NoShow': 'ออเดอร์ถูกยกเลิกเนื่องจากไม่มารับอาหารเกินเวลา'
                 }
-                send_notif(db, o['UserId'], f"🔔 ออเดอร์คิว {o['QueueNo']} {status_map.get(payload.status, payload.status)}")
+                send_notif(db, o['UserId'], f"ออเดอร์คิว {o['QueueNo']} {status_map.get(payload.status, payload.status)}")
             
             log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}")
             db.commit()

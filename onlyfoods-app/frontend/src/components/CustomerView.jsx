@@ -2,11 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import Cropper from "react-easy-crop";
 
 export default function CustomerView({ user, apiBase, onLogout }) {
-  // =========================================================================
-  // 1. STATE & CONSTANTS DEFINITIONS
-  // =========================================================================
 
-  // --- USER & PROFILE STATE ---
+  // USER & PROFILE STATE
   const userId = user?.UserId || user?.id;
   const [fullName, setFullName] = useState(user?.FullName || user?.name || "Customer");
   const [phone, setPhone] = useState(user?.Phone || "");
@@ -20,26 +17,26 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
 
-  // --- DATA STATE ---
+  // DATA STATE
   const [stores, setStores] = useState([]);
   const [products, setProducts] = useState([]);
   const [myOrders, setMyOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
   const [isFoodCourtOpen, setIsFoodCourtOpen] = useState(true);
 
-  // --- OUT OF STOCK & CHANGE ORDER STATE ---
+  // OUT OF STOCK & CHANGE ORDER STATE
   const [outOfStockOrder, setOutOfStockOrder] = useState(null);
   const [isChangeMenuMode, setIsChangeMenuMode] = useState(false);
   const [newSelectedProduct, setNewSelectedProduct] = useState(null);
   const [timeLeft, setTimeLeft] = useState(1800); // 30 นาที สำหรับยกเลิก/เปลี่ยนเมนู
 
-  // --- NAVIGATION & VIEWS ---
+  // NAVIGATION & VIEWS
   const [activeTab, setActiveTab] = useState("menu");
   const [search, setSearch] = useState("");
   const [selectedStore, setSelectedStore] = useState(null);
   const [viewMode, setViewMode] = useState("stores");
 
-  // --- CART & ORDER FORM STATE ---
+  // CART & ORDER FORM STATE
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [pickupTime, setPickupTime] = useState("");
@@ -47,16 +44,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [paymentMethod, setPaymentMethod] = useState("PromptPay");
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
-  // --- PAYMENT MODAL & SLIP ---
+  // PAYMENT MODAL & SLIP
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [slipFile, setSlipFile] = useState(null);
   const [slipPreview, setSlipPreview] = useState(null);
 
-  // --- NOTIFICATION STATE ---
+  // NOTIFICATION STATE
   const [readNotifIds, setReadNotifIds] = useState([]);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // --- REVIEW STATE ---
+  // REVIEW STATE
   const [reviewOrder, setReviewOrder] = useState(null);
   const [rating, setRating] = useState(5);
   const [hoverRating, setHoverRating] = useState(0);
@@ -66,12 +63,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [isReadOnlyReview, setIsReadOnlyReview] = useState(false);
   const [reviewedOrderIds, setReviewedOrderIds] = useState({});
 
-  // --- STORE REVIEWS MODAL STATE ---
+  // STORE REVIEWS MODAL STATE
   const [selectedStoreForReviews, setSelectedStoreForReviews] = useState(null);
   const [storeReviewsList, setStoreReviewsList] = useState([]);
   const [isLoadingReviews, setIsLoadingReviews] = useState(false);
 
-  // --- ISSUE REPORT STATE ---
+  // ISSUE REPORT STATE
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [selectedOrderForReport, setSelectedOrderForReport] = useState(null);
   const [issueType, setIssueType] = useState("อาหารไม่ตรงตามออเดอร์");
@@ -80,7 +77,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [myIssueReports, setMyIssueReports] = useState([]);
   const [isViewReportsModalOpen, setIsViewReportsModalOpen] = useState(false);
 
-  // --- CUSTOM ALERT STATE ---
+  // ICON
+  const CameraIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-camera preview-icon"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg>);
+  const UserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user preview-icon"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>)
+  const NotiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bell preview-icon"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>)
+  const HomeIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-house preview-icon"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>)
+  const OrderIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-notebook-pen preview-icon"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></svg>)
+  const HiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-hand preview-icon"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>)
+  const CartIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shopping-cart preview-icon"><path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>)
+  const CartIconPlus = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shopping-cart-plus preview-icon"><path d="M16 5h6"/><path d="M19 2v6"/><path d="m2.05 2.05 1.099-.028a1 1 0 011.008.815l2.69 14.347A1 1 0 007.83 18H18"/><path d="M4.564 5H12"/><path d="M6.25 14h12.712a2 2 0 001.991-1.57l.172-1.041"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>)
+  const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="24" height="24" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>)
+  
+  // CUSTOM ALERT STATE
   const [alertData, setAlertData] = useState({
     isOpen: false,
     title: "",
@@ -92,7 +100,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setAlertData({ isOpen: true, title, message, type });
   };
 
-  // --- CONSTANTS ---
+  // CONSTANTS
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
   const COLORS = {
@@ -108,10 +116,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     green: "#20B486",
     red: "#E0523B",
   };
-
-  // =========================================================================
-  // 2. HELPER & UTILITY FUNCTIONS
-  // =========================================================================
 
   const getNotifKey = (n) =>
     n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
@@ -935,17 +939,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const heroStyle = { background: `linear-gradient(135deg, ${COLORS.orange}, ${COLORS.yellow})`, borderRadius: "28px", padding: "32px", color: COLORS.white, display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", marginBottom: "28px", overflow: "hidden" };
   const cardStyle = { background: COLORS.white, borderRadius: "20px", padding: "13px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}` };
 
-  // =========================================================================
-  // 8. RENDER VIEWS (PAGES & TABS)
-  // =========================================================================
-
-  // --- 8.1 MENU TAB ---
+  // 8.1 MENU TAB 
   const renderMenu = () => {
     return (
       <>
         <div style={heroStyle}>
           <div>
-            <div style={{ fontSize: "14px", fontWeight: "600", marginBottom: "5px" }}>สวัสดี {fullName} 👋</div>
+            <div style={{ fontSize: "14px", fontWeight: "600", marginBottom: "2px" }}>สวัสดี {fullName} <HiIcon/></div>
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
@@ -1045,7 +1045,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           }}
                         >
                           <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                            <span style={{ color: COLORS.yellow, fontSize: "15px" }}>⭐</span>
+                            <span style={{ color: COLORS.yellow, fontSize: "5px" }}><StarIcon/></span>
                             <span style={{ fontWeight: "900", fontSize: "14px", color: COLORS.navy }}>
                               {avgRating > 0 ? avgRating.toFixed(1) : "ยังไม่มีรีวิว"}
                             </span>
@@ -1162,7 +1162,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- 8.2 PROFILE TAB ---
+  // PROFILE TAB
   const renderProfile = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน </h2>
@@ -1177,7 +1177,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               />
             ) : (
               <div style={{ width: "120px", height: "120px", borderRadius: "50%", background: `linear-gradient(135deg, ${COLORS.orange}, ${COLORS.yellow})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "56px" }}>
-                👤
+                <UserIcon />
               </div>
             )}
 
@@ -1190,18 +1190,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 background: COLORS.navy,
                 color: COLORS.white,
                 borderRadius: "50%",
-                width: "36px",
-                height: "36px",
+                width: "44px",
+                height: "44px",
                 display: "flex",
                 alignItems: "center",
-                justify: "center",
+                justifyContent: "center",
                 cursor: "pointer",
                 boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
                 fontSize: "16px"
               }}
               title="เปลี่ยนรูปโปรไฟล์"
             >
-              📷
+              <CameraIcon />
             </label>
             <input
               id="profile-upload-input"
@@ -1411,7 +1411,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
       {myOrders.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", textAlign: "center", color: COLORS.gray }}>
-          <div style={{ fontSize: "45px", marginBottom: "10px" }}>🛒</div>ยังไม่มีคำสั่งซื้อ
+          <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/></div>ยังไม่มีคำสั่งซื้อ
         </div>
       ) : (
         <div style={{ display: "grid", gap: "15px" }}>
@@ -1521,7 +1521,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         <div style={{ display: "grid", gap: "12px" }}>
           {notifs.map((notification, index) => (
             <div key={getNotifKey(notification) || index} style={{ ...cardStyle, padding: "18px", borderLeft: `5px solid ${COLORS.orange}` }}>
-              <div style={{ fontWeight: "900", marginBottom: "6px" }}>🔔 Only Foods</div>
+              <div style={{ fontWeight: "900", marginBottom: "3px" }}><NotiIcon /> Only Foods</div>
               <div style={{ color: COLORS.gray, fontSize: "13px" }}>{notification.Message}</div>
               {notification.CreatedAt && <div style={{ color: "#aaa", fontSize: "11px", marginTop: "8px" }}>{notification.CreatedAt}</div>}
             </div>
@@ -1543,7 +1543,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         <div onClick={e => e.stopPropagation()} style={{ width: "min(480px, 100%)", height: "100%", background: COLORS.white, overflowY: "auto", padding: "22px", boxSizing: "border-box" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ตะกร้าของฉัน 🛒</h2>
+              <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ตะกร้าของฉัน</h2>
               {cart.length > 0 && <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "4px" }}></div>}
             </div>
             <button onClick={() => setIsCartOpen(false)} style={{ width: "36px", height: "36px", border: "none", borderRadius: "50%", background: COLORS.lightGray, cursor: "pointer", fontSize: "20px" }}>×</button>
@@ -1719,7 +1719,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
             <label style={{ fontSize: "14px", fontWeight: "800", display: "block", marginBottom: "8px" }}>คะแนนความพึงพอใจ</label>
             {isReadOnlyReview ? (
               <div style={{ fontSize: "30px" }}>
-                {"⭐".repeat(Number(rating))}
+                {Array.from({ length: 5 }, (_, i) => (<StarIcon key={i} style={{color: i < Number(rating) ? "#FFD166" : "#D9D9D9"}}/>))}
                 <span style={{ fontSize: "14px", color: COLORS.gray, marginLeft: "8px", fontWeight: "700" }}>({rating}/5)</span>
               </div>
             ) : (
@@ -1737,7 +1737,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         filter: (hoverRating >= star || (!hoverRating && rating >= star)) ? "none" : "grayscale(100%) opacity(0.3)"
                       }}
                     >
-                      ⭐
+                      <StarIcon/>
                     </span>
                   ))}
                 </div>
@@ -1951,9 +1951,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       <span style={{ fontWeight: "800", fontSize: "13px" }}>{rev.ReviewerName || rev.CustomerName || rev.FullName || "ผู้ใช้บริการ"}</span>
                       <span style={{ fontSize: "11px", color: COLORS.gray }}>{rev.CreatedAt || rev.ReviewDate || ""}</span>
                     </div>
-                    
-                    <div style={{ fontSize: "14px", marginBottom: "6px" }}>
-                      {"⭐".repeat(Number(rev.Rating || rev.rating || 5))}
+                    <div style={{ fontSize: "14px", marginBottom: "6px", display: "flex", gap: "2px" }}>
+                      {Array.from({ length: Number(rev.Rating || rev.rating || 5) }, (_, i) => <StarIcon key={i} />)}
                     </div>
 
                     {rev.Comment || rev.comment ? (
@@ -2199,10 +2198,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // =========================================================================
-  // 10. MAIN COMPONENT RETURN
-  // =========================================================================
-
   return (
     <div className="customer-view" style={pageStyle}>
       <style>
@@ -2260,7 +2255,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               {profileImage ? (
                 <img src={profileImage} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               ) : (
-                "👤"
+                <UserIcon/>
               )}
             </div>
             <div>
@@ -2285,7 +2280,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           fontSize: "26px", cursor: "pointer", zIndex: 500, boxShadow: "0 8px 25px rgba(255,114,76,0.35)"
         }}
       >
-        🛒
+        <CartIconPlus/>
         {cartCount > 0 && (
           <span style={{
             position: "absolute", top: "-3px", right: "-3px", width: "23px", height: "23px",
@@ -2305,13 +2300,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         maxWidth: "calc(100vw - 30px)", overflowX: "auto"
       }}>
         <button onClick={() => handleSelectTab("menu")} style={{ border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "menu" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "menu" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
-          <span className="nav-text">หน้าแรก</span>
+          <span className="nav-text"><HomeIcon/></span>
         </button>
         <button onClick={() => handleSelectTab("orders")} style={{ border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "orders" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "orders" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
-          <span className="nav-text">ออเดอร์</span>
+          <span className="nav-text"><OrderIcon/></span>
         </button>
         <button onClick={() => handleSelectTab("notifs")} style={{ position: "relative", border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "notifs" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "notifs" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
-          🔔
+          <NotiIcon/>
           {unreadNotifsCount > 0 && (
             <span style={{ position: "absolute", top: "2px", right: "3px", minWidth: "17px", height: "17px", borderRadius: "50%", background: COLORS.red, color: COLORS.white, fontSize: "9px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", padding: "0 3px", boxSizing: "border-box" }}>
               {unreadNotifsCount}
@@ -2319,7 +2314,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           )}
         </button>
         <button onClick={() => handleSelectTab("profile")} style={{ border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "profile" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "profile" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
-          <span className="nav-text">โปรไฟล์</span>
+          <span className="nav-text"><UserIcon/></span>
         </button>
       </div>
 
