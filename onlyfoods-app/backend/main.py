@@ -7,6 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pymysql
 from pymysql.cursors import DictCursor
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, EmailStr
+
 
 # =====================================================================
 # Only Foods Engine Pro - Main Application Entrypoint
@@ -67,6 +71,22 @@ def clean_text(value: Optional[str]) -> Optional[str]:
         return None
     value = value.strip()
     return value or None
+
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    """แปลงรหัสผ่านเป็น Hash ก่อนบันทึกลงฐานข้อมูล"""
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """ตรวจสอบรหัสผ่าน (รองรับทั้ง Plaintext เดิมและ Hash)"""
+    if plain_password == hashed_password:
+        return True
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        return False
 
 # =====================================================================
 # Database Auto-Migrations (Ensures Schema Compatibility)
@@ -261,7 +281,11 @@ class RegisterSchema(BaseModel):
     name: str
     phone: str
     email: Optional[str] = None
-
+    
+class ResetPasswordReq(BaseModel):
+    username_or_phone: str
+    new_password: str
+    
 class GoogleAuthSchema(BaseModel):
     google_id: str
     email: str
@@ -487,7 +511,41 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการบันทึกข้อมูล: {str(e)}")
+    
+@app.post("/api/reset-password")
+def reset_password(req: ResetPasswordReq, db=Depends(get_db)):
+    cursor = db.cursor(pymysql.cursors.DictCursor)
+    try:
+        # 2. แก้ไข SQL ให้ใช้ชื่อคอลัมน์จริง (UserId, Username, Phone, Email)
+        search_sql = """
+            SELECT UserId FROM Users 
+            WHERE Username = %s OR Phone = %s OR Email = %s
+        """
+        cursor.execute(search_sql, (req.username_or_phone, req.username_or_phone, req.username_or_phone))
+        user = cursor.fetchone()
 
+        if not user:
+            raise HTTPException(
+                status_code=404, 
+                detail="ไม่พบชื่อผู้ใช้ เบอร์โทรศัพท์ หรืออีเมลนี้ในระบบ"
+            )
+
+        # 3. อัปเดตคอลัมน์ Password อิงตาม UserId (เก็บบันทึกรหัสผ่านให้สอดคล้องกับระบบ Login)
+        update_sql = "UPDATE Users SET Password = %s WHERE UserId = %s"
+        cursor.execute(update_sql, (req.new_password, user["UserId"]))
+        db.commit()
+
+        return {"status": "success", "message": "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว"}
+
+    except HTTPException as http_ex:
+        db.rollback()
+        raise http_ex
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาด: {str(e)}")
+    finally:
+        cursor.close()
+        
 @app.post("/api/auth/google")
 def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
     ensure_user_columns(db)
