@@ -246,7 +246,8 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Prompt:wght@300;400;500;600;700;800&display=swap');
 
-        * { box-sizing: border-box; font-family: 'Prompt', 'Plus Jakarta Sans', sans-serif; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Prompt', 'Plus Jakarta Sans', sans-serif; }
         html, body, #root {
           width: 100vw !important;
           height: 100vh !important;
