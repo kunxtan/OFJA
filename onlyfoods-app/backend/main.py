@@ -797,7 +797,7 @@ def create_store_full(data: StoreFullSchema, db=Depends(get_db)):
             cur.execute(
                 """
                 INSERT INTO Users
-                    (Username,Password,FullName,Role,StoreId,Points
+                    (Username,Password,FullName,Role,StoreId
                     )
                 VALUES(%s, %s, %s, %s, %s, 0)
                 """,
@@ -1118,7 +1118,7 @@ def add_store_staff(store_id: int, data: StaffCreateSchema, db=Depends(get_db)):
                 raise HTTPException(status_code=400, detail="Username นี้มีอยู่ในระบบแล้ว")
 
             cur.execute("""
-                INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points)
+                INSERT INTO Users (Username, Password, FullName, Role, StoreId)
                 VALUES (%s, %s, %s, %s, %s, 0)
             """, (data.username, data.password, data.fullName, data.role, store_id))
             db.commit()
@@ -1182,7 +1182,7 @@ def create_store_account(data: AccountCreateSchema, db=Depends(get_db)):
 
             cur.execute(
                 """
-                INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points)
+                INSERT INTO Users (Username, Password, FullName, Role, StoreId)
                 VALUES (%s, %s, %s, %s, %s, 0)
                 """,
                 (username, data.password, full_name, data.role, data.store_id),
@@ -1531,9 +1531,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 )
             
             if data.user_id:
-                pts_earned = int(total // 10)
-                cur.execute("UPDATE Users SET Points = Points + %s WHERE UserId = %s", (pts_earned, data.user_id))
-                send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ! (ได้รับ {pts_earned} แต้ม)")
+                send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ!")
                 
             log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน ID:{data.store_id}")
             

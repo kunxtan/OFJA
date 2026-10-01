@@ -158,10 +158,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     )}:${getPart("minute")}:${getPart("second")}`;
   };
 
-  // =========================================================================
-  // 3. API FETCHING FUNCTIONS
-  // =========================================================================
-
   const fetchStores = async () => {
     try {
       const res = await fetch(`${apiBase}/api/stores`);
@@ -293,10 +289,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // =========================================================================
-  // 4. USE EFFECTS (POLLING & EVENT HANDLERS)
-  // =========================================================================
-
   // Polling ข้อมูลทุกๆ 5 วินาที
   useEffect(() => {
     fetchStores();
@@ -377,7 +369,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
   }, [outOfStockOrder?.OrderID]);
 
-  // มาร์กการแจ้งเตือนว่าอ่านแล้ว
   useEffect(() => {
     if (notifs.length > 0 && !isInitialized) {
       const keys = notifs.map((n) => getNotifKey(n));
@@ -385,10 +376,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       setIsInitialized(true);
     }
   }, [notifs, isInitialized]);
-
-  // =========================================================================
-  // 5. MEMOIZED VALUES
-  // =========================================================================
 
   const activeStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
@@ -428,10 +415,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     [notifs, readNotifIds]
   );
 
-  // =========================================================================
-  // 6. ACTION & EVENT HANDLERS
-  // =========================================================================
-
   const handleSelectTab = (tabName) => {
     setActiveTab(tabName);
     if (tabName === "menu") setViewMode("stores");
@@ -446,7 +429,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setViewMode("products");
   };
 
-  // --- CART HANDLERS ---
+  // CART HANDLERS
   const createCartRow = (product) => {
     const uniqueId =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -483,7 +466,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- OUT OF STOCK HANDLERS ---
+  // OUT OF STOCK HANDLERS
   const handleCancelOutOfStockOrder = async (
     customReason = "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด"
   ) => {
@@ -557,7 +540,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // --- PROFILE HANDLERS ---
+  // PROFILE HANDLERS
   const handleProfileImageChange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -647,7 +630,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // --- ORDER SUBMISSION & PAYMENT HANDLERS ---
+  // ORDER SUBMISSION & PAYMENT HANDLERS
   const handleProceedToPayment = () => {
     if (!isFoodCourtOpen) return customAlert("ขณะนี้ศูนย์อาหารปิดให้บริการชั่วคราว", "", "error");
     if (cart.length === 0) return customAlert("กรุณาเลือกอาหารลงตะกร้าก่อนสั่งซื้อ", "", "error");
@@ -730,7 +713,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // --- REVIEWS HANDLERS ---
+  // REVIEWS HANDLERS
   const handleOpenStoreReviews = (e, store) => {
     e.stopPropagation();
     setSelectedStoreForReviews(store);
@@ -832,7 +815,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // --- REPORT HANDLERS ---
+  // REPORT HANDLERS
   const handleOpenReportModal = (order = null) => {
     // 1 ออเดอร์แจ้งปัญหาได้เพียง 1 ครั้ง
     if (order) {
@@ -925,11 +908,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // =========================================================================
-  // 7. STYLES
-  // =========================================================================
-
-  const pageStyle = { minHeight: "100vh", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif" };
+  // STYLE
+  const pageStyle = { minHeight: "100vh", height: "100vh", overflowY: "auto", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif", boxSizing: "border-box" };
   const containerStyle = { width: "100%", maxWidth: "1450px", margin: "0 auto", padding: "20px 20px 110px", boxSizing: "border-box" };
   const headerStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "15px", marginBottom: "25px", flexWrap: "wrap" };
   const logoStyle = { fontSize: "27px", fontWeight: "900", color: COLORS.navy, whiteSpace: "nowrap", cursor: "pointer" };
@@ -939,13 +919,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const heroStyle = { background: `linear-gradient(135deg, ${COLORS.orange}, ${COLORS.yellow})`, borderRadius: "28px", padding: "32px", color: COLORS.white, display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", marginBottom: "28px", overflow: "hidden" };
   const cardStyle = { background: COLORS.white, borderRadius: "20px", padding: "13px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}` };
 
-  // 8.1 MENU TAB 
+  // MENU TAB 
   const renderMenu = () => {
     return (
       <>
         <div style={heroStyle}>
           <div>
-            <div style={{ fontSize: "14px", fontWeight: "600", marginBottom: "2px" }}>สวัสดี {fullName} <HiIcon/></div>
+            <div style={{ fontSize: "14px", fontWeight: "600", marginBottom: "0px" }}>สวัสดี {fullName} <HiIcon/></div>
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
@@ -1166,7 +1146,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const renderProfile = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน </h2>
-      <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", maxWidth: "750px", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}` }}>
+      <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", Width: "100%", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}`, overflow: "visible" }}>
         <div style={{ textAlign: "center", position: "relative" }}>
           <div style={{ position: "relative", width: "120px", height: "120px", margin: "0 auto 15px" }}>
             {profileImage ? (
@@ -1326,13 +1306,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         )}
       </div>
 
-      <div style={{ maxWidth: "750px", margin: "0 auto" }}>
+      <div style={{ Width: "100%", margin: "0 auto" }}>
         <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "15px" }}> ประวัติการสั่งซื้อและรีวิวของฉัน</h3>
-        
         {myOrders.length === 0 ? (
-          <div style={{ ...cardStyle, padding: "40px 20px", textAlign: "center", color: COLORS.gray }}>
-            ยังไม่มีประวัติการสั่งซื้อ
-          </div>
+          <div style={{ ...cardStyle, padding: "40px 20px", textAlign: "center", color: COLORS.gray }}> <OrderIcon/> ยังไม่มีประวัติการสั่งซื้อ </div>
         ) : (
           <div style={{ display: "grid", gap: "15px" }}>
             {myOrders.map((order) => {
@@ -1405,12 +1382,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     </div>
   );
 
-  // --- 8.3 ORDERS TAB ---
+  // ORDERS TAB
   const renderOrders = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
       {myOrders.length === 0 ? (
-        <div style={{ ...cardStyle, padding: "55px 20px", textAlign: "center", color: COLORS.gray }}>
+        <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/></div>ยังไม่มีคำสั่งซื้อ
         </div>
       ) : (
@@ -1511,12 +1488,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     </div>
   );
 
-  // --- 8.4 NOTIFICATIONS TAB ---
   const renderNotifications = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>การแจ้งเตือน</h2>
       {notifs.length === 0 ? (
-        <div style={{ ...cardStyle, textAlign: "center", padding: "50px 20px", color: COLORS.gray }}>ไม่มีการแจ้งเตือน</div>
+        <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
+          <div style={{ fontSize: "45px", marginBottom: "10px" }}><NotiIcon/></div>ไม่มีการแจ้งเตือน
+        </div>
       ) : (
         <div style={{ display: "grid", gap: "12px" }}>
           {notifs.map((notification, index) => (
@@ -1531,11 +1509,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     </div>
   );
 
-  // =========================================================================
-  // 9. MODALS & POPUPS
-  // =========================================================================
-
-  // --- CART SLIDE OVER MODAL ---
+  // CART SLIDE OVER MODAL
   const renderCart = () => {
     if (!isCartOpen) return null;
     return (
@@ -1625,14 +1599,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- PAYMENT QR CODE & SLIP MODAL ---
+  // PAYMENT QR CODE & SLIP MODAL
   const renderPaymentModal = () => {
     if (!isPaymentModalOpen) return null;
 
     return (
       <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }} onClick={() => setIsPaymentModalOpen(false)}>
-        <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(440px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center" }}>
-          
+        <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(440px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center" }}> 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
             <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}> ชำระเงินผ่าน QR Code</h3>
             <button onClick={() => setIsPaymentModalOpen(false)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
@@ -1703,7 +1676,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- REVIEW MODAL ---
+  // REVIEW MODAL
   const renderReviewModal = () => {
     if (!reviewOrder) return null;
     return (
@@ -1800,7 +1773,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- OUT OF STOCK MODAL ---
+  // OUT OF STOCK MODAL
   const renderOutOfStockModal = () => {
     if (!outOfStockOrder) return null;
 
@@ -1914,7 +1887,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- STORE REVIEWS MODAL ---
+  // STORE REVIEWS MODAL
   const renderStoreReviewsModal = () => {
     if (!selectedStoreForReviews) return null;
 
@@ -1980,7 +1953,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- REPORT ISSUE MODAL ---
+  // REPORT ISSUE MODAL 
   const renderReportModal = () => {
     if (!isReportModalOpen) return null;
 
@@ -2076,7 +2049,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- VIEW REPORT HISTORY MODAL ---
+  // VIEW REPORT HISTORY MODAL
   const renderViewReportsModal = () => {
     if (!isViewReportsModalOpen) return null;
 
@@ -2148,7 +2121,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // --- CUSTOM ALERT DIALOG ---
+  // CUSTOM ALERT DIALOG
   const renderCustomAlert = () => {
     if (!alertData.isOpen) return null;
 
