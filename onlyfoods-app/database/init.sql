@@ -141,8 +141,8 @@ ON DUPLICATE KEY UPDATE StoreName=VALUES(StoreName);
 
 INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points, Phone, Email) VALUES
 ('uefa01', 'uefa01', 'คุณ ยูฟ่า (ลูกค้า VIP)', 'Customer', NULL, 250, '0812345678', 'uefa01@example.com'),
-('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน (ร้านแกง)', 'Front Staff', 1, 0, '0823456789', 'staff01@example.com'),
-('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว (ร้านแกง)', 'Kitchen Staff', 1, 0, '0834567890', 'kitchen01@example.com'),
+('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน ', 'Front Staff', 1, 0, '0823456789', 'staff01@example.com'),
+('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว ', 'Kitchen Staff', 1, 0, '0834567890', 'kitchen01@example.com'),
 ('owner01', 'owner01', 'เสี่ยฟลุ้ค เจ้าของร้านแกง', 'Shop Owner', 1, 0, '0845678901', 'owner01@example.com'),
 ('staff02', 'staff02', 'พนักงานยูฟ่า หน้าร้าน (ชาไทย)', 'Front Staff', 2, 0, '0856789012', 'staff02@example.com'),
 ('kitchen02', 'kitchen02', 'เชฟยูฟ่า ห้องครัว (ชาไทย)', 'Kitchen Staff', 2, 0, '0867890123', 'kitchen02@example.com'),
