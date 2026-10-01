@@ -16,9 +16,11 @@ CREATE TABLE IF NOT EXISTS Store (
     ImageUrl MEDIUMTEXT NULL,
     ContractStartDate DATE NULL,
     ContractEndDate DATE NULL,
+    CurrentContractStartDate DATE NULL,
+    IsDeleted TINYINT(1) NOT NULL DEFAULT 0,
+    DeletedAt DATETIME NULL,
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 CREATE TABLE IF NOT EXISTS Users (
     UserId INT AUTO_INCREMENT PRIMARY KEY,
     Username VARCHAR(50) NOT NULL UNIQUE,
@@ -132,17 +134,31 @@ CREATE TABLE IF NOT EXISTS FoodCourtSetting (
 
 -- ข้อมูลตั้งต้น
 INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen) VALUES (1, 1);
+-- อัปเดตข้อมูลตั้งต้นของร้านค้า (ใส่ ImageUrl และ Description)
+INSERT INTO Store (StoreId, StoreName, IsOpen, IsSuspended, ImageUrl, Description) VALUES 
+(1, 'ร้านข้าวแกงวิศวะเดือด', 1, 0, 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600', 'ข้าวแกงรสเด็ด เมนูหลากหลาย ทำสดใหม่ทุกวัน'), 
+(2, 'ชาไทยสถาบัน KMITL', 1, 0, 'https://images.unsplash.com/photo-1558857563-b371033873b8?w=600', 'ชาไทย ชาเขียว เครื่องดื่มเย็นชื่นใจ'),
+(3, 'ก๋วยเตี๋ยวเรือตึกพระเทพ', 1, 0, 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=600', 'ก๋วยเตี๋ยวเรือรสเข้มข้น น้ำตกแท้ๆ')
+ON DUPLICATE KEY UPDATE 
+    StoreName=VALUES(StoreName), 
+    ImageUrl=VALUES(ImageUrl), 
+    Description=VALUES(Description);
 
-INSERT INTO Store (StoreId, StoreName, IsOpen, IsSuspended) VALUES 
-(1, 'ร้านข้าวแกงวิศวะเดือด', 1, 0), 
-(2, 'ชาไทยสถาบัน KMITL', 1, 0),
-(3, 'ก๋วยเตี๋ยวเรือตึกพระเทพ', 1, 0)
-ON DUPLICATE KEY UPDATE StoreName=VALUES(StoreName);
-
+INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock, img) VALUES 
+(1, 'ข้าวราดกะเพราหมูกรอบไข่ดาว', 60.00, 'อาหารจานเดียว', 0, 'https://images.unsplash.com/photo-1626804475297-41608e074eb1?w=500'),
+(1, 'ข้าวแกงเขียวหวานไก่', 50.00, 'อาหารจานเดียว', 0, 'https://images.unsplash.com/photo-1455619452474-d2be8b1e70cd?w=500'),
+(1, 'ไข่ต้มยางมะตูม', 10.00, 'ทานเล่น', 0, 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?w=500'),
+(2, 'ชาไทยสูตรเข้มข้น (เย็น)', 30.00, 'เครื่องดื่ม', 0, 'https://images.unsplash.com/photo-1558857563-b371033873b8?w=500'),
+(2, 'ชาเขียวมัทฉะนมสด', 35.00, 'เครื่องดื่ม', 0, 'https://images.unsplash.com/photo-1536256263959-770b48d82b0a?w=500'),
+(3, 'ก๋วยเตี๋ยวเรือน้ำตกเนื้อพิเศษ', 55.00, 'ก๋วยเตี๋ยว', 0, 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500')
+ON DUPLICATE KEY UPDATE 
+    ProductName=VALUES(ProductName), 
+    img=VALUES(img);
+    
 INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points, Phone, Email) VALUES
 ('uefa01', 'uefa01', 'คุณ ยูฟ่า (ลูกค้า VIP)', 'Customer', NULL, 250, '0812345678', 'uefa01@example.com'),
-('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน (ร้านแกง)', 'Front Staff', 1, 0, '0823456789', 'staff01@example.com'),
-('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว (ร้านแกง)', 'Kitchen Staff', 1, 0, '0834567890', 'kitchen01@example.com'),
+('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน ', 'Front Staff', 1, 0, '0823456789', 'staff01@example.com'),
+('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว ', 'Kitchen Staff', 1, 0, '0834567890', 'kitchen01@example.com'),
 ('owner01', 'owner01', 'เสี่ยฟลุ้ค เจ้าของร้านแกง', 'Shop Owner', 1, 0, '0845678901', 'owner01@example.com'),
 ('staff02', 'staff02', 'พนักงานยูฟ่า หน้าร้าน (ชาไทย)', 'Front Staff', 2, 0, '0856789012', 'staff02@example.com'),
 ('kitchen02', 'kitchen02', 'เชฟยูฟ่า ห้องครัว (ชาไทย)', 'Kitchen Staff', 2, 0, '0867890123', 'kitchen02@example.com'),
@@ -152,11 +168,3 @@ INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points, Phone, E
 ('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0, '0901234567', 'exec01@example.com')
 ON DUPLICATE KEY UPDATE FullName=VALUES(FullName);
 
-INSERT INTO Product (StoreId, ProductName, UnitPrice, Category, IsOutOfStock) VALUES 
-(1, 'ข้าวราดกะเพราหมูกรอบไข่ดาว', 60.00, 'อาหารจานเดียว', 0),
-(1, 'ข้าวแกงเขียวหวานไก่', 50.00, 'อาหารจานเดียว', 0),
-(1, 'ไข่ต้มยางมะตูม', 10.00, 'ทานเล่น', 0),
-(2, 'ชาไทยสูตรเข้มข้น (เย็น)', 30.00, 'เครื่องดื่ม', 0),
-(2, 'ชาเขียวมัทฉะนมสด', 35.00, 'เครื่องดื่ม', 0),
-(3, 'ก๋วยเตี๋ยวเรือน้ำตกเนื้อพิเศษ', 55.00, 'ก๋วยเตี๋ยว', 0)
-ON DUPLICATE KEY UPDATE ProductName=VALUES(ProductName);
