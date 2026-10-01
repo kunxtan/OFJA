@@ -1405,9 +1405,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 )
             
             if data.user_id:
-                pts_earned = int(total // 10)
-                cur.execute("UPDATE Users SET Points = Points + %s WHERE UserId = %s", (pts_earned, data.user_id))
-                send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ! (ได้รับ {pts_earned} แต้ม)")
+                send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ!")
                 
             log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน ID:{data.store_id}")
             
