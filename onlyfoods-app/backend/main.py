@@ -18,8 +18,7 @@ from pydantic import BaseModel, EmailStr
 
 app = FastAPI(title="Only Foods Engine Pro")
 
-app.add_middleware(
-    CORSMiddleware,
+app.add_middleware(CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
@@ -101,8 +100,11 @@ STORE_EXTRA_COLUMNS = {
     "Description": "VARCHAR(300) NULL",
     "ImageUrl": "MEDIUMTEXT NULL",
     "ContractStartDate": "DATE NULL",
+    "CurrentContractStartDate": "DATE NULL",
     "ContractEndDate": "DATE NULL",
-
+    "IsDeleted": "TINYINT(1) NOT NULL DEFAULT 0",
+    "DeletedAt": "DATETIME NULL",
+    
 }
 _store_columns_ready = False
 
@@ -124,9 +126,6 @@ def ensure_store_columns(db):
     db.commit()
     _store_columns_ready = True
 
-# ---------------------------------------------------------------------
-# Additional schema compatibility migrations
-# ---------------------------------------------------------------------
 USER_EXTRA_COLUMNS = {
     "GoogleId": "VARCHAR(255) NULL",
     "Email": "VARCHAR(255) NULL",
@@ -416,6 +415,7 @@ class CustomerChangeItemSchema(BaseModel):
     unit_price: Optional[float] = None
     
 class RenewContractSchema(BaseModel):
+    contract_start_date: str
     contract_end_date: str
     performed_by: Optional[str] = "Executive"
 
@@ -435,11 +435,23 @@ ALLOWED_STORE_ROLES = ("Shop Owner", "Front Staff", "Kitchen Staff")
 @app.post("/api/login")
 def login(data: LoginSchema, db=Depends(get_db)):
     ensure_user_columns(db)
+    ensure_store_columns(db) 
+
     with db.cursor() as cur:
-        cur.execute("SELECT * FROM Users WHERE Username=%s AND Password=%s", (data.username, data.password))
+        cur.execute("SELECT u.*,s.IsDeleted AS StoreIsDeleted FROM Users u LEFT JOIN Store s ON u.StoreId = s.StoreId WHERE u.Username=%s AND u.Password=%s", (data.username, data.password))
         user = cur.fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+
+# ร้านที่โดนลบจะเข้าล็อตอินไม่ได้
+        if (user.get("StoreId") is not None and user.get("StoreIsDeleted")):
+            raise HTTPException(
+                status_code=403,
+                detail="ร้านค้านี้ถูกลบแล้ว ไม่สามารถเข้าสู่ระบบได้"
+            )
+
+        user.pop("StoreIsDeleted", None)
+        
         return user
 
 @app.post("/api/register")
@@ -626,7 +638,7 @@ def mark_all_notifications_read(user_id: int, db=Depends(get_db)):
 def get_stores(db=Depends(get_db)):
     ensure_store_columns(db)
     with db.cursor() as cur:
-        cur.execute("SELECT * FROM Store")
+        cur.execute("SELECT * FROM Store WHERE IsDeleted = 0")
         return cur.fetchall()
 
 @app.post("/api/stores", status_code=201)
@@ -651,6 +663,19 @@ def create_store(data: StoreCreateSchema, db=Depends(get_db)):
     except Exception as error:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(error))
+
+# ประวัติร้านทั้งหมดรวมอันที่โดนลบ
+@app.get("/api/stores/history")
+def get_store_history(db=Depends(get_db)):
+    ensure_store_columns(db)
+
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT *
+            FROM Store
+            ORDER BY StoreName
+        """)
+        return cur.fetchall()
 
 @app.put("/api/stores/{store_id}")
 def update_store(store_id: int, data: StoreUpdateSchema, db=Depends(get_db)):
@@ -849,22 +874,28 @@ def update_store_full(store_id: int, data: StoreFullSchema, db=Depends(get_db)):
 
 @app.delete("/api/stores/{store_id}")
 def delete_store(store_id: int, db=Depends(get_db)):
+    ensure_store_columns(db)
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT StoreName FROM Store WHERE StoreId = %s", (store_id,))
+            cur.execute("SELECT StoreName , IsDeleted FROM Store WHERE StoreId = %s FOR UPDATE", (store_id,))
             store = cur.fetchone()
             if not store:
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
 
-            cur.execute("SELECT COUNT(*) AS total FROM `Order` WHERE StoreId = %s", (store_id,))
-            if cur.fetchone()["total"] > 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="ร้านนี้มีประวัติออเดอร์อยู่ จึงลบไม่ได้ — แนะนำให้ใช้ 'ระงับสิทธิ์' แทน",
-                )
+            if store["IsDeleted"]:
+                raise HTTPException(status_code=400,detail="ร้านค้านี้ถูกลบไปแล้ว" )
 
-            cur.execute("UPDATE Users SET StoreId = NULL WHERE StoreId = %s", (store_id,))
-            cur.execute("DELETE FROM Store WHERE StoreId = %s", (store_id,))
+            # ห้ามลบร้านถ้ายังมีออเดอร์ที่ยังไม่จบ
+            cur.execute("""SELECT COUNT(*) AS total FROM `Order` WHERE StoreId = %s AND Status NOT IN ('Completed', 'Cancelled', 'NoShow') """,(store_id,)
+            )
+            pending_orders = cur.fetchone()["total"]
+            if pending_orders > 0:
+                raise HTTPException(status_code=400, detail=(
+                        f"ร้านนี้ยังมีออเดอร์ค้างอยู่ {pending_orders} รายการ " "กรุณาจัดการออเดอร์ให้เสร็จก่อนลบร้าน" ) )
+
+            
+
+            cur.execute("UPDATE Store SET IsDeleted = 1 , DeletedAt = CURRENT_TIMESTAMP, ISOpen = 0 WHERE StoreId = %s", (store_id,))
             log_audit(db, "DELETE_STORE", "Executive", f"ลบร้าน {store['StoreName']} (ID {store_id})")
         db.commit()
         return {"success": True, "message": "ลบร้านค้าเรียบร้อยแล้ว"}
@@ -877,6 +908,7 @@ def delete_store(store_id: int, db=Depends(get_db)):
 
 @app.put("/api/stores/{store_id}/toggle")
 def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(get_db)):
+    ensure_food_court_setting(db)
     try:
         with db.cursor() as cur:
             cur.execute("SELECT StoreName, IsOpen, IsSuspended FROM Store WHERE StoreId = %s", (store_id,))
@@ -885,6 +917,20 @@ def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(g
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
 
             new_status = not bool(store["IsOpen"])
+            # ปิดโรงอาหารทุกร้านเปิดเองไม่ได้ 
+            if new_status:
+             cur.execute(
+                "SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1"
+            )
+             food_court = cur.fetchone()
+
+             if not food_court or not food_court["IsOpen"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ศูนย์อาหารปิดให้บริการ ไม่สามารถเปิดร้านได้"
+        )
+
+            # เปิดร้านเองไม่ได้โดนระงับอยู่
             if new_status and store["IsSuspended"]:
                 raise HTTPException(
                     status_code=400,
@@ -938,14 +984,27 @@ def renew_store_contract(store_id: int, data: RenewContractSchema, db=Depends(ge
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้านี้")
 
             old_end = store["ContractEndDate"]
+            new_start = datetime.strptime(data.contract_start_date,"%Y-%m-%d" ).date()
             new_end = datetime.strptime(data.contract_end_date,"%Y-%m-%d").date()
-            new_start = old_end + timedelta(days=2)
+            today = datetime.now().date()
+
+            if new_start < today:
+                raise HTTPException(status_code=400, detail="วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว")
+
+            if old_end and old_end >= today:
+                minimum_start = old_end + timedelta(days=1)
+
+                if new_start < minimum_start:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"สัญญาเดิมยังไม่สิ้นสุด วันที่เริ่มสัญญาใหม่ต้องไม่ก่อน {minimum_start}"
+                    )
             if new_end < new_start:
                 raise HTTPException(
                     status_code=400,
                     detail=f"วันสิ้นสุดสัญญาใหม่ต้องไม่ก่อนวันเริ่มสัญญาใหม่ ({new_start})" )
             cur.execute("UPDATE Store SET CurrentContractStartDate = %s,ContractEndDate = %s WHERE StoreId = %s", ( new_start,new_end,store_id))
-            log_audit(db, "RENEW_CONTRACT", data.performed_by or "Executive", f"ต่อสัญญาร้าน {store['StoreName']} จาก {old_end} เป็น {data.contract_end_date}")
+            log_audit(db, "RENEW_CONTRACT", data.performed_by or "Executive", f"ต่อสัญญาร้าน {store['StoreName']} ช่วง {new_start} ถึง {new_end}")
             db.commit()
             return {"success": True, "message": "ต่อสัญญาเรียบร้อยแล้ว", "current_contract_start_date": new_start.isoformat(),
                 "contract_end_date": new_end.isoformat()}
@@ -1084,10 +1143,11 @@ def delete_staff(user_id: int, db=Depends(get_db)):
 
 @app.get("/api/store-accounts")
 def list_store_accounts(db=Depends(get_db)):
+    ensure_store_columns(db)
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT u.UserId, u.Username, u.FullName, u.Role, u.StoreId, s.StoreName
+            SELECT u.UserId, u.Username, u.FullName, u.Role, u.StoreId, s.StoreName , s.IsDeleted AS StoreIsDeleted,s.DeletedAt AS StoreDeletedAt
             FROM Users u
             LEFT JOIN Store s ON u.StoreId = s.StoreId
             WHERE u.Role IN ('Shop Owner', 'Front Staff', 'Kitchen Staff')
@@ -1112,9 +1172,9 @@ def create_store_account(data: AccountCreateSchema, db=Depends(get_db)):
 
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT StoreId FROM Store WHERE StoreId = %s", (data.store_id,))
+            cur.execute("SELECT StoreId FROM Store WHERE StoreId = %s AND IsDeleted = 0 ", (data.store_id,))
             if not cur.fetchone():
-                raise HTTPException(status_code=404, detail="ไม่พบร้านค้าที่เลือก")
+                raise HTTPException(status_code=404, detail="ไม่พบร้านค้าที่เลือก หรือร้านนี้ถูกลบแล้ว")
 
             cur.execute("SELECT UserId FROM Users WHERE Username = %s", (username,))
             if cur.fetchone():
@@ -1144,8 +1204,8 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
         with db.cursor() as cur:
             cur.execute(
                 """
-                SELECT UserId, Username, FullName, Role, StoreId
-                FROM Users
+                SELECT u.UserId, u.Username, u.FullName, u.Role, u.StoreId ,s.IsDeleted AS StoreIsDeleted
+                FROM Users u LEFT JOIN Store s ON u.StoreId = s.StoreId
                 WHERE UserId = %s
                 """,
                 (user_id,),
@@ -1154,6 +1214,12 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
 
             if not account:
                 raise HTTPException(status_code=404, detail="ไม่พบบัญชีผู้ใช้นี้")
+
+            if account["StoreIsDeleted"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="ไม่สามารถแก้ไขบัญชีของร้านที่ถูกลบแล้ว"
+                )
 
             updates = []
             values = []
@@ -1211,7 +1277,7 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
             # -----------------------------
             if data.store_id is not None:
                 cur.execute(
-                    "SELECT StoreId FROM Store WHERE StoreId = %s",
+                    "SELECT StoreId FROM Store WHERE StoreId = %s  AND IsDeleted = 0",
                     (data.store_id,),
                 )
 
@@ -1272,10 +1338,12 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
 def delete_store_account(user_id: int, db=Depends(get_db)):
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT Username, Role FROM Users WHERE UserId = %s", (user_id,))
+            cur.execute("SELECT u.Username, u.Role ,u.StoreId,s.IsDeleted AS StoreIsDeleted FROM Users u  LEFT JOIN Store s ON u.StoreId = s.StoreId WHERE UserId = %s", (user_id,))
             account = cur.fetchone()
             if not account:
                 raise HTTPException(status_code=404, detail="ไม่พบบัญชีผู้ใช้นี้")
+            if account["StoreIsDeleted"]:
+                raise HTTPException(status_code=403,detail="ไม่สามารถลบบัญชีของร้านที่ถูกลบแล้ว")
             if account["Role"] not in ALLOWED_STORE_ROLES:
                 raise HTTPException(status_code=400, detail="ลบได้เฉพาะบัญชีของฝั่งร้านค้าเท่านั้น")
 
@@ -1463,7 +1531,9 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 )
             
             if data.user_id:
-                send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ!")
+                pts_earned = int(total // 10)
+                cur.execute("UPDATE Users SET Points = Points + %s WHERE UserId = %s", (pts_earned, data.user_id))
+                send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ! (ได้รับ {pts_earned} แต้ม)")
                 
             log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน ID:{data.store_id}")
             
@@ -1931,6 +2001,9 @@ def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
             cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
             result = cur.fetchone()
             is_open = bool(result["IsOpen"])
+            # ถ้าผู้บริหารปิดโรงทุกร้านจะปิดหมด
+            if not is_open:
+                cur.execute("UPDATE Store SET IsOpen = 0")
 
             log_audit(
                 db,
@@ -2009,4 +2082,4 @@ def get_store_issue_reports(store_id: int, db=Depends(get_db)):
             ORDER BY r.CreatedAt DESC, r.ReportID DESC
         """, (store_id,))
 
-        return cur.fetchall()
+        return cur.fetchall() 

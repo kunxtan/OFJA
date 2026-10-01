@@ -46,7 +46,7 @@ const T = {
     shadowMd: '0 10px 26px rgba(42,44,65,0.10)'
 };
 const TOPBAR_H = 80;
-const FONT_STACK = '"Roboto","Sarabun","IBM Plex Sans Thai","Noto Sans Thai","Segoe UI",system-ui,sans-serif';
+const FONT_STACK = "'Roboto', 'Sarabun', sans-serif";
 // ===== ฟังก์ชันช่วยจัดรูปแบบวันที่ ยอดเงิน และคำนวณข้อมูล =====
 const intFmt = new Intl.NumberFormat('th-TH');
 const money = (v) => intFmt.format(Math.round(Number(v) || 0));
@@ -152,9 +152,9 @@ function changePct(current, previous) {
     const c = Number(current) || 0;
     const p = Number(previous) || 0;
     if (p === 0)
-        return c === 0 ? 0 : 100;
+        return c === 0 ? 0 : null;
     const raw = ((c - p) / p) * 100;
-    return Math.max(-100, Math.min(100, raw));
+    return raw;
 }
 function summarize(orders) {
     const completed = orders.filter((o) => statusIs(o, 'Completed'));
@@ -349,7 +349,7 @@ function greetingText() {
         return 'สวัสดีตอนบ่าย';
     return 'สวัสดีตอนเย็น';
 }
-function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.7, style }) {
+function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 2.2, style }) {
     const d = ICON_PATHS[name] || ICON_PATHS.info;
     return (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, display: 'block', ...style }} aria-hidden="true">
       <path d={d}/>
@@ -374,37 +374,176 @@ function exportCsv(filename, rows) {
     const csv = rows.map((r) => r.map(escape).join(',')).join('\r\n');
     saveBlob(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }), filename);
 }
-function exportXlsx(filename, rows, sheetName = 'Report') {
+function exportXlsx(filename, sheets) {
     const enc = new TextEncoder();
-    const xml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const col = (n) => { let s = ''; for (n += 1; n; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
-    const cells = rows.map((row, r) => `<row r="${r + 1}">${row.map((v, c) => {
-        const ref = `${col(c)}${r + 1}`;
-        return typeof v === 'number' && Number.isFinite(v)
-            ? `<c r="${ref}"><v>${v}</v></c>`
-            : `<c r="${ref}" t="inlineStr"><is><t>${xml(v)}</t></is></c>`;
-    }).join('')}</row>`).join('');
-    const files = {
-        '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
-        '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
-        'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xml(sheetName.slice(0,31))}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
-        'xl/_rels/workbook.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
-        'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${cells}</sheetData></worksheet>`
+
+    const xml = (v) => String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const col = (n) => {
+        let s = '';
+        for (n += 1; n; n = Math.floor((n - 1) / 26)) {
+            s = String.fromCharCode(65 + (n - 1) % 26) + s;
+        }return s;};
+
+    const safeSheets = (Array.isArray(sheets) ? sheets : [])
+        .filter((sheet) => sheet && Array.isArray(sheet.rows))
+        .map((sheet, index) => ({
+            name: String(sheet.name || `Sheet${index + 1}`)
+                .replace(/[\\/*?:[\]]/g, '')
+                .slice(0, 31) || `Sheet${index + 1}`,
+            rows: sheet.rows,
+            widths: sheet.widths || []
+        }));
+
+    if (!safeSheets.length) {
+        throw new Error('ไม่มีข้อมูลสำหรับสร้างไฟล์ Excel');
+    }
+
+    const makeSheetXml = (sheet) => {
+        const rows = sheet.rows;
+
+        const cells = rows.map((row, r) => {
+            const values = Array.isArray(row) ? row : [row];
+
+            return `<row r="${r + 1}">${values.map((v, c) => {
+                const ref = `${col(c)}${r + 1}`;
+
+                return typeof v === 'number' && Number.isFinite(v)
+                    ? `<c r="${ref}"><v>${v}</v></c>`
+                    : `<c r="${ref}" t="inlineStr"><is><t>${xml(v)}</t></is></c>`;
+            }).join('')}</row>`;
+        }).join('');
+
+        const widths = sheet.widths.length
+            ? `<cols>${sheet.widths.map((width, i) =>
+                `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`
+            ).join('')}</cols>`
+            : '';
+
+        return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+    ${widths}
+    <sheetData>${cells}</sheetData>
+</worksheet>`;
     };
-    const crcTable = Array.from({ length: 256 }, (_, n) => { let c=n; for(let k=0;k<8;k++) c=(c&1)?0xEDB88320^(c>>>1):c>>>1; return c>>>0; });
-    const crc32 = (u8) => { let c=0xFFFFFFFF; for(const b of u8) c=crcTable[(c^b)&255]^(c>>>8); return (c^0xFFFFFFFF)>>>0; };
-    const u16=(n)=>new Uint8Array([n&255,(n>>>8)&255]), u32=(n)=>new Uint8Array([n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]);
-    const join=(parts)=>{ const n=parts.reduce((a,p)=>a+p.length,0), z=new Uint8Array(n); let o=0; parts.forEach(p=>{z.set(p,o);o+=p.length;}); return z; };
-    const local=[], central=[]; let offset=0;
+
+    const contentTypes = safeSheets.map((_, i) =>
+        `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
+
+    const workbookSheets = safeSheets.map((sheet, i) =>
+        `<sheet name="${xml(sheet.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('');
+
+    const workbookRels = safeSheets.map((_, i) =>
+        `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>` ).join('');
+
+    const files = {
+        '[Content_Types].xml':
+            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+    ${contentTypes}
+</Types>`,
+
+        '_rels/.rels':
+            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+
+        'xl/workbook.xml':
+            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <sheets>${workbookSheets}</sheets>
+</workbook>`,
+
+        'xl/_rels/workbook.xml.rels':
+            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    ${workbookRels}
+</Relationships>`
+    };
+
+    safeSheets.forEach((sheet, i) => {
+        files[`xl/worksheets/sheet${i + 1}.xml`] = makeSheetXml(sheet);
+    });
+
+    const crcTable = Array.from({ length: 256 }, (_, n) => {
+        let c = n;
+        for (let k = 0; k < 8; k += 1) {
+            c = (c & 1) ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+        } return c >>> 0;});
+
+    const crc32 = (u8) => {
+        let c = 0xFFFFFFFF;
+        for (const b of u8) {
+            c = crcTable[(c ^ b) & 255] ^ (c >>> 8);
+        }return (c ^ 0xFFFFFFFF) >>> 0;};
+
+    const u16 = (n) => new Uint8Array([n & 255, (n >>> 8) & 255]);
+
+    const u32 = (n) => new Uint8Array([
+        n & 255,
+        (n >>> 8) & 255,
+        (n >>> 16) & 255,
+        (n >>> 24) & 255]);
+    const join = (parts) => {
+        const n = parts.reduce((a, p) => a + p.length, 0);
+        const z = new Uint8Array(n);
+        let o = 0;
+
+        parts.forEach((p) => {
+            z.set(p, o);
+            o += p.length;
+        });return z; };
+
+    const local = [];
+    const central = [];
+    let offset = 0;
+
     Object.entries(files).forEach(([name, content]) => {
-        const nb=enc.encode(name), data=enc.encode(content), crc=crc32(data);
-        const lh=join([u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(nb.length),u16(0),nb,data]);
+        const nb = enc.encode(name);
+        const data = enc.encode(content);
+        const crc = crc32(data);
+
+        const lh = join([
+            u32(0x04034b50),u16(20), u16(0), u16(0), u16(0), u16(0),u32(crc),
+            u32(data.length),  u32(data.length),u16(nb.length),u16(0),nb,data
+        ]);
+
         local.push(lh);
-        central.push(join([u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(nb.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset),nb]));
+
+        central.push(join([
+            u32(0x02014b50),u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),u32(crc),
+            u32(data.length),u32(data.length),u16(nb.length),
+            u16(0), u16(0), u16(0), u16(0),u32(0),
+            u32(offset),nb
+        ]));
+
         offset += lh.length;
     });
-    const cd=join(central), body=join(local), end=join([u32(0x06054b50),u16(0),u16(0),u16(central.length),u16(central.length),u32(cd.length),u32(body.length),u16(0)]);
-    saveBlob(new Blob([body, cd, end], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), filename);
+
+    const cd = join(central);
+    const body = join(local);
+
+    const end = join([
+        u32(0x06054b50),u16(0), u16(0),
+        u16(central.length),u16(central.length),
+        u32(cd.length),u32(body.length),u16(0)]);
+
+    saveBlob(
+        new Blob(
+            [body, cd, end],
+            { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+        ),
+        filename
+    );
 }
 // ===== UI Components กลาง เช่น Card, Button, Modal, Toast =====
 function Card({ title, subtitle, right, children, style }) {
@@ -447,10 +586,12 @@ function CardIconBox({ icon, background, color = '#FFFFFF', size = 44 }) {
       <Icon name={icon} size={22} color={color}/>
     </div>);
 }
-function KpiCard({ label, value, unit, delta, deltaLabel, hint, highlight, variant, icon = 'trend', tone = 'blue', size = 'md', invertDelta = false }) {
+function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hint, hasPreviousData = null, highlight, variant, icon = 'trend', tone = 'blue', size = 'md', invertDelta = false }) {
     const hasDelta = delta !== null && delta !== undefined;
-    const rising = hasDelta && delta >= 0;
-    const positive = hasDelta && (invertDelta ? delta <= 0 : delta >= 0);
+    const zeroBaseIncrease = hasPreviousData === true && !hasDelta;
+    const showComparison = hasPreviousData === true ? true : hasPreviousData === false ? false : hasDelta;
+    const rising = zeroBaseIncrease || (hasDelta && delta >= 0);
+    const positive = zeroBaseIncrease ? !invertDelta : hasDelta && (invertDelta ? delta <= 0 : delta >= 0);
     const kind = variant || (highlight ? 'purple' : 'plain');
     const solid = kind === 'purple' || kind === 'blue';
     const small = size === 'sm';
@@ -487,14 +628,14 @@ function KpiCard({ label, value, unit, delta, deltaLabel, hint, highlight, varia
         </div>
       </div>
 
-      {hasDelta ? (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',display: 'inline-flex',alignItems: 'center',gap: '6px',alignSelf: 'flex-start',padding: '5px 10px',borderRadius: '999px',fontSize: '12.5px',fontWeight:700,background:delta===0?(solid? 'rgba(255,255,255,.18)': '#F1F3F7'):positive?(solid? 'rgba(220,252,231,.96)':T.greenSoft):(solid? 'rgba(254,226,226,.96)':T.redSoft),color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
-          <span aria-hidden="true">{delta === 0 ? '→' : rising ? '↗' : '↘'}</span>
-          {delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}%
-          <span style={{fontWeight:500,opacity:solid&&delta===0?0.85:1,color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
+      {showComparison ? (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',display: 'inline-flex',alignItems: 'center',gap: '6px',alignSelf: 'flex-start',padding: '5px 10px',borderRadius: '999px',fontSize: '12.5px',fontWeight:700,background:hasDelta&&delta===0?(solid? 'rgba(255,255,255,.18)': '#F1F3F7'):positive?(solid? 'rgba(220,252,231,.96)':T.greenSoft):(solid? 'rgba(254,226,226,.96)':T.redSoft),color:hasDelta&&delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
+          <span aria-hidden="true">{hasDelta && delta === 0 ? '→' : rising ? '↗' : '↘'}</span>
+          {zeroBaseIncrease ? `เพิ่มจาก 0 เป็น ${value}${unit ? ` ${unit}` : ''}` : <>{delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}{deltaSuffix}</>}
+          {!zeroBaseIncrease && <span style={{fontWeight:500,opacity:solid&&delta===0?0.85:1,color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
             {deltaLabel}
-          </span>
-        </div>) : (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',fontSize: '12.5px',color:solid? 'rgba(255,255,255,.80)':T.muted}}>
-          {hint || 'ไม่มีข้อมูลช่วงก่อนหน้าให้เทียบ'}
+          </span>}
+        </div>) : (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',fontSize: '12.5px',color:solid ? 'rgba(255,255,255,.80)' : T.muted}}>
+          {hasPreviousData === false ? 'ไม่มีข้อมูลช่วงก่อนหน้าให้เทียบ' : hint || 'ไม่มีข้อมูลช่วงก่อนหน้าให้เทียบ'}
         </div>)}
     </div>);
 }
@@ -611,7 +752,7 @@ function EmptyState({ text, minHeight = '200px' }) {
 function PeriodPicker({ anchor, setAnchor, days, setDays, style }) {
     return (<div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', ...style }}>
       <div style={dateWrapStyle}>
-        <Icon name="calendar" size={16} color={T.muted}/>
+        
         <input type="date" value={anchor} max={todayISO()} onChange={(e) => setAnchor(e.target.value || todayISO())} style={dateInputStyle} aria-label="เลือกวันที่ที่ต้องการดู"/>
       </div>
 
@@ -707,6 +848,7 @@ function SalesLineChart({ buckets, showStoreDetail = true }) {
 }
 
 function StoreDonutChart({ rows }) {
+    const [hoveredStore, setHoveredStore] = useState(null);
     const raw = (rows || []).filter((r) => Number(r.sales) > 0);
     if (!raw.length)
         return <EmptyState text="ช่วงเวลานี้ยังไม่มียอดขาย"/>;
@@ -717,35 +859,54 @@ function StoreDonutChart({ rows }) {
         : top;
     const total = list.reduce((sum, r) => sum + Number(r.sales || 0), 0) || 1;
     const COLORS = ['#FF724C', '#FDBF50', '#2A2C41', '#FF9E84', '#FFD98C', '#585B78', '#E8552D', '#D19A28', '#B9BCCD'];
-    const radius = 72;
-    const circumference = 2 * Math.PI * radius;
-    let offset = 0;
+    let cumulative = 0;
+    const gradientStops = list.map((r, i) => {
+        const start = cumulative;
+        cumulative += (Number(r.sales || 0) / total) * 100;
+        return `${COLORS[i % COLORS.length]} ${start}% ${cumulative}%`;
+    }).join(', ');
+    const hoveredShare = hoveredStore ? (Number(hoveredStore.sales || 0) / total) * 100 : null;
+    const hoverDonut = (e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const dx = e.clientX - (rect.left + rect.width / 2);
+        const dy = e.clientY - (rect.top + rect.height / 2);
+        const distance = Math.hypot(dx, dy);
+        if (distance < rect.width * 0.327 || distance > rect.width / 2) {
+            setHoveredStore(null);
+            return;
+        }
+        const percent = ((Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360) / 3.6;
+        let sum = 0;
+        const match = list.find((r) => {
+            sum += (Number(r.sales || 0) / total) * 100;
+            return percent <= sum;
+        });
+        setHoveredStore(match || list[list.length - 1]);
+    };
     return (<div style={{display: 'flex',flexWrap: 'wrap',gap: '18px',alignItems: 'center',marginTop: '8px',width: '100%',minWidth:0,overflow: 'hidden'}}>
-      <div style={{ position: 'relative', width: '100%', maxWidth: '250px', margin: '0 auto', flex: '1 1 220px', minWidth: 0 }}>
-        <svg viewBox="0 0 200 200" style={{ width: '100%', display: 'block', transform: 'rotate(-90deg)' }} aria-label="สัดส่วนยอดขายแยกร้าน">
-          <circle cx="100" cy="100" r={radius} fill="none" stroke={T.trackSoft} strokeWidth="30"/>
-          {list.map((r, i) => {
-            const value = Number(r.sales || 0);
-            const length = (value / total) * circumference;
-            const currentOffset = offset;
-            offset += length;
-            return (<circle key={r.StoreId ?? r.StoreName} cx="100" cy="100" r={radius} fill="none" stroke={COLORS[i % COLORS.length]} strokeWidth="30" strokeDasharray={`${length} ${Math.max(circumference - length, 0)}`} strokeDashoffset={-currentOffset} strokeLinecap="butt"/>);
-        })}
-        </svg>
-        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', textAlign: 'center' }}>
-          <div>
+      <div style={{ position: 'relative', width: '100%', maxWidth: '250px', margin: '0 auto', flex: '1 1 220px', minWidth: 0, aspectRatio: '1 / 1' }}>
+        <div aria-label="สัดส่วนยอดขายแยกร้าน" onMouseMove={hoverDonut} onMouseLeave={() => setHoveredStore(null)} style={{ position: 'absolute', width: '87%', aspectRatio: '1 / 1', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `conic-gradient(${gradientStops})`, cursor: 'pointer' }}>
+          <div style={{ position: 'absolute', width: '65.5%', aspectRatio: '1 / 1', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', borderRadius: '50%', background: T.surface, pointerEvents: 'none' }}/>
+        </div>
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', textAlign: 'center', padding: '0 48px' }}>
+          {hoveredStore ? (<div>
+            <div style={{ color: T.ink, fontSize: '12px', fontWeight: 700, lineHeight: 1.35 }}>{hoveredStore.StoreName}</div>
+            <strong style={{ display: 'block', color: T.ink, fontSize: '20px', marginTop: '4px' }}>{money(hoveredStore.sales)}</strong>
+            <span style={{ color: T.muted, fontSize: '11.5px' }}>บาท · {hoveredShare.toFixed(1)}%</span>
+          </div>) : (<div>
             <div style={{ ...captionStyle, margin: 0 }}>ยอดขายรวม</div>
             <strong style={{ display: 'block', color: T.ink, fontSize: '21px', marginTop: '3px' }}>{money(total)}</strong>
             <span style={{ color: T.muted, fontSize: '12px' }}>บาท</span>
-          </div>
+          </div>)}
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '9px', minWidth: 0, flex: '1 1 240px', width: '100%', overflow: 'hidden' }}>
         {list.map((r, i) => {
-            const share = (Number(r.sales || 0) / total) * 100;
-            return (<div key={r.StoreId ?? r.StoreName} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0, 1fr) minmax(46px, auto)', gap: '8px', alignItems: 'center', width: '100%', minWidth: 0 }}>
+            const share = i === list.length - 1 ? 100 - list.slice(0, -1).reduce((s, x) => s + +(((+x.sales || 0) / total) * 100).toFixed(1), 0) : ((+r.sales || 0) / total) * 100;
+            const active = hoveredStore && String(hoveredStore.StoreId ?? hoveredStore.StoreName) === String(r.StoreId ?? r.StoreName);
+            return (<div key={r.StoreId ?? r.StoreName} onMouseEnter={() => setHoveredStore(r)} onMouseLeave={() => setHoveredStore(null)} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0, 1fr) minmax(46px, auto)', gap: '8px', alignItems: 'center', width: '100%', minWidth: 0, padding: '3px 4px', borderRadius: '6px', background: active ? T.primarySoft : 'transparent', cursor: 'pointer' }}>
               <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: COLORS[i % COLORS.length] }}/>
-              <span style={{ color: T.text, fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.StoreName}</span>
+              <span style={{ color: active ? T.ink : T.text, fontSize: '12.5px', fontWeight: active ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.StoreName}</span>
               <span style={{ color: T.ink, fontSize: '12.5px', fontWeight: 700, whiteSpace: 'nowrap', textAlign: 'right' }}>{share.toFixed(1)}%</span>
             </div>);
         })}
@@ -887,20 +1048,12 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             const dashboardStores = Array.isArray(dashboardData) ? dashboardData : [];
             const fullStores = Array.isArray(storeData) ? storeData : [];
 
-            const fullById = new Map(
-                fullStores.map((s) => [String(s.StoreId), s])
-            );
+            const dashboardById = new Map(dashboardStores.map((s) => [String(s.StoreId), s]));
 
-            const merged = dashboardStores.map((s) => ({
-                ...s,
-                ...(fullById.get(String(s.StoreId)) || {})
-            }));
-
-            fullStores.forEach((s) => {
-                if (!merged.some((m) => String(m.StoreId) === String(s.StoreId))) {
-                    merged.push(s);
-                }
-            });
+            const merged = fullStores.map((s) => ({
+              ...(dashboardById.get(String(s.StoreId)) || {}),
+              ...s
+          }));
 
             setStores(merged);
         }
@@ -1033,6 +1186,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         try {
             const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive`, { method: 'PUT' });
             setFoodCourtOpen(Boolean(data?.is_open));
+            await loadStores();
             pushToast(data?.message || 'อัปเดตสถานะศูนย์อาหารแล้ว');
         }
         catch (err) {
@@ -1181,12 +1335,12 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         window.location.reload();
     };
     const MENUS = [
-        { id: 'overview', icon: 'overview', label: 'ภาพรวมศูนย์อาหาร', caption: 'สรุปยอดขายทั้งศูนย์' },
-        { id: 'store-sales', icon: 'trend', label: 'ยอดขายรายร้าน', caption: 'เจาะรายร้าน/เมนู' },
-        { id: 'store-manage', icon: 'store', label: 'จัดการร้านค้า', caption: 'เพิ่ม แก้ไข ปิดร้าน' },
-        { id: 'store-accounts', icon: 'account', label: 'บัญชีร้านค้า', caption: 'บัญชีผู้ใช้ของร้าน' },
-        { id: 'contract-tracking', icon: 'calendar', label: 'ติดตามสัญญา', caption: 'ระยะเวลาสัญญาร้านค้า' },
-        { id: 'audit-history', icon: 'history', label: 'ประวัติการดำเนินการ', caption: 'กิจกรรมสำคัญในระบบ' }
+        { id: 'overview', icon: 'overview', label: 'Dashboard', caption: 'ภาพรวมศูนย์อาหาร' },
+        { id: 'store-sales', icon: 'trend', label: 'Sales Summary', caption: 'ยอดขายรายร้าน' },
+        { id: 'store-manage', icon: 'store', label: 'Store Management', caption: 'จัดการร้านค้า' },
+        { id: 'store-accounts', icon: 'account', label: 'Store Accounts', caption: 'บัญชีร้านค้า' },
+        { id: 'contract-tracking', icon: 'calendar', label: 'Contract Tracking', caption: 'ติดตามสัญญา' },
+        { id: 'audit-history', icon: 'history', label: 'Audit Log', caption: 'ประวัติการดำเนินการ' }
     ];
     const PAGE_META = {
         overview: {
@@ -1292,6 +1446,10 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         /* กริดการ์ด KPI: แถวบนการ์ดสีใหญ่ 2 ใบเท่ากัน แถวล่างการ์ดเล็กเรียงเท่ากันทุกใบ */
         .of-kpi-hero { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 22px; align-items: stretch; }
         .of-kpi-small { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(215px, 100%), 1fr)); gap: 22px; margin-bottom: 22px; align-items: stretch; }
+        .of-store-kpi-small { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; align-items: stretch; }
+        @media (max-width: 900px) {
+          .of-store-kpi-small { grid-template-columns: 1fr; }
+        }
         @media (max-width: 760px) {
           .of-kpi-hero { grid-template-columns: 1fr; }
         }
@@ -1446,7 +1604,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                     if (isNarrow)
                         setSidebarOpen(false);
                 }} style={{...sidebarItemStyle,justifyContent:sidebarOpen?'flex-start':'center',gap:sidebarOpen?'16px':'0',padding:sidebarOpen?'10px 16px':'12px 0',background:activeMenu===m.id?T.sideActive: 'transparent',color:activeMenu===m.id?T.primary:T.sideText}}>
-                    <Icon name={m.icon} size={20}/>
+                    <Icon name={m.icon} size={20} strokeWidth={1.5}/>
                     {sidebarOpen && <span style={{ minWidth: 0, textAlign: 'left' }}>
                       <span style={{ display: 'block', fontSize: '14px', fontWeight: activeMenu === m.id ? 600 : 500 }}>
                         {m.label}
@@ -1537,25 +1695,57 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         const previous = orders.filter((o) => inRange(o, prevBounds));
         const now = summarize(current);
         const before = summarize(previous);
-        const storeRows = stores
-            .map((s) => {
-            const mine = now.completed.filter((o) => String(o.StoreId) === String(s.StoreId));
-            const minePrev = before.completed.filter((o) => String(o.StoreId) === String(s.StoreId));
-            const cancelled = now.cancelled.filter((o) => String(o.StoreId) === String(s.StoreId));
-            const sales = sumAmount(mine);
-            const prevSales = sumAmount(minePrev);
-            return {
-                ...s,
-                sales,
-                prevSales,
-                delta: changePct(sales, prevSales),
-                completedCount: mine.length,
-                cancelledCount: cancelled.length,
-                cancelRate: mine.length + cancelled.length ? (cancelled.length / (mine.length + cancelled.length)) * 100 : 0,
-                avg: mine.length ? sales / mine.length : 0
-            };
-        })
-            .sort((a, b) => b.sales - a.sales);
+       const storeMap = new Map(
+    stores.map((s) => [String(s.StoreId), s])
+);
+
+// ร้านที่มีออเดอร์ในช่วงปัจจุบันหรือช่วงเปรียบเทียบ
+// ต้องยังอยู่ใน Dashboard แม้ร้านนั้นจะถูกลบภายหลัง
+current.forEach((o) => {
+    const id = String(o.StoreId);
+
+    if (!storeMap.has(id)) {
+        storeMap.set(id, {
+            StoreId: o.StoreId,
+            StoreName: o.StoreName || `ร้าน #${o.StoreId}`,
+            IsDeleted: 1,
+            IsOpen: 0,
+            IsSuspended: 0
+        });
+    }
+});
+
+const storeRows = Array.from(storeMap.values())
+    .map((s) => {
+        const mine = now.completed.filter(
+            (o) => String(o.StoreId) === String(s.StoreId)
+        );
+
+        const minePrev = before.completed.filter(
+            (o) => String(o.StoreId) === String(s.StoreId)
+        );
+
+        const cancelled = now.cancelled.filter(
+            (o) => String(o.StoreId) === String(s.StoreId)
+        );
+
+        const sales = sumAmount(mine);
+        const prevSales = sumAmount(minePrev);
+
+        return {
+            ...s,
+            sales,
+            prevSales,
+            delta: changePct(sales, prevSales),
+            completedCount: mine.length,
+            cancelledCount: cancelled.length,
+            cancelRate: mine.length + cancelled.length
+                ? (cancelled.length / (mine.length + cancelled.length)) * 100
+                : 0,
+            avg: mine.length ? sales / mine.length : 0
+        };
+    })
+    .sort((a, b) => b.sales - a.sales);
         const byHour = Array.from({ length: 24 }, () => 0);
         now.completed.forEach((o) => {
             const at = parseOrderDate(o.CreatedAt);
@@ -1567,6 +1757,7 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         return {
             now,
             before,
+            hasPreviousData: previous.length > 0,
             storeRows,
             buckets: buildBuckets(now.completed, anchor, days),
             peakHour: peakSales > 0 ? peakHour : null,
@@ -1601,26 +1792,29 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         .sort((a, b) => (Number(b.IsSuspended) - Number(a.IsSuspended)) || (b.cancelRate - a.cancelRate) || ((a.delta ?? 0) - (b.delta ?? 0)))
         .slice(0, 4);
     const csvRows = () => {
+       const peakTime = report.peakHour === null
+        ? '-'
+        : `${pad2(report.peakHour)}:00 น.`;
         const rows = [
             ['รายงานภาพรวมศูนย์อาหาร Only Foods'],
             ['ช่วงข้อมูล', periodLabel],
-            ['ออกรายงานเมื่อ', nowStamp()],
             [],
-            ['ตัวชี้วัด', 'ค่า', 'ช่วงก่อนหน้า'],
-            ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales), Math.round(report.before.sales)],
-            ['ออเดอร์สำเร็จ', report.now.completedCount, report.before.completedCount],
-            ['ออเดอร์ยกเลิก', report.now.cancelledCount, report.before.cancelledCount],
-            ['อัตราการยกเลิก (%)', report.now.cancelRate.toFixed(1), report.before.cancelRate.toFixed(1)],
-            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', report.now.avgOrder.toFixed(2), report.before.avgOrder.toFixed(2)],
+            ['ตัวชี้วัด', 'ค่า'],
+            ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
+            ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
+            ['ออเดอร์สำเร็จ', report.now.completedCount],
+            ['ออเดอร์ยกเลิก', report.now.cancelledCount],
+            ['อัตราการยกเลิก (%)', report.now.cancelRate.toFixed(1)],
+            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', report.now.avgOrder.toFixed(2)],
+            ['ยอดขายในช่วงเวลาขายดี (บาท)', report.peakHour === null ? '-' : Math.round(report.peakSales)],
             [],
-            ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ยอดขาย (บาท)', 'ยกเลิก', 'ยอดเฉลี่ย/ออเดอร์', 'เทียบช่วงก่อน (%)'],
+            ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ยอดขาย (บาท)', 'ยกเลิก', 'อัตรายกเลิก (%)'],
             ...report.storeRows.map((s) => [
                 s.StoreName,
                 s.completedCount,
                 Math.round(s.sales),
                 s.cancelledCount,
-                s.avg.toFixed(2),
-                s.delta === null ? '-' : s.delta.toFixed(1)
+                Number(s.cancelRate.toFixed(1))
             ]),
             [],
             [days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
@@ -1633,15 +1827,71 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         setExportPreview(null);
         pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
     };
-    const saveXlsx = () => {
-        try {
-            exportXlsx(`onlyfoods-overview-${anchor}-${days}d.xlsx`, csvRows(), 'ภาพรวมศูนย์อาหาร');
-            setExportPreview(null);
-            pushToast('บันทึกไฟล์ XLSX เรียบร้อยแล้ว');
-        } catch (err) {
-            pushToast('สร้างไฟล์ XLSX ไม่สำเร็จ', 'error');
-        }
-    };
+  const saveXlsx = () => {
+    try {
+        const peakTime = report.peakHour === null
+            ? '-'
+            : `${pad2(report.peakHour)}:00 น.`;
+
+        const overviewRows = [
+            ['ตัวชี้วัด', 'ค่า'],
+            ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
+            ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
+            ['ออเดอร์สำเร็จ', report.now.completedCount],
+            ['ออเดอร์ยกเลิก', report.now.cancelledCount],
+            ['อัตราการยกเลิก (%)', Number(report.now.cancelRate.toFixed(1))],
+            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
+            ['ช่วงเวลาขายดี', peakTime],
+            ['ยอดขายในช่วงเวลาขายดี (บาท)', report.peakHour === null ? '-' : Math.round(report.peakSales)]
+        ];
+
+        const storeRows = [
+            ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ยอดขายสุทธิ (บาท)', 'ออเดอร์ยกเลิก', 'อัตรายกเลิก (%)'],
+            ...report.storeRows.map((s) => [
+                s.StoreName,
+                s.completedCount,
+                Math.round(s.sales),
+                s.cancelledCount,
+                Number(s.cancelRate.toFixed(1))
+            ])
+        ];
+
+        const timelineRows = [
+            [days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
+            ...report.buckets.map((b) => [
+                b.label,
+                Math.round(b.sales),
+                b.count
+            ])
+        ];
+
+        exportXlsx(
+            `onlyfoods-overview-${anchor}-${days}d.xlsx`,
+            [
+                {
+                    name: 'สรุปภาพรวม',
+                    rows: overviewRows,
+                    widths: [38, 20]
+                },
+                {
+                    name: 'รายงานรายร้าน',
+                    rows: storeRows,
+                    widths: [32, 18, 22, 18, 20]
+                },
+                {
+                    name: 'ยอดขายตามเวลา',
+                    rows: timelineRows,
+                    widths: [20, 20, 16]
+                }
+            ]
+        );
+
+        setExportPreview(null);
+        pushToast('บันทึกไฟล์ XLSX เรียบร้อยแล้ว');
+    } catch (err) {
+        pushToast('สร้างไฟล์ XLSX ไม่สำเร็จ', 'error');
+    }
+};
     return (<>
 
       <div
@@ -1859,246 +2109,14 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
       </Card>
 
       <div className="of-kpi-hero">
-        <KpiCard label="ยอดขายสุทธิ" value={`${money(report.now.sales)}`} unit="บาท" delta={changePct(report.now.sales, report.before.sales)} deltaLabel={compareLabel} highlight icon="trend"/>
-        <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} variant="blue" icon="check"/>
+        <KpiCard label="ยอดขายสุทธิ" value={`${money(report.now.sales)}`} unit="บาท" delta={changePct(report.now.sales, report.before.sales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} highlight icon="trend"/>
+        <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} variant="blue" icon="check"/>
       </div>
 
-      <section className="of-card" style={{
-          ...cardStyle,
-          marginTop: '18px',
-          marginBottom: '18px',
-          padding: '0',
-          overflow: 'hidden',
-          border: watchStores.length ? '1px solid #E8552D' : `1px solid ${T.line}`,
-          background: watchStores.length
-              ? `linear-gradient(135deg, ${T.primary} 0%, ${T.primaryDark} 100%)`
-              : T.surface,
-          boxShadow: watchStores.length
-              ? '0 12px 28px rgba(232,85,45,0.18)'
-              : T.shadowSm
-      }}>
-        <div style={{
-            padding: '18px 20px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: '14px',
-            flexWrap: 'wrap',
-            background: watchStores.length
-                ? 'rgba(255,255,255,0.04)'
-                : T.surface,
-            borderBottom: `1px solid ${watchStores.length ? 'rgba(255,255,255,0.20)' : T.line}`
-        }}>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', minWidth: 0 }}>
-            <div style={{
-                width: '42px',
-                height: '42px',
-                minWidth: '42px',
-                borderRadius: '12px',
-                display: 'grid',
-                placeItems: 'center',
-                background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft
-            }}>
-              <Icon name={watchStores.length ? 'info' : 'check'} size={21}
-                color={watchStores.length ? '#FFFFFF' : T.up}/>
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <h3 style={{ ...h3Style, fontSize: '16px', color: watchStores.length ? '#FFFFFF' : T.ink }}>ร้านที่น่าจับตามอง</h3>
-              <p style={{ ...captionStyle, marginTop: '4px', color: watchStores.length ? 'rgba(255,255,255,0.82)' : T.muted }}>
-                คัดจากยอดขายลดลง อัตรายกเลิกสูง หรือร้านที่ถูกระงับสิทธิ์
-              </p>
-            </div>
-          </div>
-
-          <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '7px',
-              padding: '7px 11px',
-              borderRadius: '999px',
-              background: watchStores.length ? 'rgba(255,255,255,0.18)' : T.greenSoft,
-              color: watchStores.length ? '#FFFFFF' : T.up,
-              fontSize: '12px',
-              fontWeight: 700,
-              whiteSpace: 'nowrap'
-          }}>
-            <span style={{
-                width: '7px',
-                height: '7px',
-                borderRadius: '50%',
-                background: watchStores.length ? '#FFFFFF' : T.up
-            }}/>
-            {watchStores.length ? `พบ ${watchStores.length} ร้าน` : 'สถานะปกติ'}
-          </div>
-        </div>
-
-        <div style={{ padding: watchStores.length ? '16px 20px 20px' : '0 20px' }}>
-          {watchStores.length === 0 ? (
-            <EmptyState text="ยังไม่มีร้านที่มีสัญญาณผิดปกติในช่วงนี้" minHeight="110px"/>
-          ) : (
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))',
-                gap: '12px'
-            }}>
-              {watchStores.map((s) => {
-                const reasons = [];
-                if (s.IsSuspended) reasons.push('ร้านถูกระงับสิทธิ์');
-                if (s.delta !== null && s.delta <= -15 && (s.completedCount > 0 || s.sales > 0)) {
-                    reasons.push(`ยอดขายลดลง ${Math.abs(s.delta).toFixed(1)}% จากช่วงก่อน`);
-                }
-                if (s.cancelRate >= 10) reasons.push(`อัตรายกเลิกสูง ${s.cancelRate.toFixed(1)}%`);
-                if (!reasons.length && s.completedCount === 0 && s.sales === 0) {
-                    reasons.push('ยังไม่มีข้อมูลยอดขายเพียงพอในช่วงนี้');
-                }
-
-                const severe = Boolean(s.IsSuspended) || s.cancelRate >= 15;
-                const accent = severe ? T.down : '#E86532';
-                const soft = severe ? '#FFE5DF' : '#FFEBDD';
-
-                return (
-                  <div key={s.StoreId} style={{
-                      position: 'relative',
-                      overflow: 'hidden',
-                      border: `1px solid ${severe ? '#E89A8B' : '#E8B286'}`,
-                      borderRadius: T.radiusLg,
-                      background: T.surface,
-                      boxShadow: '0 5px 16px rgba(42,44,65,0.05)'
-                  }}>
-                    <span style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        bottom: 0,
-                        width: '5px',
-                        background: accent
-                    }}/>
-
-                    <div style={{ padding: '16px 16px 16px 20px' }}>
-                      <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'flex-start',
-                          gap: '12px'
-                      }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{
-                              color: T.ink,
-                              fontSize: '15px',
-                              lineHeight: 1.4,
-                              fontWeight: 700,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap'
-                          }}>
-                            {s.StoreName}
-                          </div>
-                          <div style={{
-                              color: T.muted,
-                              fontSize: '11.5px',
-                              marginTop: '3px'
-                          }}>
-                            ร้านค้า #{s.StoreId}
-                          </div>
-                        </div>
-
-                        <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '6px 10px',
-                            borderRadius: '999px',
-                            background: soft,
-                            color: severe ? T.down : '#B34D1D',
-                            fontSize: '11.5px',
-                            fontWeight: 700,
-                            whiteSpace: 'nowrap'
-                        }}>
-                          <span style={{
-                              width: '6px',
-                              height: '6px',
-                              borderRadius: '50%',
-                              background: accent
-                          }}/>
-                          {severe ? 'ควรตรวจสอบ' : 'ควรจับตา'}
-                        </span>
-                      </div>
-
-                      <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                          gap: '8px',
-                          marginTop: '15px'
-                      }}>
-                        {[
-                          ['ยอดขาย', `${money(s.sales)} บาท`],
-                          ['ออเดอร์', `${money(s.completedCount)} รายการ`],
-                          ['ยกเลิก', `${s.cancelRate.toFixed(1)}%`]
-                        ].map(([label, value]) => (
-                          <div key={label} style={{
-                              padding: '10px',
-                              borderRadius: T.radiusMd,
-                              background: '#F8F9FC',
-                              border: `1px solid ${T.line}`,
-                              minWidth: 0
-                          }}>
-                            <div style={{
-                                color: T.muted,
-                                fontSize: '10.5px',
-                                whiteSpace: 'nowrap'
-                            }}>{label}</div>
-                            <div style={{
-                                color: label === 'ยกเลิก' && s.cancelRate >= 10 ? T.down : T.ink,
-                                fontSize: '13px',
-                                fontWeight: 700,
-                                marginTop: '3px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-                            }}>{value}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div style={{
-                          marginTop: '12px',
-                          padding: '10px 11px',
-                          borderRadius: T.radiusMd,
-                          background: soft
-                      }}>
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            color: severe ? T.down : '#B34D1D',
-                            fontSize: '11.5px',
-                            fontWeight: 700
-                        }}>
-                          <Icon name="info" size={14} color={severe ? T.down : '#B34D1D'}/>
-                          เหตุผลที่ควรจับตา
-                        </div>
-                        <div style={{
-                            color: T.text,
-                            fontSize: '12px',
-                            lineHeight: 1.6,
-                            marginTop: '5px'
-                        }}>
-                          {reasons.join(' · ')}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
-
       <div className="of-kpi-small">
-        <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" hint="รวมมูลค่าออเดอร์สำเร็จและออเดอร์ที่ถูกยกเลิก" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} icon="wallet" tone="blue"/>
-        <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} icon="ban" tone="amber" invertDelta/>
-        <KpiCard size="sm" label="อัตราการยกเลิก" value={`${report.now.cancelRate.toFixed(1)}%`} delta={changePct(report.now.cancelRate, report.before.cancelRate)} deltaLabel={compareLabel} icon="info" tone="amber" invertDelta/>
+        <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" hint="รวมมูลค่าออเดอร์สำเร็จและออเดอร์ที่ถูกยกเลิก" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="wallet" tone="blue"/>
+        <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="ban" tone="amber" invertDelta/>
+        <KpiCard size="sm" label="อัตราการยกเลิก" value={`${report.now.cancelRate.toFixed(1)}%`} delta={report.hasPreviousData ? report.now.cancelRate - report.before.cancelRate : null} deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} icon="info" tone="amber" invertDelta/>
         <KpiCard size="sm" label="ช่วงเวลาขายดี" value={report.peakHour === null ? '—' : `${pad2(report.peakHour)}:00`} unit={report.peakHour === null ? '' : 'น.'} hint={report.peakHour === null ? 'ยังไม่มียอดขาย' : `ทำยอดได้ ${money(report.peakSales)} บาท`} delta={null} icon="calendar" tone="purple"/>
       </div>
 
@@ -2236,13 +2254,28 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
             </div>
           </div>
           <div style={{ padding: '16px 20px' }}>
+            {exportPreview === 'xlsx' && (
+    <div style={{
+        padding: '12px 14px',
+        marginBottom: '16px',
+        borderRadius: T.radiusMd,
+        background: T.bg,
+        color: T.text,
+        fontSize: '13px',
+        lineHeight: 1.7
+    }}>
+        ไฟล์ Excel จะแยกข้อมูลเป็น 3 Sheet:
+        <strong> สรุปภาพรวม · รายงานรายร้าน · ยอดขายตามเวลา</strong>
+    </div>
+)}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '16px' }}>
               {[
             ['ยอดขายสุทธิ', `${money(report.now.sales)} บาท`],
             ['ออเดอร์สำเร็จ', `${money(report.now.completedCount)} ออเดอร์`],
+            ['มูลค่าออเดอร์รวมก่อนหักยกเลิก', `${money(report.now.grossSales)} บาท`],
             ['ออเดอร์ยกเลิก', `${money(report.now.cancelledCount)} ออเดอร์`],
-            ['ยอดเฉลี่ย/ออเดอร์', `${money2(report.now.avgOrder)} บาท`]
-        ].map(([label, value]) => (<div key={label} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '12px' }}>
+            ['อัตราการยกเลิก', `${report.now.cancelRate.toFixed(1)}%`]
+].map(([label, value]) => (<div key={label} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '12px' }}>
                   <div style={{ ...captionStyle, margin: 0 }}>{label}</div>
                   <strong style={{ display: 'block', color: T.ink, marginTop: '6px', fontSize: '16px' }}>{value}</strong>
                 </div>))}
@@ -2253,9 +2286,12 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
                 <thead>
                   <tr>
                     <th style={thStyle}>ร้านค้า</th>
-                    <th style={thRightStyle}>ออเดอร์</th>
+                    <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
                     <th style={thRightStyle}>ยอดขาย</th>
+                    <th style={thRightStyle}>{compareLabel}</th>
                     <th style={thRightStyle}>ยกเลิก</th>
+                    <th style={thRightStyle}>อัตรายกเลิก</th>
+                    
                   </tr>
                 </thead>
                 <tbody>
@@ -2263,7 +2299,14 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
                       <td style={tdStyle}>{s.StoreName}</td>
                       <td style={tdRightStyle}>{money(s.completedCount)}</td>
                       <td style={tdRightStyle}>{money(s.sales)} บาท</td>
+                       <td style={tdRightStyle}>
+      {s.delta === null || s.delta === undefined
+        ? '—'
+        : `${s.delta >= 0 ? '▲' : '▼'} ${Math.abs(s.delta).toFixed(1)}%`}
+    </td>
                       <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
+                      <td style={tdRightStyle}>{s.cancelRate.toFixed(1)}%</td>
+                     
                     </tr>))}
                 </tbody>
               </table>
@@ -2659,6 +2702,22 @@ function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom
 function StoreSalesPage({ ctx }) {
     const { orders, stores, pushToast, focusStoreId, scrollToStoreIssues, clearScrollToStoreIssues, navigateTo } = ctx;
     const [storeId, setStoreId] = useState(focusStoreId || '');
+    const [historyStores, setHistoryStores] = useState([]);
+    useEffect(() => {
+    callApi(`${ctx.API}/api/stores/history`)
+        .then((data) => {
+            setHistoryStores(
+                Array.isArray(data) ? data : []
+            );
+        })
+        .catch((err) => {
+            console.error(
+                'โหลดประวัติร้านไม่สำเร็จ:',
+                err
+            );
+            setHistoryStores([]);
+        });
+}, [ctx.API]);
     useEffect(() => {
         if (focusStoreId) setStoreId(String(focusStoreId));
     }, [focusStoreId]);
@@ -2694,7 +2753,29 @@ function StoreSalesPage({ ctx }) {
     const [customRange, setCustomRange] = useState(false);
     const [customStart, setCustomStart] = useState(todayISO());
     const [customEnd, setCustomEnd] = useState(todayISO());
-    const store = stores.find((s) => String(s.StoreId) === String(storeId)) || null;
+    const [salesExportPreview, setSalesExportPreview] = useState(null);
+    const [exportExtras, setExportExtras] = useState({ reviews: [], reviewSummary: { total: 0, average: 0 }, issues: [] });
+    const store = historyStores.find((s) => String(s.StoreId) === String(storeId)) || null;
+
+    useEffect(() => {
+        if (!storeId) {
+            setExportExtras({ reviews: [], reviewSummary: { total: 0, average: 0 }, issues: [] });
+            return undefined;
+        }
+        let cancelled = false;
+        Promise.all([
+            callApi(`${ctx.API}/api/stores/${storeId}/reviews`).catch(() => ({ reviews: [], summary: { total: 0, average: 0 } })),
+            callApi(`${ctx.API}/api/reports/issue/store/${storeId}`).catch(() => [])
+        ]).then(([reviewData, issueData]) => {
+            if (cancelled) return;
+            setExportExtras({
+                reviews: Array.isArray(reviewData?.reviews) ? reviewData.reviews : [],
+                reviewSummary: reviewData?.summary || { total: 0, average: 0 },
+                issues: Array.isArray(issueData) ? issueData : []
+            });
+        });
+        return () => { cancelled = true; };
+    }, [ctx.API, storeId]);
 
     const salesContractInfo = (selectedStore) => {
         if (!selectedStore?.ContractEndDate) {
@@ -2742,6 +2823,7 @@ function StoreSalesPage({ ctx }) {
         return {
             now,
             before,
+            hasPreviousData: previous.length > 0,
             buckets: customRange ? buildBucketsForRange(now.completed, customStart, customEnd) : buildBuckets(now.completed, anchor, days),
             bestMenus: menus.slice(0, 2),
             // เมนูขายได้น้อยต้องไม่ซ้ำกับรายการขายดี
@@ -2758,42 +2840,184 @@ function StoreSalesPage({ ctx }) {
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
     const periodLabel = customRange ? `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
     const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
+    const exportDateBounds = customRange
+    ? customPeriodBounds(customStart, customEnd)
+    : periodBounds(anchor, days);
+
+    const exportReviews = exportExtras.reviews.filter((r) => {
+        const at = parseOrderDate(r.CreatedAt);
+        return at && at >= exportDateBounds.start && at < exportDateBounds.end;
+    });
+
+    const exportIssues = exportExtras.issues.filter((r) => {
+        const at = parseOrderDate(r.CreatedAt);
+        return at && at >= exportDateBounds.start && at < exportDateBounds.end;
+    });
+
+    const exportReviewAverage = exportReviews.length
+        ? exportReviews.reduce((sum, r) => sum + Number(r.Rating || 0), 0) / exportReviews.length
+        : 0;
     const salesExportRows = () => [
         [`รายงานยอดขายร้าน ${store.StoreName}`],
-        ['ช่วงข้อมูล', periodLabel], ['ออกรายงานเมื่อ', nowStamp()], [],
-        ['ตัวชี้วัด', 'ค่า', 'ช่วงก่อนหน้า'],
-        ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales), Math.round(report.before.sales)],
-        ['ออเดอร์สำเร็จ', report.now.completedCount, report.before.completedCount],
-        ['ออเดอร์ยกเลิก', report.now.cancelledCount, report.before.cancelledCount],
-        ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales), Math.round(report.before.grossSales)], [],
+        ['ช่วงข้อมูล', periodLabel],
+        ['ออกรายงานเมื่อ', nowStamp()],
+        ['สถานะร้าน', store.IsDeleted ? 'ร้านถูกลบแล้ว' : store.IsSuspended ? 'ระงับสิทธิ์' : store.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'],
+        [],
+        ['ตัวชี้วัด', 'ค่า'],
+        ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
+        ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
+        ['ออเดอร์สำเร็จ', report.now.completedCount],
+        ['ออเดอร์ยกเลิก', report.now.cancelledCount],
+        ['อัตราการยกเลิก (%)', Number(report.now.cancelRate.toFixed(1))],
+        ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
+        ['คะแนนรีวิวเฉลี่ย', Number(exportReviewAverage.toFixed(1))],
+        ['จำนวนรีวิว', exportReviews.length],
+        ['จำนวนรายงานปัญหา', exportIssues.length],
+        [],
         ['เมนู', 'จำนวนที่ขายได้', 'ยอดขาย (บาท)', 'สัดส่วนของยอดร้าน (%)'],
-        ...summarizeMenus(report.now.completed).map((m) => [m.name, m.qty, Math.round(m.amount), Number(m.share.toFixed(1))]), [],
+        ...summarizeMenus(report.now.completed).map((m) => [m.name, m.qty, Math.round(m.amount), Number(m.share.toFixed(1))]),
+        [],
         [(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
-        ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count])
+        ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count]),
+        [],
+        ['รีวิวจากลูกค้าในช่วงที่เลือก'],
+        ['วันที่', 'คะแนน', 'ผู้รีวิว', 'ความคิดเห็น'],
+        ...[...exportReviews].sort((a, b) => (parseOrderDate(b.CreatedAt)?.getTime() || 0) - (parseOrderDate(a.CreatedAt)?.getTime() || 0)).map((r) => [thaiDateTime(r.CreatedAt), Number(r.Rating || 0), r.ReviewerName || 'ลูกค้าไม่ระบุชื่อ', r.Comment || '-']),
+        [],
+        ['รายงานปัญหาจากลูกค้าในช่วงที่เลือก'],
+        ['วันที่', 'ประเภทปัญหา', 'ลูกค้า', 'ออเดอร์/คิว', 'รายละเอียด'],
+        ...[...exportIssues].sort((a, b) => (parseOrderDate(b.CreatedAt)?.getTime() || 0) - (parseOrderDate(a.CreatedAt)?.getTime() || 0)).map((r) => [thaiDateTime(r.CreatedAt), r.IssueType || 'ไม่ระบุประเภท', r.CustomerName || 'ลูกค้าไม่ระบุชื่อ', r.QueueNo ? `คิว ${r.QueueNo}` : r.OrderID ? `Order #${r.OrderID}` : '-', r.Description || '-'])
     ];
     const handleCsv = () => {
         if (!report || !store) return;
         exportCsv(`onlyfoods-${store.StoreName}-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.csv`, salesExportRows());
+        setSalesExportPreview(null);
         pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
     };
     const handleXlsx = () => {
-        if (!report || !store) return;
-        exportXlsx(`onlyfoods-${store.StoreName}-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.xlsx`, salesExportRows(), 'ยอดขายรายร้าน');
-        pushToast('บันทึกไฟล์ XLSX เรียบร้อยแล้ว');
-    };
+    if (!report || !store) return;
+
+    const summaryRows = [
+        ['ตัวชี้วัด', 'ค่า'],
+        ['ร้านค้า', store.StoreName],
+        ['ช่วงข้อมูล', periodLabel],
+        ['ออกรายงานเมื่อ', nowStamp()],
+        ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
+        ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
+        ['ออเดอร์สำเร็จ', report.now.completedCount],
+        ['ออเดอร์ยกเลิก', report.now.cancelledCount],
+        ['อัตราการยกเลิก (%)', Number(report.now.cancelRate.toFixed(1))],
+        ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
+        ['คะแนนรีวิวเฉลี่ย', Number(exportReviewAverage.toFixed(1))],
+        ['จำนวนรีวิว', exportReviews.length],
+        ['จำนวนรายงานปัญหา', exportIssues.length]
+    ];
+
+    const menuRows = [
+        ['เมนู', 'จำนวนที่ขายได้', 'ยอดขาย (บาท)', 'สัดส่วนของยอดร้าน (%)'],
+        ...summarizeMenus(report.now.completed).map((m) => [
+            m.name,
+            m.qty,
+            Math.round(m.amount),
+            Number(m.share.toFixed(1))
+        ])
+    ];
+
+    const timelineRows = [
+        [
+            (customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่',
+            'ยอดขาย (บาท)',
+            'ออเดอร์'
+        ],
+        ...report.buckets.map((b) => [
+            b.label,
+            Math.round(b.sales),
+            b.count
+        ])
+    ];
+
+    const reviewRows = [
+        ['วันที่', 'คะแนน', 'ผู้รีวิว', 'ความคิดเห็น'],
+        ...[...exportReviews]
+            .sort((a, b) =>
+                (parseOrderDate(b.CreatedAt)?.getTime() || 0) -
+                (parseOrderDate(a.CreatedAt)?.getTime() || 0)
+            )
+            .map((r) => [
+                thaiDateTime(r.CreatedAt),
+                Number(r.Rating || 0),
+                r.ReviewerName || 'ลูกค้าไม่ระบุชื่อ',
+                r.Comment || '-'
+            ])
+    ];
+
+    const issueRows = [
+        ['วันที่', 'ประเภทปัญหา', 'ลูกค้า', 'ออเดอร์/คิว', 'รายละเอียด'],
+        ...[...exportIssues]
+            .sort((a, b) =>
+                (parseOrderDate(b.CreatedAt)?.getTime() || 0) -
+                (parseOrderDate(a.CreatedAt)?.getTime() || 0)
+            )
+            .map((r) => [
+                thaiDateTime(r.CreatedAt),
+                r.IssueType || 'ไม่ระบุประเภท',
+                r.CustomerName || 'ลูกค้าไม่ระบุชื่อ',
+                r.QueueNo
+                    ? `คิว ${r.QueueNo}`
+                    : r.OrderID
+                        ? `Order #${r.OrderID}`
+                        : '-',
+                r.Description || '-'
+            ])
+    ];
+
+    exportXlsx(
+        `onlyfoods-${store.StoreName}-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.xlsx`,
+        [
+            {
+                name: 'สรุปรายงาน',
+                rows: summaryRows,
+                widths: [42, 38]
+            },
+            {
+                name: 'ยอดขายตามเมนู',
+                rows: menuRows,
+                widths: [36, 18, 20, 24]
+            },
+            {
+                name: 'ยอดขายตามเวลา',
+                rows: timelineRows,
+                widths: [20, 20, 16]
+            },
+            {
+                name: 'รีวิวลูกค้า',
+                rows: reviewRows,
+                widths: [24, 12, 28, 60]
+            },
+            {
+                name: 'รายงานปัญหา',
+                rows: issueRows,
+                widths: [24, 26, 28, 20, 60]
+            }
+        ]
+    );
+
+    setSalesExportPreview(null);
+    pushToast('บันทึกไฟล์ XLSX เรียบร้อยแล้ว');
+};
     return (<>
       <Card style={{ marginBottom: '16px', zIndex: 40 }}>
         <div style={toolbarStyle}>
           <div style={{ minWidth: '240px', flex: 1 }}>
             <h3 style={h3Style}>เลือกร้านค้า</h3>
-            <SearchableStorePicker stores={stores} value={storeId} onChange={setStoreId}/>
+            <SearchableStorePicker stores={historyStores} value={storeId} onChange={setStoreId}/>
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
 
-            <Button variant="ghost" icon="download" onClick={handleCsv} disabled={!storeId}>
+            <Button variant="ghost" icon="download" onClick={() => setSalesExportPreview('csv')} disabled={!storeId}>
               CSV
             </Button>
-            <Button variant="dark" icon="download" onClick={handleXlsx} disabled={!storeId}>
+            <Button variant="dark" icon="download" onClick={() => setSalesExportPreview('xlsx')} disabled={!storeId}>
               XLSX
             </Button>
           </div>
@@ -2808,10 +3032,13 @@ function StoreSalesPage({ ctx }) {
           <Card style={{ marginBottom: '16px' }}>
             <div style={toolbarStyle}>
               <div>
-                <h3 style={h3Style}>{store.StoreName}</h3>
+                <h3 style={h3Style}>{store.StoreName}{Boolean(store?.IsDeleted) && (<span style={{
+                  marginLeft: '8px',fontSize: '12px', fontWeight: 700,color: '#E2452F' }} > (ร้านถูกลบแล้ว) </span> )}
+                  </h3>
                 <p style={captionStyle}>{periodLabel}</p>
-              </div>
+              </div> 
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+              {!Boolean(store?.IsDeleted) && (
                 <Button
                   variant="ghost"
                   icon="edit"
@@ -2820,37 +3047,48 @@ function StoreSalesPage({ ctx }) {
                   style={{ padding: '7px 12px' }}
                 >
                   จัดการร้านค้า
-                </Button>
+                </Button> )}
                 <Badge tone={store.IsOpen ? 'ok' : 'neutral'}>
                   {store.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}
                 </Badge>
-                <Badge tone={store.IsSuspended ? 'danger' : 'ok'}>
-                  {store.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
-                </Badge>
-                {selectedContract && (
-                  <button
-                    type="button"
-                    onClick={() => navigateTo('contract-tracking', store.StoreId)}
-                    title="ไปจัดการสัญญาร้านนี้"
-                    style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: FONT_STACK }}
-                  >
-                    <Badge tone={selectedContract.tone}>
-                      สัญญา: {selectedContract.label} · จัดการ →
-                    </Badge>
-                  </button>
-                )}
+                
+                {Boolean(store?.IsDeleted) ? (
+  <Badge tone="danger">
+    ร้านถูกลบแล้ว
+  </Badge>
+) : (
+  <>
+    <Badge tone={store.IsSuspended ? 'danger' : 'ok'}>
+      {store.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
+    </Badge>
+
+    {selectedContract && (
+      <button
+        type="button"
+        onClick={() => navigateTo('contract-tracking', store.StoreId)}
+        title="ไปจัดการสัญญาร้านนี้"
+        style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: FONT_STACK }}
+      >
+        <Badge tone={selectedContract.tone}>
+          สัญญา: {selectedContract.label} · จัดการ →
+        </Badge>
+      </button>
+    )}
+  </>
+)}
               </div>
             </div>
           </Card>
 
           <div className="of-kpi-hero">
-            <KpiCard label="ยอดขายสุทธิ" value={money(report.now.sales)} unit="บาท" delta={changePct(report.now.sales, report.before.sales)} deltaLabel={compareLabel} highlight icon="trend"/>
-            <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} variant="blue" icon="check"/>
+            <KpiCard label="ยอดขายสุทธิ" value={money(report.now.sales)} unit="บาท" delta={changePct(report.now.sales, report.before.sales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} highlight icon="trend"/>
+            <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} variant="blue" icon="check"/>
           </div>
 
-          <div className="of-kpi-small">
-            <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} icon="trend" tone="blue"/>
-            <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} icon="ban" tone="amber" invertDelta/>
+          <div className="of-store-kpi-small">
+            <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="trend" tone="blue"/>
+            <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="ban" tone="amber" invertDelta/>
+            <KpiCard size="sm" label="อัตราการยกเลิก" value={`${report.now.cancelRate.toFixed(1)}%`} delta={report.hasPreviousData ? report.now.cancelRate - report.before.cancelRate : null} deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} icon="info" tone="amber" invertDelta/>
           </div>
 
           <Card style={{ marginBottom: '16px' }}>
@@ -2885,6 +3123,47 @@ function StoreSalesPage({ ctx }) {
             </div>
           </div>
         </>)}
+
+      <Modal open={Boolean(salesExportPreview && report && store)} title={`พรีวิวก่อนบันทึก ${String(salesExportPreview || '').toUpperCase()}`} subtitle={store ? `รายงานยอดขายร้าน ${store.StoreName} · ${periodLabel}` : ''} onClose={() => setSalesExportPreview(null)} width={900} footer={<>
+        <Button variant="ghost" onClick={() => setSalesExportPreview(null)}>ยกเลิก</Button>
+        <Button variant={salesExportPreview === 'xlsx' ? 'dark' : 'primary'} icon="download" onClick={salesExportPreview === 'xlsx' ? handleXlsx : handleCsv}>บันทึก {String(salesExportPreview || '').toUpperCase()}</Button>
+      </>}>
+        {report && store && (<div style={{ display: 'grid', gap: '16px' }}>
+          {salesExportPreview === 'xlsx' && (
+    <div style={{
+        padding: '12px 14px',
+        borderRadius: T.radiusMd,
+        background: T.bg,
+        color: T.text,
+        fontSize: '13px',
+        lineHeight: 1.7
+    }}>
+        ไฟล์ Excel จะแยกข้อมูลเป็น 5 Sheet:
+        <strong> สรุปรายงาน · ยอดขายตามเมนู · ยอดขายตามเวลา · รีวิวลูกค้า · รายงานปัญหา</strong>
+    </div>
+)}
+          <div style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, overflow: 'hidden' }}>
+            <table style={tableStyle}><thead><tr><th style={thStyle}>ตัวชี้วัด</th><th style={thRightStyle}>ค่า</th></tr></thead><tbody>
+              {[
+                ['ยอดขายสุทธิ', `${money(report.now.sales)} บาท`],
+                ['มูลค่าออเดอร์รวมก่อนหักยกเลิก', `${money(report.now.grossSales)} บาท`],
+                ['ออเดอร์สำเร็จ', `${money(report.now.completedCount)} ออเดอร์`],
+                ['ออเดอร์ยกเลิก', `${money(report.now.cancelledCount)} ออเดอร์`],
+                ['อัตราการยกเลิก', `${report.now.cancelRate.toFixed(1)}%`],
+                ['ยอดเฉลี่ยต่อออเดอร์', `${money2(report.now.avgOrder)} บาท`],
+                ['คะแนนรีวิวเฉลี่ย', `${exportReviewAverage.toFixed(1)} / 5`],
+                ['จำนวนรีวิว', `${money(exportReviews.length)} รีวิว`],
+                ['จำนวนรายงานปัญหา', `${money(exportIssues.length)} รายการ`]
+              ].map(([label, value]) => (<tr key={label} style={trStyle}><td style={tdStyle}>{label}</td><td style={tdRightStyle}>{value}</td></tr>))}
+            </tbody></table>
+          </div>
+          <div>
+            <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างยอดขายตาม{(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่'}</div>
+            <div style={{ overflowX: 'auto', border: `1px solid ${T.line}`, borderRadius: T.radiusMd }}><table style={tableStyle}><thead><tr><th style={thStyle}>{(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่'}</th><th style={thRightStyle}>ยอดขาย</th><th style={thRightStyle}>ออเดอร์</th></tr></thead><tbody>{report.buckets.slice(0, 8).map((b) => (<tr key={b.key} style={trStyle}><td style={tdStyle}>{b.label}</td><td style={tdRightStyle}>{money(b.sales)} บาท</td><td style={tdRightStyle}>{money(b.count)}</td></tr>))}</tbody></table></div>
+          </div>
+          <div style={{ ...captionStyle, color: T.text }}>ไฟล์จริงมีตารางเมนูขาย, ยอดขายตามเวลา, รีวิวจากลูกค้า และรายงานปัญหาจากลูกค้า โดยไม่มีคอลัมน์เทียบช่วงก่อนหน้า</div>
+        </div>)}
+      </Modal>
     </>);
 }
 const EMPTY_STORE_FORM = {
@@ -3021,10 +3300,258 @@ function validateStoreForm(form, mode = 'create') {
     }
     return errors;
 }
+
+// ===== ครอปรูปหน้าร้านก่อนนำไปบันทึก =====
+function StoreImageCropModal({ open, imageSrc, fileName, onCancel, onConfirm }) {
+    // พื้นที่ editor ใหญ่กว่ากรอบ crop เพื่อให้เห็นส่วนรอบ ๆ และซูมออกได้จริง
+    const STAGE_W = 1280;
+    const STAGE_H = 800;
+    const CROP_W = 1024;
+    const CROP_H = 576;
+    const OUTPUT_W = 1280;
+    const OUTPUT_H = 720;
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 4;
+
+    const [zoom, setZoom] = useState(1);
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+    const pointersRef = useRef(new Map());
+    const gestureRef = useRef(null);
+
+    useEffect(() => {
+        if (!open) return;
+        setZoom(1);
+        setPosition({ x: 0, y: 0 });
+        setImageSize({ width: 0, height: 0 });
+        pointersRef.current.clear();
+        gestureRef.current = null;
+    }, [open, imageSrc]);
+
+    if (!open || !imageSrc) return null;
+
+    // baseScale ทำให้รูปเต็มกรอบ crop ที่ zoom 100% โดยไม่เกิดพื้นที่ว่างในผลลัพธ์
+    const baseScale = imageSize.width && imageSize.height
+        ? Math.max(CROP_W / imageSize.width, CROP_H / imageSize.height)
+        : 1;
+    const renderedW = imageSize.width * baseScale * zoom;
+    const renderedH = imageSize.height * baseScale * zoom;
+
+    const changeZoom = (value) => {
+        const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(value) || 1));
+        setZoom(next);
+    };
+
+    const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+    const handlePointerDown = (e) => {
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const pts = [...pointersRef.current.values()];
+        if (pts.length >= 2) {
+            gestureRef.current = { type: 'pinch', distance: distance(pts[0], pts[1]), zoom };
+        } else {
+            gestureRef.current = { type: 'drag', x: e.clientX, y: e.clientY, position: { ...position } };
+        }
+    };
+
+    const handlePointerMove = (e) => {
+        if (!pointersRef.current.has(e.pointerId)) return;
+        pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const pts = [...pointersRef.current.values()];
+        const rect = e.currentTarget.getBoundingClientRect();
+
+        if (pts.length >= 2) {
+            if (gestureRef.current?.type !== 'pinch') {
+                gestureRef.current = { type: 'pinch', distance: distance(pts[0], pts[1]), zoom };
+            }
+            const start = gestureRef.current.distance || 1;
+            changeZoom(gestureRef.current.zoom * (distance(pts[0], pts[1]) / start));
+            return;
+        }
+
+        if (gestureRef.current?.type === 'drag') {
+            const sx = STAGE_W / rect.width;
+            const sy = STAGE_H / rect.height;
+            setPosition({
+                x: gestureRef.current.position.x + (e.clientX - gestureRef.current.x) * sx,
+                y: gestureRef.current.position.y + (e.clientY - gestureRef.current.y) * sy
+            });
+        }
+    };
+
+    const handlePointerEnd = (e) => {
+        pointersRef.current.delete(e.pointerId);
+        const pts = [...pointersRef.current.values()];
+        if (pts.length === 1) {
+            gestureRef.current = { type: 'drag', x: pts[0].x, y: pts[0].y, position: { ...position } };
+        } else if (!pts.length) {
+            gestureRef.current = null;
+        }
+    };
+
+    const resetCrop = () => {
+        setZoom(1);
+        setPosition({ x: 0, y: 0 });
+    };
+
+    const applyCrop = () => {
+        const img = new Image();
+        img.onload = () => {
+            // ใช้ scale/position ชุดเดียวกับ preview โดยตรง: สิ่งที่เห็นในกรอบ = สิ่งที่บันทึก
+            const scale = Math.max(CROP_W / img.naturalWidth, CROP_H / img.naturalHeight) * zoom;
+            const drawW = img.naturalWidth * scale;
+            const drawH = img.naturalHeight * scale;
+            const sourceCanvas = document.createElement('canvas');
+            sourceCanvas.width = CROP_W;
+            sourceCanvas.height = CROP_H;
+            const sourceCtx = sourceCanvas.getContext('2d');
+            if (!sourceCtx) return;
+            sourceCtx.imageSmoothingEnabled = true;
+            sourceCtx.imageSmoothingQuality = 'high';
+            // พื้นที่ที่ผู้ใช้ตั้งใจปล่อยว่างไว้ตอนซูมออก จะถูกเก็บตาม preview จริง
+            sourceCtx.fillStyle = '#11131A';
+            sourceCtx.fillRect(0, 0, CROP_W, CROP_H);
+            sourceCtx.drawImage(
+                img,
+                (CROP_W - drawW) / 2 + position.x,
+                (CROP_H - drawH) / 2 + position.y,
+                drawW,
+                drawH
+            );
+
+            const canvas = document.createElement('canvas');
+            canvas.width = OUTPUT_W;
+            canvas.height = OUTPUT_H;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(sourceCanvas, 0, 0, OUTPUT_W, OUTPUT_H);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.94);
+            const safeName = String(fileName || 'store-image').replace(/\.[^.]+$/, '') + '-cropped.jpg';
+            onConfirm(dataUrl, safeName);
+        };
+        img.src = imageSrc;
+    };
+
+    return (
+      <Modal
+        open={open}
+        title="ครอปรูปหน้าร้าน"
+        subtitle="เลื่อนและซูมรูปให้ส่วนที่ต้องการอยู่ในกรอบ"
+        onClose={onCancel}
+        width={720}
+        footer={<>
+          <Button variant="ghost" onClick={resetCrop} style={{ marginRight: 'auto' }}>รีเซ็ต</Button>
+          <Button variant="ghost" onClick={onCancel}>ยกเลิก</Button>
+          <Button icon="check" onClick={applyCrop}>ใช้รูปนี้</Button>
+        </>}
+      >
+        <div style={{
+            padding: 'clamp(6px, 1.5vw, 12px)',
+            borderRadius: T.radiusMd,
+            background: '#20222A'
+        }}>
+          <div
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            style={{
+                position: 'relative',
+                width: '100%',
+                aspectRatio: `${STAGE_W} / ${STAGE_H}`,
+                overflow: 'hidden',
+                borderRadius: T.radiusMd,
+                background: '#11131A',
+                cursor: 'grab',
+                touchAction: 'none',
+                userSelect: 'none'
+            }}
+            aria-label="พื้นที่ครอปรูป"
+          >
+            <img
+              src={imageSrc}
+              alt="รูปสำหรับครอป"
+              draggable={false}
+              onLoad={(e) => setImageSize({
+                  width: e.currentTarget.naturalWidth,
+                  height: e.currentTarget.naturalHeight
+              })}
+              style={{
+                  position: 'absolute',
+                  left: '50%',
+                  top: '50%',
+                  width: imageSize.width ? `${renderedW / STAGE_W * 100}%` : 'auto',
+                  height: imageSize.height ? `${renderedH / STAGE_H * 100}%` : 'auto',
+                  maxWidth: 'none',
+                  maxHeight: 'none',
+                  transform: `translate(-50%, -50%) translate(${position.x / STAGE_W * 100}%, ${position.y / STAGE_H * 100}%)`,
+                  pointerEvents: 'none',
+                  userSelect: 'none'
+              }}
+            />
+
+            {/* มืดเฉพาะพื้นที่นอกกรอบ crop */}
+            <div style={{
+                position: 'absolute',
+                left: '50%',
+                top: '50%',
+                width: `${CROP_W / STAGE_W * 100}%`,
+                aspectRatio: `${CROP_W} / ${CROP_H}`,
+                transform: 'translate(-50%, -50%)',
+                border: '2px solid rgba(255,255,255,.96)',
+                borderRadius: '10px',
+                boxShadow: '0 0 0 9999px rgba(10,12,18,.55)',
+                pointerEvents: 'none',
+                overflow: 'hidden'
+            }}>
+              {[1, 2].map((n) => (
+                <span key={`v${n}`} style={{
+                    position: 'absolute', top: 0, bottom: 0, left: `${(n / 3) * 100}%`,
+                    width: '1px', background: 'rgba(255,255,255,.30)'
+                }}/>
+              ))}
+              {[1, 2].map((n) => (
+                <span key={`h${n}`} style={{
+                    position: 'absolute', left: 0, right: 0, top: `${(n / 3) * 100}%`,
+                    height: '1px', background: 'rgba(255,255,255,.30)'
+                }}/>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
+            <span style={{ ...captionStyle, margin: 0 }}>ซูมรูป</span>
+            <strong style={{ color: T.ink, fontSize: '12.5px' }}>{Math.round(zoom * 100)}%</strong>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '42px minmax(0, 1fr) 42px', gap: '10px', alignItems: 'center', marginTop: '8px' }}>
+            <button type="button" onClick={() => changeZoom(zoom - 0.1)} disabled={zoom <= MIN_ZOOM} aria-label="ซูมออก"
+              style={{ width: '42px', height: '42px', borderRadius: '12px', border: `1px solid ${T.line}`, background: '#FFFFFF', color: T.ink, fontSize: '22px', cursor: zoom <= MIN_ZOOM ? 'not-allowed' : 'pointer', opacity: zoom <= MIN_ZOOM ? .45 : 1 }}>−</button>
+            <input type="range" min={MIN_ZOOM} max={MAX_ZOOM} step="0.01" value={zoom}
+              onChange={(e) => changeZoom(e.target.value)} aria-label="ระดับการซูมรูป"
+              style={{ width: '100%', minWidth: 0, accentColor: T.primary, touchAction: 'pan-x' }}/>
+            <button type="button" onClick={() => changeZoom(zoom + 0.1)} disabled={zoom >= MAX_ZOOM} aria-label="ซูมเข้า"
+              style={{ width: '42px', height: '42px', borderRadius: '12px', border: `1px solid ${T.line}`, background: '#FFFFFF', color: T.ink, fontSize: '22px', cursor: zoom >= MAX_ZOOM ? 'not-allowed' : 'pointer', opacity: zoom >= MAX_ZOOM ? .45 : 1 }}>+</button>
+          </div>
+          <div style={{ ...captionStyle, marginTop: '9px' }}>
+            ลากด้วยเมาส์หรือนิ้วเพื่อจัดตำแหน่ง · บนโทรศัพท์ใช้สองนิ้วซูมได้
+          </div>
+        </div>
+      </Modal>
+    );
+}
+
 // ===== ฟอร์มเพิ่ม/แก้ไขข้อมูลร้านค้า =====
 function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose, onSubmit, saving }) {
     const fileInputRef = useRef(null);
     const [dragOver, setDragOver] = useState(false);
+    const [cropSource, setCropSource] = useState('');
+    const [cropFileName, setCropFileName] = useState('');
 
     const calculateContractEnd = (startISO, duration) => {
         if (!startISO || !duration || duration === 'custom')
@@ -3088,7 +3615,8 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         }
         const reader = new FileReader();
         reader.onload = () => {
-            setForm((prev) => ({ ...prev, imageData: String(reader.result), imageName: file.name }));
+            setCropSource(String(reader.result));
+            setCropFileName(file.name);
             setErrors((prev) => ({ ...prev, image: undefined }));
         };
         reader.readAsDataURL(file);
@@ -3102,7 +3630,8 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         setDragOver(false);
         handleFile(e.dataTransfer.files?.[0]);
     };
-    return (<Modal open={open} title={mode === 'edit' ? 'แก้ไขข้อมูลร้านค้า' : 'เพิ่มร้านค้าใหม่'} subtitle="ช่องที่มีเครื่องหมาย * ต้องกรอกให้ครบก่อนจึงจะบันทึกได้" onClose={onClose} width={660} footer={<>
+    return (<>
+      <Modal open={open} title={mode === 'edit' ? 'แก้ไขข้อมูลร้านค้า' : 'เพิ่มร้านค้าใหม่'} subtitle="ช่องที่มีเครื่องหมาย * ต้องกรอกให้ครบก่อนจึงจะบันทึกได้" onClose={onClose} width={660} footer={<>
           <Button variant="ghost" onClick={onClose}>
             ยกเลิก
           </Button>
@@ -3268,7 +3797,24 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
           </div>
         )}
       </Field>
-    </Modal>);
+    </Modal>
+
+    <StoreImageCropModal
+      open={Boolean(cropSource)}
+      imageSrc={cropSource}
+      fileName={cropFileName}
+      onCancel={() => {
+        setCropSource('');
+        setCropFileName('');
+      }}
+      onConfirm={(dataUrl, name) => {
+        setForm((prev) => ({ ...prev, imageData: dataUrl, imageName: name }));
+        setErrors((prev) => ({ ...prev, image: undefined }));
+        setCropSource('');
+        setCropFileName('');
+      }}
+    />
+    </>);
 }
 // ดูร้าน
 function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, onSaveAccount, saving , pushToast }) {
@@ -3277,12 +3823,16 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
     const [value, setValue] = useState('');
     const [accountValue, setAccountValue] = useState('');
     const [imageValue, setImageValue] = useState('');
+    const [cropSource, setCropSource] = useState('');
+    const [cropFileName, setCropFileName] = useState('');
     useEffect(() => {
         if (!open) {
             setEditing(null);
             setValue('');
             setAccountValue('');
             setImageValue('');
+            setCropSource('');
+            setCropFileName('');
         }
     }, [open, store?.StoreId]);
 
@@ -3322,7 +3872,8 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         const reader = new FileReader();
 
         reader.onload = () => {
-            setImageValue(String(reader.result));
+            setCropSource(String(reader.result));
+            setCropFileName(file.name);
         };
 
         reader.readAsDataURL(file);
@@ -3402,14 +3953,7 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         const isEditing = editing === key;
         return (
             <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
-                    <div style={{ ...captionStyle, marginBottom: '4px' }}>{label}</div>
-                    {!isEditing && (
-                        <button type="button" onClick={() => startEdit(key)} style={inlineEditButtonStyle} aria-label={`แก้ไข${label}`}>
-                            <Icon name="edit" size={15} color={T.primary}/>
-                        </button>
-                    )}
-                </div>
+                <div style={{ ...captionStyle, marginBottom: '4px' }}>{label}</div>
                 {isEditing ? (
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
                         <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
@@ -3417,7 +3961,12 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                         <Button variant="ghost" disabled={saving} onClick={() => setEditing(null)}>ยกเลิก</Button>
                     </div>
                 ) : (
-                    <div style={{ ...bodyStyle, color: current ? T.ink : T.muted }}>{current || '—'}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', minHeight: '30px' }}>
+                        <div style={{ ...bodyStyle, color: current ? T.ink : T.muted, minWidth: 0 }}>{current || '—'}</div>
+                        <button type="button" onClick={() => startEdit(key)} style={inlineEditButtonStyle} aria-label={`แก้ไข${label}`}>
+                            <Icon name="edit" size={15} color={T.primary}/>
+                        </button>
+                    </div>
                 )}
             </div>
         );
@@ -3428,14 +3977,7 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         const shown = key === 'Password' ? '••••••••' : (account?.[key] || '—');
         return (
             <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
-                    <div style={{ ...captionStyle, marginBottom: '4px' }}>{label}</div>
-                    {account && !isEditing && key !== 'Username' && (
-                        <button type="button" onClick={() => startAccountEdit(key)} style={inlineEditButtonStyle} aria-label={`แก้ไข${label}`}>
-                            <Icon name="edit" size={15} color={T.primary}/>
-                        </button>
-                    )}
-                </div>
+                <div style={{ ...captionStyle, marginBottom: '4px' }}>{label}</div>
                 {isEditing ? (
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
                         <input
@@ -3451,8 +3993,15 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                     </div>
                 ) : (
                   <>
-                    <div style={{ ...bodyStyle, color: account ? T.ink : T.muted }}>
-                        {account ? shown : 'ยังไม่มีบัญชีเจ้าของร้าน'}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', minHeight: '30px' }}>
+                        <div style={{ ...bodyStyle, color: account ? T.ink : T.muted, minWidth: 0 }}>
+                            {account ? shown : 'ยังไม่มีบัญชีเจ้าของร้าน'}
+                        </div>
+                        {account && key !== 'Username' && (
+                            <button type="button" onClick={() => startAccountEdit(key)} style={inlineEditButtonStyle} aria-label={`แก้ไข${label}`}>
+                                <Icon name="edit" size={15} color={T.primary}/>
+                            </button>
+                        )}
                     </div>
 
                     {key === 'Username' && account && (
@@ -3466,7 +4015,7 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         );
     };
 
-    return (
+    return (<>
         <Modal open={open} title="ข้อมูลร้านค้า" subtitle={store.StoreName} onClose={onClose} width={720}
             footer={<Button variant="ghost" onClick={onClose}>ปิด</Button>}>
             <div>
@@ -3479,21 +4028,8 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                 {editableStoreItem('Description', 'รายละเอียดร้าน')}
 
                 <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
-        <div style={{ ...captionStyle, marginBottom: '4px' }}>
-            รูปหน้าร้าน
-        </div>
-
-        {editing !== 'ImageUrl' && (
-            <button
-                type="button"
-                onClick={startImageEdit}
-                style={inlineEditButtonStyle}
-                aria-label="แก้ไขรูปหน้าร้าน"
-            >
-                <Icon name="edit" size={15} color={T.primary}/>
-            </button>
-        )}
+    <div style={{ ...captionStyle, marginBottom: '4px' }}>
+        รูปหน้าร้าน
     </div>
 
     {editing === 'ImageUrl' ? (
@@ -3581,7 +4117,8 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
             </div>
         </div>
     ) : (
-        detail?.ImageUrl ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', minHeight: '30px' }}>
+          {detail?.ImageUrl ? (
             <img
                 src={detail.ImageUrl}
                 alt="รูปร้าน"
@@ -3595,11 +4132,15 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                     display: 'block'
                 }}
             />
-        ) : (
+          ) : (
             <div style={{ ...bodyStyle, color: T.muted }}>
                 ยังไม่มีรูปหน้าร้าน
             </div>
-        )
+          )}
+          <button type="button" onClick={startImageEdit} style={inlineEditButtonStyle} aria-label="แก้ไขรูปหน้าร้าน">
+            <Icon name="edit" size={15} color={T.primary}/>
+          </button>
+        </div>
     )}
 </div>
 
@@ -3619,7 +4160,22 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                 {accountItem('Password', 'รหัสผ่าน')}
             </div>
         </Modal>
-    );
+
+        <StoreImageCropModal
+          open={Boolean(cropSource)}
+          imageSrc={cropSource}
+          fileName={cropFileName}
+          onCancel={() => {
+            setCropSource('');
+            setCropFileName('');
+          }}
+          onConfirm={(dataUrl) => {
+            setImageValue(dataUrl);
+            setCropSource('');
+            setCropFileName('');
+          }}
+        />
+    </>);
 }
 // ===== จัดการร้านค้า: เพิ่ม แก้ไข เปิด/ปิด ระงับ และลบร้าน =====
 function StoreManagePage({ ctx }) {
@@ -3958,7 +4514,7 @@ function StoreManagePage({ ctx }) {
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         <Button variant="soft" icon="eye" onClick={() => openView(s)}style={smallBtn} title="ดูข้อมูลร้าน">
-                          ดู
+                          ดู/แก้ไข
                         </Button>
                         <Button
                           variant="soft"
@@ -4057,6 +4613,7 @@ function ContractTrackingPage({ ctx }) {
     const [loadError, setLoadError] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [renewStore, setRenewStore] = useState(null);
+    const [renewStart, setRenewStart] = useState('');
     const [renewDuration, setRenewDuration] = useState('1y');
     const [renewCustomEnd, setRenewCustomEnd] = useState('');
     const [renewSaving, setRenewSaving] = useState(false);
@@ -4101,52 +4658,97 @@ function ContractTrackingPage({ ctx }) {
     const nextDayISO = (value) => addDaysISO(value, 1);
     const twoDaysAfterISO = (value) => addDaysISO(value, 2);
     
-    
-    const renewalBaseDate = (currentEnd) => {
-        const current = dateOnly(currentEnd);
-        return current || dateOnly(todayISO());
-    };
-    const renewalStartDate = (currentEnd) => {
-        const base = renewalBaseDate(currentEnd);
-        return base ? new Date(`${twoDaysAfterISO(toISODate(base))}T00:00:00`) : null;
-    };
-    const calculateRenewEnd = (currentEnd, duration) => {
-        const start = renewalStartDate(currentEnd);
-        if (!start || !duration || duration === 'custom') return '';
-        const months = { '6m': 6, '1y': 12, '2y': 24, '3y': 36 }[duration];
-        if (!months) return '';
-        const originalDay = start.getDate();
-        const target = new Date(start.getFullYear(), start.getMonth() + months, 1);
-        const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
-        target.setDate(Math.min(originalDay, lastDay));
-        target.setDate(target.getDate() - 1);
-        return toISODate(target);
-    };
-    const minimumRenewEnd = (store) => {
-        const start = renewalStartDate(store?.ContractEndDate);
-        return start ? toISODate(start) : todayISO();
-    };
-    const openRenew = (store) => {
-        setRenewStore(store);
+    const defaultRenewStart = (currentEnd) => {
+    const today = dateOnly(todayISO());
+    const end = dateOnly(currentEnd);
+
+    // ไม่มีวันสิ้นสุดเดิม -> เริ่มวันนี้
+    if (!end) {
+        return todayISO();
+    }
+
+    // สัญญาหมดแล้ว -> เริ่มวันนี้
+    if (end < today) {
+        return todayISO();
+    }
+
+    // สัญญายังไม่หมด -> เริ่มวันถัดจากวันสิ้นสุดเดิม
+    return nextDayISO(toISODate(end));
+};
+
+const calculateRenewEnd = (startISO, duration) => {
+    const start = dateOnly(startISO);
+
+    if (!start || !duration || duration === 'custom') {
+        return '';
+    }
+
+    const months = {
+        '6m': 6,
+        '1y': 12,
+        '2y': 24,
+        '3y': 36
+    }[duration];
+
+    if (!months) return '';
+
+    const originalDay = start.getDate();
+
+    const target = new Date(
+        start.getFullYear(),
+        start.getMonth() + months,
+        1
+    );
+
+    const lastDay = new Date(
+        target.getFullYear(),
+        target.getMonth() + 1,
+        0
+    ).getDate();
+
+    target.setDate(Math.min(originalDay, lastDay));
+
+    // เช่น 30/09/2026 + 1 ปี
+    // ได้ช่วง 30/09/2026 - 29/09/2027
+    target.setDate(target.getDate() - 1);
+
+    return toISODate(target);
+};
+
+const openRenew = (store) => {
+    const start = defaultRenewStart(store?.ContractEndDate);
+
+    setRenewStore(store);
+    setRenewStart(start);
+    setRenewDuration('1y');
+    setRenewCustomEnd('');
+    setRenewError('');
+    setRenewAction(
+        store?.IsSuspended ? 'renew_unsuspend' : 'renew_only'
+    );
+};
+
+const closeRenew = () => {
+    if (!renewSaving) {
+        setRenewStore(null);
+        setRenewStart('');
         setRenewDuration('1y');
         setRenewCustomEnd('');
         setRenewError('');
-        setRenewAction(store?.IsSuspended ? 'renew_unsuspend' : 'renew_only');
-    };
-    const closeRenew = () => {
-        if (!renewSaving) {
-            setRenewStore(null);
-            setRenewDuration('1y');
-            setRenewCustomEnd('');
-            setRenewError('');
-            setRenewAction('renew_unsuspend');
-        }
-    };
-    const renewNewEnd = renewStore
-        ? (renewDuration === 'custom' ? renewCustomEnd : calculateRenewEnd(renewStore.ContractEndDate, renewDuration))
-        : '';
-    const renewBase = renewStore ? renewalBaseDate(renewStore.ContractEndDate) : null;
-    const renewNewStart = renewBase ? twoDaysAfterISO(toISODate(renewBase)) : '';
+        setRenewAction('renew_unsuspend');
+    }
+};
+
+const renewNewEnd = renewStore
+    ? (
+        renewDuration === 'custom'
+            ? renewCustomEnd
+            : calculateRenewEnd(renewStart, renewDuration)
+    )
+    : '';
+
+const renewNewStart = renewStart;
+    
 
     const suspendExpiredStore = async (store) => {
         if (!store || store.IsSuspended) return;
@@ -4171,27 +4773,39 @@ function ContractTrackingPage({ ctx }) {
     };
 
     const submitRenew = async () => {
-        if (!renewStore || !renewNewEnd) {
-            setRenewError('กรุณาเลือกวันสิ้นสุดสัญญาใหม่');
+        if (!renewStore || !renewStart || !renewNewEnd) {
+            setRenewError('กรุณากรอกช่วงสัญญาใหม่ให้ครบถ้วน');
             return;
         }
 
+        const newStart = dateOnly(renewStart);
         const newEnd = dateOnly(renewNewEnd);
-        const currentEnd = dateOnly(renewStore.ContractEndDate);
         const today = dateOnly(todayISO());
+
+        if (!newStart) {
+        setRenewError('รูปแบบวันที่เริ่มสัญญาไม่ถูกต้อง');
+        return;}
 
         if (!newEnd) {
             setRenewError('รูปแบบวันสิ้นสุดสัญญาไม่ถูกต้อง');
+            return;}
+
+        if (newStart < today) {
+            setRenewError('วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว');
+            return;}
+
+        const minimumStart = dateOnly(defaultRenewStart(renewStore.ContractEndDate));
+
+        if (minimumStart && newStart < minimumStart) {
+            setRenewError(
+                `วันที่เริ่มสัญญาใหม่ต้องไม่ก่อน ${formatContractDate(defaultRenewStart(renewStore.ContractEndDate))}`
+            );
             return;
         }
-        if (newEnd <= today) {
-            setRenewError('วันสิ้นสุดสัญญาใหม่ต้องเป็นวันในอนาคต');
-            return;
-        }
-        if (currentEnd && newEnd <= currentEnd) {
-            setRenewError(`วันสิ้นสุดใหม่ต้องอยู่หลังวันสิ้นสุดสัญญาปัจจุบัน (${formatContractDate(renewStore.ContractEndDate)})`);
-            return;
-        }
+
+        if (newEnd < newStart) {
+            setRenewError('วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา');
+            return;}
 
         setRenewSaving(true);
         setRenewError('');
@@ -4201,6 +4815,7 @@ function ContractTrackingPage({ ctx }) {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    contract_start_date: renewStart,
                     contract_end_date: renewNewEnd,
                     performed_by: 'Executive'
                 })
@@ -4220,6 +4835,7 @@ function ContractTrackingPage({ ctx }) {
             );
 
             setRenewStore(null);
+            setRenewStart('')
             setRenewDuration('1y');
             setRenewCustomEnd('');
             setRenewAction('renew_unsuspend');
@@ -4410,6 +5026,27 @@ function ContractTrackingPage({ ctx }) {
             <div style={{ fontSize:'18px', fontWeight:700, color:T.ink }}>{formatContractDate(renewStore.ContractEndDate)}</div>
           </div>
 
+          <Field
+    label="วันที่เริ่มสัญญาใหม่"
+    required
+    hint={renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO())
+    ? 'สัญญาเดิมยังไม่หมด วันเริ่มใหม่ต้องเป็นวันถัดจากวันสิ้นสุดสัญญาเดิมหรือหลังจากนั้น'
+    : 'สัญญาเดิมหมดอายุแล้ว สามารถเริ่มสัญญาใหม่ได้ตั้งแต่วันนี้'}
+>
+    <input
+        type="date"
+        value={renewStart}
+        min={renewStore ? defaultRenewStart(renewStore.ContractEndDate) : todayISO()}
+        onChange={(e) => {
+            setRenewStart(e.target.value);
+            setRenewCustomEnd('');
+            setRenewError('');
+        }}
+        style={inputStyle}
+    />
+</Field>
+
+<div style={{ height: '14px' }} />
           <Field label="ระยะเวลาที่ต้องการต่อ" required>
             <select value={renewDuration} onChange={(e) => { setRenewDuration(e.target.value); setRenewCustomEnd(''); setRenewError(''); }} style={inputStyle}>
               <option value="6m">6 เดือน</option>
@@ -4420,19 +5057,39 @@ function ContractTrackingPage({ ctx }) {
             </select>
           </Field>
 
-          {renewDuration === 'custom' && (
-            <div style={{ marginTop:'14px' }}>
-              <Field label="วันสิ้นสุดสัญญาใหม่" required hint={`ต้องอยู่หลัง ${formatContractDate(renewStore.ContractEndDate)} และเป็นวันในอนาคต`}>
-                <input
-                  type="date"
-                  value={renewCustomEnd}
-                  min={minimumRenewEnd(renewStore)}
-                  onChange={(e) => { setRenewCustomEnd(e.target.value); setRenewError(''); }}
-                  style={inputStyle}
-                />
-              </Field>
-            </div>
-          )}
+          <div style={{ marginTop:'14px' }}>
+    <Field
+        label="วันที่สิ้นสุดสัญญาใหม่"
+        required
+        hint={
+            renewDuration === 'custom'
+                ? 'เลือกวันสิ้นสุดสัญญาได้เอง'
+                : 'คำนวณอัตโนมัติตามวันที่เริ่มและระยะเวลาที่เลือก'
+        }
+    >
+        <input
+            type="date"
+            value={renewNewEnd}
+            min={renewStart || todayISO()}
+            disabled={renewDuration !== 'custom'}
+            onChange={(e) => {
+                setRenewCustomEnd(e.target.value);
+                setRenewError('');
+            }}
+            style={{
+                ...inputStyle,
+                background:
+                    renewDuration !== 'custom'
+                        ? '#F6F7FB'
+                        : '#FFFFFF',
+                cursor:
+                    renewDuration !== 'custom'
+                        ? 'not-allowed'
+                        : 'pointer'
+            }}
+        />
+    </Field>
+</div>
 
           {renewNewEnd && (
             <div style={{ marginTop:'16px', padding:'15px 16px', borderRadius:T.radiusMd, background:T.accentSoft, border:`1px solid ${T.accentBorder || '#FFD6C9'}` }}>
@@ -4441,7 +5098,7 @@ function ContractTrackingPage({ ctx }) {
                 {formatContractDate(renewNewStart)} <span style={{ color:T.muted, padding:'0 7px' }}>-</span> {formatContractDate(renewNewEnd)}
               </div>
               <div style={{ fontSize:'12px', color:T.muted, marginTop:'6px' }}>
-                รอบใหม่จะเริ่ม 2 วันหลังจากวันสิ้นสุดสัญญาปัจจุบัน เพื่อเผื่อเวลาเตรียมการ
+                ตรวจสอบวันที่เริ่มและสิ้นสุดสัญญาให้ถูกต้องก่อนยืนยัน
               </div>
             </div>
           )}
@@ -4702,10 +5359,13 @@ function StoreAccountsPage({ ctx }) {
     useEffect(() => {
         loadAccounts();
     }, [loadAccounts]);
-    const storeName = (id) => stores.find((s) => String(s.StoreId) === String(id))?.StoreName || '—';
+    const storeName = (id,account = null) => { if (account?.StoreName) {   return account.StoreName;}
+    return stores.find( (s) => String(s.StoreId) === String(id)  )?.StoreName || '—'; };
     const rows = accounts.filter((a) => {
         if (a.Role !== 'Shop Owner') return false;
-        const text = `${a.Username} ${a.FullName} ${storeName(a.StoreId)}`.toLowerCase();
+        const storeStillActive = stores.some((s) => String(s.StoreId) === String(a.StoreId)   );
+        if (!storeStillActive) return false;
+        const text = `${a.Username} ${a.FullName} ${storeName(a.StoreId, a)}`.toLowerCase();
         return text.includes(search);
     });
     const openCreate = () => {
@@ -4854,13 +5514,15 @@ function StoreAccountsPage({ ctx }) {
                       {ROLE_LABEL[a.Role] || a.Role}
                     </Badge>
                   </td>
-                  <td style={tdStyle}>{storeName(a.StoreId)}</td>
+                  <td style={tdStyle}> <div>{storeName(a.StoreId,a)}</div> 
+                  {Boolean(a.StoreIsDeleted) && ( <div style={{marginTop: '4px',fontSize: '12px',fontWeight: 700,color: '#E2452F'  }}>ร้านถูกลบแล้ว </div>)}
+                  </td>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      <Button variant="ghost" icon="key" onClick={() => openResetPassword(a)} style={smallBtn}>
+                      <Button variant="ghost" icon="key" disabled={Boolean(a.StoreIsDeleted)} onClick={() => openResetPassword(a)} style={smallBtn}>
                         ตั้งรหัสใหม่
                       </Button>
-                      <Button variant="danger" icon="trash" onClick={() => removeAccount(a)} style={smallBtn}>
+                      <Button variant="danger" icon="trash" disabled={Boolean(a.StoreIsDeleted)} onClick={() => removeAccount(a)} style={smallBtn}>
                         ลบ
                       </Button>
                     </div>
@@ -4927,666 +5589,81 @@ const h2Style = { margin: 0, fontSize: '24px', fontWeight: 700, color: T.ink, li
 const h3Style = { margin: 0, fontSize: '18px', fontWeight: 600, color: T.ink };
 const bodyStyle = { fontSize: '14px', color: T.text, lineHeight: 1.6 };
 const captionStyle = { margin: '4px 0 0', fontSize: '12.5px', color: T.muted, lineHeight: 1.5 };
-const ellipsisStyle = {
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    color: T.ink,
-    fontWeight: 600,
-    fontSize: '13px'
+const ellipsisStyle = { overflow: 'hidden', textOverflow: 'ellipsis',whiteSpace: 'nowrap',color: T.ink,
+    fontWeight: 600,fontSize: '13px'
 };
-const shellStyle = {
-    display: 'flex',
-    flexDirection: 'column',
-    position: 'relative',
-    width: '100%',
-    maxWidth: '100%',
-    minWidth: 0,
-    height: '100dvh',
-    minHeight: '100dvh',
-    overflow: 'hidden',
-    background: T.bg,
-    color: T.text,
-    margin: 0,
-    padding: 0
-};
-const shellBodyStyle = {
-    display: 'flex',
-    alignItems: 'stretch',
-    flex: 1,
-    minHeight: 0,
-    width: '100%',
-    position: 'relative'
-};
-const mainScrollStyle = {
-    flex: '1 1 0%',
-    minWidth: 0,
-    width: 0,
-    maxWidth: '100%',
-    overflowY: 'auto',
-    overflowX: 'hidden'
-};
-const sidebarStyle = {
-    width: '260px',
-    minWidth: '260px',
-    padding: '16px 16px 12px',
-    boxSizing: 'border-box',
-    background: T.sideBg,
-    borderRight: `1px solid ${T.line}`,
-    display: 'flex',
-    flexDirection: 'column',
-    alignSelf: 'stretch',
-    overflowY: 'auto',
-    flexShrink: 0,
-    boxShadow: '0 1px 3px rgba(18,25,38,0.02)'
-};
-const brandStyle = {
-    width: '212px',
-    flexShrink: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    whiteSpace: 'nowrap',
-    minWidth: 0
-};
-const brandTitleStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '20px',
-    fontWeight: 700,
-    color: T.primary
-};
-const brandSubtitleStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '12px',
-    marginTop: '4px',
-    color: T.muted
-};
-const sidebarLabelStyle = {
-    color: T.ink,
-    fontSize: '14px',
-    fontWeight: 500,
-    padding: '12px 16px',
-    marginBottom: '4px'
-};
-const sidebarItemStyle = {
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    padding: '10px 16px',
-    marginBottom: '8px',
-    border: 'none',
-    borderRadius: T.radiusMd,
-    cursor: 'pointer',
-    textAlign: 'left',
-    fontSize: '14px',
-    fontFamily: FONT_STACK,
-    transition: 'background .18s ease, color .18s ease'
-};
-const avatarStyle = {
-    width: '34px',
-    height: '34px',
-    minWidth: '34px',
-    display: 'grid',
-    placeItems: 'center',
-    borderRadius: '50%',
-    background: T.primary,
-    color: '#FFFFFF',
-    fontWeight: 700,
-    fontSize: '14px'
-};
-const backdropStyle = {
-    position: 'absolute',
-    inset: 0,
-    background: 'rgba(18,25,38,0.45)',
-    zIndex: 55
-};
-const topbarStyle = {
-    minHeight: `${TOPBAR_H}px`,
-    padding: '12px 24px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    background: T.surface,
-    borderBottom: `1px solid ${T.line}`,
-    position: 'sticky',
-    top: 0,
-    zIndex: 70,
-    flexShrink: 0,
-    boxSizing: 'border-box',
-    flexWrap: 'wrap'
-};
-const iconButtonStyle = {
-    position: 'relative',
-    width: '38px',
-    height: '38px',
-    display: 'grid',
-    placeItems: 'center',
-    border: 'none',
-    borderRadius: T.radiusMd,
-    background: T.primarySoft,
-    color: T.primary,
-    cursor: 'pointer',
-    padding: 0,
-    transition: 'background .2s ease, color .2s ease'
-};
-const searchWrapStyle = {
-    flex: '0 1 420px',
-    minWidth: '180px',
-    maxWidth: '420px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    padding: '5px 10px',
-    border: `1px solid ${T.line}`,
-    borderRadius: '8px',
-    background: T.surface,
-    boxShadow: '0 1px 2px rgba(18,25,38,0.02)'
-};
-const searchInputStyle = {
-    flex: 1,
-    minWidth: 0,
-    border: 'none',
-    outline: 'none',
-    background: 'transparent',
-    color: T.text,
-    fontSize: '13.5px',
-    fontFamily: FONT_STACK,
-    padding: '6px 0'
-};
-const courtPillStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '7px',
-    padding: '7px 12px',
-    borderRadius: '999px',
-    fontSize: '12.5px',
-    fontWeight: 700,
-    whiteSpace: 'nowrap'
-};
-const notifBadgeStyle = {
-    position: 'absolute',
-    top: '-6px',
-    right: '-6px',
-    minWidth: '19px',
-    height: '19px',
-    padding: '0 5px',
-    borderRadius: '999px',
-    background: T.primary,
-    color: '#FFFFFF',
-    fontSize: '11px',
-    fontWeight: 700,
-    display: 'grid',
-    placeItems: 'center',
-    boxSizing: 'border-box'
-};
+const shellStyle = {display: 'flex',flexDirection: 'column',position: 'relative',width: '100%',maxWidth: '100%',minWidth: 0,height: '100dvh',minHeight: '100dvh',overflow: 'hidden',
+    background: T.bg,color: T.text,margin: 0,padding: 0};
+const shellBodyStyle = { display: 'flex', alignItems: 'stretch', flex: 1, minHeight: 0, width: '100%', position: 'relative' };
+const mainScrollStyle = { flex: '1 1 0%', minWidth: 0, width: 0, maxWidth: '100%', overflowY: 'auto', overflowX: 'hidden' };
+const sidebarStyle = { width: '260px', minWidth: '260px', padding: '16px 16px 12px', boxSizing: 'border-box', background: T.sideBg, borderRight: `1px solid ${T.line}`, display: 'flex', flexDirection: 'column', alignSelf: 'stretch', overflowY: 'auto', flexShrink: 0, boxShadow: '0 1px 3px rgba(18,25,38,0.02)' };
+const brandStyle = { width: '212px', flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', whiteSpace: 'nowrap', minWidth: 0 };
+const brandTitleStyle = { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '20px', fontWeight: 700, color: T.primary };
+const brandSubtitleStyle = { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '4px', color: T.muted };
+
+const sidebarLabelStyle = { color: T.ink, fontSize: '14px', fontWeight: 500, padding: '12px 16px', marginBottom: '4px' };
+const sidebarItemStyle = { width: '100%', display: 'flex', alignItems: 'center', gap: '16px', padding: '10px 16px', marginBottom: '8px', border: 'none', borderRadius: T.radiusMd, cursor: 'pointer', textAlign: 'left', fontSize: '14px', fontFamily: FONT_STACK, transition: 'background .18s ease, color .18s ease' };
+const avatarStyle = { width: '34px', height: '34px', minWidth: '34px', display: 'grid', placeItems: 'center', borderRadius: '50%', background: T.primary, color: '#FFFFFF', fontWeight: 700, fontSize: '14px' };
+
+const backdropStyle = { position: 'absolute', inset: 0, background: 'rgba(18,25,38,0.45)', zIndex: 55 };
+const topbarStyle = { minHeight: `${TOPBAR_H}px`, padding: '12px 24px', display: 'flex', alignItems: 'center', gap: '16px', background: T.surface, borderBottom: `1px solid ${T.line}`, position: 'sticky', top: 0, zIndex: 70, flexShrink: 0, boxSizing: 'border-box', flexWrap: 'wrap' };
+const iconButtonStyle = { position: 'relative', width: '38px', height: '38px', display: 'grid', placeItems: 'center', border: 'none', borderRadius: T.radiusMd, background: T.primarySoft, color: T.primary, cursor: 'pointer', padding: 0, transition: 'background .2s ease, color .2s ease' };
+const searchWrapStyle = { flex: '0 1 420px', minWidth: '180px', maxWidth: '420px', display: 'flex', alignItems: 'center', gap: '4px', padding: '5px 10px', border: `1px solid ${T.line}`, borderRadius: '8px', background: T.surface, boxShadow: '0 1px 2px rgba(18,25,38,0.02)' };
+const searchInputStyle = { flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', color: T.text, fontSize: '13.5px', fontFamily: FONT_STACK, padding: '6px 0' };
+const courtPillStyle = { display: 'flex', alignItems: 'center', gap: '7px', padding: '7px 12px', borderRadius: '999px', fontSize: '12.5px', fontWeight: 700, whiteSpace: 'nowrap' };
+const notifBadgeStyle = { position: 'absolute', top: '-6px', right: '-6px', minWidth: '19px', height: '19px', padding: '0 5px', borderRadius: '999px', background: T.primary, color: '#FFFFFF', fontSize: '11px', fontWeight: 700, display: 'grid', placeItems: 'center', boxSizing: 'border-box' };
 const dropdownBackdropStyle = { position: 'fixed', inset: 0, zIndex: 40 };
-const notifPanelStyle = {
-    position: 'absolute',
-    top: '46px',
-    right: 0,
-    width: 'min(330px, 90vw)',
-    background: T.surface,
-    border: `1px solid ${T.line}`,
-    borderRadius: T.radiusLg,
-    boxShadow: '0 18px 40px rgba(18,25,38,0.16)',
-    overflow: 'hidden',
-    zIndex: 50
-};
-const notifHeadStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '14px 16px',
-    borderBottom: `1px solid ${T.line}`
-};
-const notifItemStyle = {
-    width: '100%',
-    display: 'flex',
-    gap: '10px',
-    alignItems: 'flex-start',
-    padding: '12px 16px',
-    border: 'none',
-    borderBottom: `1px solid ${T.line}`,
-    cursor: 'pointer',
-    textAlign: 'left',
-    fontFamily: FONT_STACK
-};
-const topAccountStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '9px',
-    padding: '6px 12px 6px 6px',
-    border: 'none',
-    borderRadius: '999px',
-    background: T.deepSoft,
-    maxWidth: '250px',
-    cursor: 'pointer',
-    fontFamily: FONT_STACK,
-    transition: 'background .2s ease'
-};
-const profilePanelStyle = {
-    position: 'absolute',
-    top: 'calc(100% + 10px)',
-    right: 0,
-    width: 'min(290px, 86vw)',
-    background: T.surface,
-    border: `1px solid ${T.line}`,
-    borderRadius: T.radiusLg,
-    boxShadow: '0 12px 34px rgba(18,25,38,0.14)',
-    padding: '20px',
-    zIndex: 80
-};
-const dropdownItemStyle = {
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '10px 12px',
-    marginBottom: '2px',
-    border: 'none',
-    borderRadius: '6px',
-    background: 'transparent',
-    color: T.text,
-    fontSize: '14px',
-    fontFamily: FONT_STACK,
-    textAlign: 'left',
-    cursor: 'pointer',
-    transition: 'background .2s ease, color .2s ease'
-};
-const contentStyle = {
-    width: '100%',
-    maxWidth: 'none',
-    minWidth: 0,
-    margin: 0,
-    padding: 'clamp(16px, 2.2vw, 24px)',
-    minHeight: `calc(100dvh - ${TOPBAR_H}px)`,
-    boxSizing: 'border-box',
-    overflowX: 'hidden'
-};
-const courtBannerStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '14px 16px',
-    marginBottom: '18px',
-    borderRadius: T.radiusLg,
-    background: T.redSoft,
-    border: `1px solid ${T.redSoft}`,
-    color: T.down,
-    fontSize: '13.5px',
-    fontWeight: 600
-};
-const cardStyle = {
-    background: T.surface,
-    border: 'none',
-    borderRadius: T.radiusLg,
-    padding: 'clamp(18px, 2.2vw, 24px)',
-    boxSizing: 'border-box',
-    position: 'relative',
-    boxShadow: T.shadowSm
-};
-const cardHeadStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '12px',
-    flexWrap: 'wrap',
-    marginBottom: '14px'
-};
-const chartHeadStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '14px',
-    flexWrap: 'wrap',
-    marginBottom: '6px'
-};
-const chartGridStyle = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(min(360px, 100%), 1fr))',
-    gap: '24px'
-};
-const toolbarStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    gap: '14px',
-    flexWrap: 'wrap'
-};
-const courtControlStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '16px',
-    flexWrap: 'wrap'
-};
-const tableStyle = {
-    width: '100%',
-    borderCollapse: 'collapse',
-    minWidth: '760px',
-    marginTop: '12px'
-};
-const thStyle = {
-    padding: '16px',
-    background: T.surface,
-    color: T.ink,
-    fontSize: '14px',
-    fontWeight: 600,
-    textAlign: 'left',
-    whiteSpace: 'nowrap',
-    borderBottom: `1px solid ${T.line}`
-};
+const notifPanelStyle = { position: 'absolute', top: '46px', right: 0, width: 'min(330px, 90vw)', background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, boxShadow: '0 18px 40px rgba(18,25,38,0.16)', overflow: 'hidden', zIndex: 50 };
+const notifHeadStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '14px 16px', borderBottom: `1px solid ${T.line}` };
+const notifItemStyle = { width: '100%', display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '12px 16px', border: 'none', borderBottom: `1px solid ${T.line}`, cursor: 'pointer', textAlign: 'left', fontFamily: FONT_STACK };
+const topAccountStyle = { display: 'flex', alignItems: 'center', gap: '9px', padding: '6px 12px 6px 6px', border: 'none', borderRadius: '999px', background: T.deepSoft, maxWidth: '250px', cursor: 'pointer', fontFamily: FONT_STACK, transition: 'background .2s ease' };
+const profilePanelStyle = { position: 'absolute', top: 'calc(100% + 10px)', right: 0, width: 'min(290px, 86vw)', background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, boxShadow: '0 12px 34px rgba(18,25,38,0.14)', padding: '20px', zIndex: 80 };
+const dropdownItemStyle = { width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', marginBottom: '2px', border: 'none', borderRadius: '6px', background: 'transparent', color: T.text, fontSize: '14px', fontFamily: FONT_STACK, textAlign: 'left', cursor: 'pointer', transition: 'background .2s ease, color .2s ease' };
+const contentStyle = { width: '100%', maxWidth: 'none', minWidth: 0, margin: 0, padding: 'clamp(16px, 2.2vw, 24px)', minHeight: `calc(100dvh - ${TOPBAR_H}px)`, boxSizing: 'border-box', overflowX: 'hidden' };
+const courtBannerStyle = { display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 16px', marginBottom: '18px', borderRadius: T.radiusLg, background: T.redSoft, border: `1px solid ${T.redSoft}`, color: T.down, fontSize: '13.5px', fontWeight: 600 };
+const cardStyle = { background: T.surface, border: 'none', borderRadius: T.radiusLg, padding: 'clamp(18px, 2.2vw, 24px)', boxSizing: 'border-box', position: 'relative', boxShadow: T.shadowSm };
+const cardHeadStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' };
+const chartGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(360px, 100%), 1fr))', gap: '24px' };
+const toolbarStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '14px', flexWrap: 'wrap' };
+const courtControlStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' };
+const tableStyle = { width: '100%', borderCollapse: 'collapse', minWidth: '760px', marginTop: '12px' };
+const thStyle = { padding: '16px', background: T.surface, color: T.ink, fontSize: '14px', fontWeight: 600, textAlign: 'left', whiteSpace: 'nowrap', borderBottom: `1px solid ${T.line}` };
 const thRightStyle = { ...thStyle, textAlign: 'right' };
 const trStyle = { borderBottom: `1px solid ${T.line}` };
 const tdStyle = { padding: '16px', fontSize: '14px', color: T.text, verticalAlign: 'middle' };
 const tdRightStyle = { ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' };
-const cancelStatRowStyle = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
-    gap: '12px',
-    marginBottom: '16px'
-};
-const cancelStatBoxStyle = {
-    background: T.bg,
-    borderRadius: T.radiusMd,
-    padding: '14px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px'
-};
+const cancelStatRowStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px', marginBottom: '16px' };
+const cancelStatBoxStyle = { background: T.bg, borderRadius: T.radiusMd, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '4px' };
 const cancelStatLabelStyle = { fontSize: '12.5px', color: T.muted, fontWeight: 600 };
 const cancelStatValueStyle = { fontSize: '20px', color: T.ink, fontWeight: 700, lineHeight: 1.3 };
-const cancelChipRowStyle = {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '8px',
-    marginBottom: '4px'
-};
-const cancelChipStyle = (active) => ({
-    padding: '7px 14px',
-    borderRadius: '999px',
-    fontSize: '12.5px',
-    fontWeight: 600,
-    fontFamily: FONT_STACK,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-    background: active ? T.primarySoft : T.surface,
-    color: active ? T.primaryDark : T.text,
-    border: `1px solid ${active ? T.primary : T.line}`
-});
-const cancelItemWrapStyle = {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    padding: '4px 2px'
-};
-const cancelItemRowStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    fontSize: '13.5px',
-    color: T.text
-};
-const storeThumbStyle = {
-    width: '38px',
-    height: '38px',
-    borderRadius: T.radiusMd,
-    display: 'grid',
-    placeItems: 'center',
-    background: T.primarySoft,
-    color: T.primary,
-    fontWeight: 700
-};
-const inputStyle = {
-    width: '100%',
-    padding: '11px 13px',
-    border: `1px solid ${T.line}`,
-    borderRadius: T.radiusMd,
-    fontSize: '13.5px',
-    fontFamily: FONT_STACK,
-    color: T.text,
-    background: T.surface,
-    boxSizing: 'border-box',
-    outlineColor: T.primary
-};
-const twoColStyle = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(min(210px, 100%), 1fr))',
-    gap: '0 14px'
-};
+const cancelChipRowStyle = { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '4px' };
+const cancelChipStyle = (active) => ({ padding: '7px 14px', borderRadius: '999px', fontSize: '12.5px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', whiteSpace: 'nowrap', background: active ? T.primarySoft : T.surface, color: active ? T.primaryDark : T.text, border: `1px solid ${active ? T.primary : T.line}` });
+const cancelItemWrapStyle = { display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px 2px' };
+const cancelItemRowStyle = { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px', color: T.text };
+const storeThumbStyle = { width: '38px', height: '38px', borderRadius: T.radiusMd, display: 'grid', placeItems: 'center', background: T.primarySoft, color: T.primary, fontWeight: 700 };
+const inputStyle = { width: '100%', padding: '11px 13px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, fontSize: '13.5px', fontFamily: FONT_STACK, color: T.text, background: T.surface, boxSizing: 'border-box', outlineColor: T.primary };
+const twoColStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(210px, 100%), 1fr))', gap: '0 14px' };
 const smallBtn = { padding: '7px 10px', fontSize: '12.5px' };
 const inlineEditButtonStyle = { border: 'none', background: 'transparent', padding: '4px', borderRadius: '6px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
-const storeImagePreviewStyle = {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    display: 'block'
-};
-const storeImageShadeStyle = {
-    position: 'absolute',
-    inset: 0,
-    background: 'linear-gradient(180deg, rgba(42,44,65,0.02) 48%, rgba(42,44,65,0.62) 100%)',
-    pointerEvents: 'none'
-};
-const storeImageChangeBadgeStyle = {
-    position: 'absolute',
-    left: '16px',
-    bottom: '14px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '7px 11px',
-    borderRadius: '999px',
-    background: 'rgba(42,44,65,0.78)',
-    color: '#FFFFFF',
-    fontSize: '12px',
-    fontWeight: 700,
-    backdropFilter: 'blur(7px)'
-};
-const storeImageEmptyStyle = {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '7px',
-    width: '100%',
-    height: '100%',
-    padding: '22px',
-    boxSizing: 'border-box'
-};
-const storeImageIconStyle = {
-    position: 'relative',
-    width: '58px',
-    height: '58px',
-    borderRadius: '18px',
-    display: 'grid',
-    placeItems: 'center',
-    background: T.primarySoft,
-    marginBottom: '4px'
-};
-const storeImagePlusStyle = {
-    position: 'absolute',
-    right: '-3px',
-    bottom: '-3px',
-    width: '22px',
-    height: '22px',
-    borderRadius: '50%',
-    display: 'grid',
-    placeItems: 'center',
-    background: T.primary,
-    border: `3px solid ${T.surface}`,
-    boxSizing: 'content-box'
-};
-const storeImageFormatPillStyle = {
-    marginTop: '3px',
-    padding: '5px 10px',
-    borderRadius: '999px',
-    background: T.trackSoft,
-    color: T.muted,
-    fontSize: '11.5px',
-    fontWeight: 600
-};
-const storeImageFooterStyle = {
-    marginTop: '10px',
-    padding: '10px 12px',
-    border: `1px solid ${T.line}`,
-    borderRadius: T.radiusMd,
-    background: '#FAFAFC',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '12px',
-    flexWrap: 'wrap'
-};
-function storeImageUploaderStyle(dragOver, hasError, hasImage) {
-    return {
-        width: '100%',
-        height: hasImage ? '230px' : '190px',
-        position: 'relative',
-        borderRadius: '16px',
-        border: `2px dashed ${hasError ? T.down : dragOver ? T.primary : '#D8DCE8'}`,
-        background: dragOver ? T.primarySoft : hasImage ? '#F4F5F8' : 'linear-gradient(135deg, #FFFDFC 0%, #FAFAFC 100%)',
-        display: 'grid',
-        placeItems: 'center',
-        cursor: 'pointer',
-        overflow: 'hidden',
-        padding: 0,
-        fontFamily: FONT_STACK,
-        boxSizing: 'border-box',
-        transition: 'border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease',
-        boxShadow: dragOver ? `0 0 0 4px ${T.primarySoft}` : 'none'
-    };
-}
-const dateWrapStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '7px',
-    padding: '7px 12px',
-    border: `1px solid ${T.line}`,
-    borderRadius: T.radiusMd,
-    background: T.surface
-};
-const dateInputStyle = {
-    minWidth: 0,
-    maxWidth: '100%',
-    border: 'none',
-    outline: 'none',
-    background: 'transparent',
-    color: T.text,
-    fontSize: '13px',
-    fontFamily: FONT_STACK
-};
-const overlayStyle = {
-    position: 'fixed',
-    inset: 0,
-    background: 'rgba(42,44,65,0.5)',
-    display: 'grid',
-    placeItems: 'center',
-    padding: '18px',
-    zIndex: 90
-};
-const modalStyle = {
-    width: '100%',
-    background: T.surface,
-    borderRadius: '16px',
-    boxShadow: '0 26px 60px rgba(42,44,65,0.26)',
-    overflow: 'hidden',
-    maxHeight: 'calc(100dvh - 24px)'
-};
-const modalHeadStyle = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '12px',
-    padding: '18px 22px',
-    borderBottom: `1px solid ${T.line}`
-};
-const modalFootStyle = {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    gap: '10px',
-    padding: '14px 22px',
-    borderTop: `1px solid ${T.line}`,
-    background: '#FAFAFC'
-};
-const popupNoticeOverlayStyle = {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 140,
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'flex-start',
-    padding: '90px 18px 18px',
-    pointerEvents: 'none',
-    background: 'rgba(42,44,65,0.10)'
-};
-const popupNoticeStyle = {
-    width: 'min(520px, 92vw)',
-    background: T.surface,
-    borderRadius: '16px',
-    boxShadow: '0 24px 60px rgba(42,44,65,0.24)',
-    border: `1px solid ${T.line}`,
-    padding: '20px 22px',
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '15px',
-    pointerEvents: 'auto'
-};
-const popupNoticeIconStyle = {
-    width: '54px',
-    height: '54px',
-    minWidth: '54px',
-    borderRadius: '16px',
-    display: 'grid',
-    placeItems: 'center'
-};
-const popupNoticeCloseStyle = {
-    width: '34px',
-    height: '34px',
-    border: 'none',
-    borderRadius: '9px',
-    background: T.bg,
-    display: 'grid',
-    placeItems: 'center',
-    cursor: 'pointer',
-    flexShrink: 0
-};
-const toastWrapStyle = {
-    position: 'fixed',
-    right: 'clamp(10px, 2vw, 20px)',
-    bottom: 'clamp(10px, 2vw, 20px)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '9px',
-    zIndex: 120,
-    maxWidth: 'min(360px, 90vw)'
-};
-const toastStyle = {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '9px',
-    padding: '12px 16px',
-    borderRadius: T.radiusLg,
-    background: T.surface,
-    border: `1px solid ${T.line}`,
-    boxShadow: '0 12px 30px rgba(42,44,65,0.16)',
-    cursor: 'pointer'
-};
-const tooltipStyle = {
-    position: 'absolute',
-    top: '8px',
-    padding: '10px 13px',
-    background: T.surface,
-    border: `1px solid ${T.line}`,
-    borderRadius: T.radiusLg,
-    boxShadow: '0 12px 28px rgba(42,44,65,0.16)',
-    pointerEvents: 'none',
-    minWidth: '190px',
-    zIndex: 5
-};
+const storeImagePreviewStyle = { width: '100%', height: '100%', objectFit: 'cover', display: 'block' };
+const storeImageShadeStyle = { position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(42,44,65,0.02) 48%, rgba(42,44,65,0.62) 100%)', pointerEvents: 'none' };
+const storeImageChangeBadgeStyle = { position: 'absolute', left: '16px', bottom: '14px', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 11px', borderRadius: '999px', background: 'rgba(42,44,65,0.78)', color: '#FFFFFF', fontSize: '12px', fontWeight: 700, backdropFilter: 'blur(7px)' };
+const storeImageEmptyStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '7px', width: '100%', height: '100%', padding: '22px', boxSizing: 'border-box' };
+const storeImageIconStyle = { position: 'relative', width: '58px', height: '58px', borderRadius: '18px', display: 'grid', placeItems: 'center', background: T.primarySoft, marginBottom: '4px' };
+const storeImagePlusStyle = { position: 'absolute', right: '-3px', bottom: '-3px', width: '22px', height: '22px', borderRadius: '50%', display: 'grid', placeItems: 'center', background: T.primary, border: `3px solid ${T.surface}`, boxSizing: 'content-box' };
+const storeImageFormatPillStyle = { marginTop: '3px', padding: '5px 10px', borderRadius: '999px', background: T.trackSoft, color: T.muted, fontSize: '11.5px', fontWeight: 600 };
+const storeImageFooterStyle = { marginTop: '10px', padding: '10px 12px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: '#FAFAFC', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' };
+
+function storeImageUploaderStyle(dragOver, hasError, hasImage) { return { width: '100%', height: hasImage ? '230px' : '190px', position: 'relative', borderRadius: '16px', border: `2px dashed ${hasError ? T.down : dragOver ? T.primary : '#D8DCE8'}`, background: dragOver ? T.primarySoft : hasImage ? '#F4F5F8' : 'linear-gradient(135deg, #FFFDFC 0%, #FAFAFC 100%)', display: 'grid', placeItems: 'center', cursor: 'pointer', overflow: 'hidden', padding: 0, fontFamily: FONT_STACK, boxSizing: 'border-box', transition: 'border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease', boxShadow: dragOver ? `0 0 0 4px ${T.primarySoft}` : 'none' }; }
+
+const dateWrapStyle = { display: 'flex', alignItems: 'center', gap: '7px', padding: '7px 12px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface };
+const dateInputStyle = { minWidth: 0, maxWidth: '100%', border: 'none', outline: 'none', background: 'transparent', color: T.text, fontSize: '13px', fontFamily: FONT_STACK };
+const overlayStyle = { position: 'fixed', inset: 0, background: 'rgba(42,44,65,0.5)', display: 'grid', placeItems: 'center', padding: '18px', zIndex: 90 };
+const modalStyle = { width: '100%', background: T.surface, borderRadius: '16px', boxShadow: '0 26px 60px rgba(42,44,65,0.26)', overflow: 'hidden', maxHeight: 'calc(100dvh - 24px)' };
+const modalHeadStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', padding: '18px 22px', borderBottom: `1px solid ${T.line}` };
+const modalFootStyle = { display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '14px 22px', borderTop: `1px solid ${T.line}`, background: '#FAFAFC' };
+const popupNoticeOverlayStyle = { position: 'fixed', inset: 0, zIndex: 140, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '90px 18px 18px', pointerEvents: 'none', background: 'rgba(42,44,65,0.10)' };
+const popupNoticeStyle = { width: 'min(520px, 92vw)', background: T.surface, borderRadius: '16px', boxShadow: '0 24px 60px rgba(42,44,65,0.24)', border: `1px solid ${T.line}`, padding: '20px 22px', display: 'flex', alignItems: 'flex-start', gap: '15px', pointerEvents: 'auto' };
+const popupNoticeIconStyle = { width: '54px', height: '54px', minWidth: '54px', borderRadius: '16px', display: 'grid', placeItems: 'center' };
+const popupNoticeCloseStyle = { width: '34px', height: '34px', border: 'none', borderRadius: '9px', background: T.bg, display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 };
+const tooltipStyle = { position: 'absolute', top: '8px', padding: '10px 13px', background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusLg, boxShadow: '0 12px 28px rgba(42,44,65,0.16)', pointerEvents: 'none', minWidth: '190px', zIndex: 5 };

@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS Store (
     ContractStartDate DATE NULL,
     ContractEndDate DATE NULL,
     CurrentContractStartDate DATE NULL,
-    CurrentContractEndDate DATE NULL,
+    IsDeleted TINYINT(1) NOT NULL DEFAULT 0,
+    DeletedAt DATETIME NULL,
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS Users (
