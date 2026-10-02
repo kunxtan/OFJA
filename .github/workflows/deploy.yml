@@ -1,0 +1,27 @@
+name: Auto Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    # เปลี่ยนจาก ubuntu-latest เป็น self-hosted เพื่อบอกให้ใช้เครื่อง Server ภาค
+    runs-on: self-hosted
+
+    steps:
+      - name: Run Deploy Scripts on Server
+        run: |
+          # 1. ชี้ไปที่โฟลเดอร์ OF ของคุณบน Server (แก้ path ให้ตรงของจริง)
+          cd /OFJA
+          
+          # 2. ดึงโค้ดล่าสุด
+          git pull origin main
+          
+          # 3. เข้าไปในโฟลเดอร์ที่มีไฟล์ docker-compose.yml
+          cd onlyfoods-app
+          
+          # 4. รีสตาร์ท Docker
+          docker compose down
+          docker compose up -d --build
