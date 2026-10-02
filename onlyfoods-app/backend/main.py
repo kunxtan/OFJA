@@ -131,6 +131,9 @@ USER_EXTRA_COLUMNS = {
     "Email": "VARCHAR(255) NULL",
     "Phone": "VARCHAR(30) NULL",
     "ProfileImg": "LONGTEXT NULL",
+    "CardHolderName": "VARCHAR(100) NULL",
+    "CardLast4": "VARCHAR(4) NULL",
+    "CardExpiry": "VARCHAR(5) NULL",
 }
 
 _product_columns_ready = False
@@ -305,6 +308,9 @@ class UpdateProfileSchema(BaseModel):
     phone: Optional[str] = None
     profile_img: Optional[str] = None
     profileImg: Optional[str] = None
+    card_holder_name: Optional[str] = None
+    card_last4: Optional[str] = None
+    card_expiry: Optional[str] = None
 
 class StaffCreateSchema(BaseModel):
     username: str
@@ -505,9 +511,12 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                 SET FullName = %s, 
                     Phone = %s, 
                     ProfileImg = %s
+                    CardHolderName = COALESCE(%s, CardHolderName),
+                    CardLast4 = COALESCE(%s, CardLast4),
+                    CardExpiry = COALESCE(%s, CardExpiry)
                 WHERE UserId = %s
                 """,
-                (name, phone, img if img != "" else None, uid)
+                (name, phone, img if img != "" else None, data.card_holder_name, data.card_last4, data.card_expiry, uid)
             )
             db.commit()
 
