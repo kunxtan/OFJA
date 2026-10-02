@@ -1170,7 +1170,7 @@ def add_store_staff(store_id: int, data: StaffCreateSchema, db=Depends(get_db)):
 
             cur.execute("""
                 INSERT INTO Users (Username, Password, FullName, Role, StoreId)
-                VALUES (%s, %s, %s, %s, %s, 0)
+                VALUES (%s, %s, %s, %s, %s)
             """, (data.username, data.password, data.fullName, data.role, store_id))
             db.commit()
             return {"success": True, "message": "เพิ่มพนักงานสำเร็จ"}
