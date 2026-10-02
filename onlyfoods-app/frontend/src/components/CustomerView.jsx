@@ -661,6 +661,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
     }
 
+    if (paymentMethod === "CreditCard" && !slipFile) {
+      return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
+    }
+
     const currentOrderTime = getCurrentDateTimeForBackend();
     const displayOrderTime = getCurrentTimeFormatted();
     const finalPickupTime = pickupTime ? `${pickupTime} น.` : displayOrderTime;
@@ -1601,83 +1605,387 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // PAYMENT QR CODE & SLIP MODAL
-  const renderPaymentModal = () => {
-    if (!isPaymentModalOpen) return null;
+// PAYMENT QR CODE & SLIP MODAL
+const renderPaymentModal = () => {
+  if (!isPaymentModalOpen) return null;
 
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }} onClick={() => setIsPaymentModalOpen(false)}>
-        <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(440px, 100%)", borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center" }}> 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}> ชำระเงินผ่าน QR Code</h3>
-            <button onClick={() => setIsPaymentModalOpen(false)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
-          </div>
-
-          <div style={{ background: "#FFF9F5", padding: "15px", borderRadius: "15px", marginBottom: "15px", border: `1px solid ${COLORS.border}` }}>
-            <div style={{ fontSize: "13px", color: COLORS.gray }}>ยอดชำระสุทธิ</div>
-            <div style={{ fontSize: "28px", fontWeight: "900", color: COLORS.orange }}>{totalAmount.toFixed(2)} ฿</div>
-          </div>
-
-          <div style={{ margin: "15px 0", background: "#FFFFFF", padding: "15px", borderRadius: "16px", display: "inline-block", border: `2px solid ${COLORS.navy}` }}>
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
-              alt="PromptPay QR Code"
-              style={{ width: "180px", height: "180px", display: "block" }}
-            />
-            <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "8px", fontWeight: "700" }}>PromptPay (จำลองระบบ)</div>
-          </div>
-
-          <div style={{ marginTop: "15px", textAlign: "left" }}>
-            <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>
-               แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):
-            </label>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleSlipChange}
-              style={{
-                width: "100%",
-                padding: "10px",
-                borderRadius: "10px",
-                border: `1px dashed ${COLORS.orange}`,
-                background: COLORS.bg,
-                fontSize: "12px",
-                boxSizing: "border-box"
-              }}
-            />
-          </div>
-
-          {slipPreview && (
-            <div style={{ marginTop: "12px", textAlign: "center" }}>
-              <div style={{ fontSize: "11px", color: COLORS.green, fontWeight: "800", marginBottom: "4px" }}>✓ เลือกรูปภาพเรียบร้อย</div>
-              <img src={slipPreview} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />
-            </div>
-          )}
-
-          <button
-            onClick={submitOrder}
-            disabled={isSubmittingOrder}
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(42,44,65,0.6)",
+        zIndex: 2000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px",
+        boxSizing: "border-box",
+        overflowY: "auto",
+      }}
+      onClick={() => setIsPaymentModalOpen(false)}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: COLORS.white,
+          width: "min(500px, 100%)",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          borderRadius: "24px",
+          padding: "25px",
+          boxSizing: "border-box",
+          textAlign: "center",
+        }}
+      >
+        {/* HEADER */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "15px",
+          }}
+        >
+          <h3
             style={{
-              width: "100%",
-              padding: "15px",
-              marginTop: "20px",
-              border: "none",
-              borderRadius: "15px",
-              background: isSubmittingOrder ? "#BBBBBB" : COLORS.green,
-              color: COLORS.white,
-              fontSize: "16px",
+              margin: 0,
+              fontSize: "20px",
               fontWeight: "900",
-              cursor: isSubmittingOrder ? "not-allowed" : "pointer",
-              fontFamily: "inherit"
             }}
           >
-            {isSubmittingOrder ? "กำลังส่งคำสั่งซื้อ..." : "ยืนยันการโอนเงินและสั่งซื้อ"}
+            ชำระเงิน
+          </h3>
+
+          <button
+            onClick={() => setIsPaymentModalOpen(false)}
+            style={{
+              border: "none",
+              background: COLORS.lightGray,
+              width: "35px",
+              height: "35px",
+              borderRadius: "50%",
+              cursor: "pointer",
+              fontSize: "18px",
+            }}
+          >
+            ×
           </button>
         </div>
-      </div>
-    );
-  };
 
+        {/* TOTAL */}
+        <div
+          style={{
+            background: "#FFF9F5",
+            padding: "15px",
+            borderRadius: "15px",
+            marginBottom: "18px",
+            border: `1px solid ${COLORS.border}`,
+          }}
+        >
+          <div
+            style={{
+              fontSize: "13px",
+              color: COLORS.gray,
+            }}
+          >
+            ยอดชำระสุทธิ
+          </div>
+
+          <div
+            style={{
+              fontSize: "28px",
+              fontWeight: "900",
+              color: COLORS.orange,
+            }}
+          >
+            {totalAmount.toFixed(2)} ฿
+          </div>
+        </div>
+
+        {/* PAYMENT DETAIL */}
+        {paymentMethod === "PromptPay" && (
+          <>
+            <div
+              style={{
+                margin: "15px 0",
+                background: "#FFFFFF",
+                padding: "15px",
+                borderRadius: "16px",
+                display: "inline-block",
+                border: `2px solid ${COLORS.navy}`,
+              }}
+            >
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
+                alt="PromptPay QR Code"
+                style={{
+                  width: "180px",
+                  height: "180px",
+                  display: "block",
+                }}
+              />
+
+              <div
+                style={{
+                  fontSize: "11px",
+                  color: COLORS.gray,
+                  marginTop: "8px",
+                  fontWeight: "700",
+                }}
+              >
+                PromptPay (จำลองระบบ)
+              </div>
+            </div>
+
+            {/* SLIP */}
+            <div
+              style={{
+                marginTop: "15px",
+                textAlign: "left",
+              }}
+            >
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "13px",
+                  fontWeight: "800",
+                  marginBottom: "6px",
+                }}
+              >
+                แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):
+              </label>
+
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleSlipChange}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  borderRadius: "10px",
+                  border: `1px dashed ${COLORS.orange}`,
+                  background: COLORS.bg,
+                  fontSize: "12px",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            {slipPreview && (
+              <div
+                style={{
+                  marginTop: "12px",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: COLORS.green,
+                    fontWeight: "800",
+                    marginBottom: "4px",
+                  }}
+                >
+                  ✓ เลือกรูปภาพเรียบร้อย
+                </div>
+
+                <img
+                  src={slipPreview}
+                  alt="Slip Preview"
+                  style={{
+                    width: "120px",
+                    maxHeight: "160px",
+                    objectFit: "contain",
+                    borderRadius: "10px",
+                    border: `1px solid ${COLORS.border}`,
+                  }}
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        {paymentMethod === "CreditCard" && (
+          <div
+            style={{
+              background: "#F5F8FF",
+              padding: "18px",
+              borderRadius: "16px",
+              textAlign: "left",
+              marginBottom: "15px",
+            }}
+          >
+            <div
+              style={{
+                fontWeight: "900",
+                fontSize: "15px",
+                marginBottom: "10px",
+              }}
+            >
+              Debit/Cradit Card
+            </div>
+
+            <div style={{ fontSize: "13px", lineHeight: "1.8" }}>
+              <div><b>หมายเลขบัตร:</b> 1234567890123456</div>
+              <div><b>วันหมดอายุ:</b> 08/29</div>
+              <div><b>รหัสCVV/CVC:</b> 123</div>
+              <div>
+                <b>ยอดเงิน:</b>{" "}
+                <span style={{ color: COLORS.orange, fontWeight: "900" }}>
+                  {totalAmount.toFixed(2)} ฿
+                </span>
+              </div>
+            </div>
+
+            <div
+              style={{
+                marginTop: "12px",
+                padding: "10px",
+                background: COLORS.white,
+                borderRadius: "10px",
+                fontSize: "11px",
+                color: COLORS.gray,
+                textAlign: "center",
+              }}
+            >
+              ระบบนี้เป็นเพียงการจำลอง
+            </div>
+          </div>
+        )}
+
+        {paymentMethod === "TrueMoney" && (
+          <>
+            <div
+              style={{
+                margin: "15px 0",
+                background: "#FFFFFF",
+                padding: "15px",
+                borderRadius: "16px",
+                display: "inline-block",
+                border: `2px solid ${COLORS.navy}`,
+              }}
+            >
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
+                alt="TrueMoney QR Code"
+                style={{
+                  width: "180px",
+                  height: "180px",
+                  display: "block",
+                }}
+              />
+
+              <div
+                style={{
+                  fontSize: "11px",
+                  color: COLORS.gray,
+                  marginTop: "8px",
+                  fontWeight: "700",
+                }}
+              >
+                TrueMoney (จำลองระบบ)
+              </div>
+            </div>
+
+            {/* SLIP */}
+            <div
+              style={{
+                marginTop: "15px",
+                textAlign: "left",
+              }}
+            >
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "13px",
+                  fontWeight: "800",
+                  marginBottom: "6px",
+                }}
+              >
+                แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):
+              </label>
+
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleSlipChange}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  borderRadius: "10px",
+                  border: `1px dashed ${COLORS.orange}`,
+                  background: COLORS.bg,
+                  fontSize: "12px",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            {slipPreview && (
+              <div
+                style={{
+                  marginTop: "12px",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: COLORS.green,
+                    fontWeight: "800",
+                    marginBottom: "4px",
+                  }}
+                >
+                  ✓ เลือกรูปภาพเรียบร้อย
+                </div>
+
+                <img
+                  src={slipPreview}
+                  alt="Slip Preview"
+                  style={{
+                    width: "120px",
+                    maxHeight: "160px",
+                    objectFit: "contain",
+                    borderRadius: "10px",
+                    border: `1px solid ${COLORS.border}`,
+                  }}
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* SUBMIT */}
+        <button
+          onClick={submitOrder}
+          disabled={isSubmittingOrder}
+          style={{
+            width: "100%",
+            padding: "15px",
+            marginTop: "5px",
+            border: "none",
+            borderRadius: "15px",
+            background: isSubmittingOrder
+              ? "#BBBBBB"
+              : COLORS.green,
+            color: COLORS.white,
+            fontSize: "16px",
+            fontWeight: "900",
+            cursor: isSubmittingOrder
+              ? "not-allowed"
+              : "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          {isSubmittingOrder
+            ? "กำลังส่งคำสั่งซื้อ..."
+            : "ยืนยันการชำระเงินและสั่งซื้อ"}
+        </button>
+      </div>
+    </div>
+  );
+};
   // REVIEW MODAL
   const renderReviewModal = () => {
     if (!reviewOrder) return null;
