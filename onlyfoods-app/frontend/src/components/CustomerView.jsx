@@ -110,14 +110,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setAlertData({ isOpen: true, title, message, type, onConfirm });
   };
 
-  const handleCloseAlert = () => {
-    const action = alertData.onConfirm;
-    setAlertData((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
-    if (typeof action === "function") {
-      action(); 
-    }
-  };
-
   // CONSTANTS
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -2821,6 +2813,14 @@ const renderPaymentModal = () => {
   // CUSTOM ALERT DIALOG
   const renderCustomAlert = () => {
     if (!alertData.isOpen) return null;
+
+    const handleCloseAlert = () => {
+      const action = alertData.onConfirm;
+      setAlertData((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
+      if (typeof action === "function") {
+        action(); 
+      }
+    };
 
     const getIcon = () => {
       switch (alertData.type) {
