@@ -12,6 +12,7 @@ const PALETTE = {
   borderLight: '#E2E8F0',
 };
 
+// --- SVG Icons (ไม่ใช้อีโมจิ) ---
 const KitchenIcon = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/>
@@ -76,6 +77,18 @@ const AlertIcon = () => (
   </svg>
 );
 
+const CloseIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+);
+
+const NoteIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+  </svg>
+);
+
 const getRoleLabel = (role) => {
   const roleMap = {
     'Kitchen Staff': 'พนักงานครัว',
@@ -95,9 +108,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filterTab, setFilterTab] = useState('Pending');
   
-  // State สำหรับ ป๊อบอัพแจ้งเตือนออกจากระบบ & ป๊อบอัพรายละเอียดออเดอร์
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  // State ป๊อบอัพรายละเอียดออเดอร์ & ป๊อบอัพยืนยันออกจากระบบ
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const isUpdatingRef = useRef(false);
 
@@ -207,6 +220,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     }
   };
 
+  // ตรวจสอบออเดอร์ด่วน (เวลานัดรับเหลือ <= 5 นาที)
   const getPickupAlert = (pickupTimeStr) => {
     if (!pickupTimeStr) return null;
     try {
@@ -214,7 +228,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       let targetDate = new Date();
 
       if (pickupTimeStr.includes(':')) {
-        const cleanTime = pickupTimeStr.replace('น.', '').trim();
+        const cleanTime = pickupTimeStr.replace('น.', '').replace('น', '').trim();
         const [hours, minutes] = cleanTime.split(':').map(Number);
         targetDate.setHours(hours, minutes, 0, 0);
       } else {
@@ -227,7 +241,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         return {
           isAlert: true,
           diffMins,
-          label: diffMins <= 0 ? 'ถึงเวลานัดรับแล้ว!' : `เหลือเวลานัดรับอีก ${diffMins} นาที`
+          label: diffMins <= 0 ? 'ถึงเวลานัดรับแล้ว!' : `ออเดอร์ด่วน! เหลือเวลานัดรับอีก ${diffMins} นาที`
         };
       }
     } catch (e) {
@@ -247,6 +261,12 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const formatTime = (timeStr) => {
     if (!timeStr) return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
     return new Date(timeStr).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+  };
+
+  // จัดรูปแบบเลขคิวให้ชัดเจน (รันคิวรายวันตาม order)
+  const formatQueueNo = (queueNo) => {
+    if (!queueNo) return 'คิว #--';
+    return typeof queueNo === 'number' ? `คิว #${String(queueNo).padStart(3, '0')}` : `คิว #${queueNo}`;
   };
 
   return (
@@ -281,10 +301,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         button:active {
           transform: scale(0.98);
         }
-        @keyframes alertFlash {
-          0% { background-color: rgba(239, 68, 68, 0.15); border-color: #EF4444; }
-          50% { background-color: rgba(239, 68, 68, 0.35); border-color: #DC2626; }
-          100% { background-color: rgba(239, 68, 68, 0.15); border-color: #EF4444; }
+        @keyframes urgentFlash {
+          0% { background-color: rgba(239, 68, 68, 0.12); border-color: #EF4444; }
+          50% { background-color: rgba(239, 68, 68, 0.3); border-color: #DC2626; }
+          100% { background-color: rgba(239, 68, 68, 0.12); border-color: #EF4444; }
         }
         @keyframes statusPulse {
           0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
@@ -435,7 +455,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               <button
                 onClick={() => {
                   setIsDropdownOpen(false);
-                  setShowLogoutModal(true); // เปิดป๊อบอัพแจ้งเตือนก่อนออกจากระบบ
+                  setShowLogoutModal(true);
                 }}
                 style={{
                   width: '100%',
@@ -562,7 +582,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               return (
                 <div 
                   key={o.OrderID} 
-                  onClick={() => setSelectedOrder(o)} // กดที่การ์ดเพื่อเปิดดูรายละเอียดแบบ ป๊อบอัพ (Order Detail Popup)
+                  onClick={() => setSelectedOrder(o)}
                   style={{
                     background: theme.cardBg,
                     borderRadius: '18px',
@@ -579,13 +599,13 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                   }}
                 >
                   <div>
-                    {/* Header: Queue & Pickup Time */}
+                    {/* Header: Queue & Time */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
                       <div>
                         <div style={{ fontSize: '26px', fontWeight: '900', color: PALETTE.coral, lineHeight: '1' }}>
-                          {o.QueueNo}
+                          {formatQueueNo(o.QueueNo)}
                         </div>
-                        <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                           <ClockIcon />
                           <span>สั่งเมื่อ: {formatTime(o.CreatedAt)} ({timeInfo.label})</span>
                         </div>
@@ -593,9 +613,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
                       {o.PickupTime && (
                         <div style={{
-                          background: pickupAlert ? '#FEE2E2' : theme.cardInner,
+                          background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : theme.cardInner,
                           border: `1px solid ${pickupAlert ? '#EF4444' : theme.border}`,
-                          color: pickupAlert ? '#DC2626' : theme.textMain,
+                          color: pickupAlert ? '#EF4444' : theme.textMain,
                           padding: '6px 12px',
                           borderRadius: '10px',
                           fontSize: '12px',
@@ -608,9 +628,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                       )}
                     </div>
 
+                    {/* แจ้งเตือนออเดอร์ด่วน (เหลือเวลานัดรับ <= 5 นาที) */}
                     {pickupAlert && (
                       <div style={{
-                        animation: 'alertFlash 1.5s infinite',
+                        animation: 'urgentFlash 1.5s infinite',
                         border: '1px solid #EF4444',
                         borderRadius: '10px',
                         padding: '8px 12px',
@@ -618,12 +639,12 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         display: 'flex',
                         alignItems: 'center',
                         gap: '8px',
-                        color: '#B91C1C',
+                        color: '#EF4444',
                         fontSize: '12.5px',
                         fontWeight: '800'
                       }}>
                         <AlertIcon />
-                        <span>🚨 แจ้งเตือน: {pickupAlert.label}</span>
+                        <span>แจ้งเตือนด่วน: {pickupAlert.label}</span>
                       </div>
                     )}
 
@@ -638,8 +659,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                               {item.ProductName}
                             </div>
                             {item.ItemNote && (
-                              <div style={{ fontSize: '12px', color: PALETTE.coral, marginTop: '2px', fontWeight: '600' }}>
-                                📌 Note: {item.ItemNote}
+                              <div style={{ fontSize: '12px', color: PALETTE.coral, marginTop: '3px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <NoteIcon />
+                                <span>Note: {item.ItemNote}</span>
                               </div>
                             )}
                           </div>
@@ -667,7 +689,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         color: theme.textMain,
                         marginBottom: '16px'
                       }}>
-                        <strong>หมายเหตุออเดอร์:</strong> {o.Note}
+                        <strong>หมายเหตุ:</strong> {o.Note}
                       </div>
                     )}
                   </div>
@@ -708,9 +730,14 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                           fontSize: '13px',
                           fontWeight: '700',
                           textAlign: 'center',
-                          border: `1px solid ${theme.border}`
+                          border: `1px solid ${theme.border}`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px'
                         }}>
-                          ✅ ส่งมอบสำเร็จ (ล็อก - ไม่สามารถแก้ไขได้)
+                          <DoneCheckIcon />
+                          <span>ส่งมอบสำเร็จ (ล็อกการแก้ไข)</span>
                         </div>
                       ) : (
                         <div style={{
@@ -737,9 +764,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
       </main>
 
-      {/* ========================================================= */}
-      {/* 1. Order Detail Popup Modal (รายละเอียดออเดอร์)            */}
-      {/* ========================================================= */}
+      {/* Pop-up: รายละเอียดออเดอร์ (Order Detail Popup) */}
       {selectedOrder && (
         <div
           onClick={() => setSelectedOrder(null)}
@@ -776,10 +801,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '12px' }}>
               <div>
                 <div style={{ fontSize: '24px', fontWeight: '900', color: PALETTE.coral }}>
-                  คิว #{selectedOrder.QueueNo}
+                  {formatQueueNo(selectedOrder.QueueNo)}
                 </div>
                 <div style={{ fontSize: '13px', color: theme.textMuted, marginTop: '2px' }}>
-                  รหัสออเดอร์: {selectedOrder.OrderID}
+                  รหัสออเดอร์: #{selectedOrder.OrderID}
                 </div>
               </div>
               <button
@@ -791,26 +816,24 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                   width: '36px',
                   height: '36px',
                   borderRadius: '50%',
-                  fontSize: '18px',
-                  fontWeight: 'bold',
                   cursor: 'pointer',
                   display: 'grid',
                   placeItems: 'center'
                 }}
               >
-                ✕
+                <CloseIcon />
               </button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13.5px', background: theme.cardInner, padding: '10px 14px', borderRadius: '10px' }}>
-                <span>⏰ เวลาที่สั่ง:</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลาที่สั่ง:</span>
                 <strong>{formatTime(selectedOrder.CreatedAt)}</strong>
               </div>
 
               {selectedOrder.PickupTime && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13.5px', background: theme.cardInner, padding: '10px 14px', borderRadius: '10px' }}>
-                  <span>🎯 เวลานัดรับ:</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลานัดรับ:</span>
                   <strong style={{ color: PALETTE.coral }}>{selectedOrder.PickupTime}</strong>
                 </div>
               )}
@@ -831,8 +854,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                       <div>
                         <div style={{ fontSize: '15px', fontWeight: '700' }}>{item.ProductName}</div>
                         {item.ItemNote && (
-                          <div style={{ fontSize: '12.5px', color: PALETTE.coral, marginTop: '4px', fontWeight: '600' }}>
-                            📌 Note: {item.ItemNote}
+                          <div style={{ fontSize: '12.5px', color: PALETTE.coral, marginTop: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <NoteIcon />
+                            <span>Note: {item.ItemNote}</span>
                           </div>
                         )}
                       </div>
@@ -885,9 +909,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* 2. Logout Alert Notification Modal (แจ้งเตือนออกจากระบบ)     */}
-      {/* ========================================================= */}
+      {/* Pop-up: แจ้งเตือนยืนยันออกจากระบบ (Logout Alert Modal) */}
       {showLogoutModal && (
         <div
           onClick={() => setShowLogoutModal(false)}
