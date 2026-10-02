@@ -5295,7 +5295,10 @@ function AuditHistoryPage({ ctx }) {
             DELETE_ACCOUNT: 'ลบบัญชีร้านค้า',
             RESET_PASSWORD: 'เปลี่ยนรหัสผ่าน',
             VERIFY_SLIP_APPROVE: 'อนุมัติสลิปการชำระเงิน',
-            VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน'
+            VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน',
+            CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
+            CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
+            CANCEL_ORDER: 'ยกเลิกออเดอร์'
         };
         return names[String(action || '').toUpperCase()] || String(action || '-').replaceAll('_', ' ');
     };

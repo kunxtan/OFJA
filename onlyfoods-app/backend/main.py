@@ -2013,7 +2013,10 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 }
                 send_notif(db, o['UserId'], f"ออเดอร์คิว {o['QueueNo']} {status_map.get(payload.status, payload.status)}")
             
-            log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}")
+            if payload.status == 'Cancelled':
+                log_audit(db, "CANCEL_ORDER", payload.user_role, f"Order {order_id} -> Cancelled" + (f" | เหตุผล: {payload.cancel_reason}" if payload.cancel_reason else ""))
+            else:
+                log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}")
             db.commit()
             return {"success": True}
     except Exception as e:
