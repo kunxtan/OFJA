@@ -1458,7 +1458,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                         <tr key={r.key} style={{ background: AUDIT_ROW_BG[r.tone] }}>
                           <td>
                             {fmtDateTime(r.time)}
-                            {r.derived && <div style={{ fontSize: 11, color: 'var(--berry-text-muted)' }}>(เวลาที่สั่งออเดอร์)</div>}
                           </td>
                           <td><Badge tone={r.tone}>{r.action}</Badge></td>
                           <td>{r.by}</td>
