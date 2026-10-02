@@ -627,76 +627,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   if (!editPhone.trim()) {
     return customAlert("กรุณากรอกเบอร์โทรศัพท์", "", "warning");
   }
-
-  // =========================
-  // ตรวจสอบข้อมูลบัตร
-  // =========================
-
-  const cardName = editCardHolderName.trim();
-  const cleanCardNumber = editCardNumber.replace(/\D/g, "");
-  const cardExp = editCardExpiry.trim();
-
-  // เช็กว่ามีการกรอกข้อมูลบัตรมาบางส่วนหรือไม่
-  const hasSomeCardData =
-    cardName !== "" ||
-    cleanCardNumber !== "" ||
-    cardExp !== "";
-
-  // ถ้ากรอกบัตร ต้องกรอกครบทั้ง 3 ช่อง
-  if (hasSomeCardData) {
-
-    if (!cardName) {
-      return customAlert(
-        "กรุณากรอกชื่อและนามสกุลบนบัตร",
-        "หากต้องการบันทึกบัตร กรุณากรอกข้อมูลให้ครบทั้ง 3 ช่อง",
-        "warning"
-      );
-    }
-
-    // ต้องมีชื่อและนามสกุล
-    const nameParts = cardName.split(/\s+/).filter(Boolean);
-
-    if (nameParts.length < 2) {
-      return customAlert(
-        "กรุณากรอกชื่อและนามสกุลบนบัตร",
-        "ชื่อ นามสกุล",
-        "warning"
-      );
-    }
-
-    if (cleanCardNumber.length !== 16) {
-      return customAlert(
-        "หมายเลขบัตรต้องมี 16 หลัก",
-        "กรุณาตรวจสอบหมายเลขบัตรอีกครั้ง",
-        "warning"
-      );
-    }
-
-    // ต้องเป็นรูปแบบ MM/YY
-    const expiryPattern = /^(0[1-9]|1[0-2])\/\d{2}$/;
-
-    if (!expiryPattern.test(cardExp)) {
-      return customAlert(
-        "รูปแบบวันหมดอายุไม่ถูกต้อง",
-        "กรุณากรอกเป็น MM/YY ",
-        "warning"
-      );
-    }
-  }
-
-  // ถ้าไม่ได้กรอกบัตรเลย จะส่งค่า null
-  const last4 = cleanCardNumber
-    ? cleanCardNumber.slice(-4)
-    : null;
-
-  const savedCardName = hasSomeCardData
-    ? cardName
-    : null;
-
-  const savedCardExpiry = hasSomeCardData
-    ? cardExp
-    : null;
-
   try {
     const res = await fetch(`${apiBase}/api/users/profile`, {
       method: "PUT",
@@ -705,10 +635,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         user_id: userId,
         full_name: editName,
         phone: editPhone,
-
-        card_holder_name: savedCardName,
-        card_last4: last4,
-        card_expiry: savedCardExpiry,
+        card_holder_name: cardHolderName,
+        //card_last4: last4,
+        //card_expiry: savedCardExpiry,
       }),
     });
 
@@ -739,9 +668,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     // ล้างเลขบัตรเต็มออกจากหน้าจอ
     setEditCardNumber("");
-
     setIsEditing(false);
-
     customAlert("อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว!");
 
   } catch (err) {
@@ -754,6 +681,70 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   }
 };
+
+  const handleSaveCardData = async (e) => {
+    e.preventDefault();
+
+    const cardName = cardHolderName || editCardHolderName;
+    const cleanCardNumber = editCardNumber.replace(/\D/g, "");
+    const cardExp = editCardExpiry.trim();
+
+    if (!cardName) {
+      return customAlert("กรุณากรอกชื่อและนามสกุลบนบัตร", "", "warning");
+    }
+
+    const nameParts = cardName.split(/\s+/).filter(Boolean);
+    if (nameParts.length < 2) {
+      return customAlert("กรุณากรอกทั้งชื่อและนามสกุลบนบัตร", "", "warning");
+    }
+
+    if (!cleanCardNumber && !cardLast4) {
+      return customAlert("กรุณากรอกหมายเลขบัตร 16 หลัก", "", "warning");
+    }
+
+    if (cleanCardNumber && cleanCardNumber.length !== 16) {
+      return customAlert("หมายเลขบัตรต้องมี 16 หลัก", "", "warning");
+    }
+
+    const expiryPattern = /^(0[1-9]|1[0-2])\/\d{2}$/;
+    if (!expiryPattern.test(cardExp)) {
+      return customAlert("รูปแบบวันหมดอายุไม่ถูกต้อง (MM/YY)", "", "warning");
+    }
+
+    const last4 = cleanCardNumber ? cleanCardNumber.slice(-4) : cardLast4;
+
+    try {
+      const res = await fetch(`${apiBase}/api/users/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          full_name: fullName,
+          phone: phone,
+          card_holder_name: cardName,
+          card_last4: last4,
+          card_expiry: cardExp,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.detail || "บันทึกข้อมูลบัตรไม่สำเร็จ");
+      }
+
+      const updatedUser = await res.json();
+      setCardHolderName(updatedUser.CardHolderName || cardName);
+      setCardLast4(updatedUser.CardLast4 || last4);
+      setCardExpiry(updatedUser.CardExpiry || cardExp);
+      setEditCardNumber("");
+      setIsEditingCard(false);
+
+      customAlert("อัปเดตข้อมูลบัตรเรียบร้อยแล้ว!");
+    } catch (err) {
+      console.error("Update card error:", err);
+      customAlert("เกิดข้อผิดพลาดในการบันทึกข้อมูลบัตร", err.message, "error");
+    }
+  };
 
   // ORDER SUBMISSION & PAYMENT HANDLERS
   const handleProceedToPayment = () => {
@@ -1275,7 +1266,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const renderProfile = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน </h2>
-      <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", Width: "100%", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}`, overflow: "visible" }}>
+      <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", width: "100%", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}`, overflow: "visible" }}>
         <div style={{ textAlign: "center", position: "relative" }}>
           <div style={{ position: "relative", width: "120px", height: "120px", margin: "0 auto 15px" }}>
             {profileImage ? (
@@ -1343,6 +1334,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           <div style={{ color: COLORS.gray, fontSize: "13px", marginTop: "4px" }}>Customer</div>
         </div>
 
+        {/* SECTION 1: EDIT PROFILE NAME & PHONE */}
         {isEditing ? (
           <form onSubmit={handleSaveProfileData} style={{ marginTop: "25px" }}>
             <div style={{ marginBottom: "15px", textAlign: "left" }}>
@@ -1363,284 +1355,26 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 onChange={(e) => setEditPhone(e.target.value)}
                 placeholder="08X-XXX-XXXX"
                 style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
+                required
               />
             </div>
-            <div style={{ marginBottom: "20px", textAlign: "left" }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "13px",
-                  fontWeight: "800",
-                  marginBottom: "8px"
-                }}
-              >
-                บัตรเครดิต / เดบิต
-              </label>
 
-              {!isEditingCard ? (
-                <>
-                  {cardLast4 ? (
-                    <>
-                      <div
-                        style={{
-                          padding: "12px 14px",
-                          borderRadius: "10px",
-                          background: "#F8F8FA",
-                          border: `1px solid ${COLORS.border}`,
-                          marginBottom: "8px"
-                        }}
-                      >
-                        <div style={{ marginBottom: "6px" }}>
-                          <span style={{ fontSize: "12px", color: COLORS.gray }}>
-                            ชื่อบนบัตร
-                          </span>
-                          <div style={{ fontWeight: "800", marginTop: "2px" }}>
-                            {cardHolderName || "-"}
-                          </div>
-                        </div>
-
-                        <div style={{ marginBottom: "6px" }}>
-                          <span style={{ fontSize: "12px", color: COLORS.gray }}>
-                            หมายเลขบัตร
-                          </span>
-                          <div style={{ fontWeight: "800", marginTop: "2px" }}>
-                            •••• •••• •••• {cardLast4}
-                          </div>
-                        </div>
-
-                        <div>
-                          <span style={{ fontSize: "12px", color: COLORS.gray }}>
-                            วันหมดอายุ
-                          </span>
-                          <div style={{ fontWeight: "800", marginTop: "2px" }}>
-                            {cardExpiry || "--/--"}
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditCardHolderName(cardHolderName);
-                          setEditCardNumber("");
-                          setEditCardExpiry(cardExpiry);
-                          setIsEditingCard(true);
-                        }}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: COLORS.orange,
-                          fontWeight: "800",
-                          fontSize: "13px",
-                          cursor: "pointer",
-                          padding: "5px 0",
-                          fontFamily: "inherit"
-                        }}
-                      >
-                        ＋ แก้ไขบัตร
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <div
-                        style={{
-                          color: COLORS.gray,
-                          fontSize: "13px",
-                          marginBottom: "8px"
-                        }}
-                      >
-                        ยังไม่ได้เพิ่มบัตร
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditCardHolderName("");
-                          setEditCardNumber("");
-                          setEditCardExpiry("");
-                          setIsEditingCard(true);
-                        }}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          color: COLORS.orange,
-                          fontWeight: "800",
-                          fontSize: "13px",
-                          cursor: "pointer",
-                          padding: "5px 0",
-                          fontFamily: "inherit"
-                        }}
-                      >
-                        ＋ เพิ่มบัตร
-                      </button>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  {/* ชื่อบนบัตร */}
-                  <div style={{ marginBottom: "12px" }}>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "12px",
-                        fontWeight: "800",
-                        marginBottom: "5px"
-                      }}
-                    >
-                      ชื่อบนบัตร
-                    </label>
-
-                    <input
-                      type="text"
-                      value={editCardHolderName}
-                      onChange={(e) => setEditCardHolderName(e.target.value)}
-                      placeholder="ชื่อ-นามสกุลบนบัตร"
-                      style={{
-                        width: "100%",
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        border: `1px solid ${COLORS.border}`,
-                        boxSizing: "border-box",
-                        fontFamily: "inherit"
-                      }}
-                    />
-                  </div>
-
-                  {/* หมายเลขบัตร */}
-                  <div style={{ marginBottom: "12px" }}>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "12px",
-                        fontWeight: "800",
-                        marginBottom: "5px"
-                      }}
-                    >
-                      หมายเลขบัตร
-                    </label>
-
-                    <input
-                      type="text"
-                      value={editCardNumber}
-                      onChange={(e) =>
-                        setEditCardNumber(
-                          e.target.value.replace(/\D/g, "")
-                        )
-                      }
-                      placeholder={
-                        cardLast4
-                          ? `กรอกเลขบัตรใหม่เพื่อเปลี่ยน`
-                          : "กรอกหมายเลขบัตร 16 หลัก"
-                      }
-                      maxLength="16"
-                      inputMode="numeric"
-                      style={{
-                        width: "100%",
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        border: `1px solid ${COLORS.border}`,
-                        boxSizing: "border-box",
-                        fontFamily: "inherit"
-                      }}
-                    />
-                  </div>
-
-                  {/* วันหมดอายุ */}
-                  <div style={{ marginBottom: "10px" }}>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "12px",
-                        fontWeight: "800",
-                        marginBottom: "5px"
-                      }}
-                    >
-                      วันหมดอายุ
-                    </label>
-
-                    <input
-                      type="text"
-                      value={editCardExpiry}
-                      onChange={(e) => {
-                        let value = e.target.value.replace(/\D/g, "");
-
-                        if (value.length > 4) {
-                          value = value.slice(0, 4);
-                        }
-
-                        if (value.length >= 3) {
-                          value =
-                            value.slice(0, 2) +
-                            "/" +
-                            value.slice(2);
-                        }
-
-                        setEditCardExpiry(value);
-                      }}
-                      placeholder="MM/YY"
-                      maxLength="5"
-                      inputMode="numeric"
-                      style={{
-                        width: "100%",
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        border: `1px solid ${COLORS.border}`,
-                        boxSizing: "border-box",
-                        fontFamily: "inherit"
-                      }}
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingCard(false)}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: COLORS.gray,
-                      fontWeight: "800",
-                      fontSize: "12px",
-                      cursor: "pointer",
-                      padding: "4px 0",
-                      fontFamily: "inherit"
-                    }}
-                  >
-                    ยกเลิกเพิ่ม/แก้ไขบัตร
-                  </button>
-                </>
-              )}
-            </div>
             <div style={{ display: "flex", gap: "10px" }}>
               <button
                 type="submit"
-                disabled={isEditingCard && !editCardHolderName.trim() && !editCardNumber.trim() && !editCardExpiry.trim()}
                 style={{
                   flex: 1,
                   padding: "11px",
-                  background:
-                    isEditingCard &&
-                    !editCardHolderName.trim() &&
-                    !editCardNumber.trim() &&
-                    !editCardExpiry.trim()
-                      ? COLORS.lightGray
-                      : COLORS.orange,
-                  color: COLORS.navy,
+                  background: COLORS.orange,
+                  color: COLORS.white,
                   border: "none",
                   borderRadius: "10px",
                   fontWeight: "800",
-                  cursor: isEditingCard && !editCardHolderName.trim() && !editCardNumber.trim() && !editCardExpiry.trim() ? "not-allowed" : "pointer",
-                  fontFamily: "inherit",
-                  opacity:
-                    isEditingCard &&
-                    !editCardHolderName.trim() &&
-                    !editCardNumber.trim() &&
-                    !editCardExpiry.trim()
-                      ? 0.7
-                      : 1
+                  cursor: "pointer",
+                  fontFamily: "inherit"
                 }}
               >
-                บันทึกข้อมูล
+                บันทึกข้อมูลส่วนตัว
               </button>
               <button
                 type="button"
@@ -1655,16 +1389,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           <>
             <div style={{ marginTop: "25px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-                <span> ชื่อผู้ใช้</span><strong>{fullName}</strong>
+                <span>ชื่อผู้ใช้</span><strong>{fullName}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-                <span> เบอร์โทรศัพท์</span><strong>{phone || "ยังไม่ได้ระบุ"}</strong>
+                <span>เบอร์โทรศัพท์</span><strong>{phone || "ยังไม่ได้ระบุ"}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-                <span> สั่งซื้อทั้งหมด</span><strong>{myOrders.length} รายการ</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-                <span> ยอดใช้จ่ายสะสมรวม</span><strong style={{ color: COLORS.green }}>{totalSpentAmount.toFixed(2)} ฿</strong>
+                <span>สั่งซื้อทั้งหมด</span><strong>{myOrders.length} รายการ</strong>
               </div>
             </div>
 
@@ -1674,40 +1405,199 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   setEditName(fullName);
                   setEditPhone(phone);
                   setIsEditing(true);
-                  setEditCardHolderName(cardHolderName);
-                  setEditCardNumber("");
-                  setEditCardExpiry(cardExpiry);
                 }}
                 style={{ width: "100%", padding: "12px", background: COLORS.navy, color: COLORS.white, border: "none", borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
               >
-                 แก้ไขข้อมูลส่วนตัว
-              </button>
-
-              <button
-                onClick={() => {
-                  if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
-                    if (onLogout) onLogout();
-                  }
-                }}
-                style={{
-                  width: "100%",
-                  padding: "12px",
-                  background: "#FFF0ED",
-                  color: COLORS.red,
-                  border: `1px solid ${COLORS.red}40`,
-                  borderRadius: "12px",
-                  fontWeight: "800",
-                  cursor: "pointer",
-                  fontFamily: "inherit"
-                }}
-              >
-                 ออกจากระบบ
+                แก้ไขข้อมูลส่วนตัว
               </button>
             </div>
           </>
         )}
-      </div>
 
+        {/* SECTION 2: CARD MANAGEMENT (SEPARATE BOX) */}
+        <div style={{ marginTop: "30px", paddingTop: "20px", borderTop: `2px dashed ${COLORS.border}`, textAlign: "left" }}>
+          <div style={{ fontSize: "15px", fontWeight: "900", marginBottom: "12px", color: COLORS.navy }}>
+            บัตรเครดิต / เดบิต
+          </div>
+
+          {!isEditingCard ? (
+            <div style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "16px" }}>
+              {cardLast4 ? (
+                <>
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "2px" }}>ชื่อบนบัตร</div>
+                    <div style={{ fontWeight: "800" }}>{cardHolderName || "-"}</div>
+                  </div>
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "2px" }}>หมายเลขบัตร</div>
+                    <div style={{ fontWeight: "800" }}>•••• •••• •••• {cardLast4}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "2px" }}>วันหมดอายุ</div>
+                    <div style={{ fontWeight: "800" }}>{cardExpiry || "--/--"}</div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditCardHolderName(cardHolderName);
+                      setEditCardNumber("");
+                      setEditCardExpiry(cardExpiry);
+                      setIsEditingCard(true);
+                    }}
+                    style={{
+                      marginTop: "12px",
+                      background: "none",
+                      border: "none",
+                      padding: "0",
+                      color: COLORS.orange,
+                      fontWeight: "800",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      fontFamily: "inherit"
+                    }}
+                  >
+                    แก้ไขข้อมูลบัตร
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div style={{ color: COLORS.gray, fontSize: "13px", marginBottom: "8px" }}>
+                    ยังไม่ได้เพิ่มบัตร
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditCardHolderName("");
+                      setEditCardNumber("");
+                      setEditCardExpiry("");
+                      setIsEditingCard(true);
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: "0",
+                      color: COLORS.orange,
+                      fontWeight: "800",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      fontFamily: "inherit"
+                    }}
+                  >
+                    ＋ เพิ่มบัตร
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <form onSubmit={handleSaveCardData} style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "16px" }}>
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>ชื่อบนบัตร</label>
+                <input
+                  type="text"
+                  value={editCardHolderName}
+                  onChange={(e) => setEditCardHolderName(e.target.value)}
+                  placeholder="ชื่อ-นามสกุลบนบัตร"
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
+                  required
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>หมายเลขบัตร (16 หลัก)</label>
+                <input
+                  type="text"
+                  value={editCardNumber}
+                  onChange={(e) => setEditCardNumber(e.target.value.replace(/\D/g, ""))}
+                  placeholder={cardLast4 ? `บัตรเดิม: •••• ${cardLast4}` : "กรอกหมายเลขบัตร 16 หลัก"}
+                  maxLength="16"
+                  inputMode="numeric"
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "15px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>วันหมดอายุ (MM/YY)</label>
+                <input
+                  type="text"
+                  value={editCardExpiry}
+                  onChange={(e) => {
+                    let value = e.target.value.replace(/\D/g, "");
+                    if (value.length > 4) value = value.slice(0, 4);
+                    if (value.length >= 3) value = value.slice(0, 2) + "/" + value.slice(2);
+                    setEditCardExpiry(value);
+                  }}
+                  placeholder="MM/YY"
+                  maxLength="5"
+                  inputMode="numeric"
+                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: COLORS.orange,
+                    color: COLORS.white,
+                    border: "none",
+                    borderRadius: "10px",
+                    fontWeight: "800",
+                    cursor: "pointer",
+                    fontFamily: "inherit"
+                  }}
+                >
+                  บันทึกบัตร
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingCard(false)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: COLORS.lightGray,
+                    color: COLORS.navy,
+                    border: "none",
+                    borderRadius: "10px",
+                    fontWeight: "800",
+                    cursor: "pointer",
+                    fontFamily: "inherit"
+                  }}
+                >
+                  ยกเลิก
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+
+        {/* LOGOUT BUTTON */}
+        <div style={{ marginTop: "25px" }}>
+          <button
+            onClick={() => {
+              if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
+                if (onLogout) onLogout();
+              }
+            }}
+            style={{
+              width: "100%",
+              padding: "12px",
+              background: "#FFF0ED",
+              color: COLORS.red,
+              border: `1px solid ${COLORS.red}40`,
+              borderRadius: "12px",
+              fontWeight: "800",
+              cursor: "pointer",
+              fontFamily: "inherit"
+            }}
+          >
+            ออกจากระบบ
+          </button>
+        </div>
+      </div>
       <div style={{ Width: "100%", margin: "0 auto" }}>
         <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "15px" }}> ประวัติการสั่งซื้อและรีวิวของฉัน</h3>
         {myOrders.length === 0 ? (
