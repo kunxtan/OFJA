@@ -103,11 +103,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     title: "",
     message: "",
     type: "success", // "success", "error", "warning"
-    onConfirm: null,
   });
 
   const customAlert = (title, message = "", type = "success") => {
-    setAlertData({ isOpen: true, title, message, type, onConfirm });
+    setAlertData({ isOpen: true, title, message, type });
   };
 
   // CONSTANTS
@@ -497,12 +496,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const currentCartStoreId = Number(cart[0].StoreId || cart[0].store_id);
       const newProductStoreId = Number(product.StoreId || product.store_id || selectedStore);
       if (currentCartStoreId !== newProductStoreId) {
-        customAlert("ต้องการเปลี่ยนร้าน ?", "คุณมีอาหารค้างอยู่ในตะกร้า ต้องการลบใช่หรือไม่", "warning",
-          () => {
-            setCart([createCartRow(product)]);
-            setIsCartOpen(true);
-          }
-        );
+        if (
+          window.confirm(
+            "คุณมีสินค้าจากร้านอื่นอยู่ในตะกร้า ต้องการล้างตะกร้าเดิมเพื่อเพิ่มสินค้าจากร้านนี้แทนหรือไม่?"
+          )
+        ) {
+          setCart([createCartRow(product)]);
+          setIsCartOpen(true);
+        }
         return;
       }
     }
@@ -2814,14 +2815,6 @@ const renderPaymentModal = () => {
   const renderCustomAlert = () => {
     if (!alertData.isOpen) return null;
 
-    const handleCloseAlert = () => {
-      const action = alertData.onConfirm;
-      setAlertData((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
-      if (typeof action === "function") {
-        action(); 
-      }
-    };
-
     const getIcon = () => {
       switch (alertData.type) {
         case "success": return "✔";
@@ -2843,7 +2836,7 @@ const renderPaymentModal = () => {
     return (
       <div 
         style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }}
-        onClick={handleCloseAlert}
+        onClick={() => setAlertData({ ...alertData, isOpen: false })}
       >
         <div 
           onClick={e => e.stopPropagation()} 
@@ -2858,7 +2851,7 @@ const renderPaymentModal = () => {
           </div>
           
           <button
-            onClick={handleCloseAlert}
+            onClick={() => setAlertData({ ...alertData, isOpen: false })}
             style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: getButtonColor(), color: COLORS.white, fontWeight: "900", fontSize: "16px", cursor: "pointer", fontFamily: "inherit" }}
           >
             ตกลง
