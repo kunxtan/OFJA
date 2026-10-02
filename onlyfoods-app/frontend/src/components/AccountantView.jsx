@@ -1160,7 +1160,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div className="berry-panel-header">
                   <div>
                     <h3 style={{ margin: 0 }}>ร้านค้ายอดนิยม</h3>
-                    <div className="berry-panel-caption">Top 5 เรียงตามยอดขายสุทธิ (ตามช่วงเวลาที่เลือกด้านบน)</div>
+                    <div className="berry-panel-caption">Top 5 เรียงตามยอดขายสุทธิ</div>
                   </div>
                   <span className="berry-link" onClick={() => setPage('sales')}>ดูสรุปยอดขาย →</span>
                 </div>
@@ -1237,7 +1237,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
               <div className="berry-panel">
                 <div className="berry-panel-header">
-                  <h3>ตารางยอดขายรายร้าน</h3>
+                  <div>
+                    <h3 style={{ margin: 0 }}>ตารางยอดขายรายร้าน</h3>
+                    {/* แสดงข้อความเรียงลำดับเฉพาะตอนเลือก "ทุกร้านค้า" — เลือกร้านเดียวไม่ต้องแสดง */}
+                    {salesStoreFilter === 'all' && (
+                      <div className="berry-panel-caption">เรียงตามยอดขายสุทธิ</div>
+                    )}
+                  </div>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table className="berry-table">
