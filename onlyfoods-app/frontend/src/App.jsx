@@ -212,7 +212,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const API_BASE = "http://161.246.157.217:8080";
+  const API_BASE = "http://161.246.157.217";
 
   useEffect(() => {
     fetchFoodCourtStatus();
