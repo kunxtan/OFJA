@@ -10,6 +10,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(fullName);
   const [editPhone, setEditPhone] = useState(phone);
+  const [cardHolderName, setCardHolderName] = useState(user?.CardHolderName || "");
+  const [cardLast4, setCardLast4] = useState(user?.CardLast4 || "");
+  const [cardExpiry, setCardExpiry] = useState(user?.CardExpiry || "");
+  const [isEditingCard, setIsEditingCard] = useState(false);
+  const [editCardHolderName, setEditCardHolderName] = useState("");
+  const [editCardNumber, setEditCardNumber] = useState("");
+  const [editCardExpiry, setEditCardExpiry] = useState("");
   const [profileImage, setProfileImage] = useState(user?.ProfileImage || user?.avatar || null);
   const [cropImage, setCropImage] = useState(null);
   const [isCropModalOpen, setIsCropModalOpen] = useState(false);
@@ -84,10 +91,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const NotiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bell preview-icon"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>)
   const HomeIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-house preview-icon"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>)
   const OrderIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-notebook-pen preview-icon"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></svg>)
-  const HiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-hand preview-icon"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>)
+  const HiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-hand preview-icon"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>)
   const CartIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shopping-cart preview-icon"><path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>)
   const CartIconPlus = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shopping-cart-plus preview-icon"><path d="M16 5h6"/><path d="M19 2v6"/><path d="m2.05 2.05 1.099-.028a1 1 0 011.008.815l2.69 14.347A1 1 0 007.83 18H18"/><path d="M4.564 5H12"/><path d="M6.25 14h12.712a2 2 0 001.991-1.57l.172-1.041"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>)
-  const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="24" height="24" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>)
+  const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="22" height="22" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>)
   const CommentIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-messages-square preview-icon"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg>)
 
   // CUSTOM ALERT STATE
@@ -610,27 +617,143 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const handleSaveProfileData = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch(`${apiBase}/api/users/profile`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          full_name: editName,
-          phone: editPhone,
-        }),
-      });
-      if (!res.ok) throw new Error("แก้ไขข้อมูลไม่สำเร็จ");
-      const updatedUser = await res.json();
-      setFullName(updatedUser.FullName || editName);
-      setPhone(updatedUser.Phone || editPhone);
-      setIsEditing(false);
-      customAlert("อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว!");
-    } catch (err) {
-      customAlert(err.message, "", "error");
+  e.preventDefault();
+
+  // ตรวจสอบข้อมูลชื่อและเบอร์โทร
+  if (!editName.trim()) {
+    return customAlert("กรุณากรอกชื่อ-นามสกุล", "", "warning");
+  }
+
+  if (!editPhone.trim()) {
+    return customAlert("กรุณากรอกเบอร์โทรศัพท์", "", "warning");
+  }
+
+  // =========================
+  // ตรวจสอบข้อมูลบัตร
+  // =========================
+
+  const cardName = editCardHolderName.trim();
+  const cleanCardNumber = editCardNumber.replace(/\D/g, "");
+  const cardExp = editCardExpiry.trim();
+
+  // เช็กว่ามีการกรอกข้อมูลบัตรมาบางส่วนหรือไม่
+  const hasSomeCardData =
+    cardName !== "" ||
+    cleanCardNumber !== "" ||
+    cardExp !== "";
+
+  // ถ้ากรอกบัตร ต้องกรอกครบทั้ง 3 ช่อง
+  if (hasSomeCardData) {
+
+    if (!cardName) {
+      return customAlert(
+        "กรุณากรอกชื่อและนามสกุลบนบัตร",
+        "หากต้องการบันทึกบัตร กรุณากรอกข้อมูลให้ครบทั้ง 3 ช่อง",
+        "warning"
+      );
     }
-  };
+
+    // ต้องมีชื่อและนามสกุล
+    const nameParts = cardName.split(/\s+/).filter(Boolean);
+
+    if (nameParts.length < 2) {
+      return customAlert(
+        "กรุณากรอกชื่อและนามสกุลบนบัตร",
+        "ชื่อ นามสกุล",
+        "warning"
+      );
+    }
+
+    if (cleanCardNumber.length !== 16) {
+      return customAlert(
+        "หมายเลขบัตรต้องมี 16 หลัก",
+        "กรุณาตรวจสอบหมายเลขบัตรอีกครั้ง",
+        "warning"
+      );
+    }
+
+    // ต้องเป็นรูปแบบ MM/YY
+    const expiryPattern = /^(0[1-9]|1[0-2])\/\d{2}$/;
+
+    if (!expiryPattern.test(cardExp)) {
+      return customAlert(
+        "รูปแบบวันหมดอายุไม่ถูกต้อง",
+        "กรุณากรอกเป็น MM/YY ",
+        "warning"
+      );
+    }
+  }
+
+  // ถ้าไม่ได้กรอกบัตรเลย จะส่งค่า null
+  const last4 = cleanCardNumber
+    ? cleanCardNumber.slice(-4)
+    : null;
+
+  const savedCardName = hasSomeCardData
+    ? cardName
+    : null;
+
+  const savedCardExpiry = hasSomeCardData
+    ? cardExp
+    : null;
+
+  try {
+    const res = await fetch(`${apiBase}/api/users/profile`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        full_name: editName,
+        phone: editPhone,
+
+        card_holder_name: savedCardName,
+        card_last4: last4,
+        card_expiry: savedCardExpiry,
+      }),
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+
+      throw new Error(
+        errorData?.detail || "แก้ไขข้อมูลไม่สำเร็จ"
+      );
+    }
+
+    const updatedUser = await res.json();
+
+    setFullName(updatedUser.FullName || editName);
+    setPhone(updatedUser.Phone || editPhone);
+
+    setCardHolderName(
+      updatedUser.CardHolderName || ""
+    );
+
+    setCardLast4(
+      updatedUser.CardLast4 || ""
+    );
+
+    setCardExpiry(
+      updatedUser.CardExpiry || ""
+    );
+
+    // ล้างเลขบัตรเต็มออกจากหน้าจอ
+    setEditCardNumber("");
+
+    setIsEditing(false);
+
+    customAlert("อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว!");
+
+  } catch (err) {
+    console.error("Update profile error:", err);
+
+    customAlert(
+      "เกิดข้อผิดพลาดในการบันทึกข้อมูล",
+      err.message,
+      "error"
+    );
+  }
+};
 
   // ORDER SUBMISSION & PAYMENT HANDLERS
   const handleProceedToPayment = () => {
@@ -661,7 +784,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
     }
 
-    if (paymentMethod === "CreditCard" && !slipFile) {
+    if (paymentMethod === "TrueMoney" && !slipFile) {
       return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
     }
 
@@ -1242,10 +1365,280 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
               />
             </div>
+            <div style={{ marginBottom: "20px", textAlign: "left" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "13px",
+                  fontWeight: "800",
+                  marginBottom: "8px"
+                }}
+              >
+                บัตรเครดิต / เดบิต
+              </label>
+
+              {!isEditingCard ? (
+                <>
+                  {cardLast4 ? (
+                    <>
+                      <div
+                        style={{
+                          padding: "12px 14px",
+                          borderRadius: "10px",
+                          background: "#F8F8FA",
+                          border: `1px solid ${COLORS.border}`,
+                          marginBottom: "8px"
+                        }}
+                      >
+                        <div style={{ marginBottom: "6px" }}>
+                          <span style={{ fontSize: "12px", color: COLORS.gray }}>
+                            ชื่อบนบัตร
+                          </span>
+                          <div style={{ fontWeight: "800", marginTop: "2px" }}>
+                            {cardHolderName || "-"}
+                          </div>
+                        </div>
+
+                        <div style={{ marginBottom: "6px" }}>
+                          <span style={{ fontSize: "12px", color: COLORS.gray }}>
+                            หมายเลขบัตร
+                          </span>
+                          <div style={{ fontWeight: "800", marginTop: "2px" }}>
+                            •••• •••• •••• {cardLast4}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: "12px", color: COLORS.gray }}>
+                            วันหมดอายุ
+                          </span>
+                          <div style={{ fontWeight: "800", marginTop: "2px" }}>
+                            {cardExpiry || "--/--"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditCardHolderName(cardHolderName);
+                          setEditCardNumber("");
+                          setEditCardExpiry(cardExpiry);
+                          setIsEditingCard(true);
+                        }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: COLORS.orange,
+                          fontWeight: "800",
+                          fontSize: "13px",
+                          cursor: "pointer",
+                          padding: "5px 0",
+                          fontFamily: "inherit"
+                        }}
+                      >
+                        ＋ แก้ไขบัตร
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div
+                        style={{
+                          color: COLORS.gray,
+                          fontSize: "13px",
+                          marginBottom: "8px"
+                        }}
+                      >
+                        ยังไม่ได้เพิ่มบัตร
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditCardHolderName("");
+                          setEditCardNumber("");
+                          setEditCardExpiry("");
+                          setIsEditingCard(true);
+                        }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: COLORS.orange,
+                          fontWeight: "800",
+                          fontSize: "13px",
+                          cursor: "pointer",
+                          padding: "5px 0",
+                          fontFamily: "inherit"
+                        }}
+                      >
+                        ＋ เพิ่มบัตร
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* ชื่อบนบัตร */}
+                  <div style={{ marginBottom: "12px" }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "12px",
+                        fontWeight: "800",
+                        marginBottom: "5px"
+                      }}
+                    >
+                      ชื่อบนบัตร
+                    </label>
+
+                    <input
+                      type="text"
+                      value={editCardHolderName}
+                      onChange={(e) => setEditCardHolderName(e.target.value)}
+                      placeholder="ชื่อ-นามสกุลบนบัตร"
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: `1px solid ${COLORS.border}`,
+                        boxSizing: "border-box",
+                        fontFamily: "inherit"
+                      }}
+                    />
+                  </div>
+
+                  {/* หมายเลขบัตร */}
+                  <div style={{ marginBottom: "12px" }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "12px",
+                        fontWeight: "800",
+                        marginBottom: "5px"
+                      }}
+                    >
+                      หมายเลขบัตร
+                    </label>
+
+                    <input
+                      type="text"
+                      value={editCardNumber}
+                      onChange={(e) =>
+                        setEditCardNumber(
+                          e.target.value.replace(/\D/g, "")
+                        )
+                      }
+                      placeholder={
+                        cardLast4
+                          ? `กรอกเลขบัตรใหม่เพื่อเปลี่ยน`
+                          : "กรอกหมายเลขบัตร 16 หลัก"
+                      }
+                      maxLength="16"
+                      inputMode="numeric"
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: `1px solid ${COLORS.border}`,
+                        boxSizing: "border-box",
+                        fontFamily: "inherit"
+                      }}
+                    />
+                  </div>
+
+                  {/* วันหมดอายุ */}
+                  <div style={{ marginBottom: "10px" }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "12px",
+                        fontWeight: "800",
+                        marginBottom: "5px"
+                      }}
+                    >
+                      วันหมดอายุ
+                    </label>
+
+                    <input
+                      type="text"
+                      value={editCardExpiry}
+                      onChange={(e) => {
+                        let value = e.target.value.replace(/\D/g, "");
+
+                        if (value.length > 4) {
+                          value = value.slice(0, 4);
+                        }
+
+                        if (value.length >= 3) {
+                          value =
+                            value.slice(0, 2) +
+                            "/" +
+                            value.slice(2);
+                        }
+
+                        setEditCardExpiry(value);
+                      }}
+                      placeholder="MM/YY"
+                      maxLength="5"
+                      inputMode="numeric"
+                      style={{
+                        width: "100%",
+                        padding: "10px 14px",
+                        borderRadius: "10px",
+                        border: `1px solid ${COLORS.border}`,
+                        boxSizing: "border-box",
+                        fontFamily: "inherit"
+                      }}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingCard(false)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: COLORS.gray,
+                      fontWeight: "800",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      padding: "4px 0",
+                      fontFamily: "inherit"
+                    }}
+                  >
+                    ยกเลิกเพิ่ม/แก้ไขบัตร
+                  </button>
+                </>
+              )}
+            </div>
             <div style={{ display: "flex", gap: "10px" }}>
               <button
                 type="submit"
-                style={{ flex: 1, padding: "11px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+                disabled={isEditingCard && !editCardHolderName.trim() && !editCardNumber.trim() && !editCardExpiry.trim()}
+                style={{
+                  flex: 1,
+                  padding: "11px",
+                  background:
+                    isEditingCard &&
+                    !editCardHolderName.trim() &&
+                    !editCardNumber.trim() &&
+                    !editCardExpiry.trim()
+                      ? COLORS.lightGray
+                      : COLORS.orange,
+                  color: COLORS.navy,
+                  border: "none",
+                  borderRadius: "10px",
+                  fontWeight: "800",
+                  cursor: isEditingCard && !editCardHolderName.trim() && !editCardNumber.trim() && !editCardExpiry.trim() ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                  opacity:
+                    isEditingCard &&
+                    !editCardHolderName.trim() &&
+                    !editCardNumber.trim() &&
+                    !editCardExpiry.trim()
+                      ? 0.7
+                      : 1
+                }}
               >
                 บันทึกข้อมูล
               </button>
@@ -1281,6 +1674,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   setEditName(fullName);
                   setEditPhone(phone);
                   setIsEditing(true);
+                  setEditCardHolderName(cardHolderName);
+                  setEditCardNumber("");
+                  setEditCardExpiry(cardExpiry);
                 }}
                 style={{ width: "100%", padding: "12px", background: COLORS.navy, color: COLORS.white, border: "none", borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
               >
@@ -1827,9 +2223,16 @@ const renderPaymentModal = () => {
             </div>
 
             <div style={{ fontSize: "13px", lineHeight: "1.8" }}>
-              <div><b>หมายเลขบัตร:</b> 1234567890123456</div>
-              <div><b>วันหมดอายุ:</b> 08/29</div>
-              <div><b>รหัสCVV/CVC:</b> 123</div>
+              <div style={{ marginBottom: "8px" }}>
+                <b>ชื่อบนบัตร:</b> {cardHolderName || "-"}
+              </div>
+              <div style={{ marginBottom: "8px" }}>
+                <b>หมายเลขบัตร:</b>{" "}
+                •••• •••• •••• {cardLast4 || "----"}
+              </div>
+              <div>
+                <b>วันหมดอายุ:</b> {cardExpiry || "--/--"}
+              </div>
               <div>
                 <b>ยอดเงิน:</b>{" "}
                 <span style={{ color: COLORS.orange, fontWeight: "900" }}>
