@@ -98,7 +98,7 @@ const getRoleLabel = (role) => {
   return roleMap[role] || role || 'ผู้ใช้งาน';
 };
 
-export default function KitchenView({ user, apiBase = "http://localhost:8000", onLogout }) {
+export default function KitchenView({ user, apiBase , onLogout }) {
   const [allOrders, setAllOrders] = useState([]);
   const [summary, setSummary] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
