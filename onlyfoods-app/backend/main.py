@@ -799,7 +799,7 @@ def create_store_full(data: StoreFullSchema, db=Depends(get_db)):
                 INSERT INTO Users
                     (Username,Password,FullName,Role,StoreId
                     )
-                VALUES(%s, %s, %s, %s, %s, 0)
+                VALUES(%s, %s, %s, %s, %s)
                 """,
                 (
                     owner_username,
@@ -1183,7 +1183,7 @@ def create_store_account(data: AccountCreateSchema, db=Depends(get_db)):
             cur.execute(
                 """
                 INSERT INTO Users (Username, Password, FullName, Role, StoreId)
-                VALUES (%s, %s, %s, %s, %s, 0)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (username, data.password, full_name, data.role, data.store_id),
             )
