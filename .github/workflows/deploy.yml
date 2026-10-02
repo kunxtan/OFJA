@@ -1,7 +1,5 @@
 name: Auto Deploy to Server
 
-# บอกให้ระบบทำงานตอนที่เรา push โค้ดเข้า branch "main" 
-# (ถ้าโปรเจกต์คุณใช้ branch ชื่อ "master" ให้แก้คำว่า main เป็น master นะครับ)
 on:
   push:
     branches:
@@ -9,17 +7,21 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # เปลี่ยนจาก ubuntu-latest เป็น self-hosted เพื่อบอกให้ใช้เครื่อง Server ภาค
+    runs-on: self-hosted
+
     steps:
-      - name: SSH into Server and Update
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          # ตรง script คือคำสั่งที่บอทจะพิมพ์ลงใน Server ให้เรา
-          script: |
-            cd /OFJA/onlyfoods-app
-            git pull origin main
-            docker compose down
-            docker compose up -d --build
+      - name: Run Deploy Scripts on Server
+        run: |
+          # 1. ชี้ไปที่โฟลเดอร์ OF ของคุณบน Server (แก้ path ให้ตรงของจริง)
+          cd /home/ubuntu/OFJA
+          
+          # 2. ดึงโค้ดล่าสุด
+          git pull origin main
+          
+          # 3. เข้าไปในโฟลเดอร์ที่มีไฟล์ docker-compose.yml
+          cd onlyfoods-app
+          
+          # 4. รีสตาร์ท Docker
+          sudo docker compose down
+          sudo docker compose up -d --build
