@@ -14,7 +14,7 @@ jobs:
       - name: Run Deploy Scripts on Server
         run: |
           # 1. ชี้ไปที่โฟลเดอร์ OF ของคุณบน Server (แก้ path ให้ตรงของจริง)
-          cd /OFJA
+          cd /home/ubuntu/OFJA
           
           # 2. ดึงโค้ดล่าสุด
           git pull origin main
