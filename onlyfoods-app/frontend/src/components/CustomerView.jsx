@@ -1071,7 +1071,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // STYLE
-  const pageStyle = { minHeight: "100vh", height: "100vh", overflowY: "auto", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif", boxSizing: "border-box" };
+  const pageStyle = { minHeight: "100vh", height: "100vh", overflowY: "auto", scrollbarWidth: "none", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif", boxSizing: "border-box" };
   const containerStyle = { width: "100%", maxWidth: "1450px", margin: "0 auto", padding: "20px 20px 110px", boxSizing: "border-box" };
   const headerStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "15px", marginBottom: "25px", flexWrap: "wrap" };
   const logoStyle = { fontSize: "27px", fontWeight: "900", color: COLORS.navy, whiteSpace: "nowrap", cursor: "pointer" };
