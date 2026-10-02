@@ -51,8 +51,8 @@ def log_audit(db, action: str, performed_by: str, details: str):
                 "INSERT INTO AuditLog (Action, PerformedBy, Details) VALUES (%s, %s, %s)",
                 (action, performed_by, details)
             )
-    except Exception as e:
-        print(f"AuditLog warning: {e}")
+    except Exception:
+        pass
 
 def send_notif(db, user_id: int, msg: str):
     if user_id:
@@ -62,8 +62,8 @@ def send_notif(db, user_id: int, msg: str):
                     "INSERT INTO Notifications (UserId, Message) VALUES (%s, %s)",
                     (user_id, msg)
                 )
-        except Exception as e:
-            print(f"SendNotif warning: {e}")
+        except Exception:
+            pass
 
 def clean_text(value: Optional[str]) -> Optional[str]:
     if value is None:
@@ -488,8 +488,6 @@ def logout():
 
 @app.put("/api/users/profile")
 def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
-    print("PROFILE DATA RECEIVED:", data)
-    print("PROFILE IMG RECEIVED:", data.profile_img)
     ensure_user_columns(db)
     uid = data.user_id if data.user_id is not None else data.userId
     name = data.full_name or data.fullName or data.name
@@ -525,8 +523,6 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                 )
             )
             db.commit()
-
-            print("PROFILE SAVED:", img is not None)
 
             cur.execute("SELECT * FROM Users WHERE UserId = %s", (uid,))
             user = cur.fetchone()
@@ -651,19 +647,6 @@ def get_user_profile(user_id: int, db=Depends(get_db)):
                 detail="ไม่พบข้อมูลผู้ใช้นี้"
             )
 
-        return user
-
-@app.get("/api/users/{user_id}")
-def get_user_profile(user_id: int, db=Depends(get_db)):
-    ensure_user_columns(db)
-    with db.cursor() as cur:
-        cur.execute("""SELECT UserId, Username, FullName, Phone, Email, ProfileImg, CardHolderName, CardLast4, CardExpiry, Role FROM Users WHERE UserId = %s """, (user_id,))
-        user = cur.fetchone()
-        if not user:
-            raise HTTPException(
-                status_code=404,
-                detail="ไม่พบข้อมูลผู้ใช้นี้"
-            )
         return user
 
 @app.get("/api/notifications/{user_id}")
@@ -1548,9 +1531,6 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 note_val = item.item_note or item.note or ""
                 validated_items.append((item.product_id, item.qty, real_price, note_val))
 
-            # -------------------------------------------------------------
-            # [ปรับปรุง] รีคิวทุกวันประจำร้านค้า (Daily Queue Reset per Store)
-            # -------------------------------------------------------------
             cur.execute("""
                 SELECT COUNT(*) as today_orders 
                 FROM `Order` 
@@ -1558,7 +1538,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
             """, (data.store_id,))
             q_res = cur.fetchone()
             daily_seq = (q_res['today_orders'] if q_res else 0) + 1
-            queue_no = f"Q-{daily_seq:03d}"  # รูปแบบคิว Q-001, Q-002 รีเซ็ตทุกวัน
+            queue_no = f"Q-{daily_seq:03d}"
 
             initial_status = 'Pending' if data.is_walk_in else 'Verifying_Slip'
             
@@ -1627,7 +1607,6 @@ def get_orders(store_id: Optional[int] = None, user_id: Optional[int] = None, db
         if user_id:
             query += " AND o.UserId = %s"
             params.append(user_id)
-        # เรียงลำดับคิวตามออเดอร์ลำดับก่อน-หลัง
         query += " ORDER BY o.OrderID ASC"
         cur.execute(query, params)
         orders = cur.fetchall()
@@ -1955,13 +1934,18 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
 
             current_status = current['Status']
             
-            # -------------------------------------------------------------
-            # [ปรับปรุง] ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ห้ามกดอันดู / เปลี่ยนสถานะ
-            # -------------------------------------------------------------
+            # [ปรับปรุง] ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ห้ามย้อนกลับสถานะ
             if current_status == 'Completed' and payload.status != 'Completed':
                 raise HTTPException(
                     status_code=400, 
                     detail="หน้าร้านได้ทำการส่งมอบอาหารเรียบร้อยแล้ว ไม่สามารถย้อนกลับสถานะหรือยกเลิกได้"
+                )
+
+            # [ปรับปรุง] คนครัวอัปเดตสถานะได้เพียงอย่างเดียวคือ 'Ready' (ปรุงเสร็จแล้ว)
+            if payload.user_role == 'Kitchen Staff' and payload.status != 'Ready':
+                raise HTTPException(
+                    status_code=400,
+                    detail="คนครัวสามารถกดอัปเดตสถานะเป็น 'ปรุงเสร็จแล้ว' เท่านั้น"
                 )
 
             terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
