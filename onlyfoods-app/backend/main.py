@@ -1968,11 +1968,11 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 )
 
             # [ปรับปรุง] คนครัวอัปเดตสถานะได้เพียงอย่างเดียวคือ 'Ready' (ปรุงเสร็จแล้ว)
-            if payload.user_role == 'Kitchen Staff' and payload.status != 'Ready':
-                raise HTTPException(
-                    status_code=400,
-                    detail="คนครัวสามารถกดอัปเดตสถานะเป็น 'ปรุงเสร็จแล้ว' เท่านั้น"
-                )
+            if payload.user_role == 'Kitchen Staff' and payload.status not in ['Ready', 'Pending', 'Cooking']:
+               raise HTTPException(
+            status_code=400,
+            detail="คนครัวสามารถเปลี่ยนสถานะได้เฉพาะ ปรุงเสร็จ หรือ ย้อนกลับเป็นกำลังปรุง เท่านั้น"
+        )
 
             terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
             if current_status in terminal_statuses and payload.status != current_status:

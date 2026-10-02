@@ -194,19 +194,16 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-const sortedOrders = [...allOrders].sort((a, b) => {
-  const qA = Number(a.QueueNo) || 0;
-  const qB = Number(b.QueueNo) || 0;
-  
-  if (qA !== qB) {
-    return qA - qB;
-  }
-  return new Date(a.CreatedAt || 0) - new Date(b.CreatedAt || 0);
-});
+const sortedOrders = [...allOrders].sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
 
   const pendingOrders = sortedOrders.filter(o => o.Status === 'Pending' || o.Status === 'Cooking');
   const readyOrders = sortedOrders.filter(o => o.Status === 'Ready' || o.Status === 'Completed');
-  const displayedOrders = filterTab === 'Pending' ? pendingOrders : readyOrders;
+  const displayedOrders = sortedOrders.filter(order => {
+    if (filterTab === 'Pending') {
+      return order.Status === 'Pending' || order.Status === 'Cooking';
+    }
+    return order.Status === 'Ready';
+  });
 
   const isStoreActive = foodCourtOpen && storeOpen && !isSuspended;
 
@@ -218,67 +215,117 @@ const sortedOrders = [...allOrders].sort((a, b) => {
   };
 
 const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
-  if (e) e.stopPropagation();
-  isUpdatingRef.current = true;
+    if (e) e.stopPropagation();
+    if (isUpdatingRef.current) return;
+    isUpdatingRef.current = true;
 
-  // อัปเดต Local State ทันที
-  setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
-
-  // เมื่อกด Undo ให้สลับหน้าจอไป Tab คิวรอปรุงทันที
-  if (targetStatus === 'Pending') {
-    setFilterTab('Pending');
-  }
-
-  try {
-    const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        status: targetStatus,
-        user_role: 'Kitchen Staff',
-        cancel_reason: null
-      })
-    });
-
-    if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
-  } catch (err) {
-    console.error("Update status error:", err);
-    // หาก API ล้มเหลว ให้ดึงข้อมูลจริงกลับมาจาก Backend
-    fetchData();
-  } finally {
-    isUpdatingRef.current = false;
-  }
-};
-
-  // ตรวจสอบออเดอร์ด่วน (เวลานัดรับเหลือ <= 5 นาที)
-  const getPickupAlert = (pickupTimeStr) => {
-    if (!pickupTimeStr) return null;
-    try {
-      const now = new Date();
-      let targetDate = new Date();
-
-      if (pickupTimeStr.includes(':')) {
-        const cleanTime = pickupTimeStr.replace('น.', '').replace('น', '').trim();
-        const [hours, minutes] = cleanTime.split(':').map(Number);
-        targetDate.setHours(hours, minutes, 0, 0);
-      } else {
-        targetDate = new Date(pickupTimeStr);
-      }
-
-      const diffMins = Math.floor((targetDate - now) / 60000);
-
-      if (diffMins <= 5 && diffMins >= -60) {
-        return {
-          isAlert: true,
-          diffMins,
-          label: diffMins <= 0 ? 'ถึงเวลานัดรับแล้ว!' : `ออเดอร์ด่วน! เหลือเวลานัดรับอีก ${diffMins} นาที`
-        };
-      }
-    } catch (e) {
-      return null;
+    // หากเป็นการ Undo (ส่งสถานะ Pending) ให้สลับแท็บไปที่หน้าคิวรอปรุงทันที
+    if (targetStatus === 'Pending') {
+      setFilterTab('Pending');
     }
-    return null;
+
+    // Optimistic Update: ปรับ UI ล่วงหน้าทันทีเพื่อความลื่นไหล
+    setAllOrders(prev =>
+      prev.map(o => (o.OrderID === id ? { ...o, Status: targetStatus } : o))
+    );
+
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: targetStatus,
+          user_role: 'Kitchen Staff',
+          cancel_reason: null
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error('Backend ตอบกลับสถานะล้มเหลว');
+      }
+    } catch (err) {
+      console.error("Update status error:", err);
+      // หากเกิดข้อผิดพลาด ให้ดึงข้อมูลจริงจาก DB กลับมาซิงค์อีกครั้ง
+      fetchData();
+    } finally {
+      isUpdatingRef.current = false;
+    }
   };
+
+  return (
+    <div className="p-4 max-w-7xl mx-auto">
+      {/* Header & Filter Tabs */}
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">ระบบห้องครัว (Kitchen View)</h1>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setFilterTab('Pending')}
+            className={`px-4 py-2 rounded-lg font-semibold ${
+              filterTab === 'Pending' ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-700'
+            }`}
+          >
+            คิวรอปรุง ({allOrders.filter(o => o.Status === 'Pending' || o.Status === 'Cooking').length})
+          </button>
+          <button
+            onClick={() => setFilterTab('Ready')}
+            className={`px-4 py-2 rounded-lg font-semibold ${
+              filterTab === 'Ready' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'
+            }`}
+          >
+            พร้อมเสิร์ฟ / เสร็จแล้ว ({allOrders.filter(o => o.Status === 'Ready').length})
+          </button>
+        </div>
+      </div>
+
+      {/* Order Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {displayedOrders.map(order => (
+          <div key={order.OrderID} className="border rounded-xl p-4 shadow-sm bg-white flex flex-col justify-between">
+            <div>
+              <div className="flex justify-between items-center border-b pb-2 mb-2">
+                <span className="font-bold text-lg">คิว #{order.QueueNo || order.OrderID}</span>
+                <span className="text-sm px-2 py-1 bg-gray-100 rounded">โต๊ะ {order.TableNo || '-'}</span>
+              </div>
+              <ul className="space-y-1 mb-4">
+                {order.Items?.map((item, idx) => (
+                  <li key={idx} className="text-gray-800 text-sm flex justify-between">
+                    <span>{item.ItemName}</span>
+                    <span className="font-semibold">x{item.Quantity}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="mt-4 pt-2 border-t">
+              {filterTab === 'Pending' ? (
+                <button
+                  onClick={(e) => updateOrderStatus(order.OrderID, 'Ready', e)}
+                  className="w-full py-2 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg transition"
+                >
+                  ปรุงเสร็จแล้ว
+                </button>
+              ) : (
+                <button
+                  onClick={(e) => updateOrderStatus(order.OrderID, 'Pending', e)}
+                  className="w-full py-2 bg-gray-500 hover:bg-gray-600 text-white font-bold rounded-lg transition"
+                >
+                  ↺ ย้อนกลับไปคิวรอปรุง (Undo)
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {displayedOrders.length === 0 && (
+          <div className="col-span-full text-center py-12 text-gray-400">
+            ไม่มีรายการออเดอร์ในหมวดนี้
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
   const getElapsedInfo = (timeStr) => {
     if (!timeStr) return { label: 'เพิ่งเข้า', isUrgent: false };
