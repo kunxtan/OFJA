@@ -1899,9 +1899,7 @@ const createCroppedImage = async () => {
   const renderOrders = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
-      {myOrders.length === 0 ? (
-        <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
-        <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
+      <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
           <BurgerArt width={150} height={135} />
         </div>
         <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
@@ -1913,6 +1911,8 @@ const createCroppedImage = async () => {
         <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
           <PizzaArt width={55} height={70} />
         </div>
+      {myOrders.length === 0 ? (
+        <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/></div>ยังไม่มีคำสั่งซื้อ
         </div>
       ) : (
@@ -2016,9 +2016,22 @@ const createCroppedImage = async () => {
   const renderNotifications = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>การแจ้งเตือน</h2>
+      <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
+          <BurgerArt width={150} height={135} />
+        </div>
+        <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
+          <EggArt width={70} height={60} />
+        </div>
+        <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
+          <ThaiTeaArt width={60} height={110} />
+        </div>
+        <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
+          <PizzaArt width={55} height={70} />
+        </div>
       {notifs.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
-          <div style={{ fontSize: "45px", marginBottom: "10px" }}><NotiIcon/></div>ไม่มีการแจ้งเตือน
+          <div style={{ fontSize: "45px", marginBottom: "10px" }}><NotiIcon/></div>
+          ไม่มีการแจ้งเตือน
         </div>
       ) : (
         <div style={{ display: "grid", gap: "12px" }}>
