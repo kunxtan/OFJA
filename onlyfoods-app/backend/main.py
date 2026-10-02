@@ -1592,7 +1592,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
             if data.user_id:
                 send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ!")
                 
-            log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน ID:{data.store_id}")
+            log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน {st['StoreName']} ID:{data.store_id}")
             
             db.commit()
             return {"success": True, "order_id": order_id, "queue_no": queue_no, "total": total}
@@ -1606,7 +1606,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
 @app.put("/api/orders/{order_id}/verify-slip")
 def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
     with db.cursor() as cur:
-        cur.execute("SELECT * FROM `Order` WHERE OrderID=%s", (order_id,))
+        cur.execute("SELECT o. * , s.StoreName FROM `Order`o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s", (order_id,))
         ord_data = cur.fetchone()
         if not ord_data:
             raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อ")
@@ -1617,13 +1617,13 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
             cur.execute("UPDATE `Order` SET Status='Pending' WHERE OrderID=%s", (order_id,))
             if ord_data.get('UserId'):
                 send_notif(db, ord_data['UserId'], f"สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
-            log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id}")
+            log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id} ร้าน {ord_data['StoreName']} (ID:{ord_data['StoreId']})")
         else:
             reason = payload.reason or 'สลิปไม่ถูกต้อง'
             cur.execute("UPDATE `Order` SET Status='Cancelled', CancelReason=%s WHERE OrderID=%s", (reason, order_id))
             if ord_data.get('UserId'):
                 send_notif(db, ord_data['UserId'], f"❌ สลิปคิว {ord_data['QueueNo']} ถูกปฏิเสธ: {reason}")
-            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id}: {reason}")
+            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id} ร้าน {ord_data['StoreName']} (ID:{ord_data['StoreId']}): {reason}")
 
         db.commit()
         return {"success": True}
@@ -1867,9 +1867,11 @@ def customer_cancel_order(
         with db.cursor() as cur:
             cur.execute(
                 """
-                SELECT OrderID, UserId, QueueNo, Status, CancelDeadline
-                FROM `Order`
-                WHERE OrderID=%s
+                SELECT o.OrderID, o.UserId, o.QueueNo, o.Status, o.CancelDeadline,
+                o.StoreId, s.StoreName
+                FROM `Order` o
+                JOIN Store s ON o.StoreId = s.StoreId
+                WHERE o.OrderID=%s
                 """,
                 (order_id,),
             )
@@ -1918,7 +1920,7 @@ def customer_cancel_order(
                 db,
                 "CUSTOMER_CANCEL_ORDER",
                 f"User:{payload.user_id}",
-                f"Order {order_id} ลูกค้ายืนยันยกเลิก: {reason}"
+                f"Order {order_id} ลูกค้ายืนยันยกเลิก ร้าน {order['StoreName']} (ID:{order['StoreId']}): {reason}"
             )
 
         db.commit()
@@ -2001,7 +2003,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                     (payload.status, payload.cancel_reason, order_id)
                 )
             
-            cur.execute("SELECT UserId, QueueNo FROM `Order` WHERE OrderID=%s", (order_id,))
+            cur.execute("SELECT o.UserId, o.QueueNo, o.StoreId, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s", (order_id,))            
             o = cur.fetchone()
             if o and o.get('UserId'):
                 status_map = {
@@ -2014,9 +2016,9 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 send_notif(db, o['UserId'], f"ออเดอร์คิว {o['QueueNo']} {status_map.get(payload.status, payload.status)}")
             
             if payload.status == 'Cancelled':
-                log_audit(db, "CANCEL_ORDER", payload.user_role, f"Order {order_id} -> Cancelled" + (f" | เหตุผล: {payload.cancel_reason}" if payload.cancel_reason else ""))
+                log_audit(db, "CANCEL_ORDER", payload.user_role, f"Order {order_id} -> Cancelled ร้าน {o['StoreName']} (ID:{o['StoreId']})" + (f" | เหตุผล: {payload.cancel_reason}" if payload.cancel_reason else ""))
             else:
-                log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}")
+                log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}  ร้าน {o['StoreName']} (ID:{o['StoreId']})")
             db.commit()
             return {"success": True}
     except Exception as e:
@@ -2033,13 +2035,12 @@ def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_d
             SET Status='Pending_Cancellation', CancelReason=%s, CancelDeadline=%s 
             WHERE OrderID=%s
         """, (payload.reason, deadline, order_id))
-        
-        cur.execute("SELECT UserId, QueueNo FROM `Order` WHERE OrderID=%s", (order_id,))
+        cur.execute("SELECT o.UserId, o.QueueNo, o.StoreId, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s", (order_id,))
         o = cur.fetchone()
         if o and o['UserId']:
             send_notif(db, o['UserId'], f"คิว {o['QueueNo']} มีปัญหา: {payload.reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)")
         
-        log_audit(db, "CANCEL_REQUEST", "Front Staff", f"Order {order_id} รอการยืนยันยกเลิก")
+        log_audit(db, "CANCEL_REQUEST", "Front Staff", f"Order {order_id} รอการยืนยันยกเลิก ร้าน {o['StoreName']} (ID:{o['StoreId']})")
         db.commit()
         return {"success": True}
 
