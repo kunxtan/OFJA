@@ -96,6 +96,82 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const CartIconPlus = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shopping-cart-plus preview-icon"><path d="M16 5h6"/><path d="M19 2v6"/><path d="m2.05 2.05 1.099-.028a1 1 0 011.008.815l2.69 14.347A1 1 0 007.83 18H18"/><path d="M4.564 5H12"/><path d="M6.25 14h12.712a2 2 0 001.991-1.57l.172-1.041"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>)
   const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="22" height="22" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>)
   const CommentIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-messages-square preview-icon"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg>)
+  const BurgerArt = ({ width = 240, height = 216, className = "", style = {}, ...props }) => (
+    <svg 
+      viewBox="0 0 240 216" 
+      width={width} 
+      height={height} 
+      className={className} 
+      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
+      {...props}
+    >
+      <ellipse cx="120" cy="207" rx="94" ry="8" fill="rgba(80,30,0,0.2)" />
+      <path d="M30 172 H210 Q210 198 178 198 H62 Q30 198 30 172Z" fill="#E88F25" />
+      <rect x="22" y="150" width="196" height="28" rx="14" fill="#5E3219" />
+      <rect x="36" y="155" width="64" height="5" rx="2.5" fill="rgba(255,255,255,0.2)" />
+      <path d="M26 142 H214 V154 H198 L188 176 L174 154 H66 L52 174 L40 154 H26Z" fill="#FFC72C" />
+      <rect x="28" y="130" width="184" height="18" rx="9" fill="#E8412F" />
+      <rect x="44" y="134" width="50" height="4" rx="2" fill="rgba(255,255,255,0.3)" />
+      <path d="M20 112 H220 V128 Q208 140 196 128 Q184 140 172 128 Q160 140 148 128 Q136 140 124 128 Q112 140 100 128 Q88 140 76 128 Q64 140 52 128 Q40 140 28 128 Q22 134 20 128Z" fill="#5CB85C" />
+      <path d="M24 120 Q24 44 120 44 Q216 44 216 120Z" fill="#F4A93B" />
+      <path d="M26 106 Q24 112 24 120 H216 Q216 112 214 106 Q120 118 26 106Z" fill="#E48B24" />
+      <path d="M46 98 Q50 64 84 54" stroke="rgba(255,255,255,0.42)" strokeWidth="7" strokeLinecap="round" fill="none" />
+      <g fill="#FFF3D6">
+        <ellipse cx="100" cy="76" rx="6" ry="3" transform="rotate(-20 100 76)" />
+        <ellipse cx="136" cy="64" rx="6" ry="3" transform="rotate(15 136 64)" />
+        <ellipse cx="164" cy="86" rx="6" ry="3" transform="rotate(-8 164 86)" />
+        <ellipse cx="120" cy="96" rx="6" ry="3" transform="rotate(25 120 96)" />
+        <ellipse cx="82" cy="98" rx="6" ry="3" transform="rotate(10 82 98)" />
+        <ellipse cx="184" cy="102" rx="5" ry="2.6" transform="rotate(-25 184 102)" />
+      </g>
+    </svg>
+  )
+  const ThaiTeaArt = ({ width = 100, height = 192, className = "", style = {}, ...props }) => (
+    <svg 
+      viewBox="0 0 100 192" 
+      width={width} 
+      height={height} 
+      className={className} 
+      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
+      {...props}
+    >
+      <ellipse cx="50" cy="189" rx="34" ry="4" fill="rgba(80,30,0,0.2)" />
+      <path d="M14 38 L24 178 Q25 186 34 186 H66 Q75 186 76 178 L86 38Z" fill="rgba(255,255,255,0.5)" />
+      <path d="M17 84 H83 L76 178 Q75 186 66 186 H34 Q25 186 24 178Z" fill="#F28A2E" />
+      <path d="M17 84 Q33 74 50 84 T83 84 V104 Q66 96 50 106 T17 102Z" fill="#FFE9CF" />
+      <rect x="30" y="118" width="22" height="22" rx="5" fill="rgba(255,255,255,0.55)" transform="rotate(-12 41 129)" />
+      <rect x="50" y="144" width="20" height="20" rx="5" fill="rgba(255,255,255,0.5)" transform="rotate(10 60 154)" />
+      <path d="M26 56 L32 170" stroke="rgba(255,255,255,0.6)" strokeWidth="5" strokeLinecap="round" />
+      <rect x="10" y="32" width="80" height="10" rx="5" fill="#FFFFFF" />
+      <line x1="66" y1="2" x2="56" y2="132" stroke="#3D5AFE" strokeWidth="8" strokeLinecap="round" />
+    </svg>
+  )
+  const EggArt = ({ width = 120, height = 100, className = "", style = {}, ...props }) => (
+    <svg 
+      viewBox="0 0 120 100" 
+      width={width} 
+      height={height} 
+      className={className} 
+      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
+      {...props}
+    >
+      <path d="M18 52 Q10 20 46 16 Q70 0 96 22 Q116 40 100 68 Q90 90 56 86 Q24 86 18 52Z" fill="#FFFFFF" />
+      <circle cx="58" cy="50" r="20" fill="#FFB400" />
+      <circle cx="51" cy="43" r="6" fill="rgba(255,255,255,0.45)" />
+    </svg>
+  )
+  const SparkleArt = ({ width = 24, height = 24, className = "", style = {}, ...props }) => (
+    <svg 
+      viewBox="-12 -12 24 24" 
+      width={width} 
+      height={height} 
+      className={className} 
+      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
+      {...props}
+    >
+      <path d="M0 -11 Q0 0 11 0 Q0 0 0 11 Q0 0 -11 0 Q0 0 0 -11Z" fill="#FFFFFF" />
+    </svg>
+  )
 
   // CUSTOM ALERT STATE
   const [alertData, setAlertData] = useState({
@@ -1136,7 +1212,15 @@ const createCroppedImage = async () => {
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
-          <div style={{ fontSize: "clamp(50px, 9vw, 90px)" }}>🍱</div>
+          <div style={{ position: "absolute", right: "20px", bottom: "-10px", opacity: 0.9, transform: "rotate(-10deg)" }}>
+            <BurgerArt width={150} height={135} />
+          </div>
+          <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
+            <ThaiTeaArt width={60} height={110} />
+          </div>
+          <div style={{ position: "absolute", left: "20px", top: "15px", opacity: 0.6 }}>
+            <SparkleArt width={20} height={20} />
+          </div>
         </div>
 
         {viewMode === "stores" && (
