@@ -105,8 +105,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     type: "success", // "success", "error", "warning"
   });
 
-  const customAlert = (title, message = "", type = "success") => {
-    setAlertData({ isOpen: true, title, message, type });
+  const customAlert = (title, message = "", type = "success", onConfirm = null) => {
+    setAlertData({ isOpen: true, title, message, type, onConfirm });
   };
 
   // CONSTANTS
@@ -496,14 +496,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const currentCartStoreId = Number(cart[0].StoreId || cart[0].store_id);
       const newProductStoreId = Number(product.StoreId || product.store_id || selectedStore);
       if (currentCartStoreId !== newProductStoreId) {
-        if (
-          window.confirm(
-            "คุณมีสินค้าจากร้านอื่นอยู่ในตะกร้า ต้องการล้างตะกร้าเดิมเพื่อเพิ่มสินค้าจากร้านนี้แทนหรือไม่?"
-          )
-        ) {
-          setCart([createCartRow(product)]);
-          setIsCartOpen(true);
-        }
+        customAlert(
+          "เปลี่ยนร้านค้า?", "ในตะกร้าของคุณมีสินค้าจากร้านอื่นอยู่ หากเพิ่มสินค้าจากร้านนี้ ตะกร้าเดิมจะถูกล้างออก", "warning",
+          () => {
+            setCart([createCartRow(product)]);
+            setIsCartOpen(true);
+          }
+        );
         return;
       }
     }
@@ -2817,45 +2816,168 @@ const renderPaymentModal = () => {
 
     const getIcon = () => {
       switch (alertData.type) {
-        case "success": return "✔";
-        case "error": return "✖";
-        case "warning": return "🛇";
-        default: return "✔";
+        case "success":
+          return "✔";
+        case "error":
+          return "✖";
+        case "warning":
+          return "🛇";
+        default:
+          return "✔";
       }
     };
 
     const getButtonColor = () => {
       switch (alertData.type) {
-        case "success": return COLORS.green;
-        case "error": return COLORS.red;
-        case "warning": return COLORS.orange;
-        default: return COLORS.green;
+        case "success":
+          return COLORS.green;
+        case "error":
+          return COLORS.red;
+        case "warning":
+          return COLORS.orange;
+        default:
+          return COLORS.green;
       }
     };
 
+    const closeAlert = () => {
+      setAlertData({
+        ...alertData,
+        isOpen: false,
+      });
+    };
+
+    const handleConfirm = () => {
+      if (alertData.onConfirm) {
+        alertData.onConfirm();
+      }
+
+      closeAlert();
+    };
+
     return (
-      <div 
-        style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }}
-        onClick={() => setAlertData({ ...alertData, isOpen: false })}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(42,44,65,0.6)",
+          zIndex: 9999,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px",
+          boxSizing: "border-box",
+        }}
+        onClick={closeAlert}
       >
-        <div 
-          onClick={e => e.stopPropagation()} 
-          style={{ background: COLORS.white, width: "min(380px, 100%)", borderRadius: "24px", padding: "30px 25px", textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,0.2)", boxSizing: "border-box" }}
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: COLORS.white,
+            width: "min(380px, 100%)",
+            borderRadius: "24px",
+            padding: "30px 25px",
+            textAlign: "center",
+            boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+            boxSizing: "border-box",
+          }}
         >
-          <div style={{ fontSize: "55px", marginBottom: "15px" }}>{getIcon()}</div>
-          <h3 style={{ margin: "0 0 10px", fontSize: "22px", fontWeight: "900", color: COLORS.navy }}>
+          <div
+            style={{
+              fontSize: "55px",
+              marginBottom: "15px",
+            }}
+          >
+            {getIcon()}
+          </div>
+
+          <h3
+            style={{
+              margin: "0 0 10px",
+              fontSize: "22px",
+              fontWeight: "900",
+              color: COLORS.navy,
+            }}
+          >
             {alertData.title}
           </h3>
-          <div style={{ margin: "0 0 25px", fontSize: "14px", color: COLORS.gray, whiteSpace: "pre-line", lineHeight: "1.6" }}>
+
+          <div
+            style={{
+              margin: "0 0 25px",
+              fontSize: "14px",
+              color: COLORS.gray,
+              whiteSpace: "pre-line",
+              lineHeight: "1.6",
+            }}
+          >
             {alertData.message}
           </div>
-          
-          <button
-            onClick={() => setAlertData({ ...alertData, isOpen: false })}
-            style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: getButtonColor(), color: COLORS.white, fontWeight: "900", fontSize: "16px", cursor: "pointer", fontFamily: "inherit" }}
-          >
-            ตกลง
-          </button>
+
+          {/* ถ้ามี onConfirm ให้แสดง 2 ปุ่ม */}
+          {alertData.onConfirm ? (
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+              }}
+            >
+              <button
+                onClick={closeAlert}
+                style={{
+                  flex: 1,
+                  padding: "14px",
+                  border: "1px solid #ddd",
+                  borderRadius: "14px",
+                  background: COLORS.white,
+                  color: COLORS.gray,
+                  fontWeight: "900",
+                  fontSize: "15px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                onClick={handleConfirm}
+                style={{
+                  flex: 1,
+                  padding: "14px",
+                  border: "none",
+                  borderRadius: "14px",
+                  background: getButtonColor(),
+                  color: COLORS.white,
+                  fontWeight: "900",
+                  fontSize: "15px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                เปลี่ยนร้าน
+              </button>
+            </div>
+          ) : (
+            /* Alert ปกติยังใช้ปุ่มเดียวเหมือนเดิม */
+            <button
+              onClick={closeAlert}
+              style={{
+                width: "100%",
+                padding: "14px",
+                border: "none",
+                borderRadius: "14px",
+                background: getButtonColor(),
+                color: COLORS.white,
+                fontWeight: "900",
+                fontSize: "16px",
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              ตกลง
+            </button>
+          )}
         </div>
       </div>
     );
