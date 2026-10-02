@@ -386,6 +386,48 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   }, [notifs, isInitialized]);
 
+  useEffect(() => {
+  const loadUserProfile = async () => {
+    if (!userId) return;
+
+    try {
+      const res = await fetch(`${apiBase}/api/users/${userId}`);
+
+      if (!res.ok) {
+        throw new Error("โหลดข้อมูลผู้ใช้ไม่สำเร็จ");
+      }
+
+      const data = await res.json();
+
+      // ข้อมูลโปรไฟล์
+      setFullName(data.FullName || "");
+      setPhone(data.Phone || "");
+
+      // ข้อมูลบัตร
+      setCardHolderName(data.CardHolderName || "");
+      setCardLast4(data.CardLast4 || "");
+      setCardExpiry(data.CardExpiry || "");
+
+      // ถ้ามี state สำหรับแก้ไขโปรไฟล์
+      setEditName(data.FullName || "");
+      setEditPhone(data.Phone || "");
+
+    } catch (error) {
+      console.error("Load user profile error:", error);
+    }
+  };
+
+  loadUserProfile();
+  }, [userId, apiBase]);
+
+  // อัปเดตข้อมูลบัตรและโปรไฟล์ทันทีเมื่อ user prop มีการเปลี่ยนแปลง (เช่น ตอนล็อกอินใหม่)
+  useEffect(() => {
+    if (user) {
+      setEditName(user.FullName || user.name || "");
+      setEditPhone(user.Phone || "");
+    }
+  }, [user]);
+
   const activeStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
     [stores, selectedStore]

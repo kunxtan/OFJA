@@ -505,18 +505,27 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
 
     try:
         with db.cursor() as cur:
+            # ใช้ COALESCE เพื่อที่หากไม่ได้ส่งข้อมูลบัตรมา จะคงค่าเดิมใน DB ไว้
             cur.execute(
                 """
                 UPDATE Users 
                 SET FullName = %s, 
                     Phone = %s, 
                     ProfileImg = %s,
-                    CardHolderName = %s,
-                    CardLast4 = %s,
-                    CardExpiry = %s
+                    CardHolderName = COALESCE(%s, CardHolderName),
+                    CardLast4 = COALESCE(%s, CardLast4),
+                    CardExpiry = COALESCE(%s, CardExpiry)
                 WHERE UserId = %s
                 """,
-                (name, phone, img if img != "" else None, data.card_holder_name, data.card_last4, data.card_expiry, uid)
+                (
+                    name, 
+                    phone, 
+                    img if img != "" else None, 
+                    data.card_holder_name, 
+                    data.card_last4, 
+                    data.card_expiry, 
+                    uid
+                )
             )
             db.commit()
 
@@ -611,6 +620,19 @@ def get_customer_profile(user_id: int, db=Depends(get_db)):
         cur.execute("SELECT COUNT(*) as TotalOrders FROM `Order` WHERE UserId = %s AND Status IN ('Completed', 'NoShow')", (user_id,))
         orders_count = cur.fetchone()
         user['TotalOrders'] = orders_count['TotalOrders']
+        return user
+
+@app.get("/api/users/{user_id}")
+def get_user_profile(user_id: int, db=Depends(get_db)):
+    ensure_user_columns(db)
+    with db.cursor() as cur:
+        cur.execute("""SELECT UserId, Username, FullName, Phone, Email, ProfileImg, CardHolderName, CardLast4, CardExpiry, Role FROM Users WHERE UserId = %s """, (user_id,))
+        user = cur.fetchone()
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail="ไม่พบข้อมูลผู้ใช้นี้"
+            )
         return user
 
 @app.get("/api/notifications/{user_id}")
@@ -2089,4 +2111,4 @@ def get_store_issue_reports(store_id: int, db=Depends(get_db)):
             ORDER BY r.CreatedAt DESC, r.ReportID DESC
         """, (store_id,))
 
-        return cur.fetchall() 
+        return cur.fetchall()
