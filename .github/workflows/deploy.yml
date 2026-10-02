@@ -19,7 +19,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           # ตรง script คือคำสั่งที่บอทจะพิมพ์ลงใน Server ให้เรา
           script: |
-            cd /OFJA/onlyfoods-app 
+            cd /OFJA/onlyfoods-app
             git pull origin main
             docker compose down
             docker compose up -d --build
