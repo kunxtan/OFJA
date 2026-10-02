@@ -1254,8 +1254,8 @@ const createCroppedImage = async () => {
           <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
             <ThaiTeaArt width={60} height={110} />
           </div>
-          <div style={{ position: "absolute", left: "20px", top: "15px", opacity: 0.6 }}>
-            <PizzaArt width={60} height={70} />
+          <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
+            <PizzaArt width={55} height={70} />
           </div>
         </div>
 
@@ -1474,6 +1474,18 @@ const createCroppedImage = async () => {
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน </h2>
       <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", width: "100%", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}`, overflow: "visible" }}>
+        <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
+          <BurgerArt width={150} height={135} />
+        </div>
+        <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
+          <EggArt width={70} height={60} />
+        </div>
+        <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
+          <ThaiTeaArt width={60} height={110} />
+        </div>
+        <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
+          <PizzaArt width={55} height={70} />
+        </div>
         <div style={{ textAlign: "center", position: "relative" }}>
           <div style={{ position: "relative", width: "120px", height: "120px", margin: "0 auto 15px" }}>
             {profileImage ? (
@@ -1889,6 +1901,18 @@ const createCroppedImage = async () => {
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
       {myOrders.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
+        <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
+          <BurgerArt width={150} height={135} />
+        </div>
+        <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
+          <EggArt width={70} height={60} />
+        </div>
+        <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
+          <ThaiTeaArt width={60} height={110} />
+        </div>
+        <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
+          <PizzaArt width={55} height={70} />
+        </div>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/></div>ยังไม่มีคำสั่งซื้อ
         </div>
       ) : (
