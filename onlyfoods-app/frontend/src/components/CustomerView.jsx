@@ -119,6 +119,34 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       </g>
     </svg>
   )
+  const NoodleBowlArt = ({ width = 220, height = 170, className = "", style = {}, ...props }) => (
+    <svg viewBox="0 0 220 170" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
+      <ellipse cx="110" cy="161" rx="80" ry="7" fill="rgba(80,30,0,0.2)" />
+      <path d="M26 84 Q30 34 110 30 Q190 34 194 84Z" fill="#FFD966" />
+      <g stroke="#FFF1B8" strokeWidth="5" strokeLinecap="round" fill="none">
+        <path d="M38 76 Q56 52 74 72 T110 66 T146 62 T182 74" />
+        <path d="M44 62 Q62 40 84 56 T126 48 T170 56" />
+        <path d="M60 46 Q84 30 108 42 T152 40" />
+      </g>
+      <ellipse cx="78" cy="58" rx="24" ry="15" fill="#FFFFFF" />
+      <circle cx="80" cy="57" r="9" fill="#FFB400" />
+      <path d="M126 46 Q150 26 168 50 Q174 66 158 68 Q164 56 148 54 Q138 54 130 62Z" fill="#FF8A4C" />
+      <g fill="#5CB85C">
+        <circle cx="110" cy="40" r="4" />
+        <circle cx="100" cy="66" r="4" />
+        <circle cx="148" cy="72" r="4" />
+        <circle cx="58" cy="76" r="4" />
+      </g>
+      <g stroke="#7B4A22" strokeWidth="5" strokeLinecap="round">
+        <line x1="168" y1="2" x2="116" y2="52" />
+        <line x1="182" y1="10" x2="128" y2="58" />
+      </g>
+      <path d="M14 80 H206 Q206 150 110 156 Q14 150 14 80Z" fill="#E8412F" />
+      <rect x="10" y="74" width="200" height="12" rx="6" fill="#C93322" />
+      <path d="M18 104 H202 Q200 114 196 122 H24 Q20 114 18 104Z" fill="#FFC72C" />
+      <path d="M28 94 Q30 122 52 142" stroke="rgba(255,255,255,0.3)" strokeWidth="6" strokeLinecap="round" fill="none" />
+    </svg>
+  );
   const PizzaArt = ({ width = 200, height = 190, className = "", style = {}, ...props }) => (
     <svg viewBox="0 0 200 190" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <path d="M14 54 H186 L100 176Z" fill="#FFC83D" stroke="#FFC83D" strokeWidth="12" strokeLinejoin="round" />
@@ -158,6 +186,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       <circle cx="51" cy="43" r="6" fill="rgba(255,255,255,0.45)" />
     </svg>
   )
+  const LimeArt = ({ width = 60, height = 60, className = "", style = {}, ...props }) => (
+    <svg viewBox="0 0 60 60" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
+      <circle cx="30" cy="30" r="28" fill="#7CC34F" />
+      <circle cx="30" cy="30" r="22" fill="#D9F2A8" />
+      <g stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round">
+        <line x1="30" y1="10" x2="30" y2="50" />
+        <line x1="10" y1="30" x2="50" y2="30" />
+        <line x1="16" y1="16" x2="44" y2="44" />
+        <line x1="44" y1="16" x2="16" y2="44" />
+      </g>
+      <circle cx="30" cy="30" r="4" fill="#FFFFFF" />
+    </svg>
+  );
   const SparkleArt = ({ width = 24, height = 24, className = "", style = {}, ...props }) => (
     <svg viewBox="-12 -12 24 24" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <path d="M0 -11 Q0 0 11 0 Q0 0 0 11 Q0 0 -11 0 Q0 0 0 -11Z" fill="#FFFFFF" />
@@ -1203,18 +1244,18 @@ const createCroppedImage = async () => {
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
-          <div style={{ fontSize: "clamp(50px, 9vw, 90px)" }}><BurgerArt width={150} height={135} /></div>
-          <div style={{ position: "absolute", right: "20px", bottom: "-10px", opacity: 0.9, transform: "rotate(-10deg)" }}>
+          <div style={{ fontSize: "clamp(50px, 9vw, 90px)" }}><NoodleBowlArt width={145} height={130} /></div>
+          <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
             <BurgerArt width={150} height={135} />
           </div>
-          <div style={{ position: "absolute", right: "160px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
+          <div style={{ position: "absolute", left: "320px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
             <EggArt width={110} height={100} />
           </div>
           <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
             <ThaiTeaArt width={60} height={110} />
           </div>
           <div style={{ position: "absolute", left: "20px", top: "15px", opacity: 0.6 }}>
-            <SparkleArt width={20} height={20} />
+            <PizzaArt width={20} height={20} />
           </div>
         </div>
 
