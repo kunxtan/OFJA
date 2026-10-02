@@ -104,6 +104,7 @@ STORE_EXTRA_COLUMNS = {
     "ContractEndDate": "DATE NULL",
     "IsDeleted": "TINYINT(1) NOT NULL DEFAULT 0",
     "DeletedAt": "DATETIME NULL",
+    
 }
 _store_columns_ready = False
 
@@ -448,6 +449,7 @@ def login(data: LoginSchema, db=Depends(get_db)):
         if not user:
             raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 
+# ร้านที่โดนลบจะเข้าล็อตอินไม่ได้
         if (user.get("StoreId") is not None and user.get("StoreIsDeleted")):
             raise HTTPException(
                 status_code=403,
@@ -455,6 +457,7 @@ def login(data: LoginSchema, db=Depends(get_db)):
             )
 
         user.pop("StoreIsDeleted", None)
+        
         return user
 
 @app.post("/api/register")
@@ -503,6 +506,7 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
 
     try:
         with db.cursor() as cur:
+            # ใช้ COALESCE เพื่อที่หากไม่ได้ส่งข้อมูลบัตรมา จะคงค่าเดิมใน DB ไว้
             cur.execute(
                 """
                 UPDATE Users 
@@ -545,6 +549,7 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
 def reset_password(req: ResetPasswordReq, db=Depends(get_db)):
     cursor = db.cursor(pymysql.cursors.DictCursor)
     try:
+        # 2. แก้ไข SQL ให้ใช้ชื่อคอลัมน์จริง (UserId, Username, Phone, Email)
         search_sql = """
             SELECT UserId FROM Users 
             WHERE Username = %s OR Phone = %s OR Email = %s
@@ -558,6 +563,7 @@ def reset_password(req: ResetPasswordReq, db=Depends(get_db)):
                 detail="ไม่พบชื่อผู้ใช้ เบอร์โทรศัพท์ หรืออีเมลนี้ในระบบ"
             )
 
+        # 3. อัปเดตคอลัมน์ Password อิงตาม UserId (เก็บบันทึกรหัสผ่านให้สอดคล้องกับระบบ Login)
         update_sql = "UPDATE Users SET Password = %s WHERE UserId = %s"
         cursor.execute(update_sql, (req.new_password, user["UserId"]))
         db.commit()
@@ -726,6 +732,7 @@ def create_store(data: StoreCreateSchema, db=Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=str(error))
 
+# ประวัติร้านทั้งหมดรวมอันที่โดนลบ
 @app.get("/api/stores/history")
 def get_store_history(db=Depends(get_db)):
     ensure_store_columns(db)
@@ -946,12 +953,15 @@ def delete_store(store_id: int, db=Depends(get_db)):
             if store["IsDeleted"]:
                 raise HTTPException(status_code=400,detail="ร้านค้านี้ถูกลบไปแล้ว" )
 
+            # ห้ามลบร้านถ้ายังมีออเดอร์ที่ยังไม่จบ
             cur.execute("""SELECT COUNT(*) AS total FROM `Order` WHERE StoreId = %s AND Status NOT IN ('Completed', 'Cancelled', 'NoShow') """,(store_id,)
             )
             pending_orders = cur.fetchone()["total"]
             if pending_orders > 0:
                 raise HTTPException(status_code=400, detail=(
-                        f"ร้านนี้ยังมีออเดอร์ค้างอยู่ {pending_orders} รายการ กรุณาจัดการออเดอร์ให้เสร็จก่อนลบร้าน" ) )
+                        f"ร้านนี้ยังมีออเดอร์ค้างอยู่ {pending_orders} รายการ " "กรุณาจัดการออเดอร์ให้เสร็จก่อนลบร้าน" ) )
+
+            
 
             cur.execute("UPDATE Store SET IsDeleted = 1 , DeletedAt = CURRENT_TIMESTAMP, ISOpen = 0 WHERE StoreId = %s", (store_id,))
             log_audit(db, "DELETE_STORE", "Executive", f"ลบร้าน {store['StoreName']} (ID {store_id})")
@@ -975,16 +985,20 @@ def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(g
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
 
             new_status = not bool(store["IsOpen"])
+            # ปิดโรงอาหารทุกร้านเปิดเองไม่ได้ 
             if new_status:
-                cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
-                food_court = cur.fetchone()
+             cur.execute(
+                "SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1"
+            )
+             food_court = cur.fetchone()
 
-                if not food_court or not food_court["IsOpen"]:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="ศูนย์อาหารปิดให้บริการ ไม่สามารถเปิดร้านได้"
-                    )
+             if not food_court or not food_court["IsOpen"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ศูนย์อาหารปิดให้บริการ ไม่สามารถเปิดร้านได้"
+        )
 
+            # เปิดร้านเองไม่ได้โดนระงับอยู่
             if new_status and store["IsSuspended"]:
                 raise HTTPException(
                     status_code=400,
@@ -1173,7 +1187,7 @@ def add_store_staff(store_id: int, data: StaffCreateSchema, db=Depends(get_db)):
 
             cur.execute("""
                 INSERT INTO Users (Username, Password, FullName, Role, StoreId)
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, 0)
             """, (data.username, data.password, data.fullName, data.role, store_id))
             db.commit()
             return {"success": True, "message": "เพิ่มพนักงานสำเร็จ"}
@@ -1278,15 +1292,23 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
             updates = []
             values = []
 
+            
+            # -----------------------------
+            # Password
+            # -----------------------------
             if data.password is not None:
                 if len(data.password) < 6 or " " in data.password:
                     raise HTTPException(
                         status_code=400,
                         detail="รหัสผ่านต้องยาวอย่างน้อย 6 ตัว และห้ามมีช่องว่าง",
                     )
+
                 updates.append("Password = %s")
                 values.append(data.password)
 
+            # -----------------------------
+            # Full name
+            # -----------------------------
             if data.full_name is not None:
                 full_name = data.full_name.strip()
 
@@ -1305,6 +1327,9 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
                 updates.append("FullName = %s")
                 values.append(full_name)
 
+            # -----------------------------
+            # Role
+            # -----------------------------
             if data.role is not None:
                 if data.role not in ALLOWED_STORE_ROLES:
                     raise HTTPException(
@@ -1315,6 +1340,9 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
                 updates.append("Role = %s")
                 values.append(data.role)
 
+            # -----------------------------
+            # Store
+            # -----------------------------
             if data.store_id is not None:
                 cur.execute(
                     "SELECT StoreId FROM Store WHERE StoreId = %s  AND IsDeleted = 0",
@@ -1330,6 +1358,9 @@ def update_store_account(user_id: int, data: AccountUpdateSchema, db=Depends(get
                 updates.append("StoreId = %s")
                 values.append(data.store_id)
 
+            # -----------------------------
+            # ไม่มีอะไรให้แก้
+            # -----------------------------
             if not updates:
                 raise HTTPException(
                     status_code=400,
@@ -1462,13 +1493,16 @@ def delete_product(product_id: int, db=Depends(get_db)):
 @app.put("/api/products/{product_id}/toggle-stock")
 def toggle_stock(product_id: int, db=Depends(get_db)):
     with db.cursor() as cur:
+        # 1. ดึงข้อมูลสินค้าเพื่อดูสถานะปัจจุบัน
         cur.execute("SELECT StoreId, ProductName, IsOutOfStock FROM Product WHERE ProductId = %s", (product_id,))
         prod = cur.fetchone()
         
         if prod:
+            # 2. สลับสถานะ (ถ้า 1 ให้เป็น 0, ถ้า 0 ให้เป็น 1)
             new_status = 0 if prod['IsOutOfStock'] else 1
             cur.execute("UPDATE Product SET IsOutOfStock = %s WHERE ProductId = %s", (new_status, product_id))
             
+            # 3. ถ้าสถานะใหม่คือ "ของหมด" (1) ให้ส่งแจ้งเตือนหาเจ้าของร้าน
             if new_status == 1:
                 cur.execute("SELECT UserId FROM Users WHERE StoreId = %s AND Role = 'Shop Owner'", (prod['StoreId'],))
                 owners = cur.fetchall()
@@ -1548,18 +1582,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 note_val = item.item_note or item.note or ""
                 validated_items.append((item.product_id, item.qty, real_price, note_val))
 
-            # -------------------------------------------------------------
-            # [ปรับปรุง] รีคิวทุกวันประจำร้านค้า (Daily Queue Reset per Store)
-            # -------------------------------------------------------------
-            cur.execute("""
-                SELECT COUNT(*) as today_orders 
-                FROM `Order` 
-                WHERE StoreId = %s AND DATE(CreatedAt) = CURRENT_DATE()
-            """, (data.store_id,))
-            q_res = cur.fetchone()
-            daily_seq = (q_res['today_orders'] if q_res else 0) + 1
-            queue_no = f"Q-{daily_seq:03d}"  # รูปแบบคิว Q-001, Q-002 รีเซ็ตทุกวัน
-
+            queue_no = f"OF-{random.randint(100, 999)}"
             initial_status = 'Pending' if data.is_walk_in else 'Verifying_Slip'
             
             cur.execute("""
@@ -1627,8 +1650,7 @@ def get_orders(store_id: Optional[int] = None, user_id: Optional[int] = None, db
         if user_id:
             query += " AND o.UserId = %s"
             params.append(user_id)
-        # เรียงลำดับคิวตามออเดอร์ลำดับก่อน-หลัง
-        query += " ORDER BY o.OrderID ASC"
+        query += " ORDER BY o.OrderID DESC"
         cur.execute(query, params)
         orders = cur.fetchall()
         for o in orders:
@@ -1954,20 +1976,11 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 raise HTTPException(status_code=404, detail="ไม่พบออเดอร์นี้")
 
             current_status = current['Status']
-            
-            # -------------------------------------------------------------
-            # [ปรับปรุง] ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ห้ามกดอันดู / เปลี่ยนสถานะ
-            # -------------------------------------------------------------
-            if current_status == 'Completed' and payload.status != 'Completed':
-                raise HTTPException(
-                    status_code=400, 
-                    detail="หน้าร้านได้ทำการส่งมอบอาหารเรียบร้อยแล้ว ไม่สามารถย้อนกลับสถานะหรือยกเลิกได้"
-                )
-
             terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
             if current_status in terminal_statuses and payload.status != current_status:
                 raise HTTPException(status_code=400, detail=f"ออเดอร์สถานะ {current_status} ไม่สามารถเปลี่ยนสถานะได้")
 
+            # เมื่ออาหารพร้อมรับแล้ว ห้ามย้อนกลับไปเป็นของหมด/ยกเลิก
             if current_status == 'Ready' and payload.status in {'Pending_Cancellation', 'Cancelled'}:
                 raise HTTPException(status_code=400, detail="อาหารเสร็จแล้ว ไม่สามารถยกเลิกหรือแจ้งของหมดกับออเดอร์นี้ได้")
 
@@ -2054,6 +2067,7 @@ def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
             cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
             result = cur.fetchone()
             is_open = bool(result["IsOpen"])
+            # ถ้าผู้บริหารปิดโรงทุกร้านจะปิดหมด
             if not is_open:
                 cur.execute("UPDATE Store SET IsOpen = 0")
 

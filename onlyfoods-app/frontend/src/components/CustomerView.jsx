@@ -619,7 +619,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   e.target.value = "";
 };
 
-  const createCroppedImage = async () => {
+const createCroppedImage = async () => {
     if (!cropImage || !croppedAreaPixels) return;
 
     try {
@@ -649,12 +649,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         croppedAreaPixels.height
       );
 
-      const croppedBase64 = canvas.toDataURL("image/jpeg", 0.9);
+      // แปลงรูปภาพเป็น Base64 ความคมชัดพอเหมาะ (0.8)
+      const croppedBase64 = canvas.toDataURL("image/jpeg", 0.8);
 
-      // 1. อัปเดตการแสดงผลรูปบนหน้าจอชั่วคราว
+      // 🟢 1. อัปเดตรูปบน UI และสั่งปิด ป๊อปอัป ทันที (ไม่ต้องรอ API)
       setProfileImage(croppedBase64);
+      setIsCropModalOpen(false);
+      setCropImage(null);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setCroppedAreaPixels(null);
 
-      // 2. ยิง API บันทึกลง Database ทันทีที่กด "ใช้รูปนี้"
+      // 🟢 2. ส่งรูปภาพไปบันทึกลง Database ด้านหลัง
       const res = await fetch(`${apiBase}/api/users/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -662,34 +668,30 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           user_id: userId,
           full_name: fullName,
           phone: phone,
-          profile_img: croppedBase64, // ส่งรูปใหม่บันทึกลง DB
+          profile_img: croppedBase64,
           card_holder_name: cardHolderName,
         }),
       });
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => null);
-        throw new Error(errorData?.detail || "บันทึกรูปโปรไฟล์ไม่สำเร็จ");
+        throw new Error(errorData?.detail || "ไม่สามารถอัปเดตรูปไปยังเซิร์ฟเวอร์ได้");
       }
 
       const updatedUser = await res.json();
       setProfileImage(updatedUser.ProfileImg || croppedBase64);
 
-      // 3. ปิด Pop-up และล้างข้อมูล
-      setIsCropModalOpen(false);
-      setCropImage(null);
-      setCrop({ x: 0, y: 0 });
-      setZoom(1);
-      setCroppedAreaPixels(null);
-
-      customAlert("อัปเดตรูปโปรไฟล์เรียบร้อยแล้ว!");
+      customAlert("สำเร็จ", "อัปเดตรูปโปรไฟล์เรียบร้อยแล้ว!", "success");
 
     } catch (error) {
       console.error("Crop/Save image error:", error);
-      customAlert("เกิดข้อผิดพลาด", error.message || "ไม่สามารถบันทึกรูปได้", "error");
+      // หากเกิดข้อผิดพลาด ให้เคลียร์ค่าและปิด Modal เสมอ
+      setIsCropModalOpen(false);
+      setCropImage(null);
+      customAlert("เกิดข้อผิดพลาด", error.message || "ไม่สามารถบันทึกรูปภาพได้", "error");
     }
   };
-
+  
   const handleRemoveProfileImage = () => {
     setProfileImage(null);
     customAlert("สำเร็จ", "ลบรูปโปรไฟล์เรียบร้อยแล้ว", "success");
