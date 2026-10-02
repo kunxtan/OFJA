@@ -53,7 +53,7 @@ const UndoIcon = () => (
 );
 
 const LogoutIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
   </svg>
 );
@@ -114,33 +114,26 @@ const getRoleLabel = (role) => {
   return roleMap[role] || role || 'ผู้ใช้งาน';
 };
 
-// --- ฟังก์ชันช่วยแปลงเวลาอย่างปลอดภัยเพื่อป้องกัน NaN ---
+// --- Helper ฟังก์ชันจัดการเวลาแบบปลอดภัย (Safe Date Parser) ---
 const parseDate = (timeStr) => {
   if (!timeStr) return null;
-  if (timeStr instanceof Date) return timeStr;
-  
-  let str = String(timeStr).trim();
-  
-  // รองรับรูปแบบ "YYYY-MM-DD HH:mm:ss" หรือ ISO
-  if (str.includes('-') || str.includes('T')) {
-    let isoStr = str.replace(' ', 'T');
-    let d = new Date(isoStr);
-    if (!isNaN(d.getTime())) return d;
-  }
-  
-  // รองรับรูปแบบ "14:30" หรือ "14:30 น."
-  if (str.includes(':')) {
-    const clean = str.replace('น.', '').replace('น', '').trim();
-    const parts = clean.split(':').map(Number);
-    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+  if (timeStr instanceof Date) return isNaN(timeStr.getTime()) ? null : timeStr;
+
+  // รองรับกรณีส่งเป็น HH:mm หรือ HH:mm น.
+  if (typeof timeStr === 'string' && !timeStr.includes('-') && !timeStr.includes('/') && timeStr.includes(':')) {
+    const cleanTime = timeStr.replace('น.', '').replace('น', '').trim();
+    const parts = cleanTime.split(':').map(Number);
+    if (!isNaN(parts[0]) && !isNaN(parts[1])) {
       const d = new Date();
       d.setHours(parts[0], parts[1], parts[2] || 0, 0);
       return d;
     }
   }
-  
-  let d = new Date(str);
-  return isNaN(d.getTime()) ? null : d;
+
+  // แปลง SQL datetime format "YYYY-MM-DD HH:mm:ss" ให้ Safari/iOS parse ได้ถูกต้อง
+  const formattedStr = typeof timeStr === 'string' ? timeStr.replace(' ', 'T') : timeStr;
+  const parsed = new Date(formattedStr);
+  return isNaN(parsed.getTime()) ? null : parsed;
 };
 
 export default function KitchenView({ user, apiBase, onLogout }) {
@@ -150,6 +143,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filterTab, setFilterTab] = useState('Pending');
   
+  // State เวลาปัจจุบัน (Live Clock)
+  const [currentTime, setCurrentTime] = useState(new Date());
+
   // State ป๊อบอัพรายละเอียดออเดอร์ & ป๊อบอัพยืนยันออกจากระบบ
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -159,6 +155,12 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [storeOpen, setStoreOpen] = useState(true);
   const [isSuspended, setIsSuspended] = useState(false);
+
+  // นาฬิกา Real-time แสดงเวลาปัจจุบันบน Header
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!document.getElementById('kitchen-font-link')) {
@@ -280,10 +282,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const getPickupAlert = (pickupTimeStr) => {
     if (!pickupTimeStr) return null;
     try {
-      const now = new Date();
       const targetDate = parseDate(pickupTimeStr);
       if (!targetDate) return null;
 
+      const now = new Date();
       const diffMins = Math.floor((targetDate - now) / 60000);
 
       if (diffMins <= 5 && diffMins >= -60) {
@@ -303,21 +305,28 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     if (!timeStr) return { label: 'เพิ่งเข้า', isUrgent: false };
     const d = parseDate(timeStr);
     if (!d) return { label: 'เพิ่งเข้า', isUrgent: false };
-    
+
     const diffMins = Math.floor((new Date() - d) / 60000);
-    if (isNaN(diffMins) || diffMins < 1) return { label: 'เพิ่งเข้า', isUrgent: false };
+    if (diffMins < 1) return { label: 'เพิ่งเข้า', isUrgent: false };
     if (diffMins < 60) return { label: `${diffMins} นาทีที่แล้ว`, isUrgent: diffMins >= 15 };
     return { label: `${Math.floor(diffMins / 60)} ชม. ${diffMins % 60} น.`, isUrgent: true };
   };
 
   const formatTime = (timeStr) => {
-    if (!timeStr) return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+    if (!timeStr) return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
+    
+    // ถ้าเป็นข้อความเวลาสั้นๆ เช่น "12:30" หรือ "12:30 น." ให้คืนค่าได้เลย
+    if (typeof timeStr === 'string' && /^\d{1,2}:\d{2}(\s*น\.)?$/.test(timeStr.trim())) {
+      return timeStr.includes('น') ? timeStr.trim() : `${timeStr.trim()} น.`;
+    }
+
     const d = parseDate(timeStr);
-    if (!d) return String(timeStr);
-    return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+    if (!d) return timeStr;
+
+    return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
   };
 
-  // จัดรูปแบบเลขคิวให้ชัดเจน
+  // จัดรูปแบบเลขคิวให้ชัดเจน (รันคิวรายวันตาม order)
   const formatQueueNo = (queueNo) => {
     if (!queueNo) return 'คิว #--';
     return typeof queueNo === 'number' ? `คิว #${String(queueNo).padStart(3, '0')}` : `คิว #${queueNo}`;
@@ -421,6 +430,23 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+          {/* นาฬิกาแสดงเวลาปัจจุบัน Real-time */}
+          <div style={{
+            background: theme.cardInner,
+            border: `1px solid ${theme.border}`,
+            padding: '8px 16px',
+            borderRadius: '99px',
+            fontSize: '14px',
+            fontWeight: '700',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            color: theme.textMain
+          }}>
+            <ClockIcon />
+            <span>{currentTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} น.</span>
+          </div>
+
           <div style={{
             background: theme.cardInner,
             border: `1px solid ${theme.border}`,
@@ -629,8 +655,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             </div>
           ) : (
             displayedOrders.map(o => {
-              const orderTimeStr = o.CreatedAt || o.OrderTime;
-              const timeInfo = getElapsedInfo(orderTimeStr);
+              const timeInfo = getElapsedInfo(o.CreatedAt);
               const pickupAlert = getPickupAlert(o.PickupTime);
               const isCompleted = o.Status === 'Completed';
 
@@ -662,7 +687,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         </div>
                         <div style={{ fontSize: '13px', color: theme.textMuted, marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                           <ClockIcon />
-                          <span>สั่งเมื่อ: {formatTime(orderTimeStr)} ({timeInfo.label})</span>
+                          <span>สั่งเมื่อ: {formatTime(o.CreatedAt)} ({timeInfo.label})</span>
                         </div>
                       </div>
 
@@ -683,7 +708,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                       )}
                     </div>
 
-                    {/* แจ้งเตือนออเดอร์ด่วน */}
+                    {/* แจ้งเตือนออเดอร์ด่วน (เหลือเวลานัดรับ <= 5 นาที) */}
                     {pickupAlert && (
                       <div style={{
                         animation: 'urgentFlash 1.5s infinite',
@@ -815,6 +840,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                               พร้อมรับอาหาร (รอหน้าร้านส่งมอบ)
                             </div>
                             
+                            {/* ปุ่ม Undo ย้อนกลับสถานะ */}
                             <button
                               onClick={(e) => updateOrderStatus(o.OrderID, 'Pending', e)}
                               style={{
@@ -851,7 +877,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
       </main>
 
-      {/* Pop-up: รายละเอียดออเดอร์ */}
+      {/* Pop-up: รายละเอียดออเดอร์ (Order Detail Popup) */}
       {selectedOrder && (
         <div
           onClick={() => setSelectedOrder(null)}
@@ -915,7 +941,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลาที่สั่ง:</span>
-                <strong>{formatTime(selectedOrder.CreatedAt || selectedOrder.OrderTime)}</strong>
+                <strong>{formatTime(selectedOrder.CreatedAt)}</strong>
               </div>
 
               {selectedOrder.PickupTime && (
@@ -997,7 +1023,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
       )}
 
-      {/* Pop-up: แจ้งเตือนยืนยันออกจากระบบ */}
+      {/* Pop-up: แจ้งเตือนยืนยันออกจากระบบ (Logout Alert Modal) */}
       {showLogoutModal && (
         <div
           onClick={() => setShowLogoutModal(false)}
