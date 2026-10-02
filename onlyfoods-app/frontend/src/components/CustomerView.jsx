@@ -315,7 +315,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [userId, apiBase]);
 
-    useEffect(() => {
+  useEffect(() => {
   const loadUserProfile = async () => {
     if (!userId) return;
 
@@ -358,6 +358,41 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   loadUserProfile();
 }, [userId, apiBase]);
+
+  //ทดลองทำแสงส้ม
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const target = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    const cur = { ...target };
+    let raf = null;
+
+    const tick = () => {
+      cur.x += (target.x - cur.x) * 0.12;
+      cur.y += (target.y - cur.y) * 0.12;
+      const el = viewportRef.current;
+      if (el) {
+        el.style.setProperty('--gx', `${cur.x.toFixed(1)}px`);
+        el.style.setProperty('--gy', `${cur.y.toFixed(1)}px`);
+      }
+      const moving = Math.abs(target.x - cur.x) > 0.5 || Math.abs(target.y - cur.y) > 0.5;
+      raf = moving ? requestAnimationFrame(tick) : null;
+    };
+    const onMove = (e) => {
+      target.x = e.clientX;
+      target.y = e.clientY;
+      if (viewportRef.current) viewportRef.current.dataset.glow = 'on';
+      if (!raf) raf = requestAnimationFrame(tick);
+    };
+    const onLeave = () => { if (viewportRef.current) viewportRef.current.dataset.glow = 'off'; };
+
+    window.addEventListener('pointermove', onMove, { passive: true });
+    document.addEventListener('pointerleave', onLeave);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerleave', onLeave);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
 
   // โหลดสินค้าเมื่อเปลี่ยนร้าน
   useEffect(() => {
