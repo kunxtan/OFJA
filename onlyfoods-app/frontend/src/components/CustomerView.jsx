@@ -492,6 +492,21 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const addToCart = (product) => {
+    if (cart.length > 0) {
+      const currentCartStoreId = Number(cart[0].StoreId || cart[0].store_id);
+      const newProductStoreId = Number(product.StoreId || product.store_id || selectedStore);
+      if (currentCartStoreId !== newProductStoreId) {
+        if (
+          window.confirm(
+            "คุณมีสินค้าจากร้านอื่นอยู่ในตะกร้า ต้องการล้างตะกร้าเดิมเพื่อเพิ่มสินค้าจากร้านนี้แทนหรือไม่?"
+          )
+        ) {
+          setCart([createCartRow(product)]);
+          setIsCartOpen(true);
+        }
+        return;
+      }
+    }
     setCart((prev) => [...prev, createCartRow(product)]);
     setIsCartOpen(true);
   };
@@ -691,7 +706,7 @@ const createCroppedImage = async () => {
       customAlert("เกิดข้อผิดพลาด", error.message || "ไม่สามารถบันทึกรูปภาพได้", "error");
     }
   };
-  
+
   const handleRemoveProfileImage = () => {
     setProfileImage(null);
     customAlert("สำเร็จ", "ลบรูปโปรไฟล์เรียบร้อยแล้ว", "success");
