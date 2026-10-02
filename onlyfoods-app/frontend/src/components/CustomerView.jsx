@@ -126,6 +126,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     red: "#E0523B",
   };
 
+  // ฟังก์ชันจัดการ Props สำหรับ SVG Art
+  const artProps = (props) => ({
+    width: props?.width || "100%",
+    height: props?.height || "100%",
+    style: props?.style,
+    className: props?.className
+  });
+
   const getNotifKey = (n) =>
     n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
 
@@ -1123,7 +1131,7 @@ const createCroppedImage = async () => {
   const searchStyle = { flex: "1", minWidth: "220px", maxWidth: "560px", padding: "13px 20px", border: `1px solid ${COLORS.border}`, borderRadius: "30px", outline: "none", fontSize: "14px", background: COLORS.white, boxSizing: "border-box" };
   const profileStyle = { display: "flex", alignItems: "center", gap: "10px", background: COLORS.white, borderRadius: "30px", padding: "7px 14px 7px 7px", boxShadow: "0 4px 18px rgba(42,44,65,0.06)", cursor: "pointer" };
   const avatarStyle = { width: "40px", height: "40px", borderRadius: "50%", background: COLORS.yellow, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "19px", overflow: "hidden" };
-  const heroStyle = { background: `linear-gradient(135deg, ${COLORS.orange}, ${COLORS.yellow})`, borderRadius: "28px", padding: "32px", color: COLORS.white, display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", marginBottom: "28px", overflow: "hidden" };
+  const heroStyle = { background: `linear-gradient(135deg, ${COLORS.orange}, ${COLORS.yellow})`, borderRadius: "28px", padding: "32px", color: COLORS.white, display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", marginBottom: "28px", overflow: "hidden", position: "relative", boxShadow: "0 12px 35px rgba(255, 114, 76, 0.25)" };
   const cardStyle = { background: COLORS.white, borderRadius: "20px", padding: "13px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}` };
 
   // MENU TAB 
@@ -1136,7 +1144,74 @@ const createCroppedImage = async () => {
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
-          <div style={{ fontSize: "clamp(50px, 9vw, 90px)" }}>🍱</div>
+          <div 
+            style={{ 
+              position: "relative", 
+              width: "180px", 
+              height: "140px", 
+              display: "flex", 
+              alignItems: "center", 
+              justifyContent: "center",
+              zIndex: 2 
+            }}
+          >
+            {/* รูปอาหารหลัก (ชามก๋วยเตี๋ยว / เบอร์เกอร์) */}
+            <div style={{ width: "120px", height: "120px", filter: "drop-shadow(0px 8px 16px rgba(0,0,0,0.15))" }}>
+              <NoodleBowlArt />
+            </div>
+
+            {/* ตกแต่งด้วยพิซซ่าลอยด้านข้าง */}
+            <div 
+              style={{ 
+                position: "absolute", 
+                top: "-10px", 
+                right: "-10px", 
+                width: "55px", 
+                height: "55px", 
+                transform: "rotate(15deg)",
+                filter: "drop-shadow(0px 4px 8px rgba(0,0,0,0.12))" 
+              }}
+            >
+              <PizzaArt />
+            </div>
+
+            {/* ตกแต่งด้วยไข่ดาวเล็กๆ ด้านบน */}
+            <div 
+              style={{ 
+                position: "absolute", 
+                bottom: "5px", 
+                left: "-15px", 
+                width: "45px", 
+                height: "45px", 
+                transform: "rotate(-10deg)" 
+              }}
+            >
+              <EggArt />
+            </div>
+
+            {/* ประกายดาววิ้งๆ เพิ่มความน่ารัก */}
+            <div style={{ position: "absolute", top: "5px", left: "10px", width: "18px", height: "18px", opacity: 0.8 }}>
+              <SparkleArt />
+            </div>
+            <div style={{ position: "absolute", bottom: "15px", right: "20px", width: "14px", height: "14px", opacity: 0.8 }}>
+              <SparkleArt />
+            </div>
+          </div>
+
+          {/* แสงวิ้งพื้นหลังใน Banner */}
+          <div 
+            style={{ 
+              position: "absolute", 
+              right: "-30px", 
+              top: "-30px", 
+              width: "220px", 
+              height: "220px", 
+              borderRadius: "50%", 
+              background: "rgba(255, 255, 255, 0.15)", 
+              pointerEvents: "none",
+              zIndex: 1 
+            }} 
+          />
         </div>
 
         {viewMode === "stores" && (
