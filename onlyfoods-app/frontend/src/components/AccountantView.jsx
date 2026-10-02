@@ -9,6 +9,11 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 const RATE_WARN = 5;  // % -> เฝ้าระวัง
 const RATE_BAD = 8;   // % -> สูงผิดปกติ
 
+// นักบัญชีบันทึกยอด/จำนวนออเดอร์ เฉพาะออเดอร์ที่ "จบ/กึ่งจบ" หรือ "ถูกยกเลิก" เท่านั้น
+const SETTLED_STATUSES = ['Completed', 'NoShow'];               // ส่งมอบสำเร็จ / กึ่งจบ (ลูกค้าไม่มารับ ร้านได้เงินแล้ว)
+const RECORDED_STATUSES = [...SETTLED_STATUSES, 'Cancelled'];   // สถานะที่นับเข้าบัญชี
+const isSettled = (o) => SETTLED_STATUSES.includes(o.Status);
+
 // โทนสีสำหรับแต่ละร้านค้า (ใช้เนกทีฟ/ส้ม/เหลือง/เทา ไม่แย่งซีนสีแจ้งเตือน)
 const STORE_COLORS = ['#FF724C', '#2A2C41', '#FDBF50', '#697586', '#E0532E', '#4A4D6B', '#8C91A4'];
 
@@ -20,6 +25,86 @@ const fmtMoney = (n) => {
     maximumFractionDigits: 0 
   });
 };
+
+// สีของ Audit Log: แดง = ปฏิเสธสลิป/ร้านยกเลิก/ลูกค้ายกเลิก, เหลือง = อนุมัติแล้วแต่ของหมด, เขียว = อนุมัติสลิป
+// ตัดสินจากทั้งชื่อ Action และข้อความรายละเอียด เพื่อให้ทำงานได้กับ log ที่ backend เดิมบันทึกไว้
+function auditTone(action, details) {
+  const a = String(action || '').toUpperCase();
+  const d = String(details || '');
+  if (a.includes('OUT_OF_STOCK') || a === 'CANCEL_REQUEST' || d.includes('Pending_Cancellation') || d.includes('วัตถุดิบหมด')) return 'warn';
+  if (a.includes('REJECT') || a.includes('CANCEL') || /->\s*Cancelled/i.test(d) || d.includes('ปฏิเสธสลิป') || d.includes('ยกเลิก')) return 'bad';
+  if (a.includes('APPROVE')) return 'green';
+  return 'neutral';
+}
+
+const AUDIT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;   // แสดง log ย้อนหลังไม่เกิน 1 ปี
+const ORDER_ID_RE = /Order(?:\s*ID)?\s*[:#]?\s*(\d+)/i;
+
+// เดาประเภทการยกเลิกจากเหตุผลที่เก็บในออเดอร์
+function classifyCancelledOrder(o) {
+  const reason = String(o.CancelReason || '');
+  if (reason.includes('สลิป')) return 'VERIFY_SLIP_REJECT';
+  if (reason.includes('ลูกค้า')) return 'CUSTOMER_CANCEL_ORDER';
+  return 'STORE_CANCEL_ORDER';
+}
+
+function buildAuditRows(logs, orders) {
+  const cutoff = Date.now() - AUDIT_RETENTION_MS;
+  const orderById = {};
+  (orders || []).forEach(o => { orderById[String(o.OrderID)] = o; });
+  const coveredCancels = new Set();
+  const rows = [];
+
+  (logs || []).forEach(l => {
+    const t = parseOrderDate(l.CreatedAt);
+    if (t && t.getTime() < cutoff) return;
+    let details = String(l.Details || '');
+    const m = details.match(ORDER_ID_RE);
+    const order = m ? orderById[m[1]] : null;
+
+    let action = l.Action;
+    // backend เดิมบันทึกการยกเลิกของร้านเป็น UPDATE_STATUS ... -> Cancelled
+    if (action === 'UPDATE_STATUS' && /->\s*Cancelled/i.test(details)) {
+      action = order ? classifyCancelledOrder(order) : 'STORE_CANCEL_ORDER';
+    }
+    const tone = auditTone(action, details);
+
+    if (order) {
+      const extra = [];
+      if (order.QueueNo && !details.includes(order.QueueNo)) extra.push(`คิว ${order.QueueNo}`);
+      if (order.StoreName) extra.push(`ร้าน ${order.StoreName}`);
+      if (tone === 'bad' && order.CancelReason && !details.includes(order.CancelReason)) extra.push(`เหตุผล: ${order.CancelReason}`);
+      if (extra.length) details += ` | ${extra.join(' • ')}`;
+    }
+    if (m && tone === 'bad') coveredCancels.add(m[1]);
+
+    rows.push({ key: `log-${l.LogID}`, time: l.CreatedAt, action, by: l.PerformedBy, details, tone, derived: false });
+  });
+
+  // เติมจากข้อมูลออเดอร์: ออเดอร์ที่ถูกยกเลิกแต่ไม่มี log รองรับ (เช่น log เก่าถูกตัดออกจากรายการ 50 ล่าสุด)
+  (orders || []).forEach(o => {
+    const t = parseOrderDate(o.CreatedAt);
+    if (t && t.getTime() < cutoff) return;
+    const head = `คิว ${o.QueueNo || '-'} (Order ${o.OrderID}) ร้าน ${o.StoreName || '-'} ยอด ${fmtMoney(o.TotalAmount)}B`;
+    const reason = String(o.CancelReason || '');
+    if (o.Status === 'Cancelled' && !coveredCancels.has(String(o.OrderID))) {
+      const action = classifyCancelledOrder(o);
+      const label = action === 'VERIFY_SLIP_REJECT' ? 'ปฏิเสธสลิป' : action === 'CUSTOMER_CANCEL_ORDER' ? 'ลูกค้ายกเลิก' : 'ร้านค้ายกเลิก';
+      rows.push({ key: `drv-c-${o.OrderID}`, time: o.CreatedAt, action, by: 'ระบบ (จากข้อมูลออเดอร์)',
+        details: `${label} ${head} เหตุผล: ${reason || '-'}`, tone: 'bad', derived: true });
+    }
+    if (o.Status === 'Pending_Cancellation' && reason.startsWith('วัตถุดิบหมด')) {
+      const paid = Number(o.IsWalkIn) === 1 ? 'ออเดอร์หน้าร้าน' : 'อนุมัติสลิปแล้ว';
+      rows.push({ key: `drv-s-${o.OrderID}`, time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: 'ระบบ (จากข้อมูลออเดอร์)',
+        details: `${paid} ${head} แต่${reason.replace('วัตถุดิบหมด:', '').trim() ? ` '${reason.replace('วัตถุดิบหมด:', '').trim()}'` : 'สินค้า'} หมด — รอลูกค้าตัดสินใจ`,
+        tone: 'warn', derived: true });
+    }
+  });
+
+  const ts = (r) => { const d = parseOrderDate(r.time); return d ? d.getTime() : 0; };
+  return rows.sort((x, y) => ts(y) - ts(x));
+}
+const AUDIT_ROW_BG = { bad: '#FFF7F7', warn: '#FFFBF0' };
 
 const colorForStore = (storeId) => STORE_COLORS[Number(storeId) % STORE_COLORS.length];
 const statusLabel = (s) => (s === 'bad' ? 'สูงผิดปกติ' : s === 'warn' ? 'เฝ้าระวัง' : 'ปกติ');
@@ -56,41 +141,36 @@ const dateOnly = (d) => {
 
 function buildStoreSummary(stores, orders) {
   const map = {};
-  (stores || []).forEach(s => {
-    map[s.StoreId] = {
-      storeId: s.StoreId, storeName: s.StoreName, color: colorForStore(s.StoreId),
-      totalOrders: 0, completedOrders: 0, cancelledOrders: 0, grossSales: 0, cancelledAmount: 0,
-    };
+  const blank = (id, name, isDeleted) => ({
+    storeId: id,
+    storeName: isDeleted ? `${name} (ถูกลบ)` : name,
+    isDeleted: Boolean(isDeleted),
+    color: colorForStore(id),
+    totalOrders: 0, completedOrders: 0, cancelledOrders: 0, grossSales: 0, cancelledAmount: 0,
   });
+  (stores || []).forEach(s => { map[s.StoreId] = blank(s.StoreId, s.StoreName, Number(s.IsDeleted) === 1 || s.IsDeleted === true); });
   (orders || []).forEach(o => {
-    if (!map[o.StoreId]) {
-      map[o.StoreId] = {
-        storeId: o.StoreId, storeName: o.StoreName || `ร้าน #${o.StoreId}`, color: colorForStore(o.StoreId),
-        totalOrders: 0, completedOrders: 0, cancelledOrders: 0, grossSales: 0, cancelledAmount: 0,
-      };
-    }
+    // บันทึกเฉพาะออเดอร์ที่จบ/กึ่งจบ หรือถูกยกเลิก — ออเดอร์ที่ยังดำเนินการอยู่ไม่นับ
+    if (!RECORDED_STATUSES.includes(o.Status)) return;
+    if (!map[o.StoreId]) map[o.StoreId] = blank(o.StoreId, o.StoreName || `ร้าน #${o.StoreId}`, false);
     const row = map[o.StoreId];
+    const amount = Number(o.TotalAmount || 0);
     row.totalOrders += 1;
-    
-    // บันทึกยอดขายรวม (Gross Sales) จากทุกออเดอร์ก่อน
-    row.grossSales += Number(o.TotalAmount || 0);
-
-    if (o.Status === 'Completed') { 
-      row.completedOrders += 1; 
-    }
-    if (o.Status === 'Cancelled') { 
-      row.cancelledOrders += 1; 
-      // เก็บยอดที่ถูกยกเลิกไว้
-      row.cancelledAmount += Number(o.TotalAmount || 0); 
+    row.grossSales += amount;
+    if (isSettled(o)) row.completedOrders += 1;
+    if (o.Status === 'Cancelled') {
+      row.cancelledOrders += 1;
+      row.cancelledAmount += amount;
     }
   });
-  return Object.values(map).map(r => {
-    const rate = r.totalOrders > 0 ? (r.cancelledOrders / r.totalOrders) * 100 : 0;
-    const status = rate > RATE_BAD ? 'bad' : rate >= RATE_WARN ? 'warn' : 'ok';
-    
-    // คำนวณรายได้สุทธิ = ยอดขายรวม - ยอดที่ถูกยกเลิก
-    return { ...r, rate: +rate.toFixed(1), status, netSales: r.grossSales - r.cancelledAmount };
-  }).sort((a, b) => b.netSales - a.netSales);
+  return Object.values(map)
+    .map(r => {
+      const rate = r.totalOrders > 0 ? (r.cancelledOrders / r.totalOrders) * 100 : 0;
+      const status = rate > RATE_BAD ? 'bad' : rate >= RATE_WARN ? 'warn' : 'ok';
+      // รายได้สุทธิ = ยอดที่บันทึกทั้งหมด - ยอดที่ถูกยกเลิก
+      return { ...r, rate: +rate.toFixed(1), status, netSales: r.grossSales - r.cancelledAmount };
+    })
+    .sort((a, b) => b.netSales - a.netSales);
 }
 
 function filterOrdersByRange(orders, start, end, storeId) {
@@ -119,7 +199,7 @@ function getPeriodBounds(range) {
 }
 
 function buildSalesTrend(orders, range) {
-  const completed = (orders || []).filter(o => o.Status === 'Completed');
+  const completed = (orders || []).filter(isSettled);
   if (range === 'today') {
     const todayStr = dateOnly(new Date());
     const buckets = Array.from({ length: 24 }, (_, h) => ({ label: `${String(h).padStart(2, '0')}:00`, value: 0 }));
@@ -148,7 +228,7 @@ function buildSalesTrend(orders, range) {
 function buildTopMenu(orders, storeId, limit = 10) {
   const map = {};
   (orders || []).forEach(o => {
-    if (o.Status !== 'Completed') return;
+    if (!isSettled(o)) return;
     if (storeId && storeId !== 'all' && String(o.StoreId) !== String(storeId)) return;
     const items = o.OrderItems || o.Items || o.orderItems || o.items || [];
     items.forEach(it => {
@@ -611,6 +691,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [salesStoreFilter, setSalesStoreFilter] = useState('all');
   const [detailStoreId, setDetailStoreId] = useState(null);
   const [auditSearch, setAuditSearch] = useState('');
+  const [cancelStoreFilter, setCancelStoreFilter] = useState('all');
   
   const [reportType, setReportType] = useState('store');
   const [reportFormat, setReportFormat] = useState('csv');
@@ -635,7 +716,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
   const fetchData = () => {
     Promise.all([
-      fetch(`${apiBase}/api/stores`).then(r => r.json()),
+      fetch(`${apiBase}/api/stores/history`).then(r => r.json())   // รวมร้านที่ถูกลบ เพื่อให้ตรวจย้อนหลังได้
+        .then(d => Array.isArray(d) ? d : fetch(`${apiBase}/api/stores`).then(r => r.json())),  // ถ้า endpoint ใช้ไม่ได้ ถอยไปใช้รายชื่อร้านปกติ จะได้ไม่เหลือแต่ร้านที่มีออเดอร์
       fetch(`${apiBase}/api/orders`).then(r => r.json()),
       fetch(`${apiBase}/api/audit-logs`).then(r => r.json()),
     ]).then(([storesData, ordersData, logsData]) => {
@@ -667,8 +749,17 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     const totalOrders = storeSummary.reduce((a, s) => a + s.totalOrders, 0);
     const totalCancelled = storeSummary.reduce((a, s) => a + s.cancelledOrders, 0);
     const rate = totalOrders > 0 ? (totalCancelled / totalOrders) * 100 : 0;
-    return { totalGross, totalOrders, totalCancelled, rate: +rate.toFixed(1), abnormalStores: storeSummary.filter(s => s.status !== 'ok') };
+    return { totalGross, totalOrders, totalCancelled, rate: +rate.toFixed(1), abnormalStores: storeSummary.filter(s => s.status !== 'ok' && !s.isDeleted) };
   }, [storeSummary]);
+
+  // เรียงจากอัตราการยกเลิกมากที่สุด -> น้อยที่สุด
+  const cancelSummary = useMemo(
+    () => [...storeSummary].sort((a, b) => b.rate - a.rate || b.cancelledOrders - a.cancelledOrders || b.totalOrders - a.totalOrders),
+    [storeSummary]
+  );
+  const cancelTableRows = cancelStoreFilter === 'all'
+    ? cancelSummary
+    : cancelSummary.filter(s => String(s.storeId) === String(cancelStoreFilter));
 
   const salesOrders = useMemo(() => filterOrdersByRange(orders, salesStart, salesEnd, 'all'), [orders, salesStart, salesEnd]);
   const salesStoreSummary = useMemo(() => buildStoreSummary(stores, salesOrders), [stores, salesOrders]);
@@ -720,15 +811,20 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       };
     }, [orders, stores, trendDays]);
 
-  const filteredLogs = logs.filter(l => {
+  const auditRows = useMemo(() => buildAuditRows(logs, orders), [logs, orders]);
+  const filteredLogs = auditRows.filter(r => {
     if (!auditSearch.trim()) return true;
     const q = auditSearch.toLowerCase();
-    return (l.Action || '').toLowerCase().includes(q) || (l.PerformedBy || '').toLowerCase().includes(q)
-      || (l.Details || '').toLowerCase().includes(q) || fmtDateTime(l.CreatedAt).includes(q);
+    return (r.action || '').toLowerCase().includes(q) || (r.by || '').toLowerCase().includes(q)
+      || (r.details || '').toLowerCase().includes(q) || fmtDateTime(r.time).includes(q);
   });
 
   const reportOrders = useMemo(() => filterOrdersByRange(orders, rangeStart, rangeEnd, reportStoreFilter), [orders, rangeStart, rangeEnd, reportStoreFilter]);
-  const reportSummary = useMemo(() => buildStoreSummary(stores, reportOrders), [stores, reportOrders]);
+  const reportSummary = useMemo(() => {
+    const rows = buildStoreSummary(stores, reportOrders);
+    // เลือกร้านใดร้านหนึ่ง -> แสดงเฉพาะร้านนั้น (เลือก "ทุกร้านค้า" จะแสดงทุกร้านรวมร้านที่ยอด 0)
+    return reportStoreFilter === 'all' ? rows : rows.filter(r => String(r.storeId) === String(reportStoreFilter));
+  }, [stores, reportOrders, reportStoreFilter]);
   const reportColumns = REPORT_COLUMNS[reportType] || REPORT_COLUMNS.store;
 
   const exportReport = () => {
@@ -782,8 +878,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
           <div className="berry-brand">
             <div className="brand-title">
-              <span className="brand-icon">📈</span> 
-              <span>Accountant</span>
+              <span>OnlyFoods - Accountant</span>
             </div>
             <div className="brand-subtitle">
               ระบบจัดการบัญชีส่วนกลาง
@@ -897,7 +992,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 />
                 <BerryStatCard
                   bgTone="dark"
-                  label="จำนวนออเดอร์ทั้งหมด"
+                  label="จำนวนออเดอร์ (บันทึกบัญชีแล้ว)"
                   value={fmtMoney(periodStats.curr.totalOrders)}
                   delta={periodStats.deltaOrders}
                   compareLabel={periodStats.compareLabel}
@@ -1114,7 +1209,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                           <tr key={m.name}>
                             <td>#{i + 1}</td>
                             <td>{m.name}</td>
-                            <td>{fmtMoney(m.qty)} ชิ้น</td>
+                            <td>{fmtMoney(m.qty)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1141,7 +1236,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                           <thead>
                             <tr>
                               <th>ชื่อเมนู</th>
-                              <th style={{ textAlign: 'right' }}>จำนวนที่ขายได้ (จาน)</th>
+                              <th style={{ textAlign: 'right' }}>จำนวนที่ขายได้</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1183,7 +1278,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </div>
                   </div>
                   <BerryBulletChart
-                    data={storeSummary.map(s => ({ label: s.storeName, value: s.rate, status: s.status }))}
+                    data={cancelSummary.map(s => ({ label: s.storeName, value: s.rate, status: s.status }))}
                   />
                   <div className="berry-legend">
                     <span><i style={{ background: '#e3f9e5' }}></i>ปกติ &lt; {RATE_WARN}%</span>
@@ -1211,12 +1306,24 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               </div>
 
               <div className="berry-panel">
-                <div className="berry-panel-header"><h3>ตารางอัตราการยกเลิกรายร้าน</h3></div>
+                <div className="berry-panel-header">
+                  <div>
+                    <h3 style={{ margin: 0 }}>ตารางอัตราการยกเลิกรายร้าน</h3>
+                    <div className="berry-panel-caption">เรียงจากอัตราการยกเลิกมากไปน้อย</div>
+                  </div>
+                  <select className="berry-input" value={cancelStoreFilter} onChange={e => setCancelStoreFilter(e.target.value)}>
+                    <option value="all">ทุกร้านค้า</option>
+                    {cancelSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
+                  </select>
+                </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table className="berry-table">
                     <thead><tr><th>ร้าน</th><th>Orders</th><th>Cancelled</th><th>Rate</th><th>สถานะ</th></tr></thead>
                     <tbody>
-                      {storeSummary.map(s => (
+                      {cancelTableRows.length === 0 && (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--berry-text-muted)' }}>ไม่พบข้อมูล</td></tr>
+                      )}
+                      {cancelTableRows.map(s => (
                         <tr key={s.storeId}>
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.totalOrders)}</td>
@@ -1236,8 +1343,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
             <div className="berry-dashboard-grid">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                 <div>
-                  <h2 style={{ margin: 0 }}>ประวัติการยกเลิกออเดอร์ (Audit Log)</h2>
-                  <div style={{ color: 'var(--berry-text-muted)', fontSize: 13 }}>ข้อมูลอ้างอิงเพื่อความโปร่งใส บันทึกแบบแก้ไขย้อนหลังไม่ได้</div>
+                  <h2 style={{ margin: 0 }}>ประวัติการทำรายการทั้งหมด (Audit Log)</h2>
+                  <div style={{ color: 'var(--berry-text-muted)', fontSize: 13 }}>ข้อมูลอ้างอิงเพื่อความโปร่งใส บันทึกแบบแก้ไขย้อนหลังไม่ได้ • เก็บย้อนหลัง 1 ปี</div>
                 </div>
                 <span className="berry-readonly-badge"><Icon name="audit" size={16} color="#fff" /> Read Only - แก้ไขย้อนหลังไม่ได้</span>
               </div>
@@ -1250,6 +1357,11 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   value={auditSearch}
                   onChange={e => setAuditSearch(e.target.value)}
                 />
+                <div className="berry-legend" style={{ marginTop: 12 }}>
+                  <span><i style={{ background: '#FF4D4F' }}></i>แดง: ปฏิเสธสลิป / ร้านยกเลิก / ลูกค้ายกเลิก</span>
+                  <span><i style={{ background: '#FDBF50' }}></i>เหลือง: อนุมัติแล้วแต่สินค้าหมด</span>
+                  <span><i style={{ background: '#00C853' }}></i>เขียว: อนุมัติสลิป</span>
+                </div>
               </div>
 
               <div className="berry-panel">
@@ -1258,22 +1370,15 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <table className="berry-table">
                     <thead><tr><th>เวลา</th><th>การกระทำ</th><th>ผู้ทำรายการ</th><th>รายละเอียดเพิ่มเติม</th></tr></thead>
                     <tbody>
-                      {filteredLogs.map(l => (
-                        <tr key={l.LogID}>
-                          <td>{fmtDateTime(l.CreatedAt)}</td>
+                      {filteredLogs.map(r => (
+                        <tr key={r.key} style={{ background: AUDIT_ROW_BG[r.tone] }}>
                           <td>
-                          <Badge 
-                            tone={
-                              String(l.Action || '').toUpperCase().includes('REJECT') ? 'bad' : 
-                              String(l.Action || '').toUpperCase().includes('APPROVE') ? 'green' : 
-                              'neutral'
-                            }
-                          >
-                            {l.Action}
-                          </Badge>
+                            {fmtDateTime(r.time)}
+                            {r.derived && <div style={{ fontSize: 11, color: 'var(--berry-text-muted)' }}>(เวลาที่สั่งออเดอร์)</div>}
                           </td>
-                          <td>{l.PerformedBy}</td>
-                          <td>{l.Details}</td>
+                          <td><Badge tone={r.tone}>{r.action}</Badge></td>
+                          <td>{r.by}</td>
+                          <td>{r.details}</td>
                         </tr>
                       ))}
                     </tbody>
