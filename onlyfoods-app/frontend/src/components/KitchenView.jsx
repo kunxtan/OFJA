@@ -1116,4 +1116,3 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
       )}
     </div>
   );
-}
