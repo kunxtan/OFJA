@@ -97,14 +97,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="22" height="22" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>)
   const CommentIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-messages-square preview-icon"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg>)
   const BurgerArt = ({ width = 240, height = 216, className = "", style = {}, ...props }) => (
-    <svg 
-      viewBox="0 0 240 216" 
-      width={width} 
-      height={height} 
-      className={className} 
-      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
-      {...props}
-    >
+    <svg viewBox="0 0 240 216" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <ellipse cx="120" cy="207" rx="94" ry="8" fill="rgba(80,30,0,0.2)" />
       <path d="M30 172 H210 Q210 198 178 198 H62 Q30 198 30 172Z" fill="#E88F25" />
       <rect x="22" y="150" width="196" height="28" rx="14" fill="#5E3219" />
@@ -126,15 +119,27 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       </g>
     </svg>
   )
+  const PizzaArt = ({ width = 200, height = 190, className = "", style = {}, ...props }) => (
+    <svg viewBox="0 0 200 190" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
+      <path d="M14 54 H186 L100 176Z" fill="#FFC83D" stroke="#FFC83D" strokeWidth="12" strokeLinejoin="round" />
+      <path d="M4 44 Q100 18 196 44 Q202 66 190 70 Q100 46 10 70 Q-2 66 4 44Z" fill="#E8A04A" />
+      <g>
+        <circle cx="66" cy="92" r="14" fill="#D63A2A" />
+        <circle cx="62" cy="88" r="5" fill="rgba(255,255,255,0.25)" />
+        <circle cx="122" cy="88" r="14" fill="#D63A2A" />
+        <circle cx="118" cy="84" r="5" fill="rgba(255,255,255,0.25)" />
+        <circle cx="98" cy="132" r="12" fill="#D63A2A" />
+        <circle cx="95" cy="129" r="4" fill="rgba(255,255,255,0.25)" />
+      </g>
+      <g fill="#5CB85C">
+        <rect x="90" y="96" width="12" height="5" rx="2.5" transform="rotate(30 96 98)" />
+        <rect x="140" y="106" width="12" height="5" rx="2.5" transform="rotate(-20 146 108)" />
+        <rect x="76" y="116" width="12" height="5" rx="2.5" transform="rotate(-35 82 118)" />
+      </g>
+    </svg>
+  )
   const ThaiTeaArt = ({ width = 100, height = 192, className = "", style = {}, ...props }) => (
-    <svg 
-      viewBox="0 0 100 192" 
-      width={width} 
-      height={height} 
-      className={className} 
-      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
-      {...props}
-    >
+    <svg viewBox="0 0 100 192" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <ellipse cx="50" cy="189" rx="34" ry="4" fill="rgba(80,30,0,0.2)" />
       <path d="M14 38 L24 178 Q25 186 34 186 H66 Q75 186 76 178 L86 38Z" fill="rgba(255,255,255,0.5)" />
       <path d="M17 84 H83 L76 178 Q75 186 66 186 H34 Q25 186 24 178Z" fill="#F28A2E" />
@@ -147,28 +152,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     </svg>
   )
   const EggArt = ({ width = 120, height = 100, className = "", style = {}, ...props }) => (
-    <svg 
-      viewBox="0 0 120 100" 
-      width={width} 
-      height={height} 
-      className={className} 
-      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
-      {...props}
-    >
+    <svg viewBox="0 0 120 100" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <path d="M18 52 Q10 20 46 16 Q70 0 96 22 Q116 40 100 68 Q90 90 56 86 Q24 86 18 52Z" fill="#FFFFFF" />
       <circle cx="58" cy="50" r="20" fill="#FFB400" />
       <circle cx="51" cy="43" r="6" fill="rgba(255,255,255,0.45)" />
     </svg>
   )
   const SparkleArt = ({ width = 24, height = 24, className = "", style = {}, ...props }) => (
-    <svg 
-      viewBox="-12 -12 24 24" 
-      width={width} 
-      height={height} 
-      className={className} 
-      style={{ display: "inline-block", verticalAlign: "middle", ...style }} 
-      {...props}
-    >
+    <svg viewBox="-12 -12 24 24" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <path d="M0 -11 Q0 0 11 0 Q0 0 0 11 Q0 0 -11 0 Q0 0 0 -11Z" fill="#FFFFFF" />
     </svg>
   )
@@ -1212,8 +1203,12 @@ const createCroppedImage = async () => {
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
+          <div style={{ fontSize: "clamp(50px, 9vw, 90px)" }}><BurgerArt width={150} height={135} /></div>
           <div style={{ position: "absolute", right: "20px", bottom: "-10px", opacity: 0.9, transform: "rotate(-10deg)" }}>
             <BurgerArt width={150} height={135} />
+          </div>
+          <div style={{ position: "absolute", right: "160px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
+            <EggArt width={110} height={100} />
           </div>
           <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
             <ThaiTeaArt width={60} height={110} />
