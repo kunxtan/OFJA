@@ -952,19 +952,19 @@ function SearchableStorePicker({ stores, value, onChange }) {
 function MenuRankList({ rows, tone = 'primary', emptyText }) {
     if (!rows.length)
         return <EmptyState text={emptyText || 'ยังไม่มีข้อมูลเมนู'} minHeight="120px"/>;
-    const maxValue = Math.max(...rows.map((r) => r.amount), 1);
+    const maxValue = Math.max(...rows.map((r) => r.qty), 1);
     return (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
       {rows.map((r) => (<div key={r.name}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
             <span style={{ color: T.text, fontSize: '13px' }}>{r.name}</span>
             <strong style={{ color: T.ink, fontSize: '13px', whiteSpace: 'nowrap' }}>
-              {money(r.amount)} บาท
+              {money(r.qty)} รายการ
             </strong>
           </div>
           <div style={{ height: '8px', background: T.trackSoft, borderRadius: '999px', marginTop: '5px' }}>
             <div style={{
                 height: '100%',
-                width: `${Math.max((r.amount / maxValue) * 100, 3)}%`,
+                width: `${Math.max((r.qty / maxValue) * 100, 3)}%`,
                 borderRadius: '999px',
                 background: tone === 'primary' ? T.primary : T.accent
             }}/>
