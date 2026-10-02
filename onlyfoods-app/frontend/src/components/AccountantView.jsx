@@ -139,16 +139,21 @@ const dateOnly = (d) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-function buildStoreSummary(stores, orders) {
+// rangeStart (YYYY-MM-DD) ใช้ตัดสินว่าร้านที่ถูกลบแล้วควรแสดงในช่วงวันที่นั้นหรือไม่:
+//  - ร้านที่ถูกลบ จะแสดงถ้าช่วงวันที่เริ่มก่อน/ตรงกับวันที่ลบ หรือมีออเดอร์อยู่ในช่วงนั้น
+//  - ถ้าช่วงวันที่เริ่มหลังวันที่ลบ (เช่นวันถัดจากวันที่ลบ) ร้านจะไม่ขึ้น
+//  - ไม่ส่ง rangeStart = มุมมองตลอดเวลา (ร้านที่ถูกลบยังแสดงเพื่อย้อนดูประวัติ)
+function buildStoreSummary(stores, orders, rangeStart) {
   const map = {};
-  const blank = (id, name, isDeleted) => ({
+  const blank = (id, name, isDeleted, deletedAt) => ({
     storeId: id,
     storeName: isDeleted ? `${name} (ถูกลบ)` : name,
     isDeleted: Boolean(isDeleted),
+    deletedDay: deletedAt ? dateOnly(deletedAt) : '',
     color: colorForStore(id),
     totalOrders: 0, completedOrders: 0, cancelledOrders: 0, grossSales: 0, cancelledAmount: 0,
   });
-  (stores || []).forEach(s => { map[s.StoreId] = blank(s.StoreId, s.StoreName, Number(s.IsDeleted) === 1 || s.IsDeleted === true); });
+  (stores || []).forEach(s => { map[s.StoreId] = blank(s.StoreId, s.StoreName, Number(s.IsDeleted) === 1 || s.IsDeleted === true, s.DeletedAt); });
   (orders || []).forEach(o => {
     // บันทึกเฉพาะออเดอร์ที่จบ/กึ่งจบ หรือถูกยกเลิก — ออเดอร์ที่ยังดำเนินการอยู่ไม่นับ
     if (!RECORDED_STATUSES.includes(o.Status)) return;
@@ -164,6 +169,11 @@ function buildStoreSummary(stores, orders) {
     }
   });
   return Object.values(map)
+    .filter(r => {
+      if (!r.isDeleted || !rangeStart) return true;
+      if (r.totalOrders > 0) return true;                       // มีประวัติในช่วงนี้ -> แสดง
+      return !r.deletedDay || rangeStart <= r.deletedDay;       // ช่วงนี้เริ่มก่อน/ตรงวันที่ลบ -> ร้านยังมีอยู่ในช่วงนั้น
+    })
     .map(r => {
       const rate = r.totalOrders > 0 ? (r.cancelledOrders / r.totalOrders) * 100 : 0;
       const status = rate > RATE_BAD ? 'bad' : rate >= RATE_WARN ? 'warn' : 'ok';
@@ -762,7 +772,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     : cancelSummary.filter(s => String(s.storeId) === String(cancelStoreFilter));
 
   const salesOrders = useMemo(() => filterOrdersByRange(orders, salesStart, salesEnd, 'all'), [orders, salesStart, salesEnd]);
-  const salesStoreSummary = useMemo(() => buildStoreSummary(stores, salesOrders), [stores, salesOrders]);
+  const salesStoreSummary = useMemo(() => buildStoreSummary(stores, salesOrders, salesStart), [stores, salesOrders, salesStart]);
 
   const salesFilteredRows = salesStoreFilter === 'all' 
     ? salesStoreSummary 
@@ -787,8 +797,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
   const periodStats = useMemo(() => {
     const { currStart, currEnd, prevStart, prevEnd } = getPeriodBounds(trendDays);
-    const summarize = (ords) => {
-      const s = buildStoreSummary(stores, ords);
+    const summarize = (ords, startDay) => {
+      const s = buildStoreSummary(stores, ords, startDay);
       const gross = s.reduce((a, x) => a + x.grossSales, 0);
       const net = s.reduce((a, x) => a + x.netSales, 0); 
       const totalOrders = s.reduce((a, x) => a + x.totalOrders, 0);
@@ -797,8 +807,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       return { gross, net, totalOrders, cancelled, rate, storesData: s }; 
     };
     
-      const curr = summarize(filterOrdersByRange(orders, currStart, currEnd, 'all'));
-      const prev = summarize(filterOrdersByRange(orders, prevStart, prevEnd, 'all'));
+      const curr = summarize(filterOrdersByRange(orders, currStart, currEnd, 'all'), currStart);
+      const prev = summarize(filterOrdersByRange(orders, prevStart, prevEnd, 'all'), prevStart);
       const pctChange = (c, p) => (p > 0 ? +(((c - p) / p) * 100).toFixed(1) : (c > 0 ? 100 : 0));
       const compareLabel = trendDays === 'today' ? 'เทียบกับเมื่อวาน' : `เทียบกับ ${trendDays} วันก่อนหน้า`;
       return {
@@ -821,10 +831,21 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
   const reportOrders = useMemo(() => filterOrdersByRange(orders, rangeStart, rangeEnd, reportStoreFilter), [orders, rangeStart, rangeEnd, reportStoreFilter]);
   const reportSummary = useMemo(() => {
-    const rows = buildStoreSummary(stores, reportOrders);
+    const rows = buildStoreSummary(stores, reportOrders, rangeStart);
     // เลือกร้านใดร้านหนึ่ง -> แสดงเฉพาะร้านนั้น (เลือก "ทุกร้านค้า" จะแสดงทุกร้านรวมร้านที่ยอด 0)
     return reportStoreFilter === 'all' ? rows : rows.filter(r => String(r.storeId) === String(reportStoreFilter));
-  }, [stores, reportOrders, reportStoreFilter]);
+  }, [stores, reportOrders, reportStoreFilter, rangeStart]);
+  // รายชื่อร้านใน dropdown ของรายงาน: ตามช่วงวันที่ที่เลือก (ร้านที่ลบแล้วจะอยู่ในรายการเฉพาะช่วงที่ยังมีประวัติ)
+  const reportStoreOptions = useMemo(
+    () => buildStoreSummary(stores, filterOrdersByRange(orders, rangeStart, rangeEnd, 'all'), rangeStart),
+    [stores, orders, rangeStart, rangeEnd]
+  );
+  useEffect(() => {
+    if (reportStoreFilter !== 'all' && !reportStoreOptions.some(x => String(x.storeId) === String(reportStoreFilter))) setReportStoreFilter('all');
+  }, [reportStoreOptions, reportStoreFilter]);
+  useEffect(() => {
+    if (salesStoreFilter !== 'all' && !salesStoreSummary.some(x => String(x.storeId) === String(salesStoreFilter))) setSalesStoreFilter('all');
+  }, [salesStoreSummary, salesStoreFilter]);
   const reportColumns = REPORT_COLUMNS[reportType] || REPORT_COLUMNS.store;
 
   const exportReport = () => {
@@ -1100,7 +1121,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {[...storeSummary].sort((a, b) => b.rate - a.rate).map(s => (
+                      {[...storeSummary].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => b.rate - a.rate).map(s => (
                         <tr key={s.storeId}>
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.totalOrders)}</td>
@@ -1124,7 +1145,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <label>ร้านค้า:</label>
                 <select className="berry-input" value={salesStoreFilter} onChange={e => { setSalesStoreFilter(e.target.value); setDetailStoreId(null); }}>
                   <option value="all">ทุกร้านค้า</option>
-                  {storeSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
+                  {salesStoreSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
                 </select>
 
                 {/* --- เพิ่ม Input เลือกวันที่ 2 อันตรงนี้ --- */}
@@ -1223,7 +1244,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div className="berry-modal-overlay" onClick={() => setDetailStoreId(null)}>
                   <div className="berry-modal-content" onClick={e => e.stopPropagation()}>
                     <div className="berry-modal-header">
-                      <h3>รายละเอียดเมนู: {storeSummary.find(s => s.storeId === detailStoreId)?.storeName || 'ไม่ทราบชื่อร้าน'}</h3>
+                      <h3>รายละเอียดเมนู: {salesStoreSummary.find(s => s.storeId === detailStoreId)?.storeName || 'ไม่ทราบชื่อร้าน'}</h3>
                       <button className="berry-icon-btn" onClick={() => setDetailStoreId(null)}>
                         <Icon name="cancel" size={20} />
                       </button>
@@ -1419,7 +1440,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <label style={{ display: 'block', marginBottom: 4 }}>ร้านค้า</label>
                   <select className="berry-input" value={reportStoreFilter} onChange={e => setReportStoreFilter(e.target.value)}>
                     <option value="all">ทุกร้านค้า</option>
-                    {storeSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
+                    {reportStoreOptions.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
                   </select>
                 </div>
               </div>
