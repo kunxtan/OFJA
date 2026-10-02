@@ -159,7 +159,6 @@ function changePct(current, previous) {
 function summarize(orders) {
     const completed = orders.filter((o) => statusIs(o, 'Completed'));
     const cancelled = orders.filter((o) => statusIs(o, 'Cancelled'));
-    const finished = completed.length + cancelled.length;
     const sales = sumAmount(completed);
     const grossSales = sumAmount([...completed, ...cancelled]);
     return {
@@ -167,7 +166,7 @@ function summarize(orders) {
         grossSales,
         completedCount: completed.length,
         cancelledCount: cancelled.length,
-        cancelRate: finished ? (cancelled.length / finished) * 100 : 0,
+        cancelRate: orders.length ? (cancelled.length /orders.length) * 100 : 0,
         avgOrder: completed.length ? sales / completed.length : 0,
         completed,
         cancelled
@@ -259,11 +258,12 @@ function summarizeMenus(completedOrders) {
     const map = {};
     completedOrders.forEach((o) => {
         (o.items || []).forEach((it) => {
-            const name = it.ProductName || `สินค้า #${it.ProductId}`;
-            if (!map[name])
-                map[name] = { name, qty: 0, amount: 0 };
-            map[name].qty += Number(it.Qty || 0);
-            map[name].amount += Number(it.Qty || 0) * Number(it.UnitPrice || 0);
+            const id = String(it.ProductId);
+            const name = it.ProductName || `สินค้า #${id}`;
+            if (!map[id])
+                map[id] = { id,name, qty: 0, amount: 0 };
+            map[id].qty += Number(it.Qty || 0);
+            map[id].amount += Number(it.Qty || 0) * Number(it.UnitPrice || 0);
         });
     });
     const rows = Object.values(map);
@@ -271,7 +271,8 @@ function summarizeMenus(completedOrders) {
     rows.forEach((r) => {
         r.share = total ? (r.amount / total) * 100 : 0;
     });
-    return rows.sort((a, b) => b.amount - a.amount);
+    return rows.sort((a, b) => { if (b.qty !== a.qty) return b.qty - a.qty; 
+      return Number(a.id) - Number(b.id); });
 }
 // ===== เรียก API และจัดการข้อผิดพลาดจาก Backend =====
 async function callApi(url, options = {}) {
