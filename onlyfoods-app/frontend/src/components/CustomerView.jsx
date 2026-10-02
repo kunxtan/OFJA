@@ -1,10 +1,7 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Cropper from "react-easy-crop";
 
 export default function CustomerView({ user, apiBase, onLogout }) {
-
-  // VIEW
-  const viewportRef = useRef(null);
 
   // USER & PROFILE STATE
   const userId = user?.UserId || user?.id;
@@ -318,7 +315,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [userId, apiBase]);
 
-  useEffect(() => {
+    useEffect(() => {
   const loadUserProfile = async () => {
     if (!userId) return;
 
@@ -361,41 +358,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   loadUserProfile();
 }, [userId, apiBase]);
-
-  //ทดลองทำแสงส้ม
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const target = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    const cur = { ...target };
-    let raf = null;
-
-    const tick = () => {
-      cur.x += (target.x - cur.x) * 0.12;
-      cur.y += (target.y - cur.y) * 0.12;
-      const el = viewportRef.current;
-      if (el) {
-        el.style.setProperty('--gx', `${cur.x.toFixed(1)}px`);
-        el.style.setProperty('--gy', `${cur.y.toFixed(1)}px`);
-      }
-      const moving = Math.abs(target.x - cur.x) > 0.5 || Math.abs(target.y - cur.y) > 0.5;
-      raf = moving ? requestAnimationFrame(tick) : null;
-    };
-    const onMove = (e) => {
-      target.x = e.clientX;
-      target.y = e.clientY;
-      if (viewportRef.current) viewportRef.current.dataset.glow = 'on';
-      if (!raf) raf = requestAnimationFrame(tick);
-    };
-    const onLeave = () => { if (viewportRef.current) viewportRef.current.dataset.glow = 'off'; };
-
-    window.addEventListener('pointermove', onMove, { passive: true });
-    document.addEventListener('pointerleave', onLeave);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerleave', onLeave);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
 
   // โหลดสินค้าเมื่อเปลี่ยนร้าน
   useEffect(() => {
@@ -1154,7 +1116,7 @@ const createCroppedImage = async () => {
   };
 
   // STYLE
-  const pageStyle = { position: "relative", minHeight: "100vh", height: "100vh", overflowY: "auto", scrollbarWidth: "none", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif", boxSizing: "border-box" };
+  const pageStyle = { minHeight: "100vh", height: "100vh", overflowY: "auto", scrollbarWidth: "none", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif", boxSizing: "border-box" };
   const containerStyle = { width: "100%", maxWidth: "1450px", margin: "0 auto", padding: "20px 20px 110px", boxSizing: "border-box" };
   const headerStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "15px", marginBottom: "25px", flexWrap: "wrap" };
   const logoStyle = { fontSize: "27px", fontWeight: "900", color: COLORS.navy, whiteSpace: "nowrap", cursor: "pointer" };
@@ -3022,49 +2984,13 @@ const renderPaymentModal = () => {
   };
 
   return (
-    <div 
-      className="customer-view orange-viewport" 
-      style={pageStyle} 
-      ref={viewportRef}
-    >
+    <div className="customer-view" style={pageStyle}>
       <style>
         {`
           @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
           .customer-view, .customer-view * {font-family: 'Sarabun', sans-serif !important;}
-          /* 🟠 แสงส้มไล่ตามเมาส์ */
-          .orange-viewport { position: relative; overflow-x: hidden; }
-          .cursor-glow {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 500px;
-            height: 500px;
-            border-radius: 50%;
-            background: radial-gradient(
-              circle,
-              rgba(255, 114, 76, 0.35) 0%,
-              rgba(255, 150, 40, 0.12) 45%,
-              rgba(255, 150, 40, 0) 70%
-            );
-            transform: translate3d(
-              calc(var(--gx, 50vw) - 50%),
-              calc(var(--gy, 50vh) - 50%),
-              0
-            );
-            opacity: 0;
-            transition: opacity 0.4s ease;
-            pointer-events: none;
-            z-index: 1;
-            will-change: transform;
-          }
-          .orange-viewport[data-glow='on'] .cursor-glow { opacity: 1; }
-          @media (hover: none) { .cursor-glow { display: none; } }
         `}
       </style>
-
-      {/* 🟠 สร้างดวงไฟส้มตามเมาส์ */}
-      <div className="cursor-glow" aria-hidden="true" />
-
       <div style={containerStyle}>
         {/* HEADER BAR */}
         <header style={headerStyle}>
@@ -3186,117 +3112,134 @@ const renderPaymentModal = () => {
       {renderReportModal()}
       {renderViewReportsModal()}
       {renderCustomAlert()}
-
-      {/* CROP MODAL */}
       {isCropModalOpen && cropImage && (
-        <div
+  <div
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.7)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 9999,
+      padding: "20px",
+      boxSizing: "border-box",
+    }}
+  >
+    <div
+      style={{
+        background: COLORS.white,
+        borderRadius: "20px",
+        padding: "20px",
+        width: "100%",
+        maxWidth: "500px",
+      }}
+    >
+      <h3
+        style={{
+          margin: "0 0 15px",
+          textAlign: "center",
+          fontWeight: "900",
+        }}
+      >
+        ครอปรูปโปรไฟล์
+      </h3>
+
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          height: "350px",
+          background: "#222",
+          borderRadius: "15px",
+          overflow: "hidden",
+        }}
+      >
+        <Cropper
+          image={cropImage}
+          crop={crop}
+          zoom={zoom}
+          aspect={1}
+          cropShape="round"
+          showGrid={false}
+          onCropChange={setCrop}
+          onCropComplete={(croppedArea, croppedAreaPixels) => {
+            setCroppedAreaPixels(croppedAreaPixels);
+          }}
+          onZoomChange={setZoom}
+        />
+      </div>
+
+      <div style={{ marginTop: "15px" }}>
+        <label
           style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.7)",
-            display: "flex",
-            alignItems: "center",
-            justify: "center",
-            zIndex: 9999,
-            padding: "20px",
-            boxSizing: "border-box",
+            display: "block",
+            fontSize: "13px",
+            fontWeight: "800",
+            marginBottom: "5px",
           }}
         >
-          <div
-            style={{
-              background: COLORS.white,
-              borderRadius: "20px",
-              padding: "20px",
-              width: "100%",
-              maxWidth: "500px",
-            }}
-          >
-            <h3 style={{ margin: "0 0 15px", textAlign: "center", fontWeight: "900" }}>
-              ครอปรูปโปรไฟล์
-            </h3>
+          ซูมรูป
+        </label>
 
-            <div
-              style={{
-                position: "relative",
-                width: "100%",
-                height: "350px",
-                background: "#222",
-                borderRadius: "15px",
-                overflow: "hidden",
-              }}
-            >
-              <Cropper
-                image={cropImage}
-                crop={crop}
-                zoom={zoom}
-                aspect={1}
-                cropShape="round"
-                showGrid={false}
-                onCropChange={setCrop}
-                onCropComplete={(croppedArea, croppedAreaPixels) => {
-                  setCroppedAreaPixels(croppedAreaPixels);
-                }}
-                onZoomChange={setZoom}
-              />
-            </div>
+        <input
+          type="range"
+          min={1}
+          max={3}
+          step={0.1}
+          value={zoom}
+          onChange={(e) => setZoom(Number(e.target.value))}
+          style={{ width: "100%" }}
+        />
+      </div>
 
-            <div style={{ marginTop: "15px" }}>
-              <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "5px" }}>
-                ซูมรูป
-              </label>
+      <div
+        style={{
+          display: "flex",
+          gap: "10px",
+          marginTop: "20px",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setIsCropModalOpen(false);
+            setCropImage(null);
+          }}
+          style={{
+            flex: 1,
+            padding: "11px",
+            background: COLORS.lightGray,
+            color: COLORS.navy,
+            border: "none",
+            borderRadius: "10px",
+            fontWeight: "800",
+            cursor: "pointer",
+          }}
+        >
+          ยกเลิก
+        </button>
 
-              <input
-                type="range"
-                min={1}
-                max={3}
-                step={0.1}
-                value={zoom}
-                onChange={(e) => setZoom(Number(e.target.value))}
-                style={{ width: "100%" }}
-              />
-            </div>
-
-            <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCropModalOpen(false);
-                  setCropImage(null);
-                }}
-                style={{
-                  flex: 1,
-                  padding: "11px",
-                  background: COLORS.lightGray,
-                  color: COLORS.navy,
-                  border: "none",
-                  borderRadius: "10px",
-                  fontWeight: "800",
-                  cursor: "pointer",
-                }}
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                type="button"
-                onClick={createCroppedImage}
-                style={{
-                  flex: 1,
-                  padding: "11px",
-                  background: COLORS.orange,
-                  color: COLORS.white,
-                  border: "none",
-                  borderRadius: "10px",
-                  fontWeight: "800",
-                  cursor: "pointer",
-                }}
-              >
-                ใช้รูปนี้
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        <button
+          type="button"
+          onClick={createCroppedImage}
+          style={{
+            flex: 1,
+            padding: "11px",
+            background: COLORS.orange,
+            color: COLORS.white,
+            border: "none",
+            borderRadius: "10px",
+            fontWeight: "800",
+            cursor: "pointer",
+          }}
+        >
+          ใช้รูปนี้
+        </button>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }
