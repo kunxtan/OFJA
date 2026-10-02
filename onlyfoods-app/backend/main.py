@@ -1564,7 +1564,15 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 note_val = item.item_note or item.note or ""
                 validated_items.append((item.product_id, item.qty, real_price, note_val))
 
-            queue_no = f"OF-{random.randint(100, 999)}"
+            # --- แก้ไข: รันเลขคิวตามลำดับออเดอร์ของร้าน และรีเซ็ตใหม่ทุกวัน ---
+                cur.execute("""
+                    SELECT COUNT(*) AS today_count 
+                    FROM `Order` 
+                    WHERE StoreId = %s AND DATE(CreatedAt) = CURRENT_DATE()
+                """, (data.store_id,))
+                row = cur.fetchone()
+                next_queue = (row['today_count'] if row else 0) + 1
+                queue_no = f"{next_queue:03d}"    
             initial_status = 'Pending' if data.is_walk_in else 'Verifying_Slip'
             
             cur.execute("""

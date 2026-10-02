@@ -114,6 +114,35 @@ const getRoleLabel = (role) => {
   return roleMap[role] || role || 'ผู้ใช้งาน';
 };
 
+// --- ฟังก์ชันช่วยแปลงเวลาอย่างปลอดภัยเพื่อป้องกัน NaN ---
+const parseDate = (timeStr) => {
+  if (!timeStr) return null;
+  if (timeStr instanceof Date) return timeStr;
+  
+  let str = String(timeStr).trim();
+  
+  // รองรับรูปแบบ "YYYY-MM-DD HH:mm:ss" หรือ ISO
+  if (str.includes('-') || str.includes('T')) {
+    let isoStr = str.replace(' ', 'T');
+    let d = new Date(isoStr);
+    if (!isNaN(d.getTime())) return d;
+  }
+  
+  // รองรับรูปแบบ "14:30" หรือ "14:30 น."
+  if (str.includes(':')) {
+    const clean = str.replace('น.', '').replace('น', '').trim();
+    const parts = clean.split(':').map(Number);
+    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      const d = new Date();
+      d.setHours(parts[0], parts[1], parts[2] || 0, 0);
+      return d;
+    }
+  }
+  
+  let d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 export default function KitchenView({ user, apiBase, onLogout }) {
   const [allOrders, setAllOrders] = useState([]);
   const [summary, setSummary] = useState([]);
@@ -194,7 +223,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-const sortedOrders = [...allOrders].sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
+  const sortedOrders = [...allOrders].sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
 
   const pendingOrders = sortedOrders.filter(o => o.Status === 'Pending' || o.Status === 'Cooking');
   const readyOrders = sortedOrders.filter(o => o.Status === 'Ready' || o.Status === 'Completed');
@@ -214,53 +243,46 @@ const sortedOrders = [...allOrders].sort((a, b) => (a.OrderID || 0) - (b.OrderID
     return 'เปิดให้บริการ';
   };
 
-const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
-  if (e) e.stopPropagation();
-  isUpdatingRef.current = true;
+  const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
+    if (e) e.stopPropagation();
+    isUpdatingRef.current = true;
 
-  // อัปเดต Local State ทันที
-  setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
+    // อัปเดต Local State ทันที
+    setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
-  // เมื่อกด Undo ให้สลับหน้าจอไป Tab คิวรอปรุงทันที
-  if (targetStatus === 'Pending') {
-    setFilterTab('Pending');
-  }
+    // เมื่อกด Undo ให้สลับหน้าจอไป Tab คิวรอปรุงทันที
+    if (targetStatus === 'Pending') {
+      setFilterTab('Pending');
+    }
 
-  try {
-    const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        status: targetStatus,
-        user_role: 'Kitchen Staff',
-        cancel_reason: null
-      })
-    });
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: targetStatus,
+          user_role: 'Kitchen Staff',
+          cancel_reason: null
+        })
+      });
 
-    if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
-  } catch (err) {
-    console.error("Update status error:", err);
-    // หาก API ล้มเหลว ให้ดึงข้อมูลจริงกลับมาจาก Backend
-    fetchData();
-  } finally {
-    isUpdatingRef.current = false;
-  }
-};
+      if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
+    } catch (err) {
+      console.error("Update status error:", err);
+      // หาก API ล้มเหลว ให้ดึงข้อมูลจริงกลับมาจาก Backend
+      fetchData();
+    } finally {
+      isUpdatingRef.current = false;
+    }
+  };
 
   // ตรวจสอบออเดอร์ด่วน (เวลานัดรับเหลือ <= 5 นาที)
   const getPickupAlert = (pickupTimeStr) => {
     if (!pickupTimeStr) return null;
     try {
       const now = new Date();
-      let targetDate = new Date();
-
-      if (pickupTimeStr.includes(':')) {
-        const cleanTime = pickupTimeStr.replace('น.', '').replace('น', '').trim();
-        const [hours, minutes] = cleanTime.split(':').map(Number);
-        targetDate.setHours(hours, minutes, 0, 0);
-      } else {
-        targetDate = new Date(pickupTimeStr);
-      }
+      const targetDate = parseDate(pickupTimeStr);
+      if (!targetDate) return null;
 
       const diffMins = Math.floor((targetDate - now) / 60000);
 
@@ -279,18 +301,23 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
 
   const getElapsedInfo = (timeStr) => {
     if (!timeStr) return { label: 'เพิ่งเข้า', isUrgent: false };
-    const diffMins = Math.floor((new Date() - new Date(timeStr)) / 60000);
-    if (diffMins < 1) return { label: 'เพิ่งเข้า', isUrgent: false };
+    const d = parseDate(timeStr);
+    if (!d) return { label: 'เพิ่งเข้า', isUrgent: false };
+    
+    const diffMins = Math.floor((new Date() - d) / 60000);
+    if (isNaN(diffMins) || diffMins < 1) return { label: 'เพิ่งเข้า', isUrgent: false };
     if (diffMins < 60) return { label: `${diffMins} นาทีที่แล้ว`, isUrgent: diffMins >= 15 };
     return { label: `${Math.floor(diffMins / 60)} ชม. ${diffMins % 60} น.`, isUrgent: true };
   };
 
   const formatTime = (timeStr) => {
     if (!timeStr) return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
-    return new Date(timeStr).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+    const d = parseDate(timeStr);
+    if (!d) return String(timeStr);
+    return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
   };
 
-  // จัดรูปแบบเลขคิวให้ชัดเจน (รันคิวรายวันตาม order)
+  // จัดรูปแบบเลขคิวให้ชัดเจน
   const formatQueueNo = (queueNo) => {
     if (!queueNo) return 'คิว #--';
     return typeof queueNo === 'number' ? `คิว #${String(queueNo).padStart(3, '0')}` : `คิว #${queueNo}`;
@@ -578,7 +605,7 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
         </div>
       </div>
 
-      {/* Main KDS Grid View (ปรับขนาดกรอบให้อ่านง่าย แตะง่ายขึ้น) */}
+      {/* Main KDS Grid View */}
       <main style={{
         flex: 1,
         padding: '20px 28px 28px',
@@ -602,7 +629,8 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
             </div>
           ) : (
             displayedOrders.map(o => {
-              const timeInfo = getElapsedInfo(o.CreatedAt);
+              const orderTimeStr = o.CreatedAt || o.OrderTime;
+              const timeInfo = getElapsedInfo(orderTimeStr);
               const pickupAlert = getPickupAlert(o.PickupTime);
               const isCompleted = o.Status === 'Completed';
 
@@ -634,7 +662,7 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
                         </div>
                         <div style={{ fontSize: '13px', color: theme.textMuted, marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                           <ClockIcon />
-                          <span>สั่งเมื่อ: {formatTime(o.CreatedAt)} ({timeInfo.label})</span>
+                          <span>สั่งเมื่อ: {formatTime(orderTimeStr)} ({timeInfo.label})</span>
                         </div>
                       </div>
 
@@ -655,7 +683,7 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
                       )}
                     </div>
 
-                    {/* แจ้งเตือนออเดอร์ด่วน (เหลือเวลานัดรับ <= 5 นาที) */}
+                    {/* แจ้งเตือนออเดอร์ด่วน */}
                     {pickupAlert && (
                       <div style={{
                         animation: 'urgentFlash 1.5s infinite',
@@ -722,7 +750,7 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
                     )}
                   </div>
 
-                  {/* ส่วนปุ่มสถานะและปุ่ม Undo (ปรับให้มีสัมผัสใหญ่ สะดวกคนครัว) */}
+                  {/* ส่วนปุ่มสถานะและปุ่ม Undo */}
                   <div style={{ marginTop: '12px' }}>
                     {filterTab === 'Pending' ? (
                       <button
@@ -787,7 +815,6 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
                               พร้อมรับอาหาร (รอหน้าร้านส่งมอบ)
                             </div>
                             
-                            {/* ปุ่ม Undo ย้อนกลับสถานะ */}
                             <button
                               onClick={(e) => updateOrderStatus(o.OrderID, 'Pending', e)}
                               style={{
@@ -824,7 +851,7 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
         </div>
       </main>
 
-      {/* Pop-up: รายละเอียดออเดอร์ (Order Detail Popup) */}
+      {/* Pop-up: รายละเอียดออเดอร์ */}
       {selectedOrder && (
         <div
           onClick={() => setSelectedOrder(null)}
@@ -888,7 +915,7 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลาที่สั่ง:</span>
-                <strong>{formatTime(selectedOrder.CreatedAt)}</strong>
+                <strong>{formatTime(selectedOrder.CreatedAt || selectedOrder.OrderTime)}</strong>
               </div>
 
               {selectedOrder.PickupTime && (
@@ -970,7 +997,7 @@ const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
         </div>
       )}
 
-      {/* Pop-up: แจ้งเตือนยืนยันออกจากระบบ (Logout Alert Modal) */}
+      {/* Pop-up: แจ้งเตือนยืนยันออกจากระบบ */}
       {showLogoutModal && (
         <div
           onClick={() => setShowLogoutModal(false)}
