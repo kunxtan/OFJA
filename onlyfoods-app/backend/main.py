@@ -491,8 +491,9 @@ def logout():
 
 @app.put("/api/users/profile")
 def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
+    print("PROFILE DATA RECEIVED:", data)
+    print("PROFILE IMG RECEIVED:", data.profile_img)
     ensure_user_columns(db)
-    
     uid = data.user_id if data.user_id is not None else data.userId
     name = data.full_name or data.fullName or data.name
     phone = data.phone
@@ -528,6 +529,8 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                 )
             )
             db.commit()
+
+            print("PROFILE SAVED:", img is not None)
 
             cur.execute("SELECT * FROM Users WHERE UserId = %s", (uid,))
             user = cur.fetchone()
@@ -620,6 +623,40 @@ def get_customer_profile(user_id: int, db=Depends(get_db)):
         cur.execute("SELECT COUNT(*) as TotalOrders FROM `Order` WHERE UserId = %s AND Status IN ('Completed', 'NoShow')", (user_id,))
         orders_count = cur.fetchone()
         user['TotalOrders'] = orders_count['TotalOrders']
+        return user
+
+@app.get("/api/users/{user_id}")
+def get_user_profile(user_id: int, db=Depends(get_db)):
+    ensure_user_columns(db)
+
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                UserId,
+                Username,
+                FullName,
+                Phone,
+                Email,
+                ProfileImg,
+                CardHolderName,
+                CardLast4,
+                CardExpiry,
+                Role
+            FROM Users
+            WHERE UserId = %s
+            """,
+            (user_id,)
+        )
+
+        user = cur.fetchone()
+
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail="ไม่พบข้อมูลผู้ใช้นี้"
+            )
+
         return user
 
 @app.get("/api/users/{user_id}")
@@ -1882,7 +1919,7 @@ def customer_cancel_order(
             send_notif(
                 db,
                 order["UserId"],
-                f"❌ คิว {order['QueueNo']} ถูกยกเลิกตามคำขอของคุณแล้ว "
+                f"คิว {order['QueueNo']} ถูกยกเลิกตามคำขอของคุณแล้ว "
                 f"(การคืนเงินดำเนินการตามระบบชำระเงินของร้าน)"
             )
 
@@ -1991,7 +2028,7 @@ def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_d
         cur.execute("SELECT UserId, QueueNo FROM `Order` WHERE OrderID=%s", (order_id,))
         o = cur.fetchone()
         if o and o['UserId']:
-            send_notif(db, o['UserId'], f"⚠️ คิว {o['QueueNo']} มีปัญหา: {payload.reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)")
+            send_notif(db, o['UserId'], f"คิว {o['QueueNo']} มีปัญหา: {payload.reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)")
         
         log_audit(db, "CANCEL_REQUEST", "Front Staff", f"Order {order_id} รอการยืนยันยกเลิก")
         db.commit()

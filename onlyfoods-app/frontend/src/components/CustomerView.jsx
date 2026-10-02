@@ -17,7 +17,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [editCardHolderName, setEditCardHolderName] = useState("");
   const [editCardNumber, setEditCardNumber] = useState("");
   const [editCardExpiry, setEditCardExpiry] = useState("");
-  const [profileImage, setProfileImage] = useState(user?.ProfileImage || user?.avatar || null);
+  const [profileImage, setProfileImage] = useState(user?.ProfileImg || user?.ProfileImage || user?.avatar || null);
   const [cropImage, setCropImage] = useState(null);
   const [isCropModalOpen, setIsCropModalOpen] = useState(false);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -315,6 +315,50 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [userId, apiBase]);
 
+    useEffect(() => {
+  const loadUserProfile = async () => {
+    if (!userId) return;
+
+    try {
+      const res = await fetch(`${apiBase}/api/users/${userId}`);
+
+      console.log("PROFILE API STATUS:", res.status);
+
+      if (!res.ok) {
+        console.error("โหลดข้อมูลโปรไฟล์ไม่สำเร็จ");
+        return;
+      }
+
+      const data = await res.json();
+
+      console.log("PROFILE DATA:", data);
+      console.log("PROFILE IMAGE:", data.ProfileImg);
+
+      setFullName(data.FullName || "");
+      setPhone(data.Phone || "");
+
+      setProfileImage(
+        data.ProfileImg ||
+        data.ProfileImage ||
+        data.avatar ||
+        null
+      );
+
+      setCardHolderName(data.CardHolderName || "");
+      setCardLast4(data.CardLast4 || "");
+      setCardExpiry(data.CardExpiry || "");
+
+      setEditName(data.FullName || "");
+      setEditPhone(data.Phone || "");
+
+    } catch (error) {
+      console.error("Load user profile error:", error);
+    }
+  };
+
+  loadUserProfile();
+}, [userId, apiBase]);
+
   // โหลดสินค้าเมื่อเปลี่ยนร้าน
   useEffect(() => {
     if (selectedStore) {
@@ -385,48 +429,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       setIsInitialized(true);
     }
   }, [notifs, isInitialized]);
-
-  useEffect(() => {
-  const loadUserProfile = async () => {
-    if (!userId) return;
-
-    try {
-      const res = await fetch(`${apiBase}/api/users/${userId}`);
-
-      if (!res.ok) {
-        throw new Error("โหลดข้อมูลผู้ใช้ไม่สำเร็จ");
-      }
-
-      const data = await res.json();
-
-      // ข้อมูลโปรไฟล์
-      setFullName(data.FullName || "");
-      setPhone(data.Phone || "");
-
-      // ข้อมูลบัตร
-      setCardHolderName(data.CardHolderName || "");
-      setCardLast4(data.CardLast4 || "");
-      setCardExpiry(data.CardExpiry || "");
-
-      // ถ้ามี state สำหรับแก้ไขโปรไฟล์
-      setEditName(data.FullName || "");
-      setEditPhone(data.Phone || "");
-
-    } catch (error) {
-      console.error("Load user profile error:", error);
-    }
-  };
-
-  loadUserProfile();
-  }, [userId, apiBase]);
-
-  // อัปเดตข้อมูลบัตรและโปรไฟล์ทันทีเมื่อ user prop มีการเปลี่ยนแปลง (เช่น ตอนล็อกอินใหม่)
-  useEffect(() => {
-    if (user) {
-      setEditName(user.FullName || user.name || "");
-      setEditPhone(user.Phone || "");
-    }
-  }, [user]);
 
   const activeStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
@@ -575,7 +577,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       if (res.ok && (data.success || data.message)) {
         customAlert(
           "สำเร็จ",
-          "เปลี่ยนเมนูสำเร็จ! ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว",
+          "เปลี่ยนเมนูสำเร็จ ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว",
           "success"
         );
         setOutOfStockOrder(null);
@@ -618,46 +620,81 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 };
 
   const createCroppedImage = async () => {
-  if (!cropImage || !croppedAreaPixels) return;
+    if (!cropImage || !croppedAreaPixels) return;
 
-  const image = new Image();
-  image.src = cropImage;
+    try {
+      const image = new Image();
+      image.src = cropImage;
 
-  await new Promise((resolve) => {
-    image.onload = resolve;
-  });
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = reject;
+      });
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
 
-  canvas.width = croppedAreaPixels.width;
-  canvas.height = croppedAreaPixels.height;
+      canvas.width = croppedAreaPixels.width;
+      canvas.height = croppedAreaPixels.height;
 
-  ctx.drawImage(
-    image,
-    croppedAreaPixels.x,
-    croppedAreaPixels.y,
-    croppedAreaPixels.width,
-    croppedAreaPixels.height,
-    0,
-    0,
-    croppedAreaPixels.width,
-    croppedAreaPixels.height
-  );
+      ctx.drawImage(
+        image,
+        croppedAreaPixels.x,
+        croppedAreaPixels.y,
+        croppedAreaPixels.width,
+        croppedAreaPixels.height,
+        0,
+        0,
+        croppedAreaPixels.width,
+        croppedAreaPixels.height
+      );
 
-  const croppedBase64 = canvas.toDataURL("image/jpeg", 0.8);
+      const croppedBase64 = canvas.toDataURL("image/jpeg", 0.9);
 
-  setProfileImage(croppedBase64);
-  setIsCropModalOpen(false);
-  setCropImage(null);
-};
+      // 1. อัปเดตการแสดงผลรูปบนหน้าจอชั่วคราว
+      setProfileImage(croppedBase64);
 
-  const handleRemoveProfileImage = () => {
-    if (window.confirm("คุณต้องการลบรูปโปรไฟล์ใช่หรือไม่?")) {
-      setProfileImage(null);
+      // 2. ยิง API บันทึกลง Database ทันทีที่กด "ใช้รูปนี้"
+      const res = await fetch(`${apiBase}/api/users/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          full_name: fullName,
+          phone: phone,
+          profile_img: croppedBase64, // ส่งรูปใหม่บันทึกลง DB
+          card_holder_name: cardHolderName,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.detail || "บันทึกรูปโปรไฟล์ไม่สำเร็จ");
+      }
+
+      const updatedUser = await res.json();
+      setProfileImage(updatedUser.ProfileImg || croppedBase64);
+
+      // 3. ปิด Pop-up และล้างข้อมูล
+      setIsCropModalOpen(false);
+      setCropImage(null);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setCroppedAreaPixels(null);
+
+      customAlert("อัปเดตรูปโปรไฟล์เรียบร้อยแล้ว!");
+
+    } catch (error) {
+      console.error("Crop/Save image error:", error);
+      customAlert("เกิดข้อผิดพลาด", error.message || "ไม่สามารถบันทึกรูปได้", "error");
     }
   };
 
+  const handleRemoveProfileImage = () => {
+    setProfileImage(null);
+    customAlert("สำเร็จ", "ลบรูปโปรไฟล์เรียบร้อยแล้ว", "success");
+  };
+  
   const handleSaveProfileData = async (e) => {
   e.preventDefault();
 
@@ -677,6 +714,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         user_id: userId,
         full_name: editName,
         phone: editPhone,
+        profile_img: profileImage,
         card_holder_name: cardHolderName,
         //card_last4: last4,
         //card_expiry: savedCardExpiry,
@@ -692,21 +730,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
 
     const updatedUser = await res.json();
-
     setFullName(updatedUser.FullName || editName);
     setPhone(updatedUser.Phone || editPhone);
-
-    setCardHolderName(
-      updatedUser.CardHolderName || ""
-    );
-
-    setCardLast4(
-      updatedUser.CardLast4 || ""
-    );
-
-    setCardExpiry(
-      updatedUser.CardExpiry || ""
-    );
+    setProfileImage(updatedUser.ProfileImg || profileImage || null);
+    setCardHolderName(updatedUser.CardHolderName || "");
+    setCardLast4(updatedUser.CardLast4 || "");
+    setCardExpiry(updatedUser.CardExpiry || "");
 
     // ล้างเลขบัตรเต็มออกจากหน้าจอ
     setEditCardNumber("");
@@ -1620,9 +1649,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         <div style={{ marginTop: "25px" }}>
           <button
             onClick={() => {
-              if (window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) {
+              customAlert("สำเร็จ", "ออกจากระบบสำเร็จ", "success");
+              setTimeout(() => {
                 if (onLogout) onLogout();
-              }
+              }, 1000);
             }}
             style={{
               width: "100%",
