@@ -38,27 +38,9 @@ const ClockIcon = () => (
   </svg>
 );
 
-const CheckIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="20 6 9 17 4 12"/>
-  </svg>
-);
-
-const UndoIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/>
-  </svg>
-);
-
 const LogoutIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-  </svg>
-);
-
-const UserIcon = () => (
-  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
   </svg>
 );
 
@@ -71,14 +53,6 @@ const CookingIcon = () => (
 const DoneCheckIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
-  </svg>
-);
-
-const PrinterIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="6 9 6 2 18 2 18 9"></polyline>
-    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-    <rect x="6" y="14" width="12" height="8"></rect>
   </svg>
 );
 
@@ -171,9 +145,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // -------------------------------------------------------------
-  // [ปรับปรุง] เรียงคิวตามลำดับเลขคิว / Order ID (คิวก่อนขึ้นก่อน)
-  // -------------------------------------------------------------
+  // เรียงคิวตามลำดับเลขคิว / Order ID (คิวก่อนขึ้นก่อน)
   const pendingOrders = allOrders
     .filter(o => o.Status === 'Pending' || o.Status === 'Cooking')
     .sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
@@ -192,65 +164,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return 'เปิดให้บริการ';
   };
 
-  // -------------------------------------------------------------
-  // [ปรับปรุง] พิมพ์ใบสั่งอาหารออกเครื่องพิมพ์
-  // -------------------------------------------------------------
-  const printOrderTicket = (order) => {
-    const printWindow = window.open('', '_blank', 'width=380,height=550');
-    if (!printWindow) return;
-
-    const itemsHtml = (order.items || []).map(item => `
-      <div style="display:flex; justify-content:space-between; margin-bottom: 6px; font-size:14px; font-weight:bold;">
-        <span>${item.ProductName}</span>
-        <span>x${item.Qty}</span>
-      </div>
-      ${item.ItemNote ? `<div style="font-size:12px; color:#D97706; margin-bottom: 6px; padding-left: 8px;">* ${item.ItemNote}</div>` : ''}
-    `).join('');
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Order Ticket #${order.QueueNo}</title>
-          <style>
-            body { font-family: 'Sarabun', sans-serif; padding: 10px; margin: 0; width: 280px; color: #000; }
-            .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 10px; }
-            .queue { font-size: 32px; font-weight: 900; margin: 4px 0; }
-            .items { border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
-            .note { font-size: 12px; background: #eee; padding: 6px; border-radius: 4px; margin-top: 8px; }
-            .footer { font-size: 11px; text-align: center; margin-top: 10px; color: #555; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div style="font-size:12px; text-transform:uppercase;">ใบสั่งปรุงอาหาร (Kitchen Ticket)</div>
-            <div class="queue">#${order.QueueNo}</div>
-            <div style="font-size:12px;">เวลา: ${formatTime(order.CreatedAt)}</div>
-          </div>
-          <div class="items">
-            ${itemsHtml}
-            ${order.Note ? `<div class="note"><strong>หมายเหตุ:</strong> ${order.Note}</div>` : ''}
-          </div>
-          <div class="footer">Only Foods Kitchen System</div>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(function() { window.close(); }, 500);
-            };
-          </script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-  };
-
-  // -------------------------------------------------------------
-  // [ปรับปรุง] เปลี่ยนสถานะออเดอร์ + พิมพ์ใบสั่งอาหารเมื่อกดปรุง
-  // -------------------------------------------------------------
+  // เปลี่ยนสถานะออเดอร์ (ไม่เชื่อมเครื่องพิมพ์ และป้องกัน Undo หากหน้าร้านส่งมอบแล้ว)
   const updateOrderStatus = async (id, targetStatus, e) => {
     if (e) e.stopPropagation();
     
-    // ตรวจจับออเดอร์ที่หน้าร้านส่งมอบไปแล้ว ห้ามกด Undo หรือเปลี่ยนสถานะ
     const targetOrder = allOrders.find(o => o.OrderID === id);
     if (targetOrder?.Status === 'Completed') {
       alert('หน้าร้านได้ส่งมอบอาหารเรียบร้อยแล้ว ไม่สามารถย้อนกลับสถานะหรือกดอันดูได้');
@@ -258,11 +175,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     }
 
     isUpdatingRef.current = true;
-    
-    // เชื่อมต่อเครื่องพิมพ์เมื่อกดปรุงอาหาร
-    if (targetStatus === 'Cooking' && targetOrder) {
-      printOrderTicket(targetOrder);
-    }
 
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
     if (selectedOrder?.OrderID === id) setSelectedOrder(null);
@@ -290,14 +202,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     }
   };
 
-  // -------------------------------------------------------------
-  // [ปรับปรุง] แจ้งเตือนออเดอร์เร่งด่วน 5 นาที
-  // -------------------------------------------------------------
   const getElapsedInfo = (timeStr) => {
     if (!timeStr) return { label: 'เพิ่งเข้า', isUrgent: false };
     const diffMins = Math.floor((new Date() - new Date(timeStr)) / 60000);
     if (diffMins < 1) return { label: 'เพิ่งเข้า', isUrgent: false };
-    if (diffMins < 60) return { label: `${diffMins} นาทีที่แล้ว`, isUrgent: diffMins >= 5 }; // แจ้งเตือนเมื่อเกิน 5 นาที
+    if (diffMins < 60) return { label: `${diffMins} นาทีที่แล้ว`, isUrgent: diffMins >= 5 };
     return { label: `${Math.floor(diffMins / 60)} ชม. ${diffMins % 60} น.`, isUrgent: true };
   };
 
@@ -337,550 +246,431 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           -webkit-tap-highlight-color: transparent;
         }
         button:active { transform: scale(0.98); }
-        @keyframes statusPulse {
-          0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-          70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-          100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-        }
-        @keyframes urgentBlink {
-          0% { border-color: #EF4444; box-shadow: 0 0 10px rgba(239,68,68,0.4); }
-          50% { border-color: #DC2626; box-shadow: 0 0 18px rgba(239,68,68,0.8); }
-          100% { border-color: #EF4444; box-shadow: 0 0 10px rgba(239,68,68,0.4); }
-        }
       `}</style>
 
-      {/* Top Header Bar */}
-      <header style={{ 
-        background: theme.navBg, 
-        borderBottom: `1px solid ${theme.border}`, 
-        padding: '12px 28px', 
-        display: 'flex', 
-        alignItems: 'center', 
+      {/* Top Navigation Bar */}
+      <header style={{
+        height: '64px',
+        backgroundColor: theme.navBg,
+        borderBottom: `1px solid ${theme.border}`,
+        display: 'flex',
+        alignItems: 'center',
         justifyContent: 'space-between',
-        width: '100%',
-        boxSizing: 'border-box',
-        boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.04)',
-        flexShrink: 0,
-        zIndex: 100
+        padding: '0 24px',
+        zIndex: 20,
+        boxShadow: isDark ? '0 4px 20px rgba(0,0,0,0.3)' : '0 2px 10px rgba(0,0,0,0.05)'
       }}>
-        
-        {/* Left Side: Brand Logo + Food Court Status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ 
-            width: '38px', 
-            height: '38px', 
-            borderRadius: '10px', 
-            background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED', 
-            color: PALETTE.coral, 
-            display: 'grid', 
-            placeItems: 'center' 
+          <div style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '10px',
+            backgroundColor: `${PALETTE.coral}15`,
+            color: PALETTE.coral,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}>
             <KitchenIcon />
           </div>
-
           <div>
-            <div style={{ fontSize: '20px', fontWeight: '800', color: theme.textMain, lineHeight: '1.2', letterSpacing: '-0.3px' }}>
+            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: '700', letterSpacing: '-0.3px' }}>
               Only Foods Kitchen
-            </div>
-            <div style={{ fontSize: '12.5px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px' }}>
-              <span>สถานะศูนย์อาหาร:</span>
-              <span style={{ 
-                color: isStoreActive ? PALETTE.emerald : '#EF4444', 
-                fontWeight: '700', 
-                display: 'inline-flex', 
-                alignItems: 'center', 
-                gap: '5px' 
-              }}>
-                <span style={{ 
-                  width: '7px', 
-                  height: '7px', 
-                  borderRadius: '50%', 
-                  background: isStoreActive ? PALETTE.emerald : '#EF4444',
-                  animation: isStoreActive ? 'statusPulse 2s infinite' : 'none'
-                }} />
-                {getStatusText()}
-              </span>
+            </h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: theme.textMuted }}>
+              <span style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: isStoreActive ? PALETTE.emerald : '#EF4444',
+                display: 'inline-block'
+              }} />
+              {getStatusText()}
             </div>
           </div>
         </div>
 
-        {/* Right Side: Realtime Counters & Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
-          <div style={{ 
-            background: theme.cardInner, 
-            border: `1px solid ${theme.border}`, 
-            padding: '6px 14px', 
-            borderRadius: '99px', 
-            fontSize: '13px', 
-            fontWeight: '600'
-          }}>
-            คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '3px' }}>{pendingOrders.length}</span>
-          </div>
-
-          {summary.slice(0, 3).map((s, i) => (
-            <div key={i} style={{ 
-              background: theme.cardInner, 
-              border: `1px solid ${theme.border}`, 
-              padding: '6px 14px', 
-              borderRadius: '99px', 
-              fontSize: '12.5px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '6px' 
-            }}>
-              <span>{s.ProductName}</span>
-              <span style={{ background: PALETTE.coral, color: '#FFF', borderRadius: '99px', padding: '1px 8px', fontSize: '11px', fontWeight: '800' }}>{s.TotalQty}</span>
-            </div>
-          ))}
-
-          {/* Theme Switcher Button */}
+        {/* Controls & Profile */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <button
             onClick={() => setIsDark(!isDark)}
             style={{
-              background: theme.cardInner,
-              color: theme.textMain,
+              background: 'transparent',
               border: `1px solid ${theme.border}`,
-              borderRadius: '10px',
-              padding: '8px 14px',
-              fontSize: '13px',
-              fontWeight: '700',
-              cursor: 'pointer',
+              borderRadius: '8px',
+              padding: '8px 12px',
+              color: theme.textMain,
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              transition: 'all 0.2s ease'
+              cursor: 'pointer',
+              fontSize: '13px'
             }}
           >
             {isDark ? <SunIcon /> : <MoonIcon />}
-            {isDark ? 'Light' : 'Dark'}
+            <span>{isDark ? 'โหมดสว่าง' : 'โหมดมืด'}</span>
           </button>
 
-          {/* User Profile Button */}
-          <button
-            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            style={{
-              background: theme.cardInner,
-              color: theme.textMain,
-              border: `1px solid ${theme.border}`,
-              borderRadius: '99px',
-              padding: '7px 16px',
-              fontSize: '13.5px',
-              fontWeight: '700',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <UserIcon />
-            <span>{displayName}</span>
-          </button>
-
-          {/* Dropdown Menu */}
-          {isDropdownOpen && (
-            <div 
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
               style={{
-                position: 'absolute',
-                top: 'calc(100% + 10px)',
-                right: 0,
-                background: theme.cardBg,
+                background: 'transparent',
                 border: `1px solid ${theme.border}`,
-                borderRadius: '16px',
-                width: '240px',
-                padding: '16px',
-                boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.08)',
-                zIndex: 1000,
-                boxSizing: 'border-box'
+                borderRadius: '8px',
+                padding: '6px 12px',
+                color: theme.textMain,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: 'pointer'
               }}
             >
-              <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>
-                  {displayName}
-                </div>
-                <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '2px' }}>
-                  {displayRole}
-                </div>
+              <div style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                backgroundColor: PALETTE.coral,
+                color: '#FFF',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: '700',
+                fontSize: '13px'
+              }}>
+                {displayName.charAt(0)}
               </div>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontSize: '13px', fontWeight: '600', lineHeight: '1.2' }}>{displayName}</div>
+                <div style={{ fontSize: '11px', color: theme.textMuted }}>{displayRole}</div>
+              </div>
+            </button>
 
-              <hr style={{ border: 'none', borderTop: `1px solid ${theme.border}`, margin: '12px 0' }} />
-
-              <button
-                onClick={() => {
-                  setIsDropdownOpen(false);
-                  setShowLogoutModal(true);
-                }}
-                style={{
-                  width: '100%',
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#EF4444',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  fontSize: '13.5px',
-                  fontWeight: '700',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  textAlign: 'left',
-                  transition: 'background 0.2s'
-                }}
-                onMouseOver={(e) => e.currentTarget.style.background = isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2'}
-                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <LogoutIcon />
-                ออกจากระบบ
-              </button>
-            </div>
-          )}
+            {isDropdownOpen && (
+              <div style={{
+                position: 'absolute',
+                top: '110%',
+                right: 0,
+                width: '200px',
+                backgroundColor: theme.cardBg,
+                border: `1px solid ${theme.border}`,
+                borderRadius: '10px',
+                padding: '6px',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+                zIndex: 30
+              }}>
+                <button
+                  onClick={() => {
+                    setIsDropdownOpen(false);
+                    setShowLogoutModal(true);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#EF4444',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    cursor: 'pointer',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    textAlign: 'left'
+                  }}
+                >
+                  <LogoutIcon />
+                  <span>ออกจากระบบ</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Modern Segmented Control Tab */}
-      <div style={{
-        padding: '16px 28px 0',
-        display: 'flex',
-        alignItems: 'center',
-        flexShrink: 0
-      }}>
-        <div style={{
-          display: 'inline-flex',
-          background: isDark ? 'rgba(255,255,255,0.05)' : '#E2E8F0',
-          padding: '4px',
-          borderRadius: '14px',
-          gap: '4px'
+      {/* Main Content Area */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        
+        {/* Left Side: Summary Panel */}
+        <aside style={{
+          width: '280px',
+          borderRight: `1px solid ${theme.border}`,
+          backgroundColor: theme.cardBg,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '16px',
+          overflowY: 'auto'
         }}>
-          <button
-            onClick={() => setFilterTab('Pending')}
-            style={{
-              padding: '9px 20px',
-              borderRadius: '10px',
-              border: 'none',
-              background: filterTab === 'Pending' ? theme.cardBg : 'transparent',
-              color: filterTab === 'Pending' ? PALETTE.coral : theme.textMuted,
-              fontWeight: '700',
-              fontSize: '13.5px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: filterTab === 'Pending' ? (isDark ? '0 2px 10px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.06)') : 'none',
-              transition: 'all 0.2s'
-            }}
-          >
-            <CookingIcon />
-            <span>คิวรอปรุง</span>
-            <span style={{
-              background: filterTab === 'Pending' ? (isDark ? 'rgba(255,114,76,0.2)' : '#FFF0ED') : 'transparent',
-              color: filterTab === 'Pending' ? PALETTE.coral : theme.textMuted,
-              padding: '1px 8px',
-              borderRadius: '99px',
-              fontSize: '11.5px',
-              fontWeight: '800'
-            }}>
-              {pendingOrders.length}
-            </span>
-          </button>
+          <h2 style={{ fontSize: '14px', fontWeight: '700', margin: '0 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.5px', color: theme.textMuted }}>
+            สรุปรายการอาหารที่ต้องทำ
+          </h2>
 
-          <button
-            onClick={() => setFilterTab('Ready')}
-            style={{
-              padding: '9px 20px',
-              borderRadius: '10px',
-              border: 'none',
-              background: filterTab === 'Ready' ? theme.cardBg : 'transparent',
-              color: filterTab === 'Ready' ? PALETTE.emerald : theme.textMuted,
-              fontWeight: '700',
-              fontSize: '13.5px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: filterTab === 'Ready' ? (isDark ? '0 2px 10px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.06)') : 'none',
-              transition: 'all 0.2s'
-            }}
-          >
-            <DoneCheckIcon />
-            <span>ปรุงเสร็จแล้ว / ประวัติ</span>
-            <span style={{
-              background: filterTab === 'Ready' ? (isDark ? 'rgba(16,185,129,0.2)' : '#ECFDF5') : 'transparent',
-              color: filterTab === 'Ready' ? PALETTE.emerald : theme.textMuted,
-              padding: '1px 8px',
-              borderRadius: '99px',
-              fontSize: '11.5px',
-              fontWeight: '800'
-            }}>
-              {readyOrders.length}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main KDS Grid View */}
-      <main style={{ 
-        flex: 1, 
-        padding: '16px 28px 24px', 
-        boxSizing: 'border-box', 
-        overflowY: 'auto',
-        overflowX: 'hidden'
-      }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: '20px' }}>
-          {displayedOrders.length === 0 ? (
-            <div style={{ 
-              gridColumn: '1 / -1', 
-              textAlign: 'center', 
-              padding: '90px 20px', 
-              background: theme.cardBg, 
-              borderRadius: '18px', 
-              border: `1px solid ${theme.border}` 
-            }}>
-              <h3 style={{ margin: 0, color: theme.textMuted, fontSize: '15px', fontWeight: '600' }}>
-                {filterTab === 'Pending' ? 'ไม่มีรายการอาหารค้างปรุงในขณะนี้' : 'ไม่มีรายการออเดอร์ที่ปรุงเสร็จแล้ว'}
-              </h3>
-            </div>
-          ) : (
-            displayedOrders.map(o => {
-              const timeInfo = getElapsedInfo(o.CreatedAt);
-              const isUrgent5Min = filterTab === 'Pending' && timeInfo.isUrgent;
-
-              return (
-                <article
-                  key={o.OrderID}
-                  onClick={() => setSelectedOrder(o)}
-                  style={{
-                    background: theme.cardBg,
-                    borderRadius: '18px',
-                    border: isUrgent5Min ? '2px solid #EF4444' : `1px solid ${theme.border}`,
-                    borderTop: filterTab === 'Pending' 
-                      ? `6px solid ${isUrgent5Min ? '#EF4444' : PALETTE.coral}`
-                      : `6px solid ${o.Status === 'Completed' ? '#64748B' : PALETTE.emerald}`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    overflow: 'hidden',
-                    cursor: 'pointer',
-                    boxShadow: isUrgent5Min 
-                      ? '0 0 16px rgba(239, 68, 68, 0.3)' 
-                      : (isDark ? '0 4px 20px rgba(0,0,0,0.2)' : '0 4px 16px rgba(15,23,42,0.03)'),
-                    animation: isUrgent5Min ? 'urgentBlink 2s infinite' : 'none',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  {/* Card Ticket Header */}
-                  <div style={{ 
-                    padding: '14px 20px', 
-                    background: isUrgent5Min ? (isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2') : (isDark ? 'rgba(255,255,255,0.02)' : '#FAFAFC'), 
-                    borderBottom: `1px solid ${theme.border}`, 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center' 
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {summary.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: theme.textMuted, fontSize: '13px' }}>
+                ไม่มีรายการค้างปรุง
+              </div>
+            ) : (
+              summary.map((item, idx) => (
+                <div key={idx} style={{
+                  padding: '12px',
+                  backgroundColor: theme.cardInner,
+                  borderRadius: '8px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  border: `1px solid ${theme.border}`
+                }}>
+                  <span style={{ fontSize: '14px', fontWeight: '500' }}>{item.ProductName}</span>
+                  <span style={{
+                    backgroundColor: PALETTE.coral,
+                    color: '#FFF',
+                    fontWeight: '700',
+                    fontSize: '13px',
+                    padding: '2px 8px',
+                    borderRadius: '99px'
                   }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontSize: '10px', color: theme.textMuted, fontWeight: '800', letterSpacing: '1px' }}>QUEUE</span>
-                        {isUrgent5Min && (
-                          <span style={{ background: '#EF4444', color: '#FFF', fontSize: '10px', fontWeight: '800', padding: '1px 6px', borderRadius: '4px' }}>
-                            ⚡ เร่งด่วน (>5 นาที)
+                    x{item.TotalQty}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+
+        {/* Right Side: Order Cards View */}
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          
+          {/* Filter Tabs */}
+          <div style={{
+            padding: '16px 24px 0 24px',
+            display: 'flex',
+            gap: '12px',
+            borderBottom: `1px solid ${theme.border}`
+          }}>
+            <button
+              onClick={() => setFilterTab('Pending')}
+              style={{
+                padding: '10px 20px',
+                borderRadius: '8px 8px 0 0',
+                border: 'none',
+                borderBottom: filterTab === 'Pending' ? `3px solid ${PALETTE.coral}` : '3px solid transparent',
+                backgroundColor: filterTab === 'Pending' ? theme.cardBg : 'transparent',
+                color: filterTab === 'Pending' ? PALETTE.coral : theme.textMuted,
+                fontWeight: '700',
+                fontSize: '14px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <CookingIcon />
+              <span>กำลังรอปรุง ({pendingOrders.length})</span>
+            </button>
+
+            <button
+              onClick={() => setFilterTab('Ready')}
+              style={{
+                padding: '10px 20px',
+                borderRadius: '8px 8px 0 0',
+                border: 'none',
+                borderBottom: filterTab === 'Ready' ? `3px solid ${PALETTE.emerald}` : '3px solid transparent',
+                backgroundColor: filterTab === 'Ready' ? theme.cardBg : 'transparent',
+                color: filterTab === 'Ready' ? PALETTE.emerald : theme.textMuted,
+                fontWeight: '700',
+                fontSize: '14px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <DoneCheckIcon />
+              <span>ปรุงเสร็จแล้ว ({readyOrders.length})</span>
+            </button>
+          </div>
+
+          {/* Cards Grid */}
+          <div style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
+            {displayedOrders.length === 0 ? (
+              <div style={{
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: theme.textMuted
+              }}>
+                <KitchenIcon />
+                <p style={{ marginTop: '12px', fontSize: '15px' }}>ไม่มีรายการอาหารในหมวดนี้</p>
+              </div>
+            ) : (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gap: '16px'
+              }}>
+                {displayedOrders.map(order => {
+                  const timeInfo = getElapsedInfo(order.CreatedAt);
+                  const isCooking = order.Status === 'Cooking';
+                  const isReady = order.Status === 'Ready';
+                  const isCompleted = order.Status === 'Completed';
+
+                  return (
+                    <div key={order.OrderID} style={{
+                      backgroundColor: theme.cardBg,
+                      borderRadius: '12px',
+                      border: `2px solid ${isCooking ? PALETTE.coral : isReady ? PALETTE.emerald : theme.border}`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      overflow: 'hidden',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                    }}>
+                      {/* Card Header */}
+                      <div style={{
+                        padding: '12px 16px',
+                        backgroundColor: theme.cardInner,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        borderBottom: `1px solid ${theme.border}`
+                      }}>
+                        <div>
+                          <div style={{ fontSize: '22px', fontWeight: '900', color: PALETTE.coral }}>
+                            #{order.QueueNo}
+                          </div>
+                          <div style={{ fontSize: '11px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <ClockIcon />
+                            <span>{formatTime(order.CreatedAt)}</span>
+                          </div>
+                        </div>
+
+                        {timeInfo.isUrgent && !isReady && !isCompleted && (
+                          <span style={{
+                            backgroundColor: '#EF4444',
+                            color: '#FFF',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            padding: '2px 8px',
+                            borderRadius: '4px'
+                          }}>
+                            {timeInfo.label}
                           </span>
                         )}
                       </div>
-                      <div style={{ fontSize: '30px', fontWeight: '900', color: isUrgent5Min ? '#EF4444' : theme.textMain, lineHeight: '1', marginTop: '2px' }}>
-                        #{o.QueueNo}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '12px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
-                        <ClockIcon /> {formatTime(o.CreatedAt)}
-                      </div>
-                      <span style={{ 
-                        fontSize: '11.5px', 
-                        fontWeight: '700', 
-                        color: filterTab === 'Pending' ? (isUrgent5Min ? '#EF4444' : PALETTE.coral) : (o.Status === 'Completed' ? '#64748B' : PALETTE.emerald), 
-                        marginTop: '4px', 
-                        display: 'inline-block' 
-                      }}>
-                        {filterTab === 'Pending' ? timeInfo.label : (o.Status === 'Completed' ? 'ส่งมอบแล้ว' : 'พร้อมรับอาหาร')}
-                      </span>
-                    </div>
-                  </div>
 
-                  {/* Items List */}
-                  <div style={{ padding: '16px 20px', flexGrow: 1 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {o.items?.map((item, idx) => (
-                        <div key={idx} style={{ 
-                          background: theme.cardInner, 
-                          padding: '10px 12px', 
-                          borderRadius: '10px', 
-                          border: `1px solid ${theme.border}` 
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                            <span style={{ fontSize: '14.5px', fontWeight: '700', color: theme.textMain }}>{item.ProductName}</span>
-                            <span style={{ 
-                              background: isDark ? '#334155' : '#0F172A', 
-                              color: '#FFF', 
-                              padding: '2px 8px', 
-                              borderRadius: '6px', 
-                              fontSize: '12px', 
-                              fontWeight: '800' 
-                            }}>
-                              x{item.Qty}
-                            </span>
-                          </div>
-
-                          {item.ItemNote && (
-                            <div style={{ 
-                              marginTop: '6px', 
-                              fontSize: '12px', 
-                              color: '#D97706', 
-                              background: isDark ? 'rgba(217, 119, 6, 0.15)' : '#FFFBEB', 
-                              padding: '4px 8px', 
-                              borderRadius: '6px', 
-                              border: isDark ? '1px solid rgba(217, 119, 6, 0.3)' : '1px solid #FDE68A', 
-                              whiteSpace: 'nowrap', 
-                              overflow: 'hidden', 
-                              textOverflow: 'ellipsis' 
-                            }}>
-                              * {item.ItemNote}
+                      {/* Items List */}
+                      <div style={{ padding: '16px', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {(order.items || []).map((item, idx) => (
+                          <div key={idx} style={{ fontSize: '14px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600' }}>
+                              <span>{item.ProductName}</span>
+                              <span style={{ color: PALETTE.coral }}>x{item.Qty}</span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            {item.ItemNote && (
+                              <div style={{ fontSize: '12px', color: '#D97706', marginTop: '2px' }}>
+                                * {item.ItemNote}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        {order.Note && (
+                          <div style={{
+                            marginTop: '8px',
+                            padding: '8px',
+                            backgroundColor: 'rgba(217, 119, 6, 0.1)',
+                            borderLeft: '3px solid #D97706',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            color: '#D97706'
+                          }}>
+                            <strong>หมายเหตุ:</strong> {order.Note}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Card Actions */}
+                      <div style={{ padding: '12px 16px', borderTop: `1px solid ${theme.border}`, display: 'flex', gap: '8px' }}>
+                        {order.Status === 'Pending' && (
+                          <button
+                            onClick={(e) => updateOrderStatus(order.OrderID, 'Cooking', e)}
+                            style={{
+                              flex: 1,
+                              padding: '10px',
+                              backgroundColor: PALETTE.coral,
+                              color: '#FFF',
+                              border: 'none',
+                              borderRadius: '8px',
+                              fontWeight: '700',
+                              fontSize: '14px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            เริ่มปรุง
+                          </button>
+                        )}
+
+                        {order.Status === 'Cooking' && (
+                          <button
+                            onClick={(e) => updateOrderStatus(order.OrderID, 'Ready', e)}
+                            style={{
+                              flex: 1,
+                              padding: '10px',
+                              backgroundColor: PALETTE.emerald,
+                              color: '#FFF',
+                              border: 'none',
+                              borderRadius: '8px',
+                              fontWeight: '700',
+                              fontSize: '14px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ปรุงเสร็จแล้ว
+                          </button>
+                        )}
+
+                        {order.Status === 'Ready' && (
+                          <div style={{
+                            flex: 1,
+                            textAlign: 'center',
+                            padding: '8px',
+                            backgroundColor: `${PALETTE.emerald}15`,
+                            color: PALETTE.emerald,
+                            borderRadius: '8px',
+                            fontSize: '13px',
+                            fontWeight: '700'
+                          }}>
+                            รอหน้าร้านส่งมอบ
+                          </div>
+                        )}
+
+                        {order.Status === 'Completed' && (
+                          <div style={{
+                            flex: 1,
+                            textAlign: 'center',
+                            padding: '8px',
+                            backgroundColor: theme.cardInner,
+                            color: theme.textMuted,
+                            borderRadius: '8px',
+                            fontSize: '13px',
+                            fontWeight: '600'
+                          }}>
+                            ส่งมอบเรียบร้อยแล้ว
+                          </div>
+                        )}
+                      </div>
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
 
-                    {o.Note && (
-                      <div style={{ 
-                        marginTop: '12px', 
-                        padding: '8px 10px', 
-                        borderRadius: '8px', 
-                        background: isDark ? 'rgba(59, 130, 246, 0.15)' : '#EFF6FF', 
-                        border: isDark ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid #BFDBFE', 
-                        fontSize: '12px', 
-                        color: isDark ? '#93C5FD' : '#1E40AF' 
-                      }}>
-                        <strong>หมายเหตุลูกค้า:</strong> {o.Note}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Footer Actions */}
-                  <div style={{ padding: '14px 20px', borderTop: `1px solid ${theme.border}`, display: 'flex', gap: '10px' }}>
-                    {o.Status === 'Pending' && (
-                      <button
-                        onClick={(e) => updateOrderStatus(o.OrderID, 'Cooking', e)}
-                        style={{
-                          flex: 1,
-                          background: PALETTE.coral,
-                          color: '#FFF',
-                          border: 'none',
-                          padding: '12px',
-                          borderRadius: '12px',
-                          fontWeight: '800',
-                          fontSize: '14px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          boxShadow: '0 4px 12px rgba(255, 114, 76, 0.3)'
-                        }}
-                      >
-                        <CookingIcon /> เริ่มปรุง (พิมพ์ใบสั่ง)
-                      </button>
-                    )}
-
-                    {o.Status === 'Cooking' && (
-                      <button
-                        onClick={(e) => updateOrderStatus(o.OrderID, 'Ready', e)}
-                        style={{
-                          flex: 1,
-                          background: PALETTE.emerald,
-                          color: '#FFF',
-                          border: 'none',
-                          padding: '12px',
-                          borderRadius: '12px',
-                          fontWeight: '800',
-                          fontSize: '14px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
-                        }}
-                      >
-                        <CheckIcon /> ปรุงเสร็จแล้ว
-                      </button>
-                    )}
-
-                    {o.Status === 'Ready' && (
-                      <button
-                        onClick={(e) => updateOrderStatus(o.OrderID, 'Cooking', e)}
-                        style={{
-                          flex: 1,
-                          background: theme.cardInner,
-                          color: theme.textMain,
-                          border: `1px solid ${theme.border}`,
-                          padding: '10px',
-                          borderRadius: '10px',
-                          fontWeight: '700',
-                          fontSize: '13px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px'
-                        }}
-                      >
-                        <UndoIcon /> ย้อนกลับ (อันดู)
-                      </button>
-                    )}
-
-                    {/* [ปรับปรุง] ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ล็อกการอันดู */}
-                    {o.Status === 'Completed' && (
-                      <div style={{
-                        flex: 1,
-                        background: isDark ? 'rgba(255,255,255,0.05)' : '#E2E8F0',
-                        color: theme.textMuted,
-                        textAlign: 'center',
-                        padding: '10px',
-                        borderRadius: '10px',
-                        fontSize: '12.5px',
-                        fontWeight: '700'
-                      }}>
-                        🔒 ส่งมอบอาหารแล้ว (แก้ไขไม่ได้)
-                      </div>
-                    )}
-
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        printOrderTicket(o);
-                      }}
-                      title="พิมพ์ใบสั่งอาหารอีกครั้ง"
-                      style={{
-                        background: theme.cardInner,
-                        color: theme.textMain,
-                        border: `1px solid ${theme.border}`,
-                        padding: '10px 14px',
-                        borderRadius: '10px',
-                        cursor: 'pointer',
-                        display: 'grid',
-                        placeItems: 'center'
-                      }}
-                    >
-                      <PrinterIcon />
-                    </button>
-                  </div>
-                </article>
-              );
-            })
-          )}
-        </div>
-      </main>
-
-      {/* Modal ยืนยันออกจากระบบ */}
+      {/* Logout Modal */}
       {showLogoutModal && (
         <div style={{
           position: 'fixed',
@@ -888,40 +678,36 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           left: 0,
           right: 0,
           bottom: 0,
-          background: 'rgba(15, 23, 42, 0.6)',
-          backdropFilter: 'blur(4px)',
-          display: 'grid',
-          placeItems: 'center',
-          zIndex: 2000
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 50
         }}>
           <div style={{
-            background: theme.cardBg,
-            border: `1px solid ${theme.border}`,
-            borderRadius: '20px',
+            backgroundColor: theme.cardBg,
+            borderRadius: '12px',
             padding: '24px',
-            width: '90%',
-            maxWidth: '360px',
+            width: '320px',
             textAlign: 'center',
-            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)'
+            border: `1px solid ${theme.border}`
           }}>
-            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: '800', color: theme.textMain }}>
-              ยืนยันการออกจากระบบ
-            </h3>
-            <p style={{ margin: '0 0 20px 0', fontSize: '13.5px', color: theme.textMuted }}>
-              คุณต้องการออกจากระบบห้องครัวใช่หรือไม่?
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>ยืนยันการออกจากระบบ?</h3>
+            <p style={{ color: theme.textMuted, fontSize: '13px', marginBottom: '20px' }}>
+              คุณต้องการออกจากระบบห้องครัวใช่หรือไม่
             </p>
-            <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '12px' }}>
               <button
                 onClick={() => setShowLogoutModal(false)}
                 style={{
                   flex: 1,
-                  background: theme.cardInner,
-                  color: theme.textMain,
-                  border: `1px solid ${theme.border}`,
                   padding: '10px',
-                  borderRadius: '10px',
-                  fontWeight: '700',
-                  cursor: 'pointer'
+                  backgroundColor: theme.cardInner,
+                  border: `1px solid ${theme.border}`,
+                  color: theme.textMain,
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600'
                 }}
               >
                 ยกเลิก
@@ -933,13 +719,13 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                 }}
                 style={{
                   flex: 1,
-                  background: '#EF4444',
-                  color: '#FFF',
-                  border: 'none',
                   padding: '10px',
-                  borderRadius: '10px',
-                  fontWeight: '700',
-                  cursor: 'pointer'
+                  backgroundColor: '#EF4444',
+                  border: 'none',
+                  color: '#FFF',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: '600'
                 }}
               >
                 ออกจากระบบ
