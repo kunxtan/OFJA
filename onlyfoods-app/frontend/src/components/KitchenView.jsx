@@ -50,18 +50,6 @@ const UndoIcon = () => (
   </svg>
 );
 
-const ExpandIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
-  </svg>
-);
-
-const CloseIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-  </svg>
-);
-
 const LogoutIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
@@ -86,6 +74,14 @@ const DoneCheckIcon = () => (
   </svg>
 );
 
+const PrinterIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="6 9 6 2 18 2 18 9"></polyline>
+    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+    <rect x="6" y="14" width="12" height="8"></rect>
+  </svg>
+);
+
 const getRoleLabel = (role) => {
   const roleMap = {
     'Kitchen Staff': 'พนักงานครัว',
@@ -98,17 +94,16 @@ const getRoleLabel = (role) => {
   return roleMap[role] || role || 'ผู้ใช้งาน';
 };
 
-export default function KitchenView({ user, apiBase , onLogout }) {
+export default function KitchenView({ user, apiBase, onLogout }) {
   const [allOrders, setAllOrders] = useState([]);
   const [summary, setSummary] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [isDark, setIsDark] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filterTab, setFilterTab] = useState('Pending'); 
-  const [showLogoutModal, setShowLogoutModal] = useState(false); // สถานะเปิด/ปิด Modal แจ้งเตือนออกจากระบบ
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const isUpdatingRef = useRef(false);
 
-  // สถานะการเปิด/ปิดร้านค้าจาก Owner และ Executive
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [storeOpen, setStoreOpen] = useState(true);
   const [isSuspended, setIsSuspended] = useState(false);
@@ -176,10 +171,18 @@ export default function KitchenView({ user, apiBase , onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  const pendingOrders = allOrders.filter(o => o.Status === 'Pending' || o.Status === 'Cooking');
-  const readyOrders = allOrders.filter(o => o.Status === 'Ready' || o.Status === 'Completed');
-  const displayedOrders = filterTab === 'Pending' ? pendingOrders : readyOrders;
+  // -------------------------------------------------------------
+  // [ปรับปรุง] เรียงคิวตามลำดับเลขคิว / Order ID (คิวก่อนขึ้นก่อน)
+  // -------------------------------------------------------------
+  const pendingOrders = allOrders
+    .filter(o => o.Status === 'Pending' || o.Status === 'Cooking')
+    .sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
 
+  const readyOrders = allOrders
+    .filter(o => o.Status === 'Ready' || o.Status === 'Completed')
+    .sort((a, b) => (b.OrderID || 0) - (a.OrderID || 0));
+
+  const displayedOrders = filterTab === 'Pending' ? pendingOrders : readyOrders;
   const isStoreActive = foodCourtOpen && storeOpen && !isSuspended;
 
   const getStatusText = () => {
@@ -189,10 +192,78 @@ export default function KitchenView({ user, apiBase , onLogout }) {
     return 'เปิดให้บริการ';
   };
 
+  // -------------------------------------------------------------
+  // [ปรับปรุง] พิมพ์ใบสั่งอาหารออกเครื่องพิมพ์
+  // -------------------------------------------------------------
+  const printOrderTicket = (order) => {
+    const printWindow = window.open('', '_blank', 'width=380,height=550');
+    if (!printWindow) return;
+
+    const itemsHtml = (order.items || []).map(item => `
+      <div style="display:flex; justify-content:space-between; margin-bottom: 6px; font-size:14px; font-weight:bold;">
+        <span>${item.ProductName}</span>
+        <span>x${item.Qty}</span>
+      </div>
+      ${item.ItemNote ? `<div style="font-size:12px; color:#D97706; margin-bottom: 6px; padding-left: 8px;">* ${item.ItemNote}</div>` : ''}
+    `).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Order Ticket #${order.QueueNo}</title>
+          <style>
+            body { font-family: 'Sarabun', sans-serif; padding: 10px; margin: 0; width: 280px; color: #000; }
+            .header { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 8px; margin-bottom: 10px; }
+            .queue { font-size: 32px; font-weight: 900; margin: 4px 0; }
+            .items { border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 10px; }
+            .note { font-size: 12px; background: #eee; padding: 6px; border-radius: 4px; margin-top: 8px; }
+            .footer { font-size: 11px; text-align: center; margin-top: 10px; color: #555; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div style="font-size:12px; text-transform:uppercase;">ใบสั่งปรุงอาหาร (Kitchen Ticket)</div>
+            <div class="queue">#${order.QueueNo}</div>
+            <div style="font-size:12px;">เวลา: ${formatTime(order.CreatedAt)}</div>
+          </div>
+          <div class="items">
+            ${itemsHtml}
+            ${order.Note ? `<div class="note"><strong>หมายเหตุ:</strong> ${order.Note}</div>` : ''}
+          </div>
+          <div class="footer">Only Foods Kitchen System</div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  // -------------------------------------------------------------
+  // [ปรับปรุง] เปลี่ยนสถานะออเดอร์ + พิมพ์ใบสั่งอาหารเมื่อกดปรุง
+  // -------------------------------------------------------------
   const updateOrderStatus = async (id, targetStatus, e) => {
     if (e) e.stopPropagation();
+    
+    // ตรวจจับออเดอร์ที่หน้าร้านส่งมอบไปแล้ว ห้ามกด Undo หรือเปลี่ยนสถานะ
+    const targetOrder = allOrders.find(o => o.OrderID === id);
+    if (targetOrder?.Status === 'Completed') {
+      alert('หน้าร้านได้ส่งมอบอาหารเรียบร้อยแล้ว ไม่สามารถย้อนกลับสถานะหรือกดอันดูได้');
+      return;
+    }
+
     isUpdatingRef.current = true;
     
+    // เชื่อมต่อเครื่องพิมพ์เมื่อกดปรุงอาหาร
+    if (targetStatus === 'Cooking' && targetOrder) {
+      printOrderTicket(targetOrder);
+    }
+
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
     if (selectedOrder?.OrderID === id) setSelectedOrder(null);
 
@@ -207,7 +278,10 @@ export default function KitchenView({ user, apiBase , onLogout }) {
         })
       });
 
-      if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
+      if (!res.ok) {
+        const errorData = await res.json();
+        alert(errorData.detail || 'ไม่สามารถอัปเดตสถานะได้');
+      }
     } catch (err) {
       console.error("Update status error:", err);
     } finally {
@@ -216,11 +290,14 @@ export default function KitchenView({ user, apiBase , onLogout }) {
     }
   };
 
+  // -------------------------------------------------------------
+  // [ปรับปรุง] แจ้งเตือนออเดอร์เร่งด่วน 5 นาที
+  // -------------------------------------------------------------
   const getElapsedInfo = (timeStr) => {
     if (!timeStr) return { label: 'เพิ่งเข้า', isUrgent: false };
     const diffMins = Math.floor((new Date() - new Date(timeStr)) / 60000);
     if (diffMins < 1) return { label: 'เพิ่งเข้า', isUrgent: false };
-    if (diffMins < 60) return { label: `${diffMins} นาทีที่แล้ว`, isUrgent: diffMins >= 15 };
+    if (diffMins < 60) return { label: `${diffMins} นาทีที่แล้ว`, isUrgent: diffMins >= 5 }; // แจ้งเตือนเมื่อเกิน 5 นาที
     return { label: `${Math.floor(diffMins / 60)} ชม. ${diffMins % 60} น.`, isUrgent: true };
   };
 
@@ -249,7 +326,6 @@ export default function KitchenView({ user, apiBase , onLogout }) {
       transition: 'background-color 0.25s ease' 
     }}>
       
-      {/* Dynamic Keyframes & Reset */}
       <style>{`
         * { box-sizing: border-box; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -260,13 +336,16 @@ export default function KitchenView({ user, apiBase , onLogout }) {
           touch-action: manipulation;
           -webkit-tap-highlight-color: transparent;
         }
-        button:active {
-          transform: scale(0.98);
-        }
+        button:active { transform: scale(0.98); }
         @keyframes statusPulse {
           0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
           70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
           100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        @keyframes urgentBlink {
+          0% { border-color: #EF4444; box-shadow: 0 0 10px rgba(239,68,68,0.4); }
+          50% { border-color: #DC2626; box-shadow: 0 0 18px rgba(239,68,68,0.8); }
+          100% { border-color: #EF4444; box-shadow: 0 0 10px rgba(239,68,68,0.4); }
         }
       `}</style>
 
@@ -301,7 +380,7 @@ export default function KitchenView({ user, apiBase , onLogout }) {
 
           <div>
             <div style={{ fontSize: '20px', fontWeight: '800', color: theme.textMain, lineHeight: '1.2', letterSpacing: '-0.3px' }}>
-              Only Foods
+              Only Foods Kitchen
             </div>
             <div style={{ fontSize: '12.5px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px' }}>
               <span>สถานะศูนย์อาหาร:</span>
@@ -429,7 +508,7 @@ export default function KitchenView({ user, apiBase , onLogout }) {
               <button
                 onClick={() => {
                   setIsDropdownOpen(false);
-                  setShowLogoutModal(true); // เปิด Custom Modal แทน window.confirm
+                  setShowLogoutModal(true);
                 }}
                 style={{
                   width: '100%',
@@ -538,7 +617,7 @@ export default function KitchenView({ user, apiBase , onLogout }) {
         </div>
       </div>
 
-      {/* Main KDS Grid View (Locked Bounds) */}
+      {/* Main KDS Grid View */}
       <main style={{ 
         flex: 1, 
         padding: '16px 28px 24px', 
@@ -563,7 +642,7 @@ export default function KitchenView({ user, apiBase , onLogout }) {
           ) : (
             displayedOrders.map(o => {
               const timeInfo = getElapsedInfo(o.CreatedAt);
-              const hasLongNote = o.Note?.length > 25 || o.items?.some(i => i.ItemNote?.length > 20);
+              const isUrgent5Min = filterTab === 'Pending' && timeInfo.isUrgent;
 
               return (
                 <article
@@ -572,31 +651,43 @@ export default function KitchenView({ user, apiBase , onLogout }) {
                   style={{
                     background: theme.cardBg,
                     borderRadius: '18px',
-                    border: `1px solid ${theme.border}`,
+                    border: isUrgent5Min ? '2px solid #EF4444' : `1px solid ${theme.border}`,
                     borderTop: filterTab === 'Pending' 
-                      ? `6px solid ${timeInfo.isUrgent ? '#EF4444' : PALETTE.coral}`
-                      : `6px solid ${PALETTE.emerald}`,
+                      ? `6px solid ${isUrgent5Min ? '#EF4444' : PALETTE.coral}`
+                      : `6px solid ${o.Status === 'Completed' ? '#64748B' : PALETTE.emerald}`,
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
                     overflow: 'hidden',
                     cursor: 'pointer',
-                    boxShadow: isDark ? '0 4px 20px rgba(0,0,0,0.2)' : '0 4px 16px rgba(15,23,42,0.03)',
+                    boxShadow: isUrgent5Min 
+                      ? '0 0 16px rgba(239, 68, 68, 0.3)' 
+                      : (isDark ? '0 4px 20px rgba(0,0,0,0.2)' : '0 4px 16px rgba(15,23,42,0.03)'),
+                    animation: isUrgent5Min ? 'urgentBlink 2s infinite' : 'none',
                     transition: 'all 0.2s ease'
                   }}
                 >
                   {/* Card Ticket Header */}
                   <div style={{ 
                     padding: '14px 20px', 
-                    background: isDark ? 'rgba(255,255,255,0.02)' : '#FAFAFC', 
+                    background: isUrgent5Min ? (isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2') : (isDark ? 'rgba(255,255,255,0.02)' : '#FAFAFC'), 
                     borderBottom: `1px solid ${theme.border}`, 
                     display: 'flex', 
                     justifyContent: 'space-between', 
                     alignItems: 'center' 
                   }}>
                     <div>
-                      <span style={{ fontSize: '10px', color: theme.textMuted, fontWeight: '800', letterSpacing: '1px' }}>QUEUE</span>
-                      <div style={{ fontSize: '30px', fontWeight: '900', color: theme.textMain, lineHeight: '1' }}>#{o.QueueNo}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '10px', color: theme.textMuted, fontWeight: '800', letterSpacing: '1px' }}>QUEUE</span>
+                        {isUrgent5Min && (
+                          <span style={{ background: '#EF4444', color: '#FFF', fontSize: '10px', fontWeight: '800', padding: '1px 6px', borderRadius: '4px' }}>
+                            ⚡ เร่งด่วน (>5 นาที)
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '30px', fontWeight: '900', color: isUrgent5Min ? '#EF4444' : theme.textMain, lineHeight: '1', marginTop: '2px' }}>
+                        #{o.QueueNo}
+                      </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '12px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
@@ -605,11 +696,11 @@ export default function KitchenView({ user, apiBase , onLogout }) {
                       <span style={{ 
                         fontSize: '11.5px', 
                         fontWeight: '700', 
-                        color: filterTab === 'Pending' ? (timeInfo.isUrgent ? '#EF4444' : PALETTE.coral) : PALETTE.emerald, 
+                        color: filterTab === 'Pending' ? (isUrgent5Min ? '#EF4444' : PALETTE.coral) : (o.Status === 'Completed' ? '#64748B' : PALETTE.emerald), 
                         marginTop: '4px', 
                         display: 'inline-block' 
                       }}>
-                        {filterTab === 'Pending' ? timeInfo.label : 'ปรุงเสร็จแล้ว'}
+                        {filterTab === 'Pending' ? timeInfo.label : (o.Status === 'Completed' ? 'ส่งมอบแล้ว' : 'พร้อมรับอาหาร')}
                       </span>
                     </div>
                   </div>
@@ -651,7 +742,7 @@ export default function KitchenView({ user, apiBase , onLogout }) {
                               overflow: 'hidden', 
                               textOverflow: 'ellipsis' 
                             }}>
-                              {item.ItemNote}
+                              * {item.ItemNote}
                             </div>
                           )}
                         </div>
@@ -666,68 +757,121 @@ export default function KitchenView({ user, apiBase , onLogout }) {
                         background: isDark ? 'rgba(59, 130, 246, 0.15)' : '#EFF6FF', 
                         border: isDark ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid #BFDBFE', 
                         fontSize: '12px', 
-                        color: isDark ? '#93C5FD' : '#1E40AF', 
-                        whiteSpace: 'nowrap', 
-                        overflow: 'hidden', 
-                        textOverflow: 'ellipsis' 
+                        color: isDark ? '#93C5FD' : '#1E40AF' 
                       }}>
-                        <strong>หมายเหตุ:</strong> {o.Note}
-                      </div>
-                    )}
-
-                    {hasLongNote && (
-                      <div style={{ marginTop: '10px', textAlign: 'center', fontSize: '11px', color: theme.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                        <ExpandIcon /> แตะเพื่อดูข้อความเต็ม
+                        <strong>หมายเหตุลูกค้า:</strong> {o.Note}
                       </div>
                     )}
                   </div>
 
-                  {/* Action Button */}
-                  <div style={{ padding: '12px 20px', background: theme.cardInner, borderTop: `1px solid ${theme.border}` }}>
-                    {filterTab === 'Pending' ? (
+                  {/* Footer Actions */}
+                  <div style={{ padding: '14px 20px', borderTop: `1px solid ${theme.border}`, display: 'flex', gap: '10px' }}>
+                    {o.Status === 'Pending' && (
+                      <button
+                        onClick={(e) => updateOrderStatus(o.OrderID, 'Cooking', e)}
+                        style={{
+                          flex: 1,
+                          background: PALETTE.coral,
+                          color: '#FFF',
+                          border: 'none',
+                          padding: '12px',
+                          borderRadius: '12px',
+                          fontWeight: '800',
+                          fontSize: '14px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          boxShadow: '0 4px 12px rgba(255, 114, 76, 0.3)'
+                        }}
+                      >
+                        <CookingIcon /> เริ่มปรุง (พิมพ์ใบสั่ง)
+                      </button>
+                    )}
+
+                    {o.Status === 'Cooking' && (
                       <button
                         onClick={(e) => updateOrderStatus(o.OrderID, 'Ready', e)}
                         style={{
-                          width: '100%', 
-                          minHeight: '48px', 
-                          background: PALETTE.coral, 
-                          color: '#FFF', 
-                          border: 'none', 
-                          borderRadius: '12px', 
-                          fontSize: '15px', 
-                          fontWeight: '800', 
-                          cursor: 'pointer', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center', 
-                          gap: '8px', 
-                          boxShadow: '0 4px 12px rgba(255, 114, 76, 0.25)'
+                          flex: 1,
+                          background: PALETTE.emerald,
+                          color: '#FFF',
+                          border: 'none',
+                          padding: '12px',
+                          borderRadius: '12px',
+                          fontWeight: '800',
+                          fontSize: '14px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
                         }}
                       >
                         <CheckIcon /> ปรุงเสร็จแล้ว
                       </button>
-                    ) : (
+                    )}
+
+                    {o.Status === 'Ready' && (
                       <button
-                        onClick={(e) => updateOrderStatus(o.OrderID, 'Pending', e)}
+                        onClick={(e) => updateOrderStatus(o.OrderID, 'Cooking', e)}
                         style={{
-                          width: '100%', 
-                          minHeight: '48px', 
-                          background: isDark ? '#334155' : '#475569', 
-                          color: '#FFF', 
-                          border: 'none', 
-                          borderRadius: '12px', 
-                          fontSize: '14px', 
-                          fontWeight: '700', 
-                          cursor: 'pointer', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center', 
-                          gap: '8px'
+                          flex: 1,
+                          background: theme.cardInner,
+                          color: theme.textMain,
+                          border: `1px solid ${theme.border}`,
+                          padding: '10px',
+                          borderRadius: '10px',
+                          fontWeight: '700',
+                          fontSize: '13px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px'
                         }}
                       >
-                        <UndoIcon /> ย้ายกลับไปรอปรุง (Undo)
+                        <UndoIcon /> ย้อนกลับ (อันดู)
                       </button>
                     )}
+
+                    {/* [ปรับปรุง] ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ล็อกการอันดู */}
+                    {o.Status === 'Completed' && (
+                      <div style={{
+                        flex: 1,
+                        background: isDark ? 'rgba(255,255,255,0.05)' : '#E2E8F0',
+                        color: theme.textMuted,
+                        textAlign: 'center',
+                        padding: '10px',
+                        borderRadius: '10px',
+                        fontSize: '12.5px',
+                        fontWeight: '700'
+                      }}>
+                        🔒 ส่งมอบอาหารแล้ว (แก้ไขไม่ได้)
+                      </div>
+                    )}
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        printOrderTicket(o);
+                      }}
+                      title="พิมพ์ใบสั่งอาหารอีกครั้ง"
+                      style={{
+                        background: theme.cardInner,
+                        color: theme.textMain,
+                        border: `1px solid ${theme.border}`,
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        display: 'grid',
+                        placeItems: 'center'
+                      }}
+                    >
+                      <PrinterIcon />
+                    </button>
                   </div>
                 </article>
               );
@@ -736,154 +880,46 @@ export default function KitchenView({ user, apiBase , onLogout }) {
         </div>
       </main>
 
-      {/* Detail Modal Popup */}
-      {selectedOrder && (
-        <div 
-          onClick={() => setSelectedOrder(null)}
-          style={{ 
-            position: 'fixed', 
-            top: 0, 
-            left: 0, 
-            right: 0, 
-            bottom: 0, 
-            background: 'rgba(15, 23, 42, 0.65)', 
-            backdropFilter: 'blur(4px)', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            padding: '20px', 
-            zIndex: 1000 
-          }}
-        >
-          <div 
-            onClick={(e) => e.stopPropagation()} 
-            style={{ 
-              background: theme.cardBg, 
-              border: `1px solid ${theme.border}`, 
-              borderRadius: '20px', 
-              width: '100%', 
-              maxWidth: '480px', 
-              maxHeight: '85vh', 
-              overflowY: 'auto', 
-              padding: '24px', 
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', 
-              color: theme.textMain 
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '12px' }}>
-              <div>
-                <span style={{ fontSize: '11px', color: theme.textMuted, fontWeight: '800', letterSpacing: '1px' }}>ORDER DETAILS</span>
-                <h2 style={{ margin: 0, fontSize: '32px', fontWeight: '900', color: PALETTE.coral }}>#{selectedOrder.QueueNo}</h2>
-              </div>
-              <button onClick={() => setSelectedOrder(null)} style={{ background: 'transparent', border: 'none', color: theme.textMuted, cursor: 'pointer' }}><CloseIcon /></button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              {selectedOrder.items?.map((item, idx) => (
-                <div key={idx} style={{ background: theme.cardInner, padding: '14px', borderRadius: '12px', border: `1px solid ${theme.border}` }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16.5px', fontWeight: '700' }}>
-                    <span>{item.ProductName}</span>
-                    <span style={{ color: PALETTE.coral, background: isDark ? '#334155' : '#FFF0ED', padding: '2px 8px', borderRadius: '6px' }}>x{item.Qty}</span>
-                  </div>
-                  {item.ItemNote && (
-                    <div style={{ marginTop: '8px', fontSize: '13.5px', color: '#D97706', background: isDark ? 'rgba(217, 119, 6, 0.15)' : '#FFFBEB', padding: '8px 12px', borderRadius: '8px', border: '1px solid #FDE68A', wordBreak: 'break-word' }}>
-                      <strong>รายละเอียดพิเศษ:</strong> {item.ItemNote}
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {selectedOrder.Note && (
-                <div style={{ padding: '12px 14px', borderRadius: '12px', background: isDark ? 'rgba(59, 130, 246, 0.15)' : '#EFF6FF', border: '1px solid #BFDBFE', fontSize: '13.5px', color: isDark ? '#93C5FD' : '#1E40AF', wordBreak: 'break-word' }}>
-                  <strong>หมายเหตุออเดอร์:</strong> {selectedOrder.Note}
-                </div>
-              )}
-            </div>
-
-            {selectedOrder.Status === 'Pending' || selectedOrder.Status === 'Cooking' ? (
-              <button
-                onClick={(e) => updateOrderStatus(selectedOrder.OrderID, 'Ready', e)}
-                style={{ width: '100%', minHeight: '52px', marginTop: '24px', background: PALETTE.coral, color: '#FFF', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-              >
-                <CheckIcon /> ปรุงเสร็จแล้ว
-              </button>
-            ) : (
-              <button
-                onClick={(e) => updateOrderStatus(selectedOrder.OrderID, 'Pending', e)}
-                style={{ width: '100%', minHeight: '52px', marginTop: '24px', background: isDark ? '#334155' : '#475569', color: '#FFF', border: 'none', borderRadius: '12px', fontSize: '15px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-              >
-                <UndoIcon /> ย้ายกลับไปรอปรุง (Undo)
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* System Custom Logout Confirm Modal (No localhost popup) */}
+      {/* Modal ยืนยันออกจากระบบ */}
       {showLogoutModal && (
-        <div 
-          onClick={() => setShowLogoutModal(false)}
-          style={{ 
-            position: 'fixed', 
-            top: 0, 
-            left: 0, 
-            right: 0, 
-            bottom: 0, 
-            background: 'rgba(15, 23, 42, 0.65)', 
-            backdropFilter: 'blur(4px)', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            padding: '20px', 
-            zIndex: 1100 
-          }}
-        >
-          <div 
-            onClick={(e) => e.stopPropagation()} 
-            style={{ 
-              background: theme.cardBg, 
-              border: `1px solid ${theme.border}`, 
-              borderRadius: '20px', 
-              width: '100%', 
-              maxWidth: '380px', 
-              padding: '24px', 
-              boxShadow: isDark ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)' : '0 20px 40px rgba(0,0,0,0.15)', 
-              color: theme.textMain,
-              textAlign: 'center'
-            }}
-          >
-            <div style={{ 
-              width: '48px', 
-              height: '48px', 
-              borderRadius: '14px', 
-              background: isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEE2E2', 
-              color: '#EF4444', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              margin: '0 auto 16px' 
-            }}>
-              <LogoutIcon />
-            </div>
-
-            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: '800' }}>
-              ออกจากระบบ
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(15, 23, 42, 0.6)',
+          backdropFilter: 'blur(4px)',
+          display: 'grid',
+          placeItems: 'center',
+          zIndex: 2000
+        }}>
+          <div style={{
+            background: theme.cardBg,
+            border: `1px solid ${theme.border}`,
+            borderRadius: '20px',
+            padding: '24px',
+            width: '90%',
+            maxWidth: '360px',
+            textAlign: 'center',
+            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: '800', color: theme.textMain }}>
+              ยืนยันการออกจากระบบ
             </h3>
-            <p style={{ margin: '0 0 24px', fontSize: '14px', color: theme.textMuted, lineHeight: '1.5' }}>
-              คุณต้องการออกจากระบบใช่หรือไม่?
+            <p style={{ margin: '0 0 20px 0', fontSize: '13.5px', color: theme.textMuted }}>
+              คุณต้องการออกจากระบบห้องครัวใช่หรือไม่?
             </p>
-
             <div style={{ display: 'flex', gap: '10px' }}>
               <button
                 onClick={() => setShowLogoutModal(false)}
                 style={{
                   flex: 1,
-                  minHeight: '44px',
                   background: theme.cardInner,
                   color: theme.textMain,
                   border: `1px solid ${theme.border}`,
+                  padding: '10px',
                   borderRadius: '10px',
-                  fontSize: '14px',
                   fontWeight: '700',
                   cursor: 'pointer'
                 }}
@@ -893,19 +929,17 @@ export default function KitchenView({ user, apiBase , onLogout }) {
               <button
                 onClick={() => {
                   setShowLogoutModal(false);
-                  onLogout && onLogout();
+                  if (onLogout) onLogout();
                 }}
                 style={{
                   flex: 1,
-                  minHeight: '44px',
                   background: '#EF4444',
-                  color: '#FFFFFF',
+                  color: '#FFF',
                   border: 'none',
+                  padding: '10px',
                   borderRadius: '10px',
-                  fontSize: '14px',
                   fontWeight: '700',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.25)'
+                  cursor: 'pointer'
                 }}
               >
                 ออกจากระบบ
@@ -914,7 +948,6 @@ export default function KitchenView({ user, apiBase , onLogout }) {
           </div>
         </div>
       )}
-
     </div>
   );
 }

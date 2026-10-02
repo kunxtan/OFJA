@@ -212,7 +212,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const API_BASE = "http://localhost:8080";
+  const API_BASE = "http://only-foods.cskmitl.com";
 
   useEffect(() => {
     fetchFoodCourtStatus();

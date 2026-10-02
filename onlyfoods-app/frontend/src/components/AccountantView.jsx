@@ -6,8 +6,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
    และปฏิบัติตามหลัก Effective Dashboard Design
    ============================================================ */
 
-const RATE_WARN = 5;  // % -> เฝ้าระวัง
-const RATE_BAD = 8;   // % -> สูงผิดปกติ
+const RATE_WARN = 5;    // % -> เฝ้าระวัง (ตั้งแต่ค่านี้ขึ้นไป)
+const RATE_ALERT = 10;  // % -> แจ้งเตือน (Alert) เมื่อ Cancel Rate มากกว่าค่านี้
 
 // นักบัญชีบันทึกยอด/จำนวนออเดอร์ เฉพาะออเดอร์ที่ "จบ/กึ่งจบ" หรือ "ถูกยกเลิก" เท่านั้น
 const SETTLED_STATUSES = ['Completed', 'NoShow'];               // ส่งมอบสำเร็จ / กึ่งจบ (ลูกค้าไม่มารับ ร้านได้เงินแล้ว)
@@ -147,7 +147,7 @@ function buildStoreSummary(stores, orders, rangeStart) {
   const map = {};
   const blank = (id, name, isDeleted, deletedAt) => ({
     storeId: id,
-    storeName: isDeleted ? `${name} (ถูกลบ)` : name,
+    storeName: isDeleted ? `${name} (Deleted)` : name,
     isDeleted: Boolean(isDeleted),
     deletedDay: deletedAt ? dateOnly(deletedAt) : '',
     color: colorForStore(id),
@@ -176,7 +176,7 @@ function buildStoreSummary(stores, orders, rangeStart) {
     })
     .map(r => {
       const rate = r.totalOrders > 0 ? (r.cancelledOrders / r.totalOrders) * 100 : 0;
-      const status = rate > RATE_BAD ? 'bad' : rate >= RATE_WARN ? 'warn' : 'ok';
+      const status = rate > RATE_ALERT ? 'bad' : rate >= RATE_WARN ? 'warn' : 'ok';
       // รายได้สุทธิ = ยอดที่บันทึกทั้งหมด - ยอดที่ถูกยกเลิก
       return { ...r, rate: +rate.toFixed(1), status, netSales: r.grossSales - r.cancelledAmount };
     })
@@ -638,7 +638,7 @@ function BerryHBarChart({ data, colorFor, valueFormat }) {
 }
 
 /* Bullet chart */
-function BerryBulletChart({ data, target = RATE_BAD, warn = RATE_WARN }) {
+function BerryBulletChart({ data, target = RATE_ALERT, warn = RATE_WARN }) {
   const max = Math.max(20, target + 5, ...data.map(d => d.value));
   const pct = (v) => `${Math.min(100, (v / max) * 100)}%`;
   return (
@@ -658,7 +658,7 @@ function BerryBulletChart({ data, target = RATE_BAD, warn = RATE_WARN }) {
               className="berry-bullet-bar"
               style={{ width: pct(d.value), background: d.status === 'bad' ? 'var(--berry-red)' : d.status === 'warn' ? 'var(--berry-amber)' : 'var(--berry-green)' }}
             />
-            <div className="berry-bullet-target" style={{ left: pct(target) }} title={`เกณฑ์สูงผิดปกติ ${target}%`} />
+            <div className="berry-bullet-target" style={{ left: pct(target) }} title={`เกณฑ์แจ้งเตือน ${target}%`} />
           </div>
           <div className="berry-bullet-value">{d.value}%</div>
         </div>
@@ -759,7 +759,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     const totalOrders = storeSummary.reduce((a, s) => a + s.totalOrders, 0);
     const totalCancelled = storeSummary.reduce((a, s) => a + s.cancelledOrders, 0);
     const rate = totalOrders > 0 ? (totalCancelled / totalOrders) * 100 : 0;
-    return { totalGross, totalOrders, totalCancelled, rate: +rate.toFixed(1), abnormalStores: storeSummary.filter(s => s.status !== 'ok' && !s.isDeleted) };
+    return { totalGross, totalOrders, totalCancelled, rate: +rate.toFixed(1), abnormalStores: storeSummary.filter(s => s.status === 'bad' && !s.isDeleted) };
   }, [storeSummary]);
 
   // เรียงจากอัตราการยกเลิกมากที่สุด -> น้อยที่สุด
@@ -1028,7 +1028,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <BerryStatCard
                   label="อัตราการยกเลิก"
                   value={`${periodStats.curr.rate}%`}
-                  tone={periodStats.curr.rate > RATE_BAD ? 'red' : periodStats.curr.rate >= RATE_WARN ? 'amber' : 'green'}
+                  tone={periodStats.curr.rate > RATE_ALERT ? 'red' : periodStats.curr.rate >= RATE_WARN ? 'amber' : 'green'}
                   delta={periodStats.deltaRate}
                   deltaSuffix="pp"
                   invertDelta
@@ -1102,7 +1102,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               <div className="berry-panel">
                 <div className="berry-panel-header">
                   <div>
-                    <h3 style={{ margin: 0 }}>ร้านค้าที่ต้องจับตา</h3>
+                    <h3 style={{ margin: 0 }}>ร้านค้าที่ต้องเฝ้าระวัง</h3>
                     <div className="berry-panel-caption">เรียงตามอัตรายกเลิกจากสูงไปต่ำ</div>
                   </div>
                   <span className="berry-link" onClick={() => setPage('cancel')}>ดูการวิเคราะห์ทั้งหมด →</span>
@@ -1295,7 +1295,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <div className="berry-panel-header">
                     <div>
                       <h3 style={{ margin: 0 }}>Cancellation Rate by Store</h3>
-                      <div className="berry-panel-caption">แถบสีอ่อนคือช่วงเกณฑ์ (ปกติ/เฝ้าระวัง/สูงผิดปกติ) เส้นดำคือเกณฑ์สูงผิดปกติที่ {RATE_BAD}%</div>
+                      <div className="berry-panel-caption">แถบสีอ่อนคือช่วงเกณฑ์ (ปกติ/เฝ้าระวัง/สูงผิดปกติ) เส้นดำคือเกณฑ์แจ้งเตือนที่ {RATE_ALERT}%</div>
                     </div>
                   </div>
                   <BerryBulletChart
@@ -1303,8 +1303,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   />
                   <div className="berry-legend">
                     <span><i style={{ background: '#e3f9e5' }}></i>ปกติ &lt; {RATE_WARN}%</span>
-                    <span><i style={{ background: '#fff3d6' }}></i>เฝ้าระวัง {RATE_WARN}-{RATE_BAD}%</span>
-                    <span><i style={{ background: '#fde2e1' }}></i>สูงผิดปกติ &gt; {RATE_BAD}%</span>
+                    <span><i style={{ background: '#fff3d6' }}></i>เฝ้าระวัง {RATE_WARN}-{RATE_ALERT}%</span>
+                    <span><i style={{ background: '#fde2e1' }}></i>แจ้งเตือน &gt; {RATE_ALERT}%</span>
                   </div>
                 </div>
                 <div className="berry-panel" style={{ flex: '1 1 320px' }}>
@@ -1316,7 +1316,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       <Icon name="cancel" size={20} color="#FF4D4F" />
                       <div>
                         <div className="alert-title">{s.storeName}</div>
-                        <div className="alert-sub">อัตราการยกเลิก {s.rate}% สูงกว่าเกณฑ์ {s.status === 'bad' ? '8%' : '5%'}</div>
+                        <div className="alert-sub">อัตราการยกเลิก {s.rate}% สูงกว่าเกณฑ์ {RATE_ALERT}%</div>
                         <div className="alert-link" onClick={() => { setSalesStoreFilter(String(s.storeId)); setPage('sales'); }}>
                           ดูรายละเอียดร้าน →
                         </div>
@@ -1379,7 +1379,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   onChange={e => setAuditSearch(e.target.value)}
                 />
                 <div className="berry-legend" style={{ marginTop: 12 }}>
-                  <span><i style={{ background: '#FF4D4F' }}></i>แดง: ปฏิเสธสลิป / ร้านยกเลิก / ลูกค้ายกเลิก</span>
+                  <span><i style={{ background: '#FF4D4F' }}></i>แดง: ปฏิเสธสลิป / ร้านยกเลิก</span>
                   <span><i style={{ background: '#FDBF50' }}></i>เหลือง: อนุมัติแล้วแต่สินค้าหมด</span>
                   <span><i style={{ background: '#00C853' }}></i>เขียว: อนุมัติสลิป</span>
                 </div>
