@@ -94,7 +94,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [isDark, setIsDark] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filterTab, setFilterTab] = useState('Pending');
+  
+  // State สำหรับ ป๊อบอัพแจ้งเตือนออกจากระบบ & ป๊อบอัพรายละเอียดออเดอร์
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+
   const isUpdatingRef = useRef(false);
 
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
@@ -177,7 +181,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return 'เปิดให้บริการ';
   };
 
-  // คนครัวกดได้เพียงสถานะเดียวเท่านั้น คือ 'Ready' (ปรุงเสร็จแล้ว)
   const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
     if (e) e.stopPropagation();
     isUpdatingRef.current = true;
@@ -204,7 +207,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     }
   };
 
-  // คำนวณความต่างเวลานัดรับจากลูกค้าเพื่อแสดงการแจ้งเตือนเมื่อ <= 5 นาที
   const getPickupAlert = (pickupTimeStr) => {
     if (!pickupTimeStr) return null;
     try {
@@ -221,7 +223,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
       const diffMins = Math.floor((targetDate - now) / 60000);
 
-      // ถ้าเวลานัดรับเหลือไม่เกิน 5 นาที (และยังไม่เกินเวลาเกิน 60 นาที)
       if (diffMins <= 5 && diffMins >= -60) {
         return {
           isAlert: true,
@@ -434,7 +435,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               <button
                 onClick={() => {
                   setIsDropdownOpen(false);
-                  if (onLogout) onLogout();
+                  setShowLogoutModal(true); // เปิดป๊อบอัพแจ้งเตือนก่อนออกจากระบบ
                 }}
                 style={{
                   width: '100%',
@@ -559,20 +560,24 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               const isCompleted = o.Status === 'Completed';
 
               return (
-                <div key={o.OrderID} style={{
-                  background: theme.cardBg,
-                  borderRadius: '18px',
-                  border: pickupAlert ? '2px solid #EF4444' : `1px solid ${theme.border}`,
-                  padding: '20px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.03)',
-                  transition: 'all 0.2s ease',
-                  position: 'relative',
-                  overflow: 'hidden'
-                }}>
-
+                <div 
+                  key={o.OrderID} 
+                  onClick={() => setSelectedOrder(o)} // กดที่การ์ดเพื่อเปิดดูรายละเอียดแบบ ป๊อบอัพ (Order Detail Popup)
+                  style={{
+                    background: theme.cardBg,
+                    borderRadius: '18px',
+                    border: pickupAlert ? '2px solid #EF4444' : `1px solid ${theme.border}`,
+                    padding: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    boxShadow: isDark ? '0 4px 12px rgba(0,0,0,0.3)' : '0 4px 12px rgba(0,0,0,0.03)',
+                    transition: 'all 0.2s ease',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    cursor: 'pointer'
+                  }}
+                >
                   <div>
                     {/* Header: Queue & Pickup Time */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
@@ -586,7 +591,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         </div>
                       </div>
 
-                      {/* แสดงเวลานัดรับจากลูกค้า */}
                       {o.PickupTime && (
                         <div style={{
                           background: pickupAlert ? '#FEE2E2' : theme.cardInner,
@@ -604,7 +608,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                       )}
                     </div>
 
-                    {/* แจ้งเตือนกรณีเวลานัดรับ <= 5 นาที */}
                     {pickupAlert && (
                       <div style={{
                         animation: 'alertFlash 1.5s infinite',
@@ -669,10 +672,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                     )}
                   </div>
 
-                  {/* ปุ่มควบคุมฝั่งครัว */}
                   <div style={{ marginTop: '10px' }}>
                     {filterTab === 'Pending' ? (
-                      /* คนครัวกดได้สถานะเดียวคือ 'ปรุงเสร็จแล้ว' */
                       <button
                         onClick={(e) => updateOrderStatus(o.OrderID, 'Ready', e)}
                         style={{
@@ -697,7 +698,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         <span>ปรุงเสร็จแล้ว</span>
                       </button>
                     ) : (
-                      /* ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ห้ามกดอันดู / แก้ไขไม่ได้ */
                       isCompleted ? (
                         <div style={{
                           width: '100%',
@@ -736,6 +736,249 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           )}
         </div>
       </main>
+
+      {/* ========================================================= */}
+      {/* 1. Order Detail Popup Modal (รายละเอียดออเดอร์)            */}
+      {/* ========================================================= */}
+      {selectedOrder && (
+        <div
+          onClick={() => setSelectedOrder(null)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            padding: '20px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: theme.cardBg,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '20px',
+              width: '100%',
+              maxWidth: '520px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '24px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+              color: theme.textMain
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '12px' }}>
+              <div>
+                <div style={{ fontSize: '24px', fontWeight: '900', color: PALETTE.coral }}>
+                  คิว #{selectedOrder.QueueNo}
+                </div>
+                <div style={{ fontSize: '13px', color: theme.textMuted, marginTop: '2px' }}>
+                  รหัสออเดอร์: {selectedOrder.OrderID}
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedOrder(null)}
+                style={{
+                  background: theme.cardInner,
+                  border: `1px solid ${theme.border}`,
+                  color: theme.textMain,
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '50%',
+                  fontSize: '18px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  display: 'grid',
+                  placeItems: 'center'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13.5px', background: theme.cardInner, padding: '10px 14px', borderRadius: '10px' }}>
+                <span>⏰ เวลาที่สั่ง:</span>
+                <strong>{formatTime(selectedOrder.CreatedAt)}</strong>
+              </div>
+
+              {selectedOrder.PickupTime && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13.5px', background: theme.cardInner, padding: '10px 14px', borderRadius: '10px' }}>
+                  <span>🎯 เวลานัดรับ:</span>
+                  <strong style={{ color: PALETTE.coral }}>{selectedOrder.PickupTime}</strong>
+                </div>
+              )}
+
+              <div>
+                <h4 style={{ margin: '14px 0 10px', fontSize: '15px', color: theme.textMain }}>รายการอาหารทั้งหมด</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {selectedOrder.items?.map((item, idx) => (
+                    <div key={idx} style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      background: theme.cardInner,
+                      padding: '12px',
+                      borderRadius: '12px',
+                      border: `1px solid ${theme.border}`
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '15px', fontWeight: '700' }}>{item.ProductName}</div>
+                        {item.ItemNote && (
+                          <div style={{ fontSize: '12.5px', color: PALETTE.coral, marginTop: '4px', fontWeight: '600' }}>
+                            📌 Note: {item.ItemNote}
+                          </div>
+                        )}
+                      </div>
+                      <span style={{
+                        background: PALETTE.coral,
+                        color: '#FFF',
+                        padding: '2px 10px',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        fontWeight: '800'
+                      }}>
+                        x{item.Qty}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {selectedOrder.Note && (
+                <div style={{
+                  background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED',
+                  borderLeft: `4px solid ${PALETTE.coral}`,
+                  padding: '12px',
+                  borderRadius: '8px',
+                  fontSize: '13px'
+                }}>
+                  <strong>หมายเหตุเพิ่มเติมจากลูกค้า:</strong>
+                  <div style={{ marginTop: '4px' }}>{selectedOrder.Note}</div>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setSelectedOrder(null)}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: '12px',
+                border: 'none',
+                background: theme.cardInner,
+                color: theme.textMain,
+                fontWeight: '700',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+            >
+              ปิดหน้าต่าง
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 2. Logout Alert Notification Modal (แจ้งเตือนออกจากระบบ)     */}
+      {/* ========================================================= */}
+      {showLogoutModal && (
+        <div
+          onClick={() => setShowLogoutModal(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            padding: '20px'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: theme.cardBg,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '20px',
+              width: '100%',
+              maxWidth: '380px',
+              padding: '28px 24px',
+              textAlign: 'center',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+              color: theme.textMain
+            }}
+          >
+            <div style={{
+              width: '54px',
+              height: '54px',
+              borderRadius: '50%',
+              background: 'rgba(239, 68, 68, 0.15)',
+              color: '#EF4444',
+              display: 'grid',
+              placeItems: 'center',
+              margin: '0 auto 16px'
+            }}>
+              <LogoutIcon />
+            </div>
+
+            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: '800' }}>ยืนยันการออกจากระบบ</h3>
+            <p style={{ margin: '0 0 24px', color: theme.textMuted, fontSize: '13.5px', lineHeight: '1.5' }}>
+              คุณต้องการออกจากระบบ Kitchen View ใช่หรือไม่?
+            </p>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                onClick={() => setShowLogoutModal(false)}
+                style={{
+                  flex: 1,
+                  padding: '11px',
+                  borderRadius: '12px',
+                  border: `1px solid ${theme.border}`,
+                  background: theme.cardInner,
+                  color: theme.textMain,
+                  fontWeight: '700',
+                  fontSize: '14px',
+                  cursor: 'pointer'
+                }}
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={() => {
+                  setShowLogoutModal(false);
+                  if (onLogout) onLogout();
+                }}
+                style={{
+                  flex: 1,
+                  padding: '11px',
+                  borderRadius: '12px',
+                  border: 'none',
+                  background: '#EF4444',
+                  color: '#FFFFFF',
+                  fontWeight: '700',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)'
+                }}
+              >
+                ออกจากระบบ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
