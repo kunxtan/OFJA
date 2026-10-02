@@ -194,13 +194,15 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // การเรียงลำดับคิวตามลำดับออเดอร์ที่เข้ามา (ตาม QueueNo หรือ CreatedAt)
-  const sortedOrders = [...allOrders].sort((a, b) => {
-    if (a.QueueNo && b.QueueNo) {
-      return Number(a.QueueNo) - Number(b.QueueNo);
-    }
-    return new Date(a.CreatedAt) - new Date(b.CreatedAt);
-  });
+const sortedOrders = [...allOrders].sort((a, b) => {
+  const qA = Number(a.QueueNo) || 0;
+  const qB = Number(b.QueueNo) || 0;
+  
+  if (qA !== qB) {
+    return qA - qB;
+  }
+  return new Date(a.CreatedAt || 0) - new Date(b.CreatedAt || 0);
+});
 
   const pendingOrders = sortedOrders.filter(o => o.Status === 'Pending' || o.Status === 'Cooking');
   const readyOrders = sortedOrders.filter(o => o.Status === 'Ready' || o.Status === 'Completed');
@@ -215,31 +217,38 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return 'เปิดให้บริการ';
   };
 
-  const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
-    if (e) e.stopPropagation();
-    isUpdatingRef.current = true;
+const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
+  if (e) e.stopPropagation();
+  isUpdatingRef.current = true;
 
-    setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
+  // อัปเดต Local State ทันที
+  setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
-    try {
-      const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: targetStatus,
-          user_role: 'Kitchen Staff',
-          cancel_reason: null
-        })
-      });
+  // เมื่อกด Undo ให้สลับหน้าจอไป Tab คิวรอปรุงทันที
+  if (targetStatus === 'Pending') {
+    setFilterTab('Pending');
+  }
 
-      if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
-    } catch (err) {
-      console.error("Update status error:", err);
-    } finally {
-      isUpdatingRef.current = false;
-      fetchData();
-    }
-  };
+  try {
+    const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: targetStatus,
+        user_role: 'Kitchen Staff',
+        cancel_reason: null
+      })
+    });
+
+    if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
+  } catch (err) {
+    console.error("Update status error:", err);
+    // หาก API ล้มเหลว ให้ดึงข้อมูลจริงกลับมาจาก Backend
+    fetchData();
+  } finally {
+    isUpdatingRef.current = false;
+  }
+};
 
   // ตรวจสอบออเดอร์ด่วน (เวลานัดรับเหลือ <= 5 นาที)
   const getPickupAlert = (pickupTimeStr) => {
