@@ -2087,6 +2087,11 @@ def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
                 "เปิดศูนย์อาหาร" if is_open else "ปิดศูนย์อาหาร"
             )
 
+            # แจ้งเตือนเปิดปิดศูนย์อาหาร
+            message = ("ศูนย์อาหารเปิดให้บริการแล้ว" if is_open else "ศูนย์อาหารปิดให้บริการแล้ว")
+            cur.execute("SELECT UserId FROM Users WHERE Role IN ('Customer', 'Shop Owner')"); recipients = cur.fetchall()
+            for user in recipients: send_notif(db, user["UserId"], message)
+
         db.commit()
 
         return {
