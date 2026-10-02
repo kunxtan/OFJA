@@ -1244,18 +1244,18 @@ const createCroppedImage = async () => {
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
-          <div style={{ fontSize: "clamp(50px, 9vw, 90px)" }}><NoodleBowlArt width={145} height={130} /></div>
+          <div style={{ fontSize: "clamp(50px, 9vw, 90px)", filter: "drop-shadow(0 8px 12px rgba(0,0,0,0.2))" }}><NoodleBowlArt width={145} height={130} /></div>
           <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
             <BurgerArt width={150} height={135} />
           </div>
-          <div style={{ position: "absolute", left: "320px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
-            <EggArt width={110} height={100} />
+          <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
+            <EggArt width={70} height={60} />
           </div>
           <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
             <ThaiTeaArt width={60} height={110} />
           </div>
           <div style={{ position: "absolute", left: "20px", top: "15px", opacity: 0.6 }}>
-            <PizzaArt width={20} height={20} />
+            <PizzaArt width={60} height={70} />
           </div>
         </div>
 
