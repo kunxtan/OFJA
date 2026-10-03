@@ -778,7 +778,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // 💳 DELETE CARD HANDLER
+  // DELETE CARD HANDLER
   const handleDeleteCard = async (cardIdToDelete) => {
     const updatedCards = cards.filter((c) => c.id !== cardIdToDelete);
 
@@ -790,6 +790,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           user_id: userId,
           full_name: fullName,
           phone: phone,
+          profile_img: profileImage,
           cards: updatedCards,
         }),
       });
