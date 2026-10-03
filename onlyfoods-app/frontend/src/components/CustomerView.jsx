@@ -1219,7 +1219,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           }}
                         >
                           <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                            <span style={{ color: COLORS.yellow, fontSize: "5px" }}><StarIcon/></span>
+                            <span style={{ color: COLORS.yellow, display: "flex", alignItems: "center" }}><StarIcon size={24}/></span>
                             <span style={{ fontWeight: "900", fontSize: "14px", color: COLORS.navy }}>
                               {avgRating > 0 ? avgRating.toFixed(1) : "ยังไม่มีรีวิว"}
                             </span>
@@ -2766,6 +2766,20 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               line-height: 1.2 !important;
               padding: 8px 10px !important;
               white-space: nowrap !important;
+            }
+
+            .customer-store-grid button:last-of-type {
+              font-size: 10px !important;
+              font-weight: 700 !important;
+            }
+
+            .customer-store-grid {
+              font-size: 12px;
+            }
+
+            .customer-store-grid span {
+              font-size: 10px !important;
+              line-height: 1.2 !important;
             }
 
             .customer-product-grid img {
