@@ -3396,7 +3396,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', minWidth: 0 }}>
         <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
-          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{...inputStyle,width: '100%',minWidth: 0,maxWidth: '100%',boxSizing: 'border-box'}}/>
+          <div style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}><input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{ ...inputStyle, display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', WebkitAppearance: 'none', appearance: 'none' }} /></div>
         </Field>
 
         <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
@@ -3419,6 +3419,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
               : form.contractDuration === 'custom'
                 ? 'เลือกวันสิ้นสุดสัญญาได้เอง'
                 : 'เลือกระยะเวลาสัญญาก่อน'}>
+          <div style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}>
           <input
             type="date"
             value={form.contractEndDate || ''}
@@ -3426,7 +3427,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
             onChange={update('contractEndDate')}
             disabled={form.contractDuration !== 'custom'}
             style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }}
-          />
+          /> </div>
         </Field>
       </div>
 
