@@ -3711,9 +3711,10 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
       </Field>
 
-      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',gap: '12px'}}>
+      <div style={{display: 'grid',gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',gap: '12px',  minWidth: 0}}>
         <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
-          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{...inputStyle,width: '100%',minWidth: 0,maxWidth: '100%',boxSizing: 'border-box'}}/>
+          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{...inputStyle,width: '100%',minWidth: 0,maxWidth: '100%',boxSizing: 'border-box',WebkitAppearance: 'none',
+    appearance: 'none'}}/>
         </Field>
 
         <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
