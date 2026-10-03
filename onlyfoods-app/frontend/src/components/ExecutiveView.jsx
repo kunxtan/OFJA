@@ -338,7 +338,10 @@ const ICON_PATHS = {
     refresh: 'M4 12a8 8 0 0113.7-5.7L20 8M20 4v4h-4M20 12a8 8 0 01-13.7 5.7L4 16M4 20v-4h4',
     settings: 'M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.7 1.7 0 002.5 1.1c1.6-.9 3.4.8 2.4 2.4a1.7 1.7 0 001.1 2.6c1.7.4 1.7 2.9 0 3.3a1.7 1.7 0 00-1.1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 00-2.5 1c-.4 1.8-2.9 1.8-3.4 0a1.7 1.7 0 00-2.5-1c-1.6.9-3.3-.9-2.4-2.4a1.7 1.7 0 00-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 001-2.6c-.9-1.6.8-3.3 2.4-2.4a1.7 1.7 0 002.5-1.1zM9 12a3 3 0 106 0 3 3 0 00-6 0',
     logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3',
-    history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2'
+    history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2',
+    arrowRight: 'M5 12h14M13 6l6 6-6 6',
+    arrowUp: 'M7 17L17 7M7 7h10v10',
+    arrowDown: 'M7 7l10 10M17 7v10H7'
 };
 function greetingText() {
     const h = new Date().getHours();
@@ -627,7 +630,7 @@ function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hin
       </div>
 
       {showComparison ? (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',display: 'inline-flex',alignItems: 'center',gap: '6px',alignSelf: 'flex-start',padding: '5px 10px',borderRadius: '999px',fontSize: '12.5px',fontWeight:700,background:hasDelta&&delta===0?(solid? 'rgba(255,255,255,.18)': '#F1F3F7'):positive?(solid? 'rgba(220,252,231,.96)':T.greenSoft):(solid? 'rgba(254,226,226,.96)':T.redSoft),color:hasDelta&&delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
-          <span aria-hidden="true">{hasDelta && delta === 0 ? '→' : rising ? '↗' : '↘'}</span>
+         <Icon name={hasDelta && delta === 0 ? 'arrowRight' : rising ? 'arrowUp' : 'arrowDown'} size={13}/>
           <>{delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}{deltaSuffix}</>
           {<span style={{fontWeight:500,opacity:solid&&delta===0?0.85:1,color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
             {deltaLabel}
