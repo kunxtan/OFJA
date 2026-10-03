@@ -1243,12 +1243,6 @@ const createCroppedImage = async () => {
             <div style={{ fontSize: "14px", fontWeight: "600", marginBottom: "0px" }}>สวัสดี {fullName} <HiIcon/></div>
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
-            <div className="animated-sparkle" style={{ position: "absolute", bottom: "-5px", right: "-25px"}}>
-              <SparkleArt width={24} height={24} />
-            </div>
-            <div className="animated-sparkle" style={{ position: "absolute", top: "-10px", right: "10px", animationDelay: "1s" }}>
-              <SparkleArt width={18} height={18} />
-            </div>
           </div>
           <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 4 }}>
           <div style={{ filter: "drop-shadow(0 10px 15px rgba(0,0,0,0.18))" }}>
@@ -1891,49 +1885,65 @@ const createCroppedImage = async () => {
   );
 
   // ORDERS TAB
-  const renderOrders = () => (
+const renderOrders = () => (
     <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
+      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน</h2>
       {myOrders.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
-          <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/></div>ยังไม่มีคำสั่งซื้อ
+          <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon /></div>
+          ยังไม่มีคำสั่งซื้อ
         </div>
       ) : (
         <div style={{ display: "grid", gap: "15px" }}>
           {myOrders.map(order => {
             const hasReview = order.IsReviewed || order.review || reviewedOrderIds[order.OrderID];
+            const reportedIssue = Array.isArray(myIssueReports)
+              ? myIssueReports.find((rep) => Number(rep.order_id || rep.OrderID) === Number(order.OrderID))
+              : null;
+            const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
+
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ color: COLORS.orange, fontSize: "20px", fontWeight: "900" }}>คิว #{order.QueueNo}</div>
-                    <div style={{ fontSize: "14px", fontWeight: "700", marginTop: "3px" }}>{order.StoreName}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
+                  <div style={{
+                    background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
+                    color: "#ffffff",
+                    padding: "8px 16px",
+                    borderRadius: "12px",
+                    textAlign: "left",
+                    boxShadow: "0 4px 10px rgba(2, 132, 199, 0.25)",
+                    flex: "1",
+                    minWidth: "160px"
+                  }}>
+                    <div style={{ fontSize: "10px", opacity: 0.85, textTransform: "uppercase" }}>คิวของคุณ</div>
+                    <div style={{ fontSize: "20px", fontWeight: "900" }}>#{order.QueueNo}</div>
+                    <div style={{ fontSize: "13px", fontWeight: "700", marginTop: "2px" }}>{order.StoreName}</div>
                   </div>
+
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: "800" }}>
                     {order.Status || "Pending"}
                   </span>
                 </div>
 
-                {(order.OrderTime || order.CreatedAt || order.order_time) && (
-                  <div style={{ marginTop: "12px", fontSize: "12px", color: COLORS.gray }}>
-                     เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}
-                  </div>
-                )}
-                {(order.PickupTime || order.pickup_time) && (
-                  <div style={{ marginTop: "5px", fontSize: "12px", color: COLORS.gray }}>
-                     เวลารับอาหาร: {order.PickupTime || order.pickup_time}
-                  </div>
-                )}
+                {/* เวลาที่สั่ง และ เวลารับอาหาร */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: COLORS.gray, margin: "10px 0" }}>
+                  {(order.OrderTime || order.CreatedAt || order.order_time) && (
+                    <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
+                  )}
+                  {(order.PickupTime || order.pickup_time) && (
+                    <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
+                  )}
+                </div>
 
                 {order.items && order.items.length > 0 && (
-                  <div style={{ marginTop: "18px", paddingTop: "15px", borderTop: `1px solid ${COLORS.border}` }}>
+                  <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: `1px solid ${COLORS.border}` }}>
                     {order.items.map((item, index) => (
-                      <div key={item.OrderDetailID || index} style={{ display: "flex", justifyContent: "space-between", gap: "15px", padding: "7px 0", fontSize: "13px" }}>
+                      <div key={item.OrderDetailID || index} style={{ display: "flex", justifyContent: "space-between", gap: "15px", padding: "6px 0", fontSize: "13px" }}>
                         <div>
                           <b>{item.ProductName}</b> x{item.Qty}
-                          {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "12px", marginTop: "3px" }}> {item.ItemNote}</div>}
+                          {item.ItemNote && <div style={{ color: COLORS.gray, fontSize: "12px", marginTop: "2px" }}>📝 {item.ItemNote}</div>}
                         </div>
-                        <span>{(Number(item.UnitPrice) * Number(item.Qty)).toFixed(2)} ฿</span>
+                        <span>{(Number(item.UnitPrice || 0) * Number(item.Qty || 1)).toFixed(2)} ฿</span>
                       </div>
                     ))}
                   </div>
@@ -1941,51 +1951,53 @@ const createCroppedImage = async () => {
 
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", paddingTop: "12px", borderTop: `1px solid ${COLORS.border}`, fontWeight: "900" }}>
                   <span>ยอดรวม</span>
-                  <span style={{ color: COLORS.orange, fontSize: "18px" }}>{order.TotalAmount} ฿</span>
+                  <span style={{ color: COLORS.orange, fontSize: "18px" }}>{Number(order.TotalAmount || 0).toFixed(2)} ฿</span>
                 </div>
 
                 {order.Status === "Completed" && (
-                  <div style={{ display: "flex", gap: "10px", marginTop: "12px", width: "100%" }}>
+                  <div style={{ display: "flex", gap: "10px", marginTop: "15px", width: "100%" }}>
                     <button
                       onClick={() => handleOpenReviewModal(order)}
                       style={{
-                        flex: 1, padding: "10px", border: "none", borderRadius: "12px",
+                        flex: 1,
+                        padding: "11px",
+                        border: "none",
+                        borderRadius: "12px",
                         background: hasReview ? COLORS.yellow : COLORS.orange,
                         color: hasReview ? COLORS.navy : COLORS.white,
-                        fontSize: "13px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
+                        fontSize: "13px",
+                        fontWeight: "800",
+                        cursor: "pointer",
+                        fontFamily: "inherit"
                       }}
                     >
                       {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
                     </button>
 
-                    {(() => {
-                      const hasReportedIssue = myIssueReports.some(
-                        (report) => Number(report.OrderID || report.order_id) === Number(order.OrderID)
-                      );
-
-                      return (
-                        <button
-                          onClick={() => {
-                            if (hasReportedIssue) {
-                              fetchMyIssueReports();
-                              setIsViewReportsModalOpen(true);
-                            } else {
-                              handleOpenReportModal(order);
-                            }
-                          }}
-                          style={{
-                            flex: 1, padding: "10px",
-                            border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
-                            borderRadius: "12px",
-                            background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED",
-                            color: hasReportedIssue ? COLORS.navy : COLORS.red,
-                            fontSize: "13px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
-                          }}
-                        >
-                          {hasReportedIssue ? "ดูปัญหาของฉัน" : "แจ้งปัญหา"}
-                        </button>
-                      );
-                    })()}
+                    <button
+                      onClick={() => {
+                        if (hasReportedIssue) {
+                          if (typeof fetchMyIssueReports === "function") fetchMyIssueReports();
+                          if (typeof setIsViewReportsModalOpen === "function") setIsViewReportsModalOpen(true);
+                        } else {
+                          handleOpenReportModal(order);
+                        }
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: "11px",
+                        border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
+                        borderRadius: "12px",
+                        background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED",
+                        color: hasReportedIssue ? COLORS.navy : COLORS.red,
+                        fontSize: "13px",
+                        fontWeight: "800",
+                        cursor: "pointer",
+                        fontFamily: "inherit"
+                      }}
+                    >
+                      {hasReportedIssue ? "ดูปัญหาของฉัน" : "แจ้งปัญหา"}
+                    </button>
                   </div>
                 )}
               </div>
