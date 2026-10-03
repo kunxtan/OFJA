@@ -1233,7 +1233,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                         Synthetic: true,
                         StoreId: store.StoreId,
                         Message: `สัญญาร้าน ${store.StoreName} หมดอายุแล้ว`,
-                        CreatedAt: store.ContractEndDate,
+                        CreatedAt: new Date().toISOString(),
                         EventType: 'CONTRACT_EXPIRED'
                     };
                 }
@@ -1243,7 +1243,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                         Synthetic: true,
                         StoreId: store.StoreId,
                         Message: `สัญญาร้าน ${store.StoreName} ใกล้หมดอายุ (${daysLeft === 0 ? 'วันนี้' : `เหลือ ${daysLeft} วัน`})`,
-                        CreatedAt: store.ContractEndDate,
+                        CreatedAt: new Date().toISOString(),
                         EventType: 'CONTRACT_EXPIRING'
                     };
                 }
@@ -3738,7 +3738,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
       </Field>
 
-      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',gap: '12px'}}>
+      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',gap: '12px'}}>
         <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
           <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={inputStyle}/>
         </Field>
