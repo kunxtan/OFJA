@@ -1234,6 +1234,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               background: COLORS.white,
                               border: `1px solid ${COLORS.border}`,
                               borderRadius: "15px",
+                              boxSizing: "border-box",
+                              maxWidth: "100%",
+                              whiteSpace: "nowrap",
                               padding: "4px 10px",
                               fontSize: "11px",
                               fontWeight: "800",
@@ -2764,10 +2767,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               font-size: 8px !important;
               font-weight: 600 !important;
               line-height: 1.2 !important;
-              padding: 4px 6px !important;
               white-space: nowrap !important;
-              min-width: 0 !important;
-               overflow: hidden !important;
             }
 
             .customer-store-grid button:last-of-type {
