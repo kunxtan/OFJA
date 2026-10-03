@@ -678,6 +678,7 @@ def get_user_profile(user_id: int, db=Depends(get_db)):
                 Phone,
                 Email,
                 ProfileImg,
+                Cards,
                 CardHolderName,
                 CardLast4,
                 CardExpiry,
@@ -695,6 +696,25 @@ def get_user_profile(user_id: int, db=Depends(get_db)):
                 status_code=404,
                 detail="ไม่พบข้อมูลผู้ใช้นี้"
             )
+        
+        if user.get("Cards"):
+            try:
+                user["Cards"] = json.loads(user["Cards"])
+            except Exception:
+                user["Cards"] = []
+        else:
+            user["Cards"] = []
+
+        if len(user["Cards"]) == 0 and user.get("CardLast4"):
+            user["Cards"] = [
+                {
+                    "id": "card_1",
+                    "cardHolderName": user.get("CardHolderName") or "",
+                    "cardLast4": user.get("CardLast4") or "",
+                    "cardExpiry": user.get("CardExpiry") or ""
+                }
+            ]
+
 
         return user
 
