@@ -1639,28 +1639,8 @@ const storeRows = Array.from(storeMap.values())
         .filter((s) => s.IsSuspended || (s.delta !== null && s.delta <= -15) || s.cancelRate >= 10)
         .sort((a, b) => (Number(b.IsSuspended) - Number(a.IsSuspended)) || (b.cancelRate - a.cancelRate) || ((a.delta ?? 0) - (b.delta ?? 0)))
         .slice(0, 4);
-    const csvRows = () => [
-    [
-        'ร้านค้า',
-        'ออเดอร์สำเร็จ',
-        'ออเดอร์ที่ยกเลิก',
-        'ยอดขายก่อนหักยกเลิก (บาท)',
-        'ยอดขายสุทธิ (บาท)',
-        'อัตราการยกเลิก'
-    ],
-
-    ...report.storeRows.map((s) => [
-        s.StoreName,
-        s.completedCount,
-        s.cancelledCount,
-        Math.round(s.grossSales),
-        Math.round(s.sales),
-        s.cancelRate === null
-            ? 'N/A'
-            : `${s.cancelRate.toFixed(2)}%`
-    ]),
-
-    [
+    const csvRows = () => {
+    const summaryRow = [
         'สรุปภาพรวม',
         report.now.completedCount,
         report.now.cancelledCount,
@@ -1669,8 +1649,71 @@ const storeRows = Array.from(storeMap.values())
         report.now.cancelRate === null
             ? 'N/A'
             : `${report.now.cancelRate.toFixed(2)}%`
-    ]
-];
+    ];
+
+    // 1 วัน: แสดงข้อมูลแยกร้าน
+    if (days === 1) {
+        return [
+            [
+                'ร้านค้า',
+                'ออเดอร์สำเร็จ',
+                'ออเดอร์ที่ยกเลิก',
+                'ยอดขายก่อนหักยกเลิก (บาท)',
+                'ยอดขายสุทธิ (บาท)',
+                'อัตราการยกเลิก'
+            ],
+
+            ...report.storeRows.map((s) => [
+                s.StoreName,
+                s.completedCount,
+                s.cancelledCount,
+                Math.round(s.grossSales),
+                Math.round(s.sales),
+                s.cancelRate === null
+                    ? 'N/A'
+                    : `${s.cancelRate.toFixed(2)}%`
+            ]),
+
+            summaryRow
+        ];
+    }
+
+    // 7 / 14 / 30 วัน: แสดงข้อมูลแยกรายวัน
+    const dailyRows = report.buckets.map((bucket) => {
+        const bucketOrders = report.current.filter((o) => {
+            const at = parseOrderDate(o.CreatedAt);
+            return at && toISODate(at) === bucket.key;
+        });
+
+        const summary = summarize(bucketOrders);
+
+        return [
+            bucket.label,
+            summary.completedCount,
+            summary.cancelledCount,
+            Math.round(summary.grossSales),
+            Math.round(summary.sales),
+            summary.cancelRate === null
+                ? 'N/A'
+                : `${summary.cancelRate.toFixed(2)}%`
+        ];
+    });
+
+    return [
+        [
+            'วันที่',
+            'ออเดอร์สำเร็จ',
+            'ออเดอร์ที่ยกเลิก',
+            'ยอดขายก่อนหักยกเลิก (บาท)',
+            'ยอดขายสุทธิ (บาท)',
+            'อัตราการยกเลิก'
+        ],
+
+        ...dailyRows,
+
+        summaryRow
+    ];
+};
     const saveCsv = () => {
         exportCsv(`onlyfoods-executive-report-${anchor}-${days}d.csv`, csvRows());
         setExportPreview(null);
