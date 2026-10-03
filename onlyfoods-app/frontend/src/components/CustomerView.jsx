@@ -1269,8 +1269,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
         {viewMode === "products" && (
           <div>
-            <div  className="customer-product-grid"
-              style= {{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
               <button
                 onClick={() => setViewMode("stores")}
                 style={{
@@ -1295,7 +1294,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
+            <div className="customer-product-grid"
+              style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
               {filteredProducts.map(product => (
                 <div key={product.ProductId} style={{ ...cardStyle, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
                   <img
