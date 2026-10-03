@@ -1905,10 +1905,14 @@ const renderOrders = () => (
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
-                  <div style={{
-                    background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)", color: "#ffffff", padding: "8px 16px", borderRadius: "12px", textAlign: "left", boxShadow: "0 4px 10px rgba(2, 132, 199, 0.25)",
-                    width: "100%", boxSizing: "border-box", marginBottom: "14px"
-                  }}>
+                  <div style={{ background: order.Status === "Completed"
+                                ? "#FFEBD9": "#FF8A00",
+                                color: order.Status === "Completed"
+                                  ? "#D96000": (typeof PALETTE !== "undefined" && PALETTE.slateText) ? PALETTE.slateText : "#1E293B",
+                                padding: "12px 20px", borderRadius: "14px", textAlign: "left",
+                                boxShadow: order.Status === "Completed" ? "none" : "0 4px 12px rgba(255, 138, 0, 0.25)",
+                                width: "100%", boxSizing: "border-box", marginBottom: "14px", transition: "all 0.3s ease"
+                              }}>
                     <div style={{ fontSize: "10px", opacity: 0.85, textTransform: "uppercase" }}>คิวของคุณ</div>
                     <div style={{ fontSize: "20px", fontWeight: "900" }}>#{order.QueueNo}</div>
                     <div style={{ fontSize: "13px", fontWeight: "700", marginTop: "2px" }}>{order.StoreName}</div>
