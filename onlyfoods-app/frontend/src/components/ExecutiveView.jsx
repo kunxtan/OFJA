@@ -3607,6 +3607,7 @@ function StoreImageCropModal({ open, imageSrc, fileName, onCancel, onConfirm }) 
 
 // ===== ฟอร์มเพิ่ม/แก้ไขข้อมูลร้านค้า =====
 function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose, onSubmit, saving }) {
+    const isCompact = useIsNarrow(700);
     const fileInputRef = useRef(null);
     const [dragOver, setDragOver] = useState(false);
     const [cropSource, setCropSource] = useState('');
@@ -3713,8 +3714,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
 
       <div style={{display: 'grid',gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',gap: '12px',  minWidth: 0}}>
         <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
-          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{...inputStyle,width: '100%',minWidth: 0,maxWidth: '100%',boxSizing: 'border-box',WebkitAppearance: 'none',
-    appearance: 'none'}}/>
+          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{...inputStyle,width: '100%',minWidth: 0,maxWidth: '100%',boxSizing: 'border-box'}}/>
         </Field>
 
         <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
@@ -5454,7 +5454,7 @@ function CustomerInfoPage({ ctx }) {
             {customers.length > 0 && <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
     {customers.map(customer => <div key={customer.UserId} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '16px', background: T.surface }}>
         <div style={{ fontSize: '16px', fontWeight: 700, color: T.ink }}>{customer.FullName || 'ไม่ระบุชื่อ'}</div>
-        <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px 18px', fontSize: '13px', color: T.text }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isCompact ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: '12px', minWidth: 0 }}>
             <div><strong>User ID:</strong> {customer.UserId}</div>
             <div><strong>Username:</strong> {customer.Username || '—'}</div>
             <div><strong>Role:</strong> {customer.Role || '—'}</div>
