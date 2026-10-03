@@ -308,6 +308,7 @@ class UpdateProfileSchema(BaseModel):
     phone: Optional[str] = None
     profile_img: Optional[str] = None
     profileImg: Optional[str] = None
+    cards: Optional[List[dict]] = None
     card_holder_name: Optional[str] = None
     card_last4: Optional[str] = None
     card_expiry: Optional[str] = None
