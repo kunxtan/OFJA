@@ -1604,6 +1604,7 @@ const storeRows = Array.from(storeMap.values())
         return {
             now,
             before,
+            current,
             hasPreviousData: previous.length > 0,
             storeRows,
             buckets: buildBuckets(now.completed, anchor, days),
