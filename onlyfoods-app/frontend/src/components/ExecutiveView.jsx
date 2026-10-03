@@ -3395,7 +3395,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
       </Field>
             <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: '12px', minWidth: 0 }}>
-    <div style={{ minWidth: 0, paddingRight: isNarrow ? '16px' : 0 }}><Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}><input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }} /></Field></div>
+    <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}><input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{ ...inputStyle,   width: isNarrow ? 'calc(100% - 16px)' : '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }} /></Field>
 
     <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
         <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
@@ -3403,9 +3403,9 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
     </Field>
 
-    <div style={{ minWidth: 0, paddingRight: isNarrow ? '16px' : 0 }}><Field label="วันที่สิ้นสุดสัญญา" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
-        <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }} />
-    </Field></div>
+    <Field label="วันที่สิ้นสุดสัญญา" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
+        <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...inputStyle,   width: isNarrow ? 'calc(100% - 16px)' : '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }} />
+    </Field>
 </div>
 
       <div style={twoColStyle}>
