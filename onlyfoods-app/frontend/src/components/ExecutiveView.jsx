@@ -3294,6 +3294,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
     const [dragOver, setDragOver] = useState(false);
     const [cropSource, setCropSource] = useState('');
     const [cropFileName, setCropFileName] = useState('');
+    const isNarrow = useIsNarrow();
 
     const calculateContractEnd = (startISO, duration) => {
         if (!startISO || !duration || duration === 'custom')
@@ -3393,43 +3394,21 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
             </option>))}
         </select>
       </Field>
+<div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: '12px', minWidth: 0 }}>
+    <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
+        <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }} />
+    </Field>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', minWidth: 0 }}>
-        <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
-          <div style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}><input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{ ...inputStyle, display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', WebkitAppearance: 'none', appearance: 'none' }} /></div>
-        </Field>
+    <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
+        <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
+            <option value="">— เลือกระยะเวลา —</option><option value="6m">6 เดือน</option><option value="1y">1 ปี</option><option value="2y">2 ปี</option><option value="3y">3 ปี</option><option value="custom">กำหนดวันสิ้นสุดเอง</option>
+        </select>
+    </Field>
 
-        <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
-          <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
-            <option value="">— เลือกระยะเวลา —</option>
-            <option value="6m">6 เดือน</option>
-            <option value="1y">1 ปี</option>
-            <option value="2y">2 ปี</option>
-            <option value="3y">3 ปี</option>
-            <option value="custom">กำหนดวันสิ้นสุดเอง</option>
-          </select>
-        </Field>
-
-        <Field
-          label="วันที่สิ้นสุดสัญญา"
-          required
-          error={errors.contractEndDate}
-          hint={form.contractDuration && form.contractDuration !== 'custom'
-              ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ'
-              : form.contractDuration === 'custom'
-                ? 'เลือกวันสิ้นสุดสัญญาได้เอง'
-                : 'เลือกระยะเวลาสัญญาก่อน'}>
-          <div style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}>
-          <input
-            type="date"
-            value={form.contractEndDate || ''}
-            min={form.contractStartDate || undefined}
-            onChange={update('contractEndDate')}
-            disabled={form.contractDuration !== 'custom'}
-            style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }}
-          /> </div>
-        </Field>
-      </div>
+    <Field label="วันที่สิ้นสุดสัญญา" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
+        <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }} />
+    </Field>
+</div>
 
       <div style={twoColStyle}>
         <Field label="ชื่อผู้ติดต่อ" required error={errors.contactName}>
