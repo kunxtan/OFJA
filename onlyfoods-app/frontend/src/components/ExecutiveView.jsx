@@ -2153,77 +2153,37 @@ const storeRows = Array.from(storeMap.values())
                   <strong style={{ display: 'block', color: T.ink, marginTop: '6px', fontSize: '16px' }}>{value}</strong>
                 </div>))}
             </div>
-            <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างข้อมูลสรุปผลรายร้าน</div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={tableStyle}>
-    <thead>
-        <tr>
-            <th style={thStyle}>ร้านค้า</th>
-            <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
-            <th style={thRightStyle}>ออเดอร์ที่ยกเลิก</th>
-            <th style={thRightStyle}>ยอดขายก่อนหักยกเลิก</th>
-            <th style={thRightStyle}>ยอดขายสุทธิ</th>
-            <th style={thRightStyle}>อัตราการยกเลิก</th>
-        </tr>
-    </thead>
+            <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>{exportPreview === 'csv' && days > 1 ? 'ตัวอย่างข้อมูลสรุปผลรายวัน' : 'ตัวอย่างข้อมูลสรุปผลรายร้าน'}</div>
 
+<div style={{ overflowX: 'auto' }}><table style={tableStyle}>
+    <thead><tr>
+        <th style={thStyle}>{exportPreview === 'csv' && days > 1 ? 'วันที่' : 'ร้านค้า'}</th>
+        <th style={thRightStyle}>ออเดอร์สำเร็จ</th><th style={thRightStyle}>ออเดอร์ที่ยกเลิก</th><th style={thRightStyle}>ยอดขายก่อนหักยกเลิก</th><th style={thRightStyle}>ยอดขายสุทธิ</th><th style={thRightStyle}>อัตราการยกเลิก</th>
+    </tr></thead>
     <tbody>
-        {report.storeRows.slice(0, 6).map( (s) => {
-          
-            const cancelledSales = sumAmount(
-                report.now.cancelled.filter(
-                    (o) => String(o.StoreId) === String(s.StoreId)
-                )
-            );
-
-            return (
-                <tr key={s.StoreId} style={trStyle}>
-                    <td style={tdStyle}>
-                        {s.StoreName}
-                    </td>
-
-                    <td style={tdRightStyle}>
-                        {money(s.completedCount)}
-                    </td>
-
-                    <td style={tdRightStyle}>
-                        {money(s.cancelledCount)}
-                    </td>
-
-                    <td style={tdRightStyle}>
-                        {money(s.sales + cancelledSales)} บาท
-                    </td>
-
-                    <td style={tdRightStyle}>
-                        {money(s.sales)} บาท
-                    </td>
-
-                    <td style={tdRightStyle}>
-    {s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}
-</td>
-                </tr>
-            );
-        })}
-        {exportPreview === 'csv' && (
-    <tr style={{ ...trStyle, fontWeight: 700, background: T.bg }}>
-        <td style={tdStyle}>สรุปภาพรวม</td>
-        <td style={tdRightStyle}>{money(report.now.completedCount)}</td>
-        <td style={tdRightStyle}>{money(report.now.cancelledCount)}</td>
-        <td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td>
-        <td style={tdRightStyle}>{money(report.now.sales)} บาท</td>
-        <td style={tdRightStyle}>
-            {report.now.cancelRate === null
-                ? 'N/A'
-                : `${report.now.cancelRate.toFixed(2)}%`}
-        </td>
-    </tr>
-)}
+        {exportPreview === 'csv' && days > 1 ? <>
+            {report.buckets.slice(0, 6).map(bucket => {
+                const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && toISODate(at) === bucket.key; }), summary = summarize(bucketOrders);
+                return <tr key={bucket.key} style={trStyle}>
+                    <td style={tdStyle}>{bucket.label}</td><td style={tdRightStyle}>{money(summary.completedCount)}</td><td style={tdRightStyle}>{money(summary.cancelledCount)}</td><td style={tdRightStyle}>{money(summary.grossSales)} บาท</td><td style={tdRightStyle}>{money(summary.sales)} บาท</td><td style={tdRightStyle}>{summary.cancelRate === null ? 'N/A' : `${summary.cancelRate.toFixed(1)}%`}</td>
+                </tr>;
+            })}
+            <tr style={{ ...trStyle, fontWeight: 700, background: T.bg }}>
+                <td style={tdStyle}>สรุปภาพรวม</td><td style={tdRightStyle}>{money(report.now.completedCount)}</td><td style={tdRightStyle}>{money(report.now.cancelledCount)}</td><td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td><td style={tdRightStyle}>{money(report.now.sales)} บาท</td><td style={tdRightStyle}>{report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(2)}%`}</td>
+            </tr>
+        </> : <>
+            {report.storeRows.slice(0, 6).map(s => <tr key={s.StoreId} style={trStyle}>
+                <td style={tdStyle}>{s.StoreName}</td><td style={tdRightStyle}>{money(s.completedCount)}</td><td style={tdRightStyle}>{money(s.cancelledCount)}</td><td style={tdRightStyle}>{money(s.grossSales)} บาท</td><td style={tdRightStyle}>{money(s.sales)} บาท</td><td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}</td>
+            </tr>)}
+            {exportPreview === 'csv' && <tr style={{ ...trStyle, fontWeight: 700, background: T.bg }}>
+                <td style={tdStyle}>สรุปภาพรวม</td><td style={tdRightStyle}>{money(report.now.completedCount)}</td><td style={tdRightStyle}>{money(report.now.cancelledCount)}</td><td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td><td style={tdRightStyle}>{money(report.now.sales)} บาท</td><td style={tdRightStyle}>{report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(2)}%`}</td>
+            </tr>}
+        </>}
     </tbody>
-</table>
-            </div>
-            {report.storeRows.length > 6 && (<p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>
-                และอีก {report.storeRows.length - 6} ร้านในไฟล์จริง
-              </p>)}
+</table></div>
+
+{exportPreview === 'csv' && days > 1 && report.buckets.length > 6 && <p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>และอีก {report.buckets.length - 6} วันในไฟล์จริง</p>}
+{!(exportPreview === 'csv' && days > 1) && report.storeRows.length > 6 && <p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>และอีก {report.storeRows.length - 6} ร้านในไฟล์จริง</p>}
           </div>
         </div>
       </Modal>
