@@ -745,6 +745,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     const updatedCards = [...cards, newCardObj];
 
+      console.log("cards เดิม:", cards);
+      console.log("cards หลังเพิ่ม:", updatedCards);
+      
     try {
       const res = await fetch(`${apiBase}/api/users/profile`, {
         method: "PUT",
