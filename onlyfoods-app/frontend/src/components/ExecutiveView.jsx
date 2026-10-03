@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Cropper from 'react-easy-crop';
+import * as XLSX from 'xlsx';
 // ===== ตั้งค่าหลักของหน้า Executive =====
 const ORDER_TIME_IS_UTC = true;
 const MAX_IMAGE_MB = 5;
@@ -378,175 +379,43 @@ function exportCsv(filename, rows) {
     saveBlob(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }), filename);
 }
 function exportXlsx(filename, sheets) {
-    const enc = new TextEncoder();
+    const workbook = XLSX.utils.book_new();
 
-    const xml = (v) => String(v ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+    (sheets || []).forEach((sheet, index) => {
+        if (!sheet || !Array.isArray(sheet.rows)) return;
 
-    const col = (n) => {
-        let s = '';
-        for (n += 1; n; n = Math.floor((n - 1) / 26)) {
-            s = String.fromCharCode(65 + (n - 1) % 26) + s;
-        }return s;};
+        const sheetName = String(
+            sheet.name || `Sheet${index + 1}`
+        )
+            .replace(/[\\/*?:[\]]/g, '')
+            .slice(0, 31) || `Sheet${index + 1}`;
 
-    const safeSheets = (Array.isArray(sheets) ? sheets : [])
-        .filter((sheet) => sheet && Array.isArray(sheet.rows))
-        .map((sheet, index) => ({
-            name: String(sheet.name || `Sheet${index + 1}`)
-                .replace(/[\\/*?:[\]]/g, '')
-                .slice(0, 31) || `Sheet${index + 1}`,
-            rows: sheet.rows,
-            widths: sheet.widths || []
-        }));
+        const worksheet = XLSX.utils.aoa_to_sheet(
+            sheet.rows
+        );
 
-    if (!safeSheets.length) {
-        throw new Error('ไม่มีข้อมูลสำหรับสร้างไฟล์ Excel');
+        if (Array.isArray(sheet.widths)) {
+            worksheet['!cols'] = sheet.widths.map(
+                (width) => ({
+                    wch: Number(width) || 12
+                })
+            );
+        }
+
+        XLSX.utils.book_append_sheet(
+            workbook,
+            worksheet,
+            sheetName
+        );
+    });
+
+    if (!workbook.SheetNames.length) {
+        throw new Error(
+            'ไม่มีข้อมูลสำหรับสร้างไฟล์ Excel'
+        );
     }
 
-    const makeSheetXml = (sheet) => {
-        const rows = sheet.rows;
-
-        const cells = rows.map((row, r) => {
-            const values = Array.isArray(row) ? row : [row];
-
-            return `<row r="${r + 1}">${values.map((v, c) => {
-                const ref = `${col(c)}${r + 1}`;
-
-                return typeof v === 'number' && Number.isFinite(v)
-                    ? `<c r="${ref}"><v>${v}</v></c>`
-                    : `<c r="${ref}" t="inlineStr"><is><t>${xml(v)}</t></is></c>`;
-            }).join('')}</row>`;
-        }).join('');
-
-        const widths = sheet.widths.length
-            ? `<cols>${sheet.widths.map((width, i) =>
-                `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`
-            ).join('')}</cols>`
-            : '';
-
-        return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-    ${widths}
-    <sheetData>${cells}</sheetData>
-</worksheet>`;
-    };
-
-    const contentTypes = safeSheets.map((_, i) =>
-        `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
-
-    const workbookSheets = safeSheets.map((sheet, i) =>
-        `<sheet name="${xml(sheet.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('');
-
-    const workbookRels = safeSheets.map((_, i) =>
-        `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>` ).join('');
-
-    const files = {
-        '[Content_Types].xml':
-            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-    <Default Extension="xml" ContentType="application/xml"/>
-    <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-    ${contentTypes}
-</Types>`,
-
-        '_rels/.rels':
-            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>`,
-
-        'xl/workbook.xml':
-            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-    <sheets>${workbookSheets}</sheets>
-</workbook>`,
-
-        'xl/_rels/workbook.xml.rels':
-            `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-    ${workbookRels}
-</Relationships>`
-    };
-
-    safeSheets.forEach((sheet, i) => {
-        files[`xl/worksheets/sheet${i + 1}.xml`] = makeSheetXml(sheet);
-    });
-
-    const crcTable = Array.from({ length: 256 }, (_, n) => {
-        let c = n;
-        for (let k = 0; k < 8; k += 1) {
-            c = (c & 1) ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-        } return c >>> 0;});
-
-    const crc32 = (u8) => {
-        let c = 0xFFFFFFFF;
-        for (const b of u8) {
-            c = crcTable[(c ^ b) & 255] ^ (c >>> 8);
-        }return (c ^ 0xFFFFFFFF) >>> 0;};
-
-    const u16 = (n) => new Uint8Array([n & 255, (n >>> 8) & 255]);
-
-    const u32 = (n) => new Uint8Array([
-        n & 255,
-        (n >>> 8) & 255,
-        (n >>> 16) & 255,
-        (n >>> 24) & 255]);
-    const join = (parts) => {
-        const n = parts.reduce((a, p) => a + p.length, 0);
-        const z = new Uint8Array(n);
-        let o = 0;
-
-        parts.forEach((p) => {
-            z.set(p, o);
-            o += p.length;
-        });return z; };
-
-    const local = [];
-    const central = [];
-    let offset = 0;
-
-    Object.entries(files).forEach(([name, content]) => {
-        const nb = enc.encode(name);
-        const data = enc.encode(content);
-        const crc = crc32(data);
-
-        const lh = join([
-            u32(0x04034b50),u16(20), u16(0), u16(0), u16(0), u16(0),u32(crc),
-            u32(data.length),  u32(data.length),u16(nb.length),u16(0),nb,data
-        ]);
-
-        local.push(lh);
-
-        central.push(join([
-            u32(0x02014b50),u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),u32(crc),
-            u32(data.length),u32(data.length),u16(nb.length),
-            u16(0), u16(0), u16(0), u16(0),u32(0),
-            u32(offset),nb
-        ]));
-
-        offset += lh.length;
-    });
-
-    const cd = join(central);
-    const body = join(local);
-
-    const end = join([
-        u32(0x06054b50),u16(0), u16(0),
-        u16(central.length),u16(central.length),
-        u32(cd.length),u32(body.length),u16(0)]);
-
-    saveBlob(
-        new Blob(
-            [body, cd, end],
-            { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
-        ),
-        filename
-    );
+    XLSX.writeFile(workbook, filename);
 }
 // ===== UI Components กลาง เช่น Card, Button, Modal, Toast =====
 function Card({ title, subtitle, right, children, style }) {
