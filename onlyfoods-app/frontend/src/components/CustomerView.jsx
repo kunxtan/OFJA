@@ -1244,15 +1244,18 @@ const createCroppedImage = async () => {
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
-          <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}>
+          <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 3 }}>
           <div style={{ filter: "drop-shadow(0 10px 15px rgba(0,0,0,0.18))" }}>
             <NoodleBowlArt width={150} height={120} />
           </div>
-          <div style={{ position: "absolute", top: "-15px", right: "-20px", transform: "rotate(15deg)", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>
+          <div style={{ position: "absolute", top: "-15px", right: "-40px", transform: "rotate(15deg)", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>
             <ThaiTeaArt width={45} height={85} />
           </div>
-          <div style={{ position: "absolute", bottom: "-5px", left: "-25px", opacity: 0.8 }}>
+          <div className="animated-sparkle" style={{ position: "absolute", bottom: "-5px", left: "-25px"}}>
             <SparkleArt width={24} height={24} />
+          </div>
+          <div className="animated-sparkle" style={{ position: "absolute", top: "-10px", left: "10px", animationDelay: "1s" }}>
+            <SparkleArt width={18} height={18} />
           </div>
         </div>
       </div>
@@ -3108,6 +3111,9 @@ const renderPaymentModal = () => {
         {`
           @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
           .customer-view, .customer-view * {font-family: 'Sarabun', sans-serif !important;}
+          @keyframes sparkleTwinkle { 0% {transform: scale(0.8) rotate(0deg); opacity: 0.4;} 50% {transform: scale(1.25) rotate(90deg); opacity: 1;
+          filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));} 100% {transform: scale(0.8) rotate(180deg); opacity: 0.4;}}
+          .animated-sparkle {animation: sparkleTwinkle 2s infinite ease-in-out; display: inline-block;}
         `}
       </style>
       <div style={containerStyle}>
