@@ -3394,7 +3394,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
       </Field>
 
-      <div style={{display: 'grid',gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',gap: '12px',  minWidth: 0}}>
+      <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: '12px', minWidth: 0 }}>
         <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
           <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{...inputStyle,width: '100%',minWidth: 0,maxWidth: '100%',boxSizing: 'border-box'}}/>
         </Field>
