@@ -3395,10 +3395,10 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
       </Field>
             <div style={{ display: 'grid', gridTemplateColumns: isCompact ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', columnGap: '14px', minWidth: 0, width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
-    <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}><input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{ ...inputStyle, display: 'block', minWidth: 0, maxWidth: '100%' }} /></Field>
+    <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}><input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={formDateInputStyle} /></Field>
     <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}><select value={form.contractDuration || ''} onChange={update('contractDuration')} style={{ ...inputStyle, display: 'block', minWidth: 0, maxWidth: '100%' }}><option value="">— เลือกระยะเวลา —</option><option value="6m">6 เดือน</option><option value="1y">1 ปี</option><option value="2y">2 ปี</option><option value="3y">3 ปี</option><option value="custom">กำหนดวันสิ้นสุดเอง</option></select></Field>
     <Field label="วันที่สิ้นสุดสัญญา" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
-        <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...inputStyle, display: 'block', minWidth: 0, maxWidth: '100%', background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }} />
+        <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...formDateInputStyle, background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer'  }} />
     </Field>
 </div>
 
@@ -4791,7 +4791,7 @@ const renewNewStart = renewStart;
                 setRenewError('');
             }}
             style={{
-                ...inputStyle,
+                ...formDateInputStyle,
                 background:
                     renewDuration !== 'custom'
                         ? '#F6F7FB'
@@ -5491,6 +5491,7 @@ const cancelItemWrapStyle = { display: 'flex', flexDirection: 'column', gap: '8p
 const cancelItemRowStyle = { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px', color: T.text };
 const storeThumbStyle = { width: '38px', height: '38px', borderRadius: T.radiusMd, display: 'grid', placeItems: 'center', background: T.primarySoft, color: T.primary, fontWeight: 700 };
 const inputStyle = { width: '100%', padding: '11px 13px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, fontSize: '13.5px', fontFamily: FONT_STACK, color: T.text, background: T.surface, boxSizing: 'border-box', outlineColor: T.primary };
+const formDateInputStyle = { ...inputStyle, display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', WebkitAppearance: 'none', appearance: 'none' };
 const twoColStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(210px, 100%), 1fr))', gap: '0 14px' };
 const smallBtn = { padding: '7px 10px', fontSize: '12.5px' };
 const inlineEditButtonStyle = { border: 'none', background: 'transparent', padding: '4px', borderRadius: '6px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
