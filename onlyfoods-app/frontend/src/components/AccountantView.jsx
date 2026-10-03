@@ -107,7 +107,9 @@ function buildAuditRows(logs, orders) {
 const AUDIT_ROW_BG = { bad: '#FFF7F7', warn: '#FFFBF0' };
 
 const colorForStore = (storeId) => STORE_COLORS[Number(storeId) % STORE_COLORS.length];
-const statusLabel = (s) => (s === 'bad' ? 'สูงผิดปกติ' : s === 'warn' ? 'เฝ้าระวัง' : 'ปกติ');
+const statusLabel = (s) => (s === 'na' ? 'N/A' : s === 'bad' ? 'สูงผิดปกติ' : s === 'warn' ? 'เฝ้าระวัง' : 'ปกติ');
+// ถ้าไม่มีข้อมูล (rate เป็น null) ให้แสดง N/A แทน 0%
+const fmtRate = (r) => (r === null || r === undefined || Number.isNaN(r) ? 'N/A' : `${r}%`);
 
 function parseOrderDate(value) {
   if (!value) return null;
@@ -175,10 +177,12 @@ function buildStoreSummary(stores, orders, rangeStart) {
       return !r.deletedDay || rangeStart <= r.deletedDay;       // ช่วงนี้เริ่มก่อน/ตรงวันที่ลบ -> ร้านยังมีอยู่ในช่วงนั้น
     })
     .map(r => {
-      const rate = r.totalOrders > 0 ? (r.cancelledOrders / r.totalOrders) * 100 : 0;
-      const status = rate > RATE_ALERT ? 'bad' : rate >= RATE_WARN ? 'warn' : 'ok';
+      // ไม่มีออเดอร์ = ไม่มีข้อมูลให้คำนวณ -> rate เป็น null (แสดง N/A)
+      const hasData = r.totalOrders > 0;
+      const rate = hasData ? (r.cancelledOrders / r.totalOrders) * 100 : null;
+      const status = !hasData ? 'na' : rate > RATE_ALERT ? 'bad' : rate >= RATE_WARN ? 'warn' : 'ok';
       // รายได้สุทธิ = ยอดที่บันทึกทั้งหมด - ยอดที่ถูกยกเลิก
-      return { ...r, rate: +rate.toFixed(1), status, netSales: r.grossSales - r.cancelledAmount };
+      return { ...r, rate: hasData ? +rate.toFixed(1) : null, status, netSales: r.grossSales - r.cancelledAmount };
     })
     .sort((a, b) => b.netSales - a.netSales);
 }
@@ -291,6 +295,7 @@ function Icon({ name, size = 18, color = 'currentColor' }) {
     dashboard: <><path d="M4 4h6v8H4z" /><path d="M4 16h6v4H4z" /><path d="M14 12h6v8h-6z" /><path d="M14 4h6v4h-6z" /></>,
     sales: <><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></>,
     cancel: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6l4 2" /></>,
+    close: <><path d="M18 6L6 18" /><path d="M6 6l12 12" /></>,
     audit: <><path d="M9 12h6M9 16h6M9 8h6" /><rect x="4" y="3" width="16" height="18" rx="2" /></>,
     report: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
     bell: <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></>,
@@ -639,8 +644,8 @@ function BerryHBarChart({ data, colorFor, valueFormat }) {
 
 /* Bullet chart */
 function BerryBulletChart({ data, target = RATE_ALERT, warn = RATE_WARN }) {
-  const max = Math.max(20, target + 5, ...data.map(d => d.value));
-  const pct = (v) => `${Math.min(100, (v / max) * 100)}%`;
+  const max = Math.max(20, target + 5, ...data.map(d => (typeof d.value === 'number' ? d.value : 0)));
+  const pct = (v) => `${Math.min(100, ((v || 0) / max) * 100)}%`;
   return (
     <div className="berry-bullet-list">
       {data.length === 0 ? (
@@ -656,11 +661,11 @@ function BerryBulletChart({ data, target = RATE_ALERT, warn = RATE_WARN }) {
             </div>
             <div
               className="berry-bullet-bar"
-              style={{ width: pct(d.value), background: d.status === 'bad' ? 'var(--berry-red)' : d.status === 'warn' ? 'var(--berry-amber)' : 'var(--berry-green)' }}
+              style={{ width: d.value === null || d.value === undefined ? '0%' : pct(d.value), background: d.status === 'bad' ? 'var(--berry-red)' : d.status === 'warn' ? 'var(--berry-amber)' : 'var(--berry-green)' }}
             />
             <div className="berry-bullet-target" style={{ left: pct(target) }} title={`เกณฑ์แจ้งเตือน ${target}%`} />
           </div>
-          <div className="berry-bullet-value">{d.value}%</div>
+          <div className="berry-bullet-value">{fmtRate(d.value)}</div>
         </div>
       ))}
     </div>
@@ -758,13 +763,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     const totalGross = storeSummary.reduce((a, s) => a + s.grossSales, 0);
     const totalOrders = storeSummary.reduce((a, s) => a + s.totalOrders, 0);
     const totalCancelled = storeSummary.reduce((a, s) => a + s.cancelledOrders, 0);
-    const rate = totalOrders > 0 ? (totalCancelled / totalOrders) * 100 : 0;
-    return { totalGross, totalOrders, totalCancelled, rate: +rate.toFixed(1), abnormalStores: storeSummary.filter(s => s.status === 'bad' && !s.isDeleted) };
+    const rate = totalOrders > 0 ? +((totalCancelled / totalOrders) * 100).toFixed(1) : null;
+    return { totalGross, totalOrders, totalCancelled, rate, abnormalStores: storeSummary.filter(s => s.status === 'bad' && !s.isDeleted) };
   }, [storeSummary]);
 
   // เรียงจากอัตราการยกเลิกมากที่สุด -> น้อยที่สุด
   const cancelSummary = useMemo(
-    () => [...storeSummary].sort((a, b) => b.rate - a.rate || b.cancelledOrders - a.cancelledOrders || b.totalOrders - a.totalOrders),
+    () => [...storeSummary].sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.cancelledOrders - a.cancelledOrders || b.totalOrders - a.totalOrders),
     [storeSummary]
   );
   const cancelTableRows = cancelStoreFilter === 'all'
@@ -774,9 +779,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const salesOrders = useMemo(() => filterOrdersByRange(orders, salesStart, salesEnd, 'all'), [orders, salesStart, salesEnd]);
   const salesStoreSummary = useMemo(() => buildStoreSummary(stores, salesOrders, salesStart), [stores, salesOrders, salesStart]);
 
-  const salesFilteredRows = salesStoreFilter === 'all' 
-    ? salesStoreSummary 
-    : salesStoreSummary.filter(s => String(s.storeId) === String(salesStoreFilter));
+  // เรียงตามยอดสุทธิจากมากไปน้อย (ถ้าเท่ากันเรียงตามยอดขายรวม แล้วตามชื่อร้าน)
+  const salesFilteredRows = useMemo(() => {
+    const rows = salesStoreFilter === 'all'
+      ? salesStoreSummary
+      : salesStoreSummary.filter(s => String(s.storeId) === String(salesStoreFilter));
+    return [...rows].sort((a, b) =>
+      b.netSales - a.netSales || b.grossSales - a.grossSales || String(a.storeName).localeCompare(String(b.storeName), 'th'));
+  }, [salesStoreSummary, salesStoreFilter]);
 
   const salesTotals = useMemo(() => {
     const gross = salesFilteredRows.reduce((a, s) => a + s.grossSales, 0);
@@ -803,7 +813,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       const net = s.reduce((a, x) => a + x.netSales, 0); 
       const totalOrders = s.reduce((a, x) => a + x.totalOrders, 0);
       const cancelled = s.reduce((a, x) => a + x.cancelledOrders, 0);
-      const rate = totalOrders > 0 ? +((cancelled / totalOrders) * 100).toFixed(1) : 0;
+      const rate = totalOrders > 0 ? +((cancelled / totalOrders) * 100).toFixed(1) : null;
       return { gross, net, totalOrders, cancelled, rate, storesData: s }; 
     };
     
@@ -817,9 +827,18 @@ export default function AccountantView({ apiBase, user, onLogout }) {
         deltaNet: pctChange(curr.net, prev.net), 
         deltaOrders: pctChange(curr.totalOrders, prev.totalOrders),
         deltaCancelled: pctChange(curr.cancelled, prev.cancelled),
-        deltaRate: +(curr.rate - prev.rate).toFixed(1),
+        deltaRate: curr.rate === null || prev.rate === null ? null : +(curr.rate - prev.rate).toFixed(1),
       };
     }, [orders, stores, trendDays]);
+
+  // ร้านค้ายอดนิยม (Dashboard): ตามช่วงเวลาที่เลือก เรียงตามยอดสุทธิ ตัดร้านที่ไม่มียอดและร้านที่ถูกลบออก
+  const topStores = useMemo(
+    () => [...periodStats.curr.storesData]
+      .filter(s => !s.isDeleted && s.totalOrders > 0)
+      .sort((a, b) => b.netSales - a.netSales || b.grossSales - a.grossSales)
+      .slice(0, 5),
+    [periodStats]
+  );
 
   const auditRows = useMemo(() => buildAuditRows(logs, orders), [logs, orders]);
   const filteredLogs = auditRows.filter(r => {
@@ -1027,8 +1046,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 />
                 <BerryStatCard
                   label="อัตราการยกเลิก"
-                  value={`${periodStats.curr.rate}%`}
-                  tone={periodStats.curr.rate > RATE_ALERT ? 'red' : periodStats.curr.rate >= RATE_WARN ? 'amber' : 'green'}
+                  value={fmtRate(periodStats.curr.rate)}
+                  tone={periodStats.curr.rate === null ? undefined : periodStats.curr.rate > RATE_ALERT ? 'red' : periodStats.curr.rate >= RATE_WARN ? 'amber' : 'green'}
                   delta={periodStats.deltaRate}
                   deltaSuffix="pp"
                   invertDelta
@@ -1121,20 +1140,58 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {[...storeSummary].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => b.rate - a.rate).map(s => (
+                      {[...storeSummary].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1)).map(s => (
                         <tr key={s.storeId}>
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.totalOrders)}</td>
                           <td>฿{fmtMoney(s.grossSales)}</td> 
                           <td style={{ fontWeight: 600 }}>฿{fmtMoney(s.netSales)}</td> 
                           <td>{fmtMoney(s.cancelledOrders)}</td>
-                          <td>{s.rate}%</td>
-                          <td><Badge tone={s.status}>{statusLabel(s.status)}</Badge></td>
+                          <td>{fmtRate(s.rate)}</td>
+                          <td><Badge tone={s.status === 'na' ? 'neutral' : s.status}>{statusLabel(s.status)}</Badge></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              <div className="berry-panel">
+                <div className="berry-panel-header">
+                  <div>
+                    <h3 style={{ margin: 0 }}>ร้านค้ายอดนิยม</h3>
+                    <div className="berry-panel-caption">Top 5 เรียงตามยอดขายสุทธิ</div>
+                  </div>
+                  <span className="berry-link" onClick={() => setPage('sales')}>ดูสรุปยอดขาย →</span>
+                </div>
+                {topStores.length === 0 ? (
+                  <div className="berry-empty-note">ยังไม่มีข้อมูลยอดขายในช่วงเวลานี้</div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="berry-table">
+                      <thead>
+                        <tr>
+                          <th>อันดับ</th>
+                          <th>ร้าน</th>
+                          <th>ออเดอร์สำเร็จ</th>
+                          <th>ยอดขายรวม</th>
+                          <th>ยอดขายสุทธิ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {topStores.map((s, i) => (
+                          <tr key={s.storeId}>
+                            <td>#{i + 1}</td>
+                            <td><b>{s.storeName}</b></td>
+                            <td>{fmtMoney(s.completedOrders)}</td>
+                            <td>฿{fmtMoney(s.grossSales)}</td>
+                            <td style={{ fontWeight: 600 }}>฿{fmtMoney(s.netSales)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1180,7 +1237,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
               <div className="berry-panel">
                 <div className="berry-panel-header">
-                  <h3>ตารางยอดขายรายร้าน</h3>
+                  <div>
+                    <h3 style={{ margin: 0 }}>ตารางยอดขายรายร้าน</h3>
+                    {/* แสดงข้อความเรียงลำดับเฉพาะตอนเลือก "ทุกร้านค้า" — เลือกร้านเดียวไม่ต้องแสดง */}
+                    {salesStoreFilter === 'all' && (
+                      <div className="berry-panel-caption">เรียงตามยอดขายสุทธิ</div>
+                    )}
+                  </div>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table className="berry-table">
@@ -1200,8 +1263,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.completedOrders)}</td>
                           <td>฿{fmtMoney(s.grossSales)}</td>
-                          <td style={{ color: s.status === 'bad' ? 'var(--berry-red)' : s.status === 'warn' ? '#D99B00' : 'var(--berry-green)' }}>
-                          {fmtMoney(s.cancelledOrders)} ({s.rate}%)
+                          <td style={{ color: s.status === 'na' ? 'var(--berry-text-muted)' : s.status === 'bad' ? 'var(--berry-red)' : s.status === 'warn' ? '#D99B00' : 'var(--berry-green)' }}>
+                          {fmtMoney(s.cancelledOrders)} ({fmtRate(s.rate)})
                           </td>
                           <td style={{ fontWeight: 700 }}>฿{fmtMoney(s.netSales)}</td>
                           <td>
@@ -1246,7 +1309,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     <div className="berry-modal-header">
                       <h3>รายละเอียดเมนู: {salesStoreSummary.find(s => s.storeId === detailStoreId)?.storeName || 'ไม่ทราบชื่อร้าน'}</h3>
                       <button className="berry-icon-btn" onClick={() => setDetailStoreId(null)}>
-                        <Icon name="cancel" size={20} />
+                        <Icon name="close" size={20} />
                       </button>
                     </div>
                     <div className="berry-modal-body">
@@ -1282,7 +1345,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               <div className="berry-stats-row-4">
                 <BerryStatCard label="Order ทั้งหมด" value={fmtMoney(overview.totalOrders)} />
                 <BerryStatCard label="Cancelled" value={fmtMoney(overview.totalCancelled)} />
-                <BerryStatCard label="Cancellation Rate เฉลี่ย" value={`${overview.rate}%`} />
+                <BerryStatCard label="Cancellation Rate เฉลี่ย" value={fmtRate(overview.rate)} />
                 <BerryStatCard
                   label="ร้านที่ผิดปกติ"
                   value={`${overview.abnormalStores.length} ร้าน`}
@@ -1349,8 +1412,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.totalOrders)}</td>
                           <td>{fmtMoney(s.cancelledOrders)}</td>
-                          <td>{s.rate}%</td>
-                          <td><Badge tone={s.status}>{statusLabel(s.status)}</Badge></td>
+                          <td>{fmtRate(s.rate)}</td>
+                          <td><Badge tone={s.status === 'na' ? 'neutral' : s.status}>{statusLabel(s.status)}</Badge></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1395,7 +1458,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                         <tr key={r.key} style={{ background: AUDIT_ROW_BG[r.tone] }}>
                           <td>
                             {fmtDateTime(r.time)}
-                            {r.derived && <div style={{ fontSize: 11, color: 'var(--berry-text-muted)' }}>(เวลาที่สั่งออเดอร์)</div>}
                           </td>
                           <td><Badge tone={r.tone}>{r.action}</Badge></td>
                           <td>{r.by}</td>
@@ -1458,7 +1520,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                         <tr key={s.storeId}>
                           {reportColumns.map(c => (
                             <td key={c.key}>
-                              {c.money ? `฿${fmtMoney(s[c.key])}` : c.percent ? `${s[c.key]}%` : s[c.key]}
+                              {c.money ? `฿${fmtMoney(s[c.key])}` : c.percent ? fmtRate(s[c.key]) : s[c.key]}
                             </td>
                           ))}
                         </tr>

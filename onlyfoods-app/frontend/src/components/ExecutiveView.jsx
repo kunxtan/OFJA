@@ -151,15 +151,12 @@ const sumAmount = (orders) => orders.reduce((s, o) => s + Number(o.TotalAmount |
 function changePct(current, previous) {
     const c = Number(current) || 0;
     const p = Number(previous) || 0;
-    if (p === 0)
-        return c === 0 ? 0 : null;
-    const raw = ((c - p) / p) * 100;
-    return raw;
+    if (p === 0) return null;
+        return ((c - p) / p) * 100;
 }
 function summarize(orders) {
     const completed = orders.filter((o) => statusIs(o, 'Completed'));
     const cancelled = orders.filter((o) => statusIs(o, 'Cancelled'));
-    const finished = completed.length + cancelled.length;
     const sales = sumAmount(completed);
     const grossSales = sumAmount([...completed, ...cancelled]);
     return {
@@ -167,7 +164,7 @@ function summarize(orders) {
         grossSales,
         completedCount: completed.length,
         cancelledCount: cancelled.length,
-        cancelRate: finished ? (cancelled.length / finished) * 100 : 0,
+        cancelRate: orders.length ? (cancelled.length / orders.length) * 100 : null,
         avgOrder: completed.length ? sales / completed.length : 0,
         completed,
         cancelled
@@ -259,11 +256,12 @@ function summarizeMenus(completedOrders) {
     const map = {};
     completedOrders.forEach((o) => {
         (o.items || []).forEach((it) => {
-            const name = it.ProductName || `สินค้า #${it.ProductId}`;
-            if (!map[name])
-                map[name] = { name, qty: 0, amount: 0 };
-            map[name].qty += Number(it.Qty || 0);
-            map[name].amount += Number(it.Qty || 0) * Number(it.UnitPrice || 0);
+            const id = String(it.ProductId);
+            const name = it.ProductName || `สินค้า #${id}`;
+            if (!map[id])
+                map[id] = { id,name, qty: 0, amount: 0 };
+            map[id].qty += Number(it.Qty || 0);
+            map[id].amount += Number(it.Qty || 0) * Number(it.UnitPrice || 0);
         });
     });
     const rows = Object.values(map);
@@ -271,7 +269,8 @@ function summarizeMenus(completedOrders) {
     rows.forEach((r) => {
         r.share = total ? (r.amount / total) * 100 : 0;
     });
-    return rows.sort((a, b) => b.amount - a.amount);
+    return rows.sort((a, b) => { if (b.qty !== a.qty) return b.qty - a.qty; 
+      return Number(a.id) - Number(b.id); });
 }
 // ===== เรียก API และจัดการข้อผิดพลาดจาก Backend =====
 async function callApi(url, options = {}) {
@@ -588,10 +587,9 @@ function CardIconBox({ icon, background, color = '#FFFFFF', size = 44 }) {
 }
 function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hint, hasPreviousData = null, highlight, variant, icon = 'trend', tone = 'blue', size = 'md', invertDelta = false }) {
     const hasDelta = delta !== null && delta !== undefined;
-    const zeroBaseIncrease = hasPreviousData === true && !hasDelta;
-    const showComparison = hasPreviousData === true ? true : hasPreviousData === false ? false : hasDelta;
-    const rising = zeroBaseIncrease || (hasDelta && delta >= 0);
-    const positive = zeroBaseIncrease ? !invertDelta : hasDelta && (invertDelta ? delta <= 0 : delta >= 0);
+    const showComparison = hasDelta;
+    const rising = hasDelta && delta >= 0;
+    const positive = hasDelta && (invertDelta ? delta <= 0 : delta >= 0);
     const kind = variant || (highlight ? 'purple' : 'plain');
     const solid = kind === 'purple' || kind === 'blue';
     const small = size === 'sm';
@@ -630,8 +628,8 @@ function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hin
 
       {showComparison ? (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',display: 'inline-flex',alignItems: 'center',gap: '6px',alignSelf: 'flex-start',padding: '5px 10px',borderRadius: '999px',fontSize: '12.5px',fontWeight:700,background:hasDelta&&delta===0?(solid? 'rgba(255,255,255,.18)': '#F1F3F7'):positive?(solid? 'rgba(220,252,231,.96)':T.greenSoft):(solid? 'rgba(254,226,226,.96)':T.redSoft),color:hasDelta&&delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
           <span aria-hidden="true">{hasDelta && delta === 0 ? '→' : rising ? '↗' : '↘'}</span>
-          {zeroBaseIncrease ? `เพิ่มจาก 0 เป็น ${value}${unit ? ` ${unit}` : ''}` : <>{delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}{deltaSuffix}</>}
-          {!zeroBaseIncrease && <span style={{fontWeight:500,opacity:solid&&delta===0?0.85:1,color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
+          <>{delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}{deltaSuffix}</>
+          {<span style={{fontWeight:500,opacity:solid&&delta===0?0.85:1,color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
             {deltaLabel}
           </span>}
         </div>) : (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',fontSize: '12.5px',color:solid ? 'rgba(255,255,255,.80)' : T.muted}}>
@@ -954,19 +952,19 @@ function SearchableStorePicker({ stores, value, onChange }) {
 function MenuRankList({ rows, tone = 'primary', emptyText }) {
     if (!rows.length)
         return <EmptyState text={emptyText || 'ยังไม่มีข้อมูลเมนู'} minHeight="120px"/>;
-    const maxValue = Math.max(...rows.map((r) => r.amount), 1);
+    const maxValue = Math.max(...rows.map((r) => r.qty), 1);
     return (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
       {rows.map((r) => (<div key={r.name}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
             <span style={{ color: T.text, fontSize: '13px' }}>{r.name}</span>
             <strong style={{ color: T.ink, fontSize: '13px', whiteSpace: 'nowrap' }}>
-              {money(r.amount)} บาท
+              {money(r.qty)} รายการ
             </strong>
           </div>
           <div style={{ height: '8px', background: T.trackSoft, borderRadius: '999px', marginTop: '5px' }}>
             <div style={{
                 height: '100%',
-                width: `${Math.max((r.amount / maxValue) * 100, 3)}%`,
+                width: `${Math.max((r.qty / maxValue) * 100, 3)}%`,
                 borderRadius: '999px',
                 background: tone === 'primary' ? T.primary : T.accent
             }}/>
@@ -1717,32 +1715,27 @@ current.forEach((o) => {
 
 const storeRows = Array.from(storeMap.values())
     .map((s) => {
-        const mine = now.completed.filter(
+        const storeCurrent = current.filter(
+            (o) => String(o.StoreId) === String(s.StoreId)
+        );
+        const storePrevious = previous.filter(
             (o) => String(o.StoreId) === String(s.StoreId)
         );
 
-        const minePrev = before.completed.filter(
-            (o) => String(o.StoreId) === String(s.StoreId)
-        );
-
-        const cancelled = now.cancelled.filter(
-            (o) => String(o.StoreId) === String(s.StoreId)
-        );
-
-        const sales = sumAmount(mine);
-        const prevSales = sumAmount(minePrev);
+        const storeNow = summarize(storeCurrent);
+        const storeBefore = summarize(storePrevious);
 
         return {
             ...s,
-            sales,
-            prevSales,
-            delta: changePct(sales, prevSales),
-            completedCount: mine.length,
-            cancelledCount: cancelled.length,
-            cancelRate: mine.length + cancelled.length
-                ? (cancelled.length / (mine.length + cancelled.length)) * 100
-                : 0,
-            avg: mine.length ? sales / mine.length : 0
+            sales: storeNow.sales,
+            grossSales: storeNow.grossSales,
+            prevSales: storeBefore.sales,
+            delta: changePct(storeNow.sales, storeBefore.sales),
+            completedCount: storeNow.completedCount,
+            cancelledCount: storeNow.cancelledCount,
+            orderCount: storeCurrent.length,
+            cancelRate: storeNow.cancelRate,
+            avg: storeNow.avgOrder
         };
     })
     .sort((a, b) => b.sales - a.sales);
@@ -1766,7 +1759,7 @@ const storeRows = Array.from(storeMap.values())
         };
     }, [orders, stores, anchor, days]);
     const periodLabel = days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
-    const compareLabel = days === 1 ? 'ยอดขายเทียบวันก่อนหน้า' : `ยอดขายเทียบ ${days} วันก่อนหน้า`;
+    const compareLabel = days === 1 ? 'เทียบวันก่อนหน้า' : `เทียบ ${days} วันก่อนหน้า`;
     const visibleStoreRows = report.storeRows;
     const issueBounds = periodBounds(anchor, days);
     const periodIssueReports = issueReports.filter((item) => {
@@ -1791,39 +1784,26 @@ const storeRows = Array.from(storeMap.values())
         .filter((s) => s.IsSuspended || (s.delta !== null && s.delta <= -15) || s.cancelRate >= 10)
         .sort((a, b) => (Number(b.IsSuspended) - Number(a.IsSuspended)) || (b.cancelRate - a.cancelRate) || ((a.delta ?? 0) - (b.delta ?? 0)))
         .slice(0, 4);
-    const csvRows = () => {
-       const peakTime = report.peakHour === null
-        ? '-'
-        : `${pad2(report.peakHour)}:00 น.`;
-        const rows = [
-            ['รายงานภาพรวมศูนย์อาหาร Only Foods'],
-            ['ช่วงข้อมูล', periodLabel],
-            [],
-            ['ตัวชี้วัด', 'ค่า'],
-            ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
-            ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
-            ['ออเดอร์สำเร็จ', report.now.completedCount],
-            ['ออเดอร์ยกเลิก', report.now.cancelledCount],
-            ['อัตราการยกเลิก (%)', report.now.cancelRate.toFixed(1)],
-            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', report.now.avgOrder.toFixed(2)],
-            ['ยอดขายในช่วงเวลาขายดี (บาท)', report.peakHour === null ? '-' : Math.round(report.peakSales)],
-            [],
-            ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ยอดขาย (บาท)', 'ยกเลิก', 'อัตรายกเลิก (%)'],
-            ...report.storeRows.map((s) => [
-                s.StoreName,
-                s.completedCount,
-                Math.round(s.sales),
-                s.cancelledCount,
-                Number(s.cancelRate.toFixed(1))
-            ]),
-            [],
-            [days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
-            ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count])
-        ];
-        return rows;
-    };
+    const csvRows = () => [
+    [
+        'ร้านค้า',
+        'ออเดอร์สำเร็จ',
+        'ออเดอร์ที่ยกเลิก',
+        'ยอดขายก่อนหักยกเลิก (บาท)',
+        'ยอดขายสุทธิ (บาท)',
+        'อัตราการยกเลิก'
+    ],
+   ...report.storeRows.map((s) => [
+    s.StoreName,
+    s.completedCount,
+    s.cancelledCount,
+    Math.round(s.grossSales),
+    Math.round(s.sales),
+    s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`
+])
+];
     const saveCsv = () => {
-        exportCsv(`onlyfoods-overview-${anchor}-${days}d.csv`, csvRows());
+        exportCsv(`onlyfoods-executive-report-${anchor}-${days}d.csv`, csvRows());
         setExportPreview(null);
         pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
     };
@@ -1839,7 +1819,7 @@ const storeRows = Array.from(storeMap.values())
             ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
             ['ออเดอร์สำเร็จ', report.now.completedCount],
             ['ออเดอร์ยกเลิก', report.now.cancelledCount],
-            ['อัตราการยกเลิก (%)', Number(report.now.cancelRate.toFixed(1))],
+            ['อัตราการยกเลิก (%)', report.now.cancelRate === null  ? 'N/A' : Number(report.now.cancelRate.toFixed(1)) ],
             ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
             ['ช่วงเวลาขายดี', peakTime],
             ['ยอดขายในช่วงเวลาขายดี (บาท)', report.peakHour === null ? '-' : Math.round(report.peakSales)]
@@ -1852,7 +1832,7 @@ const storeRows = Array.from(storeMap.values())
                 s.completedCount,
                 Math.round(s.sales),
                 s.cancelledCount,
-                Number(s.cancelRate.toFixed(1))
+                s.cancelRate === null ? 'N/A' : Number(s.cancelRate.toFixed(1))
             ])
         ];
 
@@ -2116,7 +2096,7 @@ const storeRows = Array.from(storeMap.values())
       <div className="of-kpi-small">
         <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" hint="รวมมูลค่าออเดอร์สำเร็จและออเดอร์ที่ถูกยกเลิก" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="wallet" tone="blue"/>
         <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="ban" tone="amber" invertDelta/>
-        <KpiCard size="sm" label="อัตราการยกเลิก" value={`${report.now.cancelRate.toFixed(1)}%`} delta={report.hasPreviousData ? report.now.cancelRate - report.before.cancelRate : null} deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} icon="info" tone="amber" invertDelta/>
+        <KpiCard size="sm" label="อัตราการยกเลิก" value={report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`} delta={ report.now.cancelRate !== null && report.before.cancelRate !== null  ? report.now.cancelRate - report.before.cancelRate : null } deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} icon="info" tone="amber" invertDelta/>
         <KpiCard size="sm" label="ช่วงเวลาขายดี" value={report.peakHour === null ? '—' : `${pad2(report.peakHour)}:00`} unit={report.peakHour === null ? '' : 'น.'} hint={report.peakHour === null ? 'ยังไม่มียอดขาย' : `ทำยอดได้ ${money(report.peakSales)} บาท`} delta={null} icon="calendar" tone="purple"/>
       </div>
 
@@ -2184,7 +2164,7 @@ const storeRows = Array.from(storeMap.values())
                       </span>)}
                   </td>
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
-                  <td style={tdRightStyle}>{s.cancelRate.toFixed(1)}%</td>
+                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}</td>
                   <td style={tdStyle}>
                     <Badge tone={s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
                       {s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
@@ -2274,7 +2254,7 @@ const storeRows = Array.from(storeMap.values())
             ['ออเดอร์สำเร็จ', `${money(report.now.completedCount)} ออเดอร์`],
             ['มูลค่าออเดอร์รวมก่อนหักยกเลิก', `${money(report.now.grossSales)} บาท`],
             ['ออเดอร์ยกเลิก', `${money(report.now.cancelledCount)} ออเดอร์`],
-            ['อัตราการยกเลิก', `${report.now.cancelRate.toFixed(1)}%`]
+            ['อัตราการยกเลิก', report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`]
 ].map(([label, value]) => (<div key={label} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '12px' }}>
                   <div style={{ ...captionStyle, margin: 0 }}>{label}</div>
                   <strong style={{ display: 'block', color: T.ink, marginTop: '6px', fontSize: '16px' }}>{value}</strong>
@@ -2283,33 +2263,56 @@ const storeRows = Array.from(storeMap.values())
             <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างข้อมูลสรุปผลรายร้าน</div>
             <div style={{ overflowX: 'auto' }}>
               <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thStyle}>ร้านค้า</th>
-                    <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
-                    <th style={thRightStyle}>ยอดขาย</th>
-                    <th style={thRightStyle}>{compareLabel}</th>
-                    <th style={thRightStyle}>ยกเลิก</th>
-                    <th style={thRightStyle}>อัตรายกเลิก</th>
-                    
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.storeRows.slice(0, 6).map((s) => (<tr key={s.StoreId} style={trStyle}>
-                      <td style={tdStyle}>{s.StoreName}</td>
-                      <td style={tdRightStyle}>{money(s.completedCount)}</td>
-                      <td style={tdRightStyle}>{money(s.sales)} บาท</td>
-                       <td style={tdRightStyle}>
-      {s.delta === null || s.delta === undefined
-        ? '—'
-        : `${s.delta >= 0 ? '▲' : '▼'} ${Math.abs(s.delta).toFixed(1)}%`}
-    </td>
-                      <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
-                      <td style={tdRightStyle}>{s.cancelRate.toFixed(1)}%</td>
-                     
-                    </tr>))}
-                </tbody>
-              </table>
+    <thead>
+        <tr>
+            <th style={thStyle}>ร้านค้า</th>
+            <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
+            <th style={thRightStyle}>ออเดอร์ที่ยกเลิก</th>
+            <th style={thRightStyle}>ยอดขายก่อนหักยกเลิก</th>
+            <th style={thRightStyle}>ยอดขายสุทธิ</th>
+            <th style={thRightStyle}>อัตราการยกเลิก</th>
+        </tr>
+    </thead>
+
+    <tbody>
+        {report.storeRows.slice(0, 6).map((s) => {
+          
+            const cancelledSales = sumAmount(
+                report.now.cancelled.filter(
+                    (o) => String(o.StoreId) === String(s.StoreId)
+                )
+            );
+
+            return (
+                <tr key={s.StoreId} style={trStyle}>
+                    <td style={tdStyle}>
+                        {s.StoreName}
+                    </td>
+
+                    <td style={tdRightStyle}>
+                        {money(s.completedCount)}
+                    </td>
+
+                    <td style={tdRightStyle}>
+                        {money(s.cancelledCount)}
+                    </td>
+
+                    <td style={tdRightStyle}>
+                        {money(s.sales + cancelledSales)} บาท
+                    </td>
+
+                    <td style={tdRightStyle}>
+                        {money(s.sales)} บาท
+                    </td>
+
+                    <td style={tdRightStyle}>
+    {s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}
+</td>
+                </tr>
+            );
+        })}
+    </tbody>
+</table>
             </div>
             {report.storeRows.length > 6 && (<p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>
                 และอีก {report.storeRows.length - 6} ร้านในไฟล์จริง
@@ -2822,7 +2825,7 @@ function StoreSalesPage({ ctx }) {
         const menus = summarizeMenus(now.completed);
         return {
             now,
-            before,
+            before, current,
             hasPreviousData: previous.length > 0,
             buckets: customRange ? buildBucketsForRange(now.completed, customStart, customEnd) : buildBuckets(now.completed, anchor, days),
             bestMenus: menus.slice(0, 2),
@@ -2857,37 +2860,66 @@ function StoreSalesPage({ ctx }) {
     const exportReviewAverage = exportReviews.length
         ? exportReviews.reduce((sum, r) => sum + Number(r.Rating || 0), 0) / exportReviews.length
         : 0;
-    const salesExportRows = () => [
-        [`รายงานยอดขายร้าน ${store.StoreName}`],
-        ['ช่วงข้อมูล', periodLabel],
-        ['ออกรายงานเมื่อ', nowStamp()],
-        ['สถานะร้าน', store.IsDeleted ? 'ร้านถูกลบแล้ว' : store.IsSuspended ? 'ระงับสิทธิ์' : store.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'],
-        [],
-        ['ตัวชี้วัด', 'ค่า'],
-        ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
-        ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
-        ['ออเดอร์สำเร็จ', report.now.completedCount],
-        ['ออเดอร์ยกเลิก', report.now.cancelledCount],
-        ['อัตราการยกเลิก (%)', Number(report.now.cancelRate.toFixed(1))],
-        ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
-        ['คะแนนรีวิวเฉลี่ย', Number(exportReviewAverage.toFixed(1))],
-        ['จำนวนรีวิว', exportReviews.length],
-        ['จำนวนรายงานปัญหา', exportIssues.length],
-        [],
-        ['เมนู', 'จำนวนที่ขายได้', 'ยอดขาย (บาท)', 'สัดส่วนของยอดร้าน (%)'],
-        ...summarizeMenus(report.now.completed).map((m) => [m.name, m.qty, Math.round(m.amount), Number(m.share.toFixed(1))]),
-        [],
-        [(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
-        ...report.buckets.map((b) => [b.label, Math.round(b.sales), b.count]),
-        [],
-        ['รีวิวจากลูกค้าในช่วงที่เลือก'],
-        ['วันที่', 'คะแนน', 'ผู้รีวิว', 'ความคิดเห็น'],
-        ...[...exportReviews].sort((a, b) => (parseOrderDate(b.CreatedAt)?.getTime() || 0) - (parseOrderDate(a.CreatedAt)?.getTime() || 0)).map((r) => [thaiDateTime(r.CreatedAt), Number(r.Rating || 0), r.ReviewerName || 'ลูกค้าไม่ระบุชื่อ', r.Comment || '-']),
-        [],
-        ['รายงานปัญหาจากลูกค้าในช่วงที่เลือก'],
-        ['วันที่', 'ประเภทปัญหา', 'ลูกค้า', 'ออเดอร์/คิว', 'รายละเอียด'],
-        ...[...exportIssues].sort((a, b) => (parseOrderDate(b.CreatedAt)?.getTime() || 0) - (parseOrderDate(a.CreatedAt)?.getTime() || 0)).map((r) => [thaiDateTime(r.CreatedAt), r.IssueType || 'ไม่ระบุประเภท', r.CustomerName || 'ลูกค้าไม่ระบุชื่อ', r.QueueNo ? `คิว ${r.QueueNo}` : r.OrderID ? `Order #${r.OrderID}` : '-', r.Description || '-'])
-    ];
+ const salesTimelineRows =  !report ? [] : (customRange ? effectiveDays : days) === 1
+    ? (() => {
+        const summary = summarize(report.current);
+
+        return [{
+            key: 'day',
+            label: customRange ? customStart : anchor,
+            completedCount: summary.completedCount,
+            cancelledCount: summary.cancelledCount,
+            grossSales: summary.grossSales,
+            netSales: summary.sales,
+            cancelRate: report.current.length
+                ? `${summary.cancelRate.toFixed(1)}%`
+                : 'N/A'
+        }];
+    })()
+    : (report?.buckets || []).map((b) => {
+        const bucketOrders = report.current.filter((o) => {
+            const at = parseOrderDate(o.CreatedAt);
+            return at && b.key === toISODate(at);
+        });
+
+        const summary = summarize(bucketOrders);
+
+        return {
+            key: b.key,
+            label: b.label,
+            completedCount: summary.completedCount,
+            cancelledCount: summary.cancelledCount,
+            grossSales: summary.grossSales,
+            netSales: summary.sales,
+            cancelRate: bucketOrders.length
+                ? `${summary.cancelRate.toFixed(1)}%`
+                : 'N/A'
+        };
+    });
+    const salesExportRows = () => [ ['วันที่',
+        'ออเดอร์สำเร็จ',
+        'ออเดอร์ที่ยกเลิก',
+        'ยอดขายก่อนหักยกเลิก (บาท)',
+        'ยอดขายสุทธิ (บาท)',
+        'อัตราการยกเลิก'],
+    ...salesTimelineRows.map((row) => [
+        row.label,
+        row.completedCount,
+        row.cancelledCount,
+        Math.round(row.grossSales),
+        Math.round(row.netSales),
+        row.cancelRate ]),[],
+
+    ['สรุปข้อมูลเพิ่มเติม', 'ค่า'],
+    [
+        'คะแนนรีวิวเฉลี่ย',
+        exportReviews.length
+            ? Number(exportReviewAverage.toFixed(1))
+            : 'N/A'
+    ],
+    ['จำนวนรีวิว', exportReviews.length],
+    ['จำนวนรายงานปัญหา', exportIssues.length]
+];
     const handleCsv = () => {
         if (!report || !store) return;
         exportCsv(`onlyfoods-${store.StoreName}-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.csv`, salesExportRows());
@@ -2906,7 +2938,7 @@ function StoreSalesPage({ ctx }) {
         ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
         ['ออเดอร์สำเร็จ', report.now.completedCount],
         ['ออเดอร์ยกเลิก', report.now.cancelledCount],
-        ['อัตราการยกเลิก (%)', Number(report.now.cancelRate.toFixed(1))],
+        ['อัตราการยกเลิก (%)', report.now.cancelRate === null  ? 'N/A' : Number(report.now.cancelRate.toFixed(1)) ],
         ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
         ['คะแนนรีวิวเฉลี่ย', Number(exportReviewAverage.toFixed(1))],
         ['จำนวนรีวิว', exportReviews.length],
@@ -3088,7 +3120,7 @@ function StoreSalesPage({ ctx }) {
           <div className="of-store-kpi-small">
             <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="trend" tone="blue"/>
             <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="ban" tone="amber" invertDelta/>
-            <KpiCard size="sm" label="อัตราการยกเลิก" value={`${report.now.cancelRate.toFixed(1)}%`} delta={report.hasPreviousData ? report.now.cancelRate - report.before.cancelRate : null} deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} icon="info" tone="amber" invertDelta/>
+            <KpiCard size="sm" label="อัตราการยกเลิก" value={report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`} delta={ report.now.cancelRate !== null && report.before.cancelRate !== null  ? report.now.cancelRate - report.before.cancelRate : null } deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} icon="info" tone="amber" invertDelta/>
           </div>
 
           <Card style={{ marginBottom: '16px' }}>
@@ -3129,42 +3161,85 @@ function StoreSalesPage({ ctx }) {
         <Button variant={salesExportPreview === 'xlsx' ? 'dark' : 'primary'} icon="download" onClick={salesExportPreview === 'xlsx' ? handleXlsx : handleCsv}>บันทึก {String(salesExportPreview || '').toUpperCase()}</Button>
       </>}>
         {report && store && (<div style={{ display: 'grid', gap: '16px' }}>
-          {salesExportPreview === 'xlsx' && (
-    <div style={{
-        padding: '12px 14px',
-        borderRadius: T.radiusMd,
-        background: T.bg,
-        color: T.text,
-        fontSize: '13px',
-        lineHeight: 1.7
-    }}>
+  {salesExportPreview === 'csv' ? (<>
+    <div>
+      <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างยอดขายตามวันที่'</div>
+      <div style={{ overflowX: 'auto', border: `1px solid ${T.line}`, borderRadius: T.radiusMd }}>
+        <table style={tableStyle}>
+          <thead><tr>
+            <th style={thStyle}>วันที่</th>
+            <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
+            <th style={thRightStyle}>ออเดอร์ที่ยกเลิก</th>
+            <th style={thRightStyle}>ยอดขายก่อนหักยกเลิก</th>
+            <th style={thRightStyle}>ยอดขายสุทธิ</th>
+            <th style={thRightStyle}>อัตราการยกเลิก</th>
+          </tr></thead>
+          <tbody>{salesTimelineRows.slice(0, 8).map((row) => (
+            <tr key={row.key} style={trStyle}>
+              <td style={tdStyle}>{row.label}</td>
+              <td style={tdRightStyle}>{money(row.completedCount)}</td>
+              <td style={tdRightStyle}>{money(row.cancelledCount)}</td>
+              <td style={tdRightStyle}>{money(row.grossSales)} บาท</td>
+              <td style={tdRightStyle}>{money(row.netSales)} บาท</td>
+              <td style={tdRightStyle}>{row.cancelRate}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, overflow: 'hidden' }}>
+      <table style={tableStyle}>
+        <thead><tr><th style={thStyle}>สรุปข้อมูลเพิ่มเติม</th><th style={thRightStyle}>ค่า</th></tr></thead>
+        <tbody>
+          <tr style={trStyle}><td style={tdStyle}>คะแนนรีวิวเฉลี่ย</td><td style={tdRightStyle}>{exportReviews.length ? `${exportReviewAverage.toFixed(1)} / 5` : 'N/A'}</td></tr>
+          <tr style={trStyle}><td style={tdStyle}>จำนวนรีวิว</td><td style={tdRightStyle}>{money(exportReviews.length)} รีวิว</td></tr>
+          <tr style={trStyle}><td style={tdStyle}>จำนวนรายงานปัญหา</td><td style={tdRightStyle}>{money(exportIssues.length)} รายการ</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </>) : (<>
+    {salesExportPreview === 'xlsx' && (
+      <div style={{ padding: '12px 14px', borderRadius: T.radiusMd, background: T.bg, color: T.text, fontSize: '13px', lineHeight: 1.7 }}>
         ไฟล์ Excel จะแยกข้อมูลเป็น 5 Sheet:
         <strong> สรุปรายงาน · ยอดขายตามเมนู · ยอดขายตามเวลา · รีวิวลูกค้า · รายงานปัญหา</strong>
+      </div>
+    )}
+
+    <div style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, overflow: 'hidden' }}>
+      <table style={tableStyle}>
+        <thead><tr><th style={thStyle}>ตัวชี้วัด</th><th style={thRightStyle}>ค่า</th></tr></thead>
+        <tbody>{[
+          ['ยอดขายสุทธิ', `${money(report.now.sales)} บาท`],
+          ['มูลค่าออเดอร์รวมก่อนหักยกเลิก', `${money(report.now.grossSales)} บาท`],
+          ['ออเดอร์สำเร็จ', `${money(report.now.completedCount)} ออเดอร์`],
+          ['ออเดอร์ยกเลิก', `${money(report.now.cancelledCount)} ออเดอร์`],
+          ['อัตราการยกเลิก', report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`],
+          ['ยอดเฉลี่ยต่อออเดอร์', `${money2(report.now.avgOrder)} บาท`],
+          ['คะแนนรีวิวเฉลี่ย', `${exportReviewAverage.toFixed(1)} / 5`],
+          ['จำนวนรีวิว', `${money(exportReviews.length)} รีวิว`],
+          ['จำนวนรายงานปัญหา', `${money(exportIssues.length)} รายการ`]
+        ].map(([label, value]) => (
+          <tr key={label} style={trStyle}><td style={tdStyle}>{label}</td><td style={tdRightStyle}>{value}</td></tr>
+        ))}</tbody>
+      </table>
     </div>
-)}
-          <div style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, overflow: 'hidden' }}>
-            <table style={tableStyle}><thead><tr><th style={thStyle}>ตัวชี้วัด</th><th style={thRightStyle}>ค่า</th></tr></thead><tbody>
-              {[
-                ['ยอดขายสุทธิ', `${money(report.now.sales)} บาท`],
-                ['มูลค่าออเดอร์รวมก่อนหักยกเลิก', `${money(report.now.grossSales)} บาท`],
-                ['ออเดอร์สำเร็จ', `${money(report.now.completedCount)} ออเดอร์`],
-                ['ออเดอร์ยกเลิก', `${money(report.now.cancelledCount)} ออเดอร์`],
-                ['อัตราการยกเลิก', `${report.now.cancelRate.toFixed(1)}%`],
-                ['ยอดเฉลี่ยต่อออเดอร์', `${money2(report.now.avgOrder)} บาท`],
-                ['คะแนนรีวิวเฉลี่ย', `${exportReviewAverage.toFixed(1)} / 5`],
-                ['จำนวนรีวิว', `${money(exportReviews.length)} รีวิว`],
-                ['จำนวนรายงานปัญหา', `${money(exportIssues.length)} รายการ`]
-              ].map(([label, value]) => (<tr key={label} style={trStyle}><td style={tdStyle}>{label}</td><td style={tdRightStyle}>{value}</td></tr>))}
-            </tbody></table>
-          </div>
-          <div>
-            <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างยอดขายตาม{(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่'}</div>
-            <div style={{ overflowX: 'auto', border: `1px solid ${T.line}`, borderRadius: T.radiusMd }}><table style={tableStyle}><thead><tr><th style={thStyle}>{(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่'}</th><th style={thRightStyle}>ยอดขาย</th><th style={thRightStyle}>ออเดอร์</th></tr></thead><tbody>{report.buckets.slice(0, 8).map((b) => (<tr key={b.key} style={trStyle}><td style={tdStyle}>{b.label}</td><td style={tdRightStyle}>{money(b.sales)} บาท</td><td style={tdRightStyle}>{money(b.count)}</td></tr>))}</tbody></table></div>
-          </div>
-          <div style={{ ...captionStyle, color: T.text }}>ไฟล์จริงมีตารางเมนูขาย, ยอดขายตามเวลา, รีวิวจากลูกค้า และรายงานปัญหาจากลูกค้า โดยไม่มีคอลัมน์เทียบช่วงก่อนหน้า</div>
-        </div>)}
-      </Modal>
-    </>);
+
+    <div>
+      <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างยอดขายตาม{(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่'}</div>
+      <div style={{ overflowX: 'auto', border: `1px solid ${T.line}`, borderRadius: T.radiusMd }}>
+        <table style={tableStyle}>
+          <thead><tr><th style={thStyle}>{(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่'}</th><th style={thRightStyle}>ยอดขาย</th><th style={thRightStyle}>ออเดอร์</th></tr></thead>
+          <tbody>{report.buckets.slice(0, 8).map((b) => (
+            <tr key={b.key} style={trStyle}><td style={tdStyle}>{b.label}</td><td style={tdRightStyle}>{money(b.sales)} บาท</td><td style={tdRightStyle}>{money(b.count)}</td></tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style={{ ...captionStyle, color: T.text }}>ไฟล์จริงมีตารางเมนูขาย, ยอดขายตามเวลา, รีวิวจากลูกค้า และรายงานปัญหาจากลูกค้า โดยไม่มีคอลัมน์เทียบช่วงก่อนหน้า</div>
+  </>)}</div>)} </Modal>
+</>);
 }
 const EMPTY_STORE_FORM = {
     StoreId: null,
@@ -5220,7 +5295,10 @@ function AuditHistoryPage({ ctx }) {
             DELETE_ACCOUNT: 'ลบบัญชีร้านค้า',
             RESET_PASSWORD: 'เปลี่ยนรหัสผ่าน',
             VERIFY_SLIP_APPROVE: 'อนุมัติสลิปการชำระเงิน',
-            VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน'
+            VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน',
+            CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
+            CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
+            CANCEL_ORDER: 'ยกเลิกออเดอร์'
         };
         return names[String(action || '').toUpperCase()] || String(action || '-').replaceAll('_', ' ');
     };
