@@ -116,6 +116,7 @@ function Icon({ name, size = 20 }) {
     users: <><path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /><path d="M21 21v-2a4 4 0 0 0 -3 -3.85" /></>,
     star: <><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z" /></>,
     alert: <><path d="M12 9v2m0 4v.01M5.07 19H18.93c1.93 0 2.89-2.34 1.53-3.71L13.53 4.29c-.77-1.34-2.29-1.34-3.06 0L3.54 15.29c-1.36 1.37-.4 3.71 1.53 3.71z"/></>,
+    calendar: <><path d="M7 3v4M17 3v4M3 9h18M5 5h14v16H5z" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -235,7 +236,6 @@ function ImageUploadZone({ image, onChange }) {
       alert('กรุณาอัปโหลดไฟล์รูปภาพเท่านั้น');
       return;
     }
-    // ตรวจสอบขนาดไม่เกิน 5 MB (5 * 1024 * 1024)
     if (file.size > 5242880) {
       alert('ขนาดไฟล์ต้องไม่เกิน 5 MB');
       return;
@@ -309,6 +309,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const storeId = user?.storeId || 1;
   const uid = user?.id || user?.UserId;
   const [dash, setDash] = useState({});
+  const [storeDetail, setStoreDetail] = useState(null);
   const [cancels, setCancels] = useState([]);
   const [products, setProducts] = useState([]);
   const [history, setHistory] = useState([]); 
@@ -348,6 +349,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [newStaff, setNewStaff] = useState({ username: '', password: '', fullName: '', role: 'Front Staff' });
 
+  // --- Filter States ---
+  const [reviewFilter, setReviewFilter] = useState('all');
+  const [issueFilter, setIssueFilter] = useState('all');
+
   useEffect(() => {
     function handleClickOutside(event) {
       if (profileRef.current && !profileRef.current.contains(event.target)) setProfileOpen(false);
@@ -359,6 +364,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const fetchData = () => {
     fetch(`${apiBase}/api/reports/dashboard?store_id=${storeId}`).then(r => r.json()).then(d => setDash(d[0] || {}));
+    fetch(`${apiBase}/api/stores/${storeId}`).then(r => r.json()).then(d => setStoreDetail(d)).catch(err => console.error(err));
     fetch(`${apiBase}/api/food-court/status`).then(r => r.json()).then(d => setFoodCourtOpen(d.is_open ?? true)).catch(err => console.error(err));
     fetch(`${apiBase}/api/stores/${storeId}/reviews`).then(r => r.json()).then(d => setReviewsData(d)).catch(err => console.error(err));
     fetch(`${apiBase}/api/reports/issue/store/${storeId}`).then(r => r.json()).then(d => setIssues(Array.isArray(d) ? d : [])).catch(err => console.error(err));
@@ -523,7 +529,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // --- Staff Management ---
   const handleAddStaff = async (e) => {
     e.preventDefault();
     try {
@@ -575,9 +580,27 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
     { id: 'reviews', label: 'Customer Reviews', caption: 'รีวิวจากลูกค้า', icon: 'star' },
     { id: 'issues', label: 'Issue Reports', caption: 'ประวัติการแจ้งปัญหา', icon: 'alert' },
+    { id: 'contract', label: 'Contract Tracking', caption: 'ติดตามสัญญา', icon: 'calendar' },
   ];
 
   const totalBadgeUnread = unreadCancels + unreadNotifs;
+  
+  // -- Helper functions for filtering and contracts --
+  const getDaysLeft = (endDate) => {
+    if (!endDate) return null;
+    const end = new Date(endDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Math.ceil((end - today) / 86400000);
+  };
+  const daysLeft = getDaysLeft(storeDetail?.ContractEndDate);
+
+  const getReviewCount = (star) => (reviewsData.reviews || []).filter(r => String(r.Rating) === String(star)).length;
+  const filteredReviews = reviewFilter === 'all' ? (reviewsData.reviews || []) : (reviewsData.reviews || []).filter(r => String(r.Rating) === reviewFilter);
+  
+  const issueTypes = [...new Set(issues.map(i => i.IssueType))].filter(Boolean);
+  const getIssueCount = (type) => issues.filter(i => i.IssueType === type).length;
+  const filteredIssues = issueFilter === 'all' ? issues : issues.filter(i => i.IssueType === issueFilter);
 
   return (
     <div className="berry-root">
@@ -747,6 +770,32 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         <main className="berry-content">
           {page === 'dashboard' && (
             <div className="berry-dashboard-grid">
+              {/* Top Store Banner */}
+              <div className="berry-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', padding: '16px 24px' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '20px', color: 'var(--berry-text-dark)' }}>{dash.StoreName || 'Loading...'}</h2>
+                  <div style={{ color: 'var(--berry-text-muted)', fontSize: '13px', marginTop: '4px' }}>
+                    วันที่ {new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button className="berry-btn-small" style={{ border: '1px solid var(--berry-border)', background: 'transparent', color: 'var(--berry-text-dark)', padding: '6px 12px' }} onClick={() => setPage('menu')}>
+                    <Icon name="edit" size={14} /> จัดการร้านค้า
+                  </button>
+                  <Badge tone={dash.IsOpen ? 'success' : 'neutral'}>{dash.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}</Badge>
+                  <Badge tone="success">สิทธิ์ปกติ</Badge>
+                  {storeDetail?.ContractEndDate && (
+                    <button 
+                      onClick={() => setPage('contract')}
+                      className={`berry-badge tone-${daysLeft > 30 ? 'success' : daysLeft > 0 ? 'warning' : 'danger'}`}
+                      style={{ cursor: 'pointer', border: 'none', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px' }}
+                    >
+                      สัญญา: {daysLeft < 0 ? 'หมดอายุแล้ว' : `เหลือ ${daysLeft} วัน`} · จัดการ &rarr;
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <div className="berry-stat-row">
                 <div className="berry-card berry-bg-purple">
                   <div className="berry-decor-circle-1"></div>
@@ -755,7 +804,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     <div className="berry-icon-box dark"><Icon name="dashboard" size={24} /></div>
                   </div>
                   <div className="berry-card-body">
-                    <h2>${fmtMoney(storeReport?.total_sales || 0)}.00</h2>
+                    <h2>฿{fmtMoney(storeReport?.total_sales || 0)}</h2>
                     <p>Total Earning</p>
                   </div>
                 </div>
@@ -776,7 +825,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 <div className="berry-stat-col">
                   <DashboardSmallCard 
                     label="Avg. Order Value" 
-                    value={`$${fmtMoney(storeReport?.average_order || 0)}`} 
+                    value={`฿${fmtMoney(storeReport?.average_order || 0)}`} 
                     icon="check" 
                     tone="blue" 
                   />
@@ -794,7 +843,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <div style={{ color: 'var(--berry-text-muted)', fontSize: '14px', fontWeight: '500' }}>Total Growth</div>
-                      <h3 style={{ margin: '8px 0 0', fontSize: '24px', fontWeight: '700' }}>${fmtMoney(storeReport?.total_sales || 0)}.00</h3>
+                      <h3 style={{ margin: '8px 0 0', fontSize: '24px', fontWeight: '700' }}>฿{fmtMoney(storeReport?.total_sales || 0)}</h3>
                     </div>
                     <PeriodButtons days={storeDays} setDays={setStoreDays} />
                   </div>
@@ -999,7 +1048,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                             </div>
                           ))}
                         </td>
-                        <td className="mono bold">${fmtMoney(h.TotalAmount)}</td>
+                        <td className="mono bold">฿{fmtMoney(h.TotalAmount)}</td>
                         <td>
                           <Badge tone={h.Status === 'Completed' ? 'success' : h.Status === 'Cancelled' ? 'danger' : 'warning'}>
                             {getStatusLabel(h.Status)}
@@ -1036,7 +1085,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                           {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
                         </td>
                         <td className="mono" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{c.QueueNo}</td>
-                        <td className="mono bold">${fmtMoney(c.TotalAmount)}</td>
+                        <td className="mono bold">฿{fmtMoney(c.TotalAmount)}</td>
                         <td style={{ color: 'var(--berry-red)', fontWeight: '500' }}>{c.CancelReason || '-'}</td>
                       </tr>
                     ))}
@@ -1049,84 +1098,173 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           {page === 'reviews' && (
             <div className="berry-card">
               <div className="berry-card-header-simple" style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                <h3>Customer Reviews</h3>
+                <h3>รีวิวจากลูกค้า</h3>
                 <div style={{ textAlign: 'right' }}>
                   <span style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--berry-amber)' }}>
                     {reviewsData.summary?.average?.toFixed(1) || '0.0'}
                   </span>
                   <span style={{ fontSize: '14px', color: 'var(--berry-text-muted)' }}> / 5</span>
                   <div style={{ fontSize: '12px', color: 'var(--berry-text-muted)' }}>
-                    จาก {reviewsData.summary?.total || 0} รีวิว
+                    รีวิวทั้งหมดของร้านนี้
                   </div>
                 </div>
               </div>
-              <div className="berry-table-container">
-                <table className="berry-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Customer</th>
-                      <th>Rating</th>
-                      <th>Comment</th>
-                      <th>Image</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!reviewsData.reviews || reviewsData.reviews.length === 0 ? (
-                      <tr><td colSpan="5" className="empty-state">No reviews found.</td></tr>
-                    ) : (
-                      reviewsData.reviews.map(r => (
-                        <tr key={r.ReviewId}>
-                          <td className="muted mono">{new Date(r.CreatedAt).toLocaleString('th-TH')}</td>
-                          <td className="bold">{r.ReviewerName || 'Unknown'}</td>
-                          <td style={{ color: 'var(--berry-amber)', fontSize: '16px' }}>
-                            {'★'.repeat(r.Rating)}{'☆'.repeat(5 - r.Rating)}
-                          </td>
-                          <td>{r.Comment || '-'}</td>
-                          <td>
-                            {r.ImageUrl ? (
-                              <img src={r.ImageUrl} alt="Review" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '8px' }} />
-                            ) : '-'}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+
+              {/* ปุ่มกรองคะแนน */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '16px 0', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginRight: '4px' }}>กรองคะแนน:</span>
+                <button 
+                  onClick={() => setReviewFilter('all')} 
+                  className={`berry-period-btn ${reviewFilter === 'all' ? 'active' : ''}`} 
+                  style={{ border: reviewFilter === 'all' ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
+                >
+                  ทั้งหมด ({(reviewsData.reviews || []).length})
+                </button>
+                {[5, 4, 3, 2, 1].map(star => (
+                  <button 
+                    key={star} 
+                    onClick={() => setReviewFilter(String(star))} 
+                    className={`berry-period-btn ${reviewFilter === String(star) ? 'active' : ''}`} 
+                    style={{ border: reviewFilter === String(star) ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
+                  >
+                    {star} ★ ({getReviewCount(star)})
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                {filteredReviews.length === 0 ? (
+                  <div className="empty-state">ไม่มีรีวิวในหมวดหมู่นี้</div>
+                ) : (
+                  filteredReviews.map(r => (
+                    <div key={r.ReviewId} style={{ padding: '16px 0', borderBottom: '1px solid var(--berry-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontWeight: '600', fontSize: '14px', color: 'var(--berry-text-dark)' }}>
+                        {r.ReviewerName || "P'1"}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: 'var(--berry-amber)', fontSize: '16px', letterSpacing: '2px' }}>
+                          {'★'.repeat(r.Rating)}{'☆'.repeat(5 - r.Rating)}
+                        </span>
+                        <span style={{ color: 'var(--berry-text-muted)', fontSize: '12px' }}>
+                          {new Date(r.CreatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} · {new Date(r.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}
 
           {page === 'issues' && (
             <div className="berry-card">
-              <div className="berry-card-header-simple">
-                <h3>Issue Reports</h3>
+              <div className="berry-card-header-simple" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div>
+                  <h3>รายงานปัญหาจากลูกค้า</h3>
+                  <p style={{ margin: '4px 0 0', color: 'var(--berry-text-muted)', fontSize: '13px' }}>รายงานทั้งหมดของร้านนี้</p>
+                </div>
+                <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{issues.length} รายการ</span>
               </div>
-              <div className="berry-table-container">
+
+              {/* ปุ่มกรองประเภทปัญหา */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '16px 0', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginRight: '4px' }}>ประเภทปัญหา:</span>
+                <button 
+                  onClick={() => setIssueFilter('all')} 
+                  className={`berry-period-btn ${issueFilter === 'all' ? 'active' : ''}`} 
+                  style={{ border: issueFilter === 'all' ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
+                >
+                  ทั้งหมด ({issues.length})
+                </button>
+                {issueTypes.map(type => (
+                  <button 
+                    key={type} 
+                    onClick={() => setIssueFilter(type)} 
+                    className={`berry-period-btn ${issueFilter === type ? 'active' : ''}`} 
+                    style={{ border: issueFilter === type ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
+                  >
+                    {type} ({getIssueCount(type)})
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {filteredIssues.length === 0 ? (
+                  <div className="empty-state">ไม่มีรายงานปัญหาในหมวดหมู่นี้</div>
+                ) : (
+                  filteredIssues.map(issue => (
+                    <div key={issue.ReportID} style={{ border: '1px solid var(--berry-border)', borderRadius: '12px', padding: '16px', background: '#fff' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            <span style={{ fontWeight: '600', color: 'var(--berry-text-dark)', fontSize: '15px' }}>{issue.IssueType}</span>
+                            {issue.QueueNo ? (
+                              <span style={{ background: 'var(--berry-blue-light)', color: 'var(--berry-text-muted)', padding: '2px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: '500' }}>คิว {issue.QueueNo}</span>
+                            ) : issue.OrderID ? (
+                              <span style={{ background: 'var(--berry-blue-light)', color: 'var(--berry-text-muted)', padding: '2px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: '500' }}>คิว OF-{issue.OrderID}</span>
+                            ) : null}
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginBottom: '12px' }}>
+                            ผู้แจ้ง: {issue.CustomerName || "P'1"} · Order #{issue.OrderID}
+                          </div>
+                        </div>
+                        <div style={{ color: 'var(--berry-text-muted)', fontSize: '13px' }}>
+                          {new Date(issue.CreatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} · {new Date(issue.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '14px', color: 'var(--berry-text-dark)', lineHeight: '1.5' }}>
+                        {issue.Description || "-"}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {page === 'contract' && (
+            <div className="berry-card">
+              <div className="berry-card-header-simple">
+                <h3>ติดตามระยะเวลาสัญญา</h3>
+                <p style={{ color: 'var(--berry-text-muted)', fontSize: '13px', margin: '4px 0 16px' }}>
+                  ตรวจสอบวันเริ่มสัญญา วันสิ้นสุดสัญญา และระยะเวลาคงเหลือของร้าน
+                </p>
+              </div>
+              
+              <div style={{ border: '1px solid var(--berry-border)', borderRadius: '12px', overflow: 'hidden' }}>
                 <table className="berry-table">
-                  <thead>
+                  <thead style={{ background: 'var(--berry-bg)' }}>
                     <tr>
-                      <th>Date / Time</th>
-                      <th>Customer</th>
-                      <th>Order/Queue</th>
-                      <th>Issue Type</th>
-                      <th>Description</th>
+                      <th>ร้านค้า</th>
+                      <th>ช่วงสัญญาปัจจุบัน</th>
+                      <th>ระยะเวลาคงเหลือ</th>
+                      <th>สถานะสัญญา</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {issues.length === 0 ? (
-                      <tr><td colSpan="5" className="empty-state">No issues reported.</td></tr>
-                    ) : (
-                      issues.map(issue => (
-                        <tr key={issue.ReportID}>
-                          <td className="muted mono">{new Date(issue.CreatedAt).toLocaleString('th-TH')}</td>
-                          <td className="bold">{issue.CustomerName || `User ID: ${issue.UserId}`}</td>
-                          <td className="mono" style={{ color: 'var(--berry-purple)' }}>{issue.QueueNo ? `Queue: ${issue.QueueNo}` : (issue.OrderID ? `Order: #${issue.OrderID}` : '-')}</td>
-                          <td style={{ fontWeight: '600' }}>{issue.IssueType}</td>
-                          <td style={{ whiteSpace: 'pre-wrap' }}>{issue.Description}</td>
-                        </tr>
-                      ))
-                    )}
+                    <tr>
+                      <td>
+                        <div style={{ fontWeight: '600', color: 'var(--berry-text-dark)' }}>{dash.StoreName || 'Loading...'}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--berry-text-muted)' }}>Store ID #{storeId}</div>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: '600', color: 'var(--berry-text-dark)' }}>
+                          {storeDetail?.ContractStartDate ? new Date(storeDetail.ContractStartDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'} 
+                          <span style={{ margin: '0 8px', color: 'var(--berry-text-muted)' }}>-</span>
+                          {storeDetail?.ContractEndDate ? new Date(storeDetail.ContractEndDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: '600', color: 'var(--berry-text-dark)' }}>
+                          {daysLeft !== null ? (daysLeft < 0 ? `เกินมา ${Math.abs(daysLeft)} วัน` : `${daysLeft} วัน`) : '-'}
+                        </div>
+                      </td>
+                      <td>
+                        <Badge tone={daysLeft > 30 ? 'success' : daysLeft > 0 ? 'warning' : 'danger'}>
+                          {daysLeft > 30 ? 'ปกติ' : daysLeft > 0 ? 'ใกล้หมดอายุ' : 'หมดอายุแล้ว'}
+                        </Badge>
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
