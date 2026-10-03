@@ -733,7 +733,7 @@ function ToastStack({ toasts, onDismiss }) {
     </div>);
 }
 function Field({ label, required, error, hint, children }) {
-    return (<label style={{ display: 'block', marginBottom: '14px' }}>
+    return (<label style={{ display: 'block', marginBottom: '14px', minWidth: 0  }}>
       <span style={{ ...captionStyle, color: T.text, fontWeight: 600, display: 'block' }}>
         {label}
         {required && <span style={{ color: T.down, marginLeft: '3px' }}>*</span>}
