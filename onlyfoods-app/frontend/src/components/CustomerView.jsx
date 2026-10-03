@@ -1237,9 +1237,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               boxSizing: "border-box",
                               maxWidth: "100%",
                               whiteSpace: "nowrap",
-                              padding: "3px 7px",
+                              padding: "3px 6px",
                               fontSize: "10px",
-                              fontWeight: "700",
+                              fontWeight: "600",
                               color: COLORS.navy,
                               cursor: "pointer",
                               boxShadow: "0 2px 5px rgba(0,0,0,0.04)"
