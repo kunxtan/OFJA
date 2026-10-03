@@ -1143,19 +1143,40 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                 pushToast(err.message, 'error');
         }
     }, [API, user, pushToast]);
+
+    const loadContractNotifications = useCallback(async (silent = true) => {
+    const userId = user?.UserId || user?.userId;
+
+    if (!userId)
+        return;
+
+    try {
+        const data = await callApi(
+            `${API}/api/executive/contract-notifications/${userId}`
+        );
+
+        setContractAlerts(Array.isArray(data) ? data : []);
+    }
+    catch (err) {
+        if (!silent)
+            pushToast(err.message, 'error');
+    }
+}, [API, user, pushToast]);
     useEffect(() => {
         loadStores();
         loadOrders();
         loadFoodCourt(true);
         loadNotifications(true);
+        loadContractNotifications(true);
         const timer = setInterval(() => {
             loadStores(true);
             loadOrders(true);
             loadFoodCourt(true);
             loadNotifications(true);
+            loadContractNotifications(true);
         }, REFRESH_MS);
         return () => clearInterval(timer);
-    }, [loadStores, loadOrders, loadFoodCourt, loadNotifications]);
+    }, [loadStores, loadOrders, loadFoodCourt, loadNotifications, loadContractNotifications]);
     useEffect(() => {
         if (!stores.length)
             return;
@@ -1214,43 +1235,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         n?.Synthetic
             ? locallyRead.includes(n.NotifId)
             : Boolean(n?.IsRead);
-
-    const contractAlerts = useMemo(() => {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        return stores
-            .filter((store) => store?.ContractEndDate)
-            .map((store) => {
-                const end = parseOrderDate(store.ContractEndDate);
-                if (!end) return null;
-                end.setHours(0, 0, 0, 0);
-                const daysLeft = Math.ceil((end.getTime() - today.getTime()) / 86400000);
-
-                if (daysLeft < 0) {
-                    return {
-                        NotifId: `front-contract-expired-${store.StoreId}-${store.ContractEndDate}`,
-                        Synthetic: true,
-                        StoreId: store.StoreId,
-                        Message: `สัญญาร้าน ${store.StoreName} หมดอายุแล้ว`,
-                        CreatedAt: new Date().toISOString(),
-                        EventType: 'CONTRACT_EXPIRED'
-                    };
-                }
-                if (daysLeft <= 7) {
-                    return {
-                        NotifId: `front-contract-expiring-${store.StoreId}-${store.ContractEndDate}`,
-                        Synthetic: true,
-                        StoreId: store.StoreId,
-                        Message: `สัญญาร้าน ${store.StoreName} ใกล้หมดอายุ (${daysLeft === 0 ? 'วันนี้' : `เหลือ ${daysLeft} วัน`})`,
-                        CreatedAt: new Date().toISOString(),
-                        EventType: 'CONTRACT_EXPIRING'
-                    };
-                }
-                return null;
-            })
-            .filter(Boolean);
-    }, [stores]);
+    const [contractAlerts, setContractAlerts] = useState([]);
 
     const displayNotifications = useMemo(() => {
         return [...issueAlerts, ...contractAlerts, ...notifications]
@@ -1265,36 +1250,36 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const unreadCount = displayNotifications.filter((n) => !isRead(n)).length;
 
     const openNotification = async (notif) => {
-        if (notif?.Synthetic) {
-            rememberSyntheticRead(notif.NotifId);
-            if (notif?.EventType === 'ISSUE_REPORT') {
-                setFocusStoreId(String(notif.StoreId || ''));
-                setScrollToStoreIssues(true);
-                setActiveMenu('store-sales');
-                setSearch('');
-            }
-            else if (notif?.EventType === 'CONTRACT_EXPIRING' || notif?.EventType === 'CONTRACT_EXPIRED') {
-                setFocusStoreId(String(notif.StoreId || ''));
-                setActiveMenu('contract-tracking');
-                setSearch('');
-            }
-        }
-        else if (!isRead(notif)) {
+    if (notif?.Synthetic) {
+        rememberSyntheticRead(notif.NotifId);
+
+        if (notif?.EventType === 'ISSUE_REPORT') {
+            setFocusStoreId(String(notif.StoreId || ''));
+            setScrollToStoreIssues(true);
+            setActiveMenu('store-sales');
+            setSearch('');
+        }}else {
+        if (notif?.EventType === 'CONTRACT') {
+            setFocusStoreId(String(notif.StoreId || ''));
+            setActiveMenu('contract-tracking');
+            setSearch(''); }
+
+        if (!isRead(notif)) {
             try {
-                await callApi(`${API}/api/notifications/${notif.NotifId}/read`, { method: 'PUT' });
-            }
+                await callApi(
+                    `${API}/api/notifications/${notif.NotifId}/read`,
+                    { method: 'PUT' }); }
             catch (err) {
-                console.debug('mark-read endpoint ยังไม่พร้อม:', err.message);
-            }
-        }
+                console.debug('mark-read endpoint ยังไม่พร้อม:', err.message);} }}
 
-        setNotifOpen(false);
-        if (isNarrow)
-            setSidebarOpen(false);
+    setNotifOpen(false);
 
-        if (!notif?.Synthetic)
-            loadNotifications(true);
-    };
+    if (isNarrow)
+        setSidebarOpen(false);
+
+    if (!notif?.Synthetic)
+        loadNotifications(true);
+};
 
     const markAllRead = async () => {
         const userId = user?.UserId || user?.userId;

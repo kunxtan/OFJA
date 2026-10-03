@@ -758,6 +758,7 @@ def get_user_profile(user_id: int, db=Depends(get_db)):
 
 @app.get("/api/notifications/{user_id}")
 def get_notifs(user_id: int, db=Depends(get_db)):
+    ensure_store_columns(db)
     with db.cursor() as cur:
         cur.execute("SELECT * FROM Notifications WHERE UserId=%s ORDER BY NotifId DESC LIMIT 15", (user_id,))
         return cur.fetchall()
@@ -781,6 +782,45 @@ def mark_all_notifications_read(user_id: int, db=Depends(get_db)):
         updated = cur.rowcount
     db.commit()
     return {"success": True, "updated": updated}
+
+# แจ้งเตือนสัญญา
+@app.get("/api/executive/contract-notifications/{user_id}")
+def get_executive_contract_notifications(user_id: int, db=Depends(get_db)):
+    ensure_store_columns(db)
+    with db.cursor() as cur:
+        cur.execute("SELECT Role FROM Users WHERE UserId = %s", (user_id,))
+        user = cur.fetchone()
+        if not user: raise HTTPException(status_code=404, detail="ไม่พบผู้ใช้งาน")
+        if user.get("Role") != "Executive": raise HTTPException(status_code=403, detail="สำหรับ Executive เท่านั้น")
+
+        today = datetime.now().date()
+        cur.execute("""SELECT StoreId, StoreName, ContractEndDate FROM Store WHERE IsDeleted = 0 AND ContractEndDate IS NOT NULL""")
+        stores = cur.fetchall()
+
+        for store in stores:
+            end_date = store["ContractEndDate"]; days_left = (end_date - today).days
+            if days_left > 7: continue
+            marker = f"[CONTRACT:{store['StoreId']}:{end_date}]"
+            cur.execute("""SELECT NotifId FROM Notifications WHERE UserId = %s AND Message LIKE %s LIMIT 1""", (user_id, f"%{marker}%"))
+            if cur.fetchone(): continue
+
+            if days_left < 0: message = f"สัญญาร้าน {store['StoreName']} หมดอายุแล้ว"
+            elif days_left == 0: message = f"สัญญาร้าน {store['StoreName']} หมดอายุวันนี้"
+            else: message = f"สัญญาร้าน {store['StoreName']} ใกล้หมดอายุ (เหลือ {days_left} วัน)"
+            send_notif(db, user_id, f"{message} {marker}")
+
+        db.commit()
+        cur.execute("""SELECT * FROM Notifications WHERE UserId = %s AND Message LIKE '%%[CONTRACT:%%' ORDER BY NotifId DESC LIMIT 15""", (user_id,))
+        notifications = cur.fetchall()
+
+        for notif in notifications:
+            message = notif.get("Message") or ""; marker_pos = message.find(" [CONTRACT:")
+            if marker_pos != -1:
+                marker = message[marker_pos + 11:-1]; parts = marker.split(":", 1); notif["Message"] = message[:marker_pos]
+                if parts and parts[0].isdigit(): notif["StoreId"] = int(parts[0])
+            notif["EventType"] = "CONTRACT"
+
+        return notifications
 
 # =====================================================================
 # Store Management Endpoints
