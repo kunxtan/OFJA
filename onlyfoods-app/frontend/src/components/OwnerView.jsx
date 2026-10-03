@@ -593,7 +593,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'contract', label: 'Contract Tracking', caption: 'ติดตามสัญญา', icon: 'calendar' },
   ];
 
-  const totalBadgeUnread = unreadCancels + unreadNotifs;
+  const isSuspended = Boolean(storeDetail?.IsSuspended);
+  const unreadSuspendedAlert = isSuspended ? 1 : 0;
+  const totalBadgeUnread = unreadCancels + unreadNotifs + unreadSuspendedAlert;
   
   // -- Helper functions for filtering and contracts --
   const getDaysLeft = (endDate) => {
@@ -664,8 +666,22 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 </div>
                 
                 <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                  {notifications.length > 0 || cancels.length > 0 ? (
+                  {notifications.length > 0 || cancels.length > 0 || isSuspended ? (
                     <>
+                      {isSuspended && (
+                        <div 
+                          key="notif-suspended" 
+                          style={{ padding: '12px 16px', borderBottom: '1px solid var(--berry-border)', cursor: 'default', background: 'var(--berry-red-light)' }} 
+                        >
+                          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--berry-red)' }}>
+                            ⚠️ ร้านค้าของคุณถูกระงับสิทธิ์
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--berry-text-dark)', marginTop: '4px' }}>
+                            คุณไม่สามารถเปิดรับออเดอร์ใหม่ได้ กรุณาติดต่อผู้ดูแลระบบ (Executive)
+                          </div>
+                        </div>
+                      )}
+
                       {notifications.map(n => (
                         <div 
                           key={`notif-${n.NotifId}`} 
@@ -793,7 +809,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     <Icon name="edit" size={14} /> จัดการร้านค้า
                   </button>
                   <Badge tone={dash.IsOpen ? 'success' : 'neutral'}>{dash.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}</Badge>
-                  <Badge tone="success">สิทธิ์ปกติ</Badge>
+                  <Badge tone={storeDetail?.IsSuspended ? 'danger' : 'success'}>
+                    {storeDetail?.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
+                  </Badge>
                   {daysLeft !== null && (
                     <button 
                       onClick={() => setPage('contract')}
@@ -875,13 +893,18 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     </div>
                     <button 
                       onClick={toggleStore}
-                      disabled={!dash.IsOpen && !foodCourtOpen}
+                      disabled={(!dash.IsOpen && !foodCourtOpen) || storeDetail?.IsSuspended}
                       className={`berry-btn ${dash.IsOpen ? 'btn-error' : 'btn-primary'}`}
-                      style={{ width: '100%', marginTop: '16px', opacity: (!dash.IsOpen && !foodCourtOpen) ? 0.5 : 1 }}
+                      style={{ width: '100%', marginTop: '16px', opacity: ((!dash.IsOpen && !foodCourtOpen) || storeDetail?.IsSuspended) ? 0.5 : 1 }}
                     >
                       <Icon name="power" size={18} /> 
                       {dash.IsOpen ? 'Turn Off Orders' : 'Turn On Orders'}
                     </button>
+                    {storeDetail?.IsSuspended && (
+                      <div style={{ marginTop: '8px', color: 'var(--berry-red)', fontSize: '13px', fontWeight: '500', textAlign: 'center' }}>
+                        *ร้านของคุณถูกระงับสิทธิ์ ไม่สามารถเปิดรับออเดอร์ได้
+                      </div>
+                    )}
                     
                     <div style={{ marginTop: '32px' }}>
                       <h4 style={{ margin: '0 0 12px', fontSize: '15px' }}>Quick Stats</h4>
