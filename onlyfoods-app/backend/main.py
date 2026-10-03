@@ -624,81 +624,44 @@ def get_customer_profile(user_id: int, db=Depends(get_db)):
         user['TotalOrders'] = orders_count['TotalOrders']
         return user
 
-@app.put("/api/users/profile")
-def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
+@app.get("/api/users/{user_id}")
+def get_user_profile(user_id: int, db=Depends(get_db)):
     ensure_user_columns(db)
-    uid = data.user_id if data.user_id is not None else data.userId
-    name = data.full_name or data.fullName or data.name
-    phone = data.phone
-    img = data.profile_img if data.profile_img is not None else data.profileImg
 
-    if not uid:
-        raise HTTPException(status_code=400, detail="ไม่พบ user_id ในคำขอ")
-    if not name or not phone:
-        raise HTTPException(status_code=400, detail="กรุณากรอกชื่อ-นามสกุลและเบอร์โทรศัพท์ให้ครบถ้วน")
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                UserId,
+                Username,
+                FullName,
+                Phone,
+                Email,
+                ProfileImg,
+                CardHolderName,
+                CardLast4,
+                CardExpiry,
+                Role
+            FROM Users
+            WHERE UserId = %s
+            """,
+            (user_id,)
+        )
 
-    try:
-        cards_list = data.cards if data.cards is not None else []
-        cards_json = json.dumps(cards_list, ensure_ascii=False)
+        user = cur.fetchone()
 
-        # หากมีบัตรอย่างน้อย 1 ใบ ให้เก็บข้อมูลบัตรใบแรกลงในคอลัมน์บัตรเดี่ยวเดิมด้วย
-        if len(cards_list) > 0:
-            first_card = cards_list[0]
-            card_holder = first_card.get("cardHolderName") or first_card.get("card_holder_name")
-            card_last4 = first_card.get("cardLast4") or first_card.get("card_last4")
-            card_expiry = first_card.get("cardExpiry") or first_card.get("card_expiry")
-        else:
-            card_holder = None
-            card_last4 = None
-            card_expiry = None
-
-        with db.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE Users 
-                SET FullName = %s, 
-                    Phone = %s, 
-                    ProfileImg = %s,
-                    Cards = %s,
-                    CardHolderName = %s,
-                    CardLast4 = %s,
-                    CardExpiry = %s
-                WHERE UserId = %s
-                """,
-                (
-                    name, 
-                    phone, 
-                    img if img != "" else None, 
-                    cards_json,
-                    card_holder,
-                    card_last4,
-                    card_expiry,
-                    uid
-                )
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail="ไม่พบข้อมูลผู้ใช้นี้"
             )
-            db.commit()
-
-            cur.execute("SELECT * FROM Users WHERE UserId = %s", (uid,))
-            user = cur.fetchone()
-            if not user:
-                raise HTTPException(status_code=404, detail="ไม่พบข้อมูลผู้ใช้นี้ในระบบ")
-            
-            if user.get("Cards"):
-                try:
-                    user["Cards"] = json.loads(user["Cards"])
-                except Exception:
-                    user["Cards"] = []
-            else:
+        if user.get("Cards"):
+            try:
+                user["Cards"] = json.loads(user["Cards"])
+            except Exception:
                 user["Cards"] = []
 
-            return user
-
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการบันทึกข้อมูล: {str(e)}")
+        return user
 
 @app.get("/api/notifications/{user_id}")
 def get_notifs(user_id: int, db=Depends(get_db)):
