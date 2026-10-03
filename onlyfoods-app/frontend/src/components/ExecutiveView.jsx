@@ -3362,7 +3362,6 @@ function validateStoreForm(form, mode = 'create') {
 }
 
 // ===== ครอปรูปหน้าร้านก่อนนำไปบันทึก =====
-// ===== ครอปรูปหน้าร้านก่อนนำไปบันทึก =====
 function StoreImageCropModal({ open, imageSrc, fileName, onCancel, onConfirm }) {
     const [crop, setCrop] = useState({ x: 0, y: 0 }), [zoom, setZoom] = useState(1), [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
 
@@ -3406,12 +3405,12 @@ function StoreImageCropModal({ open, imageSrc, fileName, onCancel, onConfirm }) 
             </>}
         >
             <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', maxHeight: '430px', background: '#11131A', borderRadius: T.radiusMd, overflow: 'hidden' }}>
-                <Cropper image={imageSrc} crop={crop} zoom={zoom} aspect={16 / 9} showGrid={false} onCropChange={setCrop} onCropComplete={(croppedArea, croppedAreaPixels) => setCroppedAreaPixels(croppedAreaPixels)} onZoomChange={setZoom} />
+                <Cropper image={imageSrc} crop={crop} zoom={zoom} minZoom={0.5}   maxZoom={3} aspect={16 / 9} showGrid={false} onCropChange={setCrop} onCropComplete={(croppedArea, croppedAreaPixels) => setCroppedAreaPixels(croppedAreaPixels)} onZoomChange={setZoom} />
             </div>
 
             <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <Button variant="ghost" onClick={() => setZoom(prev => Math.max(1, Number((prev - 0.1).toFixed(1))))}>−</Button>
-                <input type="range" min={1} max={3} step={0.1} value={zoom} onChange={e => setZoom(Number(e.target.value))} style={{ flex: 1, minWidth: 0 }} />
+                <Button variant="ghost" onClick={() => setZoom(prev => Math.max(0.5, Number((prev - 0.1).toFixed(1))))}>−</Button>
+                <input type="range" min={0.5} max={3} step={0.1} value={zoom} onChange={e => setZoom(Number(e.target.value))} style={{ flex: 1, minWidth: 0 }} />
                 <Button variant="ghost" onClick={() => setZoom(prev => Math.min(3, Number((prev + 0.1).toFixed(1))))}>+</Button>
                 <span style={{ minWidth: '48px', textAlign: 'right', color: T.muted, fontSize: '12px' }}>{Math.round(zoom * 100)}%</span>
             </div>
