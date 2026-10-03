@@ -638,54 +638,44 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="กรุณากรอกชื่อ-นามสกุลและเบอร์โทรศัพท์ให้ครบถ้วน")
 
     try:
-        # ตรวจสอบว่าส่งบัตรมาหรือไม่
-        cards_json = json.dumps(data.cards, ensure_ascii=False) if data.cards is not None else None
-        
-        # กรณีลบบัตรจนเหลือ 0 ใบ (cards เป็นอาเรย์ว่าง []) ให้ล้างค่าข้อมูลบัตรเดิมใน DB ด้วย
-        is_empty_cards = (data.cards is not None and len(data.cards) == 0)
+        cards_list = data.cards if data.cards is not None else []
+        cards_json = json.dumps(cards_list, ensure_ascii=False)
+
+        # หากมีบัตรอย่างน้อย 1 ใบ ให้เก็บข้อมูลบัตรใบแรกลงในคอลัมน์บัตรเดี่ยวเดิมด้วย
+        if len(cards_list) > 0:
+            first_card = cards_list[0]
+            card_holder = first_card.get("cardHolderName") or first_card.get("card_holder_name")
+            card_last4 = first_card.get("cardLast4") or first_card.get("card_last4")
+            card_expiry = first_card.get("cardExpiry") or first_card.get("card_expiry")
+        else:
+            card_holder = None
+            card_last4 = None
+            card_expiry = None
 
         with db.cursor() as cur:
-            if is_empty_cards:
-                # ล้างข้อมูลคอลัมน์ Cards และคอลัมน์บัตรเดี่ยวเดิมทั้งหมด
-                cur.execute(
-                    """
-                    UPDATE Users 
-                    SET FullName = %s, 
-                        Phone = %s, 
-                        ProfileImg = %s,
-                        Cards = '[]',
-                        CardHolderName = NULL,
-                        CardLast4 = NULL,
-                        CardExpiry = NULL
-                    WHERE UserId = %s
-                    """,
-                    (name, phone, img if img != "" else None, uid)
+            cur.execute(
+                """
+                UPDATE Users 
+                SET FullName = %s, 
+                    Phone = %s, 
+                    ProfileImg = %s,
+                    Cards = %s,
+                    CardHolderName = %s,
+                    CardLast4 = %s,
+                    CardExpiry = %s
+                WHERE UserId = %s
+                """,
+                (
+                    name, 
+                    phone, 
+                    img if img != "" else None, 
+                    cards_json,
+                    card_holder,
+                    card_last4,
+                    card_expiry,
+                    uid
                 )
-            else:
-                # กรณีมีข้อมูลบัตรหรือไม่มีการแก้ไขบัตร ให้ใช้ COALESCE ตามปกติ
-                cur.execute(
-                    """
-                    UPDATE Users 
-                    SET FullName = %s, 
-                        Phone = %s, 
-                        ProfileImg = %s,
-                        Cards = COALESCE(%s, Cards),
-                        CardHolderName = COALESCE(%s, CardHolderName),
-                        CardLast4 = COALESCE(%s, CardLast4),
-                        CardExpiry = COALESCE(%s, CardExpiry)
-                    WHERE UserId = %s
-                    """,
-                    (
-                        name, 
-                        phone, 
-                        img if img != "" else None, 
-                        cards_json, 
-                        data.card_holder_name, 
-                        data.card_last4, 
-                        data.card_expiry, 
-                        uid
-                    )
-                )
+            )
             db.commit()
 
             cur.execute("SELECT * FROM Users WHERE UserId = %s", (uid,))
@@ -698,6 +688,8 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                     user["Cards"] = json.loads(user["Cards"])
                 except Exception:
                     user["Cards"] = []
+            else:
+                user["Cards"] = []
 
             return user
 

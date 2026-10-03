@@ -757,10 +757,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
       if (!res.ok) throw new Error("ไม่สามารถลบบัตรได้");
 
-      setCards(updatedCards);
+      const updatedUser = await res.json();
+      const newCards = Array.isArray(updatedUser.Cards) ? updatedUser.Cards : updatedCards;
+      setCards(newCards);
+
       if (selectedCardId === cardIdToDelete) {
-        setSelectedCardId(updatedCards.length > 0 ? updatedCards[0].id : null);
+        setSelectedCardId(newCards.length > 0 ? newCards[0].id : null);
       }
+
       customAlert("สำเร็จ", "ลบบัตรเรียบร้อยแล้ว", "success");
     } catch (err) {
       console.error("Delete card error:", err);
