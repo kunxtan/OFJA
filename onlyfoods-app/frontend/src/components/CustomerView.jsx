@@ -1243,10 +1243,10 @@ const createCroppedImage = async () => {
             <div style={{ fontSize: "14px", fontWeight: "600", marginBottom: "0px" }}>สวัสดี {fullName} <HiIcon/></div>
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
-            <div className="animated-sparkle" style={{ position: "absolute", bottom: "-5px", left: "25px"}}>
+            <div className="animated-sparkle" style={{ position: "absolute", bottom: "-5px", right: "-25px"}}>
               <SparkleArt width={24} height={24} />
             </div>
-            <div className="animated-sparkle" style={{ position: "absolute", top: "-10px", left: "-10px", animationDelay: "1s" }}>
+            <div className="animated-sparkle" style={{ position: "absolute", top: "-10px", right: "10px", animationDelay: "1s" }}>
               <SparkleArt width={18} height={18} />
             </div>
           </div>
@@ -1254,7 +1254,7 @@ const createCroppedImage = async () => {
           <div style={{ filter: "drop-shadow(0 10px 15px rgba(0,0,0,0.18))" }}>
             <NoodleBowlArt width={150} height={120} />
           </div>
-          <div style={{ position: "absolute", top: "-15px", right: "0px", transform: "rotate(15deg)", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>
+          <div style={{ position: "absolute", top: "-15px", right: "-10px", transform: "rotate(15deg)", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>
             <ThaiTeaArt width={45} height={85} />
           </div>
           <div className="animated-sparkle" style={{ position: "absolute", bottom: "-5px", left: "-25px"}}>
