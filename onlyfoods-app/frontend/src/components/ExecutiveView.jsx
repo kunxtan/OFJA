@@ -1647,14 +1647,28 @@ const storeRows = Array.from(storeMap.values())
         'ยอดขายสุทธิ (บาท)',
         'อัตราการยกเลิก'
     ],
-   ...report.storeRows.map((s) => [
-    s.StoreName,
-    s.completedCount,
-    s.cancelledCount,
-    Math.round(s.grossSales),
-    Math.round(s.sales),
-    s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`
-])
+
+    ...report.storeRows.map((s) => [
+        s.StoreName,
+        s.completedCount,
+        s.cancelledCount,
+        Math.round(s.grossSales),
+        Math.round(s.sales),
+        s.cancelRate === null
+            ? 'N/A'
+            : `${s.cancelRate.toFixed(2)}%`
+    ]),
+
+    [
+        'สรุปภาพรวม',
+        report.now.completedCount,
+        report.now.cancelledCount,
+        Math.round(report.now.grossSales),
+        Math.round(report.now.sales),
+        report.now.cancelRate === null
+            ? 'N/A'
+            : `${report.now.cancelRate.toFixed(2)}%`
+    ]
 ];
     const saveCsv = () => {
         exportCsv(`onlyfoods-executive-report-${anchor}-${days}d.csv`, csvRows());
@@ -1663,62 +1677,43 @@ const storeRows = Array.from(storeMap.values())
     };
   const saveXlsx = () => {
     try {
-        const peakTime = report.peakHour === null
-            ? '-'
-            : `${pad2(report.peakHour)}:00 น.`;
+        const peakTime = report.peakHour === null ? '-' : `${pad2(report.peakHour)}:00 น.`;
 
         const overviewRows = [
-            ['ตัวชี้วัด', 'ค่า'],
-            ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
-            ['มูลค่าออเดอร์รวมก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)],
-            ['ออเดอร์สำเร็จ', report.now.completedCount],
-            ['ออเดอร์ยกเลิก', report.now.cancelledCount],
-            ['อัตราการยกเลิก (%)', report.now.cancelRate === null  ? 'N/A' : Number(report.now.cancelRate.toFixed(1)) ],
-            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
-            ['ช่วงเวลาขายดี', peakTime],
-            ['ยอดขายในช่วงเวลาขายดี (บาท)', report.peakHour === null ? '-' : Math.round(report.peakSales)]
+            ['ตัวชี้วัด', 'ค่า'], ['ช่วงข้อมูล', periodLabel], ['ออกรายงานเมื่อ', nowStamp()],
+            ['ออเดอร์สำเร็จ', report.now.completedCount], ['ออเดอร์ยกเลิก', report.now.cancelledCount],
+            ['ยอดขายก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)], ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
+            ['อัตราการยกเลิก (%)', report.now.cancelRate === null ? 'N/A' : Number(report.now.cancelRate.toFixed(2))],
+            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))], ['ช่วงเวลาขายดี', peakTime],
+            ['ยอดขายช่วงเวลาขายดี (บาท)', report.peakHour === null ? '-' : Math.round(report.peakSales)]
         ];
 
         const storeRows = [
-            ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ยอดขายสุทธิ (บาท)', 'ออเดอร์ยกเลิก', 'อัตรายกเลิก (%)'],
-            ...report.storeRows.map((s) => [
-                s.StoreName,
-                s.completedCount,
-                Math.round(s.sales),
-                s.cancelledCount,
-                s.cancelRate === null ? 'N/A' : Number(s.cancelRate.toFixed(1))
-            ])
+            ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ออเดอร์ยกเลิก', 'ยอดขายก่อนหักยกเลิก (บาท)', 'ยอดขายสุทธิ (บาท)', 'อัตราการยกเลิก (%)'],
+            ...report.storeRows.map(s => [s.StoreName, s.completedCount, s.cancelledCount, Math.round(s.grossSales), Math.round(s.sales), s.cancelRate === null ? 'N/A' : Number(s.cancelRate.toFixed(2))])
         ];
 
-        const timelineRows = [
-            [days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ยอดขาย (บาท)', 'ออเดอร์'],
-            ...report.buckets.map((b) => [
-                b.label,
-                Math.round(b.sales),
-                b.count
-            ])
-        ];
+        const timelineRows = [[days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ออเดอร์สำเร็จ', 'ออเดอร์ยกเลิก', 'ยอดขายก่อนหักยกเลิก (บาท)', 'ยอดขายสุทธิ (บาท)', 'อัตราการยกเลิก (%)']];
 
-        exportXlsx(
-            `onlyfoods-overview-${anchor}-${days}d.xlsx`,
-            [
-                {
-                    name: 'สรุปภาพรวม',
-                    rows: overviewRows,
-                    widths: [38, 20]
-                },
-                {
-                    name: 'รายงานรายร้าน',
-                    rows: storeRows,
-                    widths: [32, 18, 22, 18, 20]
-                },
-                {
-                    name: 'ยอดขายตามเวลา',
-                    rows: timelineRows,
-                    widths: [20, 20, 16]
-                }
-            ]
-        );
+        if (days === 1) {
+            for (let h = 0; h < 24; h += 1) {
+                const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && at.getHours() === h; });
+                const summary = summarize(bucketOrders);
+                timelineRows.push([`${pad2(h)}:00`, summary.completedCount, summary.cancelledCount, Math.round(summary.grossSales), Math.round(summary.sales), summary.cancelRate === null ? 'N/A' : Number(summary.cancelRate.toFixed(2))]);
+            }
+        } else {
+            report.buckets.forEach(b => {
+                const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && b.key === toISODate(at); });
+                const summary = summarize(bucketOrders);
+                timelineRows.push([b.label, summary.completedCount, summary.cancelledCount, Math.round(summary.grossSales), Math.round(summary.sales), summary.cancelRate === null ? 'N/A' : Number(summary.cancelRate.toFixed(2))]);
+            });
+        }
+
+        exportXlsx(`onlyfoods-overview-${anchor}-${days}d.xlsx`, [
+            { name: 'สรุปภาพรวม', rows: overviewRows, widths: [38, 24] },
+            { name: 'รายงานรายร้าน', rows: storeRows, widths: [32, 18, 18, 30, 22, 22] },
+            { name: 'ยอดขายตามเวลา', rows: timelineRows, widths: [18, 18, 18, 30, 22, 22] }
+        ]);
 
         setExportPreview(null);
         pushToast('บันทึกไฟล์ XLSX เรียบร้อยแล้ว');
@@ -2129,7 +2124,7 @@ const storeRows = Array.from(storeMap.values())
     </thead>
 
     <tbody>
-        {report.storeRows.slice(0, 6).map((s) => {
+        {report.storeRows.slice(0, 6).map( (s) => {
           
             const cancelledSales = sumAmount(
                 report.now.cancelled.filter(
@@ -2165,6 +2160,20 @@ const storeRows = Array.from(storeMap.values())
                 </tr>
             );
         })}
+        {exportPreview === 'csv' && (
+    <tr style={{ ...trStyle, fontWeight: 700, background: T.bg }}>
+        <td style={tdStyle}>สรุปภาพรวม</td>
+        <td style={tdRightStyle}>{money(report.now.completedCount)}</td>
+        <td style={tdRightStyle}>{money(report.now.cancelledCount)}</td>
+        <td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td>
+        <td style={tdRightStyle}>{money(report.now.sales)} บาท</td>
+        <td style={tdRightStyle}>
+            {report.now.cancelRate === null
+                ? 'N/A'
+                : `${report.now.cancelRate.toFixed(2)}%`}
+        </td>
+    </tr>
+)}
     </tbody>
 </table>
             </div>
@@ -2714,43 +2723,18 @@ function StoreSalesPage({ ctx }) {
     const exportReviewAverage = exportReviews.length
         ? exportReviews.reduce((sum, r) => sum + Number(r.Rating || 0), 0) / exportReviews.length
         : 0;
- const salesTimelineRows =  !report ? [] : (customRange ? effectiveDays : days) === 1
-    ? (() => {
-        const summary = summarize(report.current);
-
-        return [{
-            key: 'day',
-            label: customRange ? customStart : anchor,
-            completedCount: summary.completedCount,
-            cancelledCount: summary.cancelledCount,
-            grossSales: summary.grossSales,
-            netSales: summary.sales,
-            cancelRate: report.current.length
-                ? `${summary.cancelRate.toFixed(1)}%`
-                : 'N/A'
-        }];
-    })()
-    : (report?.buckets || []).map((b) => {
-        const bucketOrders = report.current.filter((o) => {
-            const at = parseOrderDate(o.CreatedAt);
-            return at && b.key === toISODate(at);
-        });
-
-        const summary = summarize(bucketOrders);
-
-        return {
-            key: b.key,
-            label: b.label,
-            completedCount: summary.completedCount,
-            cancelledCount: summary.cancelledCount,
-            grossSales: summary.grossSales,
-            netSales: summary.sales,
-            cancelRate: bucketOrders.length
-                ? `${summary.cancelRate.toFixed(1)}%`
-                : 'N/A'
-        };
+    const salesTimelineRows = !report ? [] : (customRange ? effectiveDays : days) === 1
+    ? Array.from({ length: 24 }, (_, h) => {
+        const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && at.getHours() === h; }), summary = summarize(bucketOrders);
+        return { key: `h${h}`, label: `${pad2(h)}:00`, completedCount: summary.completedCount, cancelledCount: summary.cancelledCount, grossSales: summary.grossSales, netSales: summary.sales, cancelRate: summary.cancelRate === null ? 'N/A' : `${summary.cancelRate.toFixed(2)}%` };
+    })
+    : (report?.buckets || []).map(b => {
+        const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && b.key === toISODate(at); }), summary = summarize(bucketOrders);
+        return { key: b.key, label: b.label, completedCount: summary.completedCount, cancelledCount: summary.cancelledCount, grossSales: summary.grossSales, netSales: summary.sales, cancelRate: summary.cancelRate === null ? 'N/A' : `${summary.cancelRate.toFixed(2)}%` };
     });
-    const salesExportRows = () => [ ['วันที่',
+    const salesExportRows = () => [ [(customRange ? effectiveDays : days) === 1
+        ? 'ช่วงเวลา'
+        : 'วันที่',
         'ออเดอร์สำเร็จ',
         'ออเดอร์ที่ยกเลิก',
         'ยอดขายก่อนหักยกเลิก (บาท)',
@@ -2793,7 +2777,6 @@ function StoreSalesPage({ ctx }) {
         ['ออเดอร์สำเร็จ', report.now.completedCount],
         ['ออเดอร์ยกเลิก', report.now.cancelledCount],
         ['อัตราการยกเลิก (%)', report.now.cancelRate === null  ? 'N/A' : Number(report.now.cancelRate.toFixed(1)) ],
-        ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
         ['คะแนนรีวิวเฉลี่ย', Number(exportReviewAverage.toFixed(1))],
         ['จำนวนรีวิว', exportReviews.length],
         ['จำนวนรายงานปัญหา', exportIssues.length]
@@ -2810,17 +2793,26 @@ function StoreSalesPage({ ctx }) {
     ];
 
     const timelineRows = [
-        [
-            (customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่',
-            'ยอดขาย (บาท)',
-            'ออเดอร์'
-        ],
-        ...report.buckets.map((b) => [
-            b.label,
-            Math.round(b.sales),
-            b.count
-        ])
-    ];
+    [
+        (customRange ? effectiveDays : days) === 1
+            ? 'ช่วงเวลา'
+            : 'วันที่',
+        'ออเดอร์สำเร็จ',
+        'ออเดอร์ยกเลิก',
+        'ยอดขายก่อนหักยกเลิก (บาท)',
+        'ยอดขายสุทธิ (บาท)',
+        'อัตราการยกเลิก'
+    ],
+
+    ...salesTimelineRows.map((row) => [
+        row.label,
+        row.completedCount,
+        row.cancelledCount,
+        Math.round(row.grossSales),
+        Math.round(row.netSales),
+        row.cancelRate
+    ])
+];
 
     const reviewRows = [
         ['วันที่', 'คะแนน', 'ผู้รีวิว', 'ความคิดเห็น'],
@@ -3017,11 +3009,12 @@ function StoreSalesPage({ ctx }) {
         {report && store && (<div style={{ display: 'grid', gap: '16px' }}>
   {salesExportPreview === 'csv' ? (<>
     <div>
-      <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>ตัวอย่างยอดขายตามวันที่'</div>
+      <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>{(customRange ? effectiveDays : days) === 1 ?
+       'ตัวอย่างยอดขายตามช่วงเวลา' : 'ตัวอย่างยอดขายตามวันที่'}</div>
       <div style={{ overflowX: 'auto', border: `1px solid ${T.line}`, borderRadius: T.radiusMd }}>
         <table style={tableStyle}>
           <thead><tr>
-            <th style={thStyle}>วันที่</th>
+            <th style={thStyle}>{(customRange ? effectiveDays : days) === 1 ? 'ช่วงเวลา' : 'วันที่'}</th>
             <th style={thRightStyle}>ออเดอร์สำเร็จ</th>
             <th style={thRightStyle}>ออเดอร์ที่ยกเลิก</th>
             <th style={thRightStyle}>ยอดขายก่อนหักยกเลิก</th>
@@ -3069,7 +3062,6 @@ function StoreSalesPage({ ctx }) {
           ['ออเดอร์สำเร็จ', `${money(report.now.completedCount)} ออเดอร์`],
           ['ออเดอร์ยกเลิก', `${money(report.now.cancelledCount)} ออเดอร์`],
           ['อัตราการยกเลิก', report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`],
-          ['ยอดเฉลี่ยต่อออเดอร์', `${money2(report.now.avgOrder)} บาท`],
           ['คะแนนรีวิวเฉลี่ย', `${exportReviewAverage.toFixed(1)} / 5`],
           ['จำนวนรีวิว', `${money(exportReviews.length)} รีวิว`],
           ['จำนวนรายงานปัญหา', `${money(exportIssues.length)} รายการ`]
