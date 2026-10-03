@@ -1823,27 +1823,139 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     </div>
   );
 
-  const renderNotifications = () => (
-    <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>การแจ้งเตือน</h2>
-      {notifs.length === 0 ? (
-        <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
-          <div style={{ fontSize: "45px", marginBottom: "10px" }}><NotiIcon/></div>
-          ไม่มีการแจ้งเตือน
+const renderNotifications = () => (
+  <div style={{ paddingBottom: "20px" }}>
+    <h2
+      style={{
+        margin: "5px 0 25px",
+        fontSize: "25px",
+        fontWeight: "900",
+      }}
+    >
+      การแจ้งเตือน
+    </h2>
+
+    {notifs.length === 0 ? (
+      <div
+        style={{
+          ...cardStyle,
+          padding: "60px 20px",
+          width: "100%",
+          textAlign: "center",
+          color: COLORS.gray,
+          borderRadius: "20px",
+        }}
+      >
+        <div style={{ fontSize: "45px", marginBottom: "10px" }}>
+          <NotiIcon />
         </div>
-      ) : (
+        ไม่มีการแจ้งเตือน
+      </div>
+    ) : (
+      <div style={{ maxWidth: "900px", margin: "0 auto" }}>
+
+        {/* วันนี้ */}
+        <div
+          style={{
+            fontSize: "14px",
+            fontWeight: "800",
+            color: "#777",
+            marginBottom: "10px",
+          }}
+        >
+          วันนี้
+        </div>
+
         <div style={{ display: "grid", gap: "12px" }}>
           {notifs.map((notification, index) => (
-            <div key={getNotifKey(notification) || index} style={{ ...cardStyle, padding: "18px", borderLeft: `5px solid ${COLORS.orange}` }}>
-              <div style={{ fontWeight: "900", marginBottom: "3px" }}><NotiIcon /> Only Foods</div>
-              <div style={{ color: COLORS.gray, fontSize: "13px" }}>{notification.Message}</div>
-              {notification.CreatedAt && <div style={{ color: "#aaa", fontSize: "11px", marginTop: "8px" }}>{notification.CreatedAt}</div>}
+            <div
+              key={getNotifKey(notification) || index}
+              style={{
+                ...cardStyle,
+                padding: "17px 20px",
+                borderLeft: `5px solid ${COLORS.orange}`,
+                borderRadius: "16px",
+                position: "relative",
+                background: "#fff",
+                boxShadow: "0 4px 15px rgba(0,0,0,0.05)",
+              }}
+            >
+              {/* หัวแจ้งเตือน */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  fontWeight: "900",
+                  fontSize: "15px",
+                  color: "#17213a",
+                }}
+              >
+                <div
+                  style={{
+                    width: "34px",
+                    height: "34px",
+                    borderRadius: "50%",
+                    background: "#fff3ed",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: COLORS.orange,
+                    flexShrink: 0,
+                  }}
+                >
+                  <NotiIcon />
+                </div>
+
+                <span>Only Foods</span>
+
+                {/* จุดแจ้งเตือนใหม่ */}
+                <div
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: COLORS.orange,
+                    marginLeft: "auto",
+                    flexShrink: 0,
+                  }}
+                />
+              </div>
+
+              {/* ข้อความ */}
+              <div
+                style={{
+                  color: COLORS.gray,
+                  fontSize: "13px",
+                  marginTop: "8px",
+                  marginLeft: "44px",
+                  lineHeight: "1.5",
+                }}
+              >
+                {notification.Message}
+              </div>
+
+              {/* เวลา */}
+              {notification.CreatedAt && (
+                <div
+                  style={{
+                    color: "#aaa",
+                    fontSize: "11px",
+                    marginTop: "7px",
+                    marginLeft: "44px",
+                  }}
+                >
+                  {notification.CreatedAt}
+                </div>
+              )}
             </div>
           ))}
         </div>
-      )}
-    </div>
-  );
+
+      </div>
+    )}
+  </div>
+);
 
   // CART SLIDE OVER MODAL
   const renderCart = () => {
