@@ -354,33 +354,37 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         setPhone(data.Phone || "");
         setProfileImage(data.ProfileImg || data.ProfileImage || data.avatar || null);
 
-        // 💳 Load Cards (หาก backend คืนค่า cards เป็น array ให้ใส่เลย ถ้าไม่มีให้จัดรูปแบบเป็น array)
-        if (Array.isArray(data.Cards) && data.Cards.length > 0) {
-          setCards(data.Cards);
-          setSelectedCardId(data.Cards[0].id);
-        } else if (data.CardLast4) {
-          const initialCard = {
-            id: "card_1",
-            cardHolderName: data.CardHolderName || "",
-            cardLast4: data.CardLast4 || "",
-            cardExpiry: data.CardExpiry || "",
-          };
-          setCards([initialCard]);
-          setSelectedCardId("card_1");
-        } else {
-          setCards([]);
-          setSelectedCardId(null);
-        }
-
-        setEditName(data.FullName || "");
-        setEditPhone(data.Phone || "");
-      } catch (error) {
-        console.error("Load user profile error:", error);
+        if (Array.isArray(data.Cards)) {
+        // หากส่ง Cards มา (ไม่ว่าจะเปิดเป็น [บัตร1, บัตร2] หรือเป็นอาเรย์ว่าง []) ให้ยึดตามนี้เลย
+        setCards(data.Cards);
+        setSelectedCardId(data.Cards.length > 0 ? data.Cards[0].id : null);
+      } else if (data.cards && Array.isArray(data.cards)) {
+        setCards(data.cards);
+        setSelectedCardId(data.cards.length > 0 ? data.cards[0].id : null);
+      } else if (data.CardLast4 && data.CardLast4.trim() !== "") {
+        // ดึง CardLast4 เฉพาะกรณีที่ไม่มีคอลัมน์ Cards และ CardLast4 มีค่าอยู่จริงๆ
+        const initialCard = {
+          id: "card_1",
+          cardHolderName: data.CardHolderName || "",
+          cardLast4: data.CardLast4 || "",
+          cardExpiry: data.CardExpiry || "",
+        };
+        setCards([initialCard]);
+        setSelectedCardId("card_1");
+      } else {
+        setCards([]);
+        setSelectedCardId(null);
       }
-    };
 
-    loadUserProfile();
-  }, [userId, apiBase]);
+      setEditName(data.FullName || "");
+      setEditPhone(data.Phone || "");
+    } catch (error) {
+      console.error("Load user profile error:", error);
+    }
+  };
+
+  loadUserProfile();
+}, [userId, apiBase]);
 
   useEffect(() => {
     if (selectedStore) fetchProducts();
@@ -1468,7 +1472,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           </>
         )}
 
-        {/* 💳 SECTION 2: MULTIPLE CARDS MANAGEMENT */}
         <div style={{ marginTop: "30px", paddingTop: "20px", borderTop: `2px dashed ${COLORS.border}`, textAlign: "left" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
             <div style={{ fontSize: "15px", fontWeight: "900", color: COLORS.navy }}>

@@ -503,36 +503,81 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="กรุณากรอกชื่อ-นามสกุลและเบอร์โทรศัพท์ให้ครบถ้วน")
 
     try:
+        cards_json = json.dumps(data.cards, ensure_ascii=False) if data.cards is not None else None
+        has_cards_update = (data.cards is not None)
+        is_empty_cards = (has_cards_update and len(data.cards) == 0)
+        
         with db.cursor() as cur:
-            # ใช้ COALESCE เพื่อที่หากไม่ได้ส่งข้อมูลบัตรมา จะคงค่าเดิมใน DB ไว้
-            cur.execute(
-                """
-                UPDATE Users 
-                SET FullName = %s, 
-                    Phone = %s, 
-                    ProfileImg = COALESCE(%s, ProfileImg),
-                    CardHolderName = COALESCE(%s, CardHolderName),
-                    CardLast4 = COALESCE(%s, CardLast4),
-                    CardExpiry = COALESCE(%s, CardExpiry)
-                WHERE UserId = %s
-                """,
-                (
-                    name, 
-                    phone, 
-                    img if img != "" else None, 
-                    data.card_holder_name, 
-                    data.card_last4, 
-                    data.card_expiry, 
-                    uid
+            if is_empty_cards:
+                cur.execute(
+                        """
+                        UPDATE Users 
+                        SET FullName = %s, 
+                            Phone = %s, 
+                            ProfileImg = COALESCE(%s, ProfileImg),
+                            Cards = '[]',
+                            CardHolderName = NULL,
+                            CardLast4 = NULL,
+                            CardExpiry = NULL
+                        WHERE UserId = %s
+                        """,
+                        (name, phone, img if img != "" else None, uid)
+                    )
+            elif has_cards_update:
+                # กรณีมีการส่งรายการบัตรใหม่มา (มีอย่างน้อย 1 ใบ)
+                first_card = data.cards[0]
+                cur.execute(
+                    """
+                    UPDATE Users 
+                    SET FullName = %s, 
+                        Phone = %s, 
+                        ProfileImg = COALESCE(%s, ProfileImg),
+                        Cards = %s,
+                        CardHolderName = %s,
+                        CardLast4 = %s,
+                        CardExpiry = %s
+                    WHERE UserId = %s
+                    """,
+                    (
+                        name, 
+                        phone, 
+                        img if img != "" else None, 
+                        cards_json, 
+                        first_card.get("cardHolderName"), 
+                        first_card.get("cardLast4"), 
+                        first_card.get("cardExpiry"), 
+                        uid
+                    )
                 )
-            )
+            else:
+                    # กรณีอัปเดตแค่ชื่อ/เบอร์/รูป โดยไม่ได้ส่งข้อมูลบัตรมาด้วย
+                    cur.execute(
+                        """
+                        UPDATE Users 
+                        SET FullName = %s, 
+                            Phone = %s, 
+                            ProfileImg = COALESCE(%s, ProfileImg)
+                        WHERE UserId = %s
+                        """,
+                        (name, phone, img if img != "" else None, uid)
+                    )
+
             db.commit()
 
             cur.execute("SELECT * FROM Users WHERE UserId = %s", (uid,))
             user = cur.fetchone()
             if not user:
                 raise HTTPException(status_code=404, detail="ไม่พบข้อมูลผู้ใช้นี้ในระบบ")
-            return user
+                
+            if user.get("Cards"):
+                try:
+                    user["Cards"] = json.loads(user["Cards"])
+                except Exception:
+                    user["Cards"] = []
+            else:
+                user["Cards"] = []
+
+        return user
 
     except HTTPException:
         db.rollback()
@@ -540,7 +585,7 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการบันทึกข้อมูล: {str(e)}")
-    
+        
 @app.post("/api/reset-password")
 def reset_password(req: ResetPasswordReq, db=Depends(get_db)):
     cursor = db.cursor(pymysql.cursors.DictCursor)
