@@ -113,7 +113,9 @@ function Icon({ name, size = 20 }) {
     plus: <><path d="M12 5l0 14" /><path d="M5 12l14 0" /></>,
     trash: <><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></>,
     edit: <><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" /></>,
-    users: <><path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /><path d="M21 21v-2a4 4 0 0 0 -3 -3.85" /></>
+    users: <><path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /><path d="M21 21v-2a4 4 0 0 0 -3 -3.85" /></>,
+    star: <><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z" /></>,
+    alert: <><path d="M12 9v2m0 4v.01M5.07 19H18.93c1.93 0 2.89-2.34 1.53-3.71L13.53 4.29c-.77-1.34-2.29-1.34-3.06 0L3.54 15.29c-1.36 1.37-.4 3.71 1.53 3.71z"/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -274,7 +276,6 @@ function ImageUploadZone({ image, onChange }) {
         </div>
       ) : (
         <div className="berry-upload-placeholder">
-          {/* Cloud Icon SVG with Executive Gradient */}
           <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--berry-purple)' }}>
             <defs>
               <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -312,27 +313,27 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [products, setProducts] = useState([]);
   const [history, setHistory] = useState([]); 
   const [staffList, setStaffList] = useState([]); 
+  const [foodCourtOpen, setFoodCourtOpen] = useState(true);
+  const [reviewsData, setReviewsData] = useState({ reviews: [], summary: {} });
+  const [issues, setIssues] = useState([]);
   
   const [storeDays, setStoreDays] = useState(1);
   const [storeReport, setStoreReport] = useState(null);
   
   const [page, setPage] = useState('dashboard');
   
-  // ให้ sidebar กางออกโดยเริ่มต้น
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState({ show: false, msg: '' });
 
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
-  // --- เพิ่ม State และ Ref สำหรับจัดการกล่องแจ้งเตือน ---
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
 
   const [notifications, setNotifications] = useState([]);
   const [unreadNotifs, setUnreadNotifs] = useState(0);
 
-  // --- ระบบนับจำนวนแจ้งเตือน ---
   const [unreadCancels, setUnreadCancels] = useState(0);
   const [knownCancelsCount, setKnownCancelsCount] = useState(0);
   const isFirstFetch = useRef(true);
@@ -349,13 +350,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   useEffect(() => {
     function handleClickOutside(event) {
-      if (profileRef.current && !profileRef.current.contains(event.target)) {
-        setProfileOpen(false);
-      }
-      // เพิ่มส่วนนี้เพื่อเช็คการคลิกนอกกล่องแจ้งเตือน
-      if (notifRef.current && !notifRef.current.contains(event.target)) {
-        setNotifOpen(false);
-      }
+      if (profileRef.current && !profileRef.current.contains(event.target)) setProfileOpen(false);
+      if (notifRef.current && !notifRef.current.contains(event.target)) setNotifOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -363,6 +359,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const fetchData = () => {
     fetch(`${apiBase}/api/reports/dashboard?store_id=${storeId}`).then(r => r.json()).then(d => setDash(d[0] || {}));
+    fetch(`${apiBase}/api/food-court/status`).then(r => r.json()).then(d => setFoodCourtOpen(d.is_open ?? true)).catch(err => console.error(err));
+    fetch(`${apiBase}/api/stores/${storeId}/reviews`).then(r => r.json()).then(d => setReviewsData(d)).catch(err => console.error(err));
+    fetch(`${apiBase}/api/reports/issue/store/${storeId}`).then(r => r.json()).then(d => setIssues(Array.isArray(d) ? d : [])).catch(err => console.error(err));
     
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
       .then(r => r.json())
@@ -574,6 +573,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'staff', label: 'Manage Staff', caption: 'จัดการพนักงาน', icon: 'users' },
     { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history' },
     { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
+    { id: 'reviews', label: 'Customer Reviews', caption: 'รีวิวจากลูกค้า', icon: 'star' },
+    { id: 'issues', label: 'Issue Reports', caption: 'ประวัติการแจ้งปัญหา', icon: 'alert' },
   ];
 
   const totalBadgeUnread = unreadCancels + unreadNotifs;
@@ -592,8 +593,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             </div>
             <div className="brand-subtitle">
               สถานะศูนย์อาหาร: 
-              <span className="status-dot"></span> 
-              <span className="status-text">เปิดให้บริการ</span>
+              <span className="status-dot" style={{ background: foodCourtOpen ? 'var(--berry-green)' : 'var(--berry-red)' }}></span> 
+              <span className="status-text" style={{ color: foodCourtOpen ? 'var(--berry-green)' : 'var(--berry-red)' }}>
+                {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
+              </span>
             </div>
           </div>
 
@@ -604,7 +607,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
         <div className="berry-topbar-right">
           
-          {/* เริ่มส่วนแจ้งเตือน */}
           <div className="berry-notif-container" ref={notifRef} style={{ position: 'relative' }}>
             <button 
               className="berry-icon-btn amber-light" 
@@ -631,7 +633,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                   {notifications.length > 0 || cancels.length > 0 ? (
                     <>
-                      {/* แจ้งเตือนของหมด / แจ้งเตือนระบบ */}
                       {notifications.map(n => (
                         <div 
                           key={`notif-${n.NotifId}`} 
@@ -648,7 +649,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                         </div>
                       ))}
 
-                      {/* แจ้งเตือนออเดอร์ที่ถูกยกเลิก (แสดง 5 รายการล่าสุด) */}
                       {cancels.slice(0, 5).map(c => (
                         <div 
                           key={`cancel-${c.OrderID}`} 
@@ -684,7 +684,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
               </div>
             )}
           </div>
-          {/* สิ้นสุดส่วนแจ้งเตือน */}
 
           <div className="berry-profile-container" ref={profileRef}>
             <div className="berry-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
@@ -813,11 +812,13 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                       <span style={{ color: dash.IsOpen ? 'var(--berry-green)' : 'var(--berry-red)', fontWeight: '600' }}>
                         {dash.IsOpen ? 'Open' : 'Closed'}
                       </span>
+                      {!foodCourtOpen && <div style={{color: 'var(--berry-red)', fontSize: '12px', marginTop: '4px'}}>*ศูนย์อาหารปิดทำการชั่วคราว</div>}
                     </div>
                     <button 
-                      onClick={toggleStore} 
+                      onClick={toggleStore}
+                      disabled={!dash.IsOpen && !foodCourtOpen}
                       className={`berry-btn ${dash.IsOpen ? 'btn-error' : 'btn-primary'}`}
-                      style={{ width: '100%', marginTop: '16px' }}
+                      style={{ width: '100%', marginTop: '16px', opacity: (!dash.IsOpen && !foodCourtOpen) ? 0.5 : 1 }}
                     >
                       <Icon name="power" size={18} /> 
                       {dash.IsOpen ? 'Turn Off Orders' : 'Turn On Orders'}
@@ -914,7 +915,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             </div>
           )}
 
-          {/* ===== STAFF MANAGEMENT PAGE ===== */}
           {page === 'staff' && (
             <div className="berry-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -1040,6 +1040,93 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                         <td style={{ color: 'var(--berry-red)', fontWeight: '500' }}>{c.CancelReason || '-'}</td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {page === 'reviews' && (
+            <div className="berry-card">
+              <div className="berry-card-header-simple" style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <h3>Customer Reviews</h3>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--berry-amber)' }}>
+                    {reviewsData.summary?.average?.toFixed(1) || '0.0'}
+                  </span>
+                  <span style={{ fontSize: '14px', color: 'var(--berry-text-muted)' }}> / 5</span>
+                  <div style={{ fontSize: '12px', color: 'var(--berry-text-muted)' }}>
+                    จาก {reviewsData.summary?.total || 0} รีวิว
+                  </div>
+                </div>
+              </div>
+              <div className="berry-table-container">
+                <table className="berry-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Customer</th>
+                      <th>Rating</th>
+                      <th>Comment</th>
+                      <th>Image</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!reviewsData.reviews || reviewsData.reviews.length === 0 ? (
+                      <tr><td colSpan="5" className="empty-state">No reviews found.</td></tr>
+                    ) : (
+                      reviewsData.reviews.map(r => (
+                        <tr key={r.ReviewId}>
+                          <td className="muted mono">{new Date(r.CreatedAt).toLocaleString('th-TH')}</td>
+                          <td className="bold">{r.ReviewerName || 'Unknown'}</td>
+                          <td style={{ color: 'var(--berry-amber)', fontSize: '16px' }}>
+                            {'★'.repeat(r.Rating)}{'☆'.repeat(5 - r.Rating)}
+                          </td>
+                          <td>{r.Comment || '-'}</td>
+                          <td>
+                            {r.ImageUrl ? (
+                              <img src={r.ImageUrl} alt="Review" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '8px' }} />
+                            ) : '-'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {page === 'issues' && (
+            <div className="berry-card">
+              <div className="berry-card-header-simple">
+                <h3>Issue Reports</h3>
+              </div>
+              <div className="berry-table-container">
+                <table className="berry-table">
+                  <thead>
+                    <tr>
+                      <th>Date / Time</th>
+                      <th>Customer</th>
+                      <th>Order/Queue</th>
+                      <th>Issue Type</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {issues.length === 0 ? (
+                      <tr><td colSpan="5" className="empty-state">No issues reported.</td></tr>
+                    ) : (
+                      issues.map(issue => (
+                        <tr key={issue.ReportID}>
+                          <td className="muted mono">{new Date(issue.CreatedAt).toLocaleString('th-TH')}</td>
+                          <td className="bold">{issue.CustomerName || `User ID: ${issue.UserId}`}</td>
+                          <td className="mono" style={{ color: 'var(--berry-purple)' }}>{issue.QueueNo ? `Queue: ${issue.QueueNo}` : (issue.OrderID ? `Order: #${issue.OrderID}` : '-')}</td>
+                          <td style={{ fontWeight: '600' }}>{issue.IssueType}</td>
+                          <td style={{ whiteSpace: 'pre-wrap' }}>{issue.Description}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1311,11 +1398,9 @@ body, html {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--berry-green);
   display: inline-block;
 }
 .status-text {
-  color: var(--berry-green);
   font-weight: 600;
 }
 
