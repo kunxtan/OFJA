@@ -1152,7 +1152,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 </p>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
+              <div className="customer-store-grid"
+                style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
                 {filteredStores.map(store => {
                   const avgRating = Number(store.RatingAverage || store.rating || 0);
                   const totalReviews = Number(store.ReviewCount || store.review_count || 0);
@@ -1268,7 +1269,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
         {viewMode === "products" && (
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+            <div  className="customer-product-grid"
+              style= {{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "20px" }}>
               <button
                 onClick={() => setViewMode("stores")}
                 style={{
@@ -1823,139 +1825,27 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     </div>
   );
 
-const renderNotifications = () => (
-  <div style={{ paddingBottom: "20px" }}>
-    <h2
-      style={{
-        margin: "5px 0 25px",
-        fontSize: "25px",
-        fontWeight: "900",
-      }}
-    >
-      การแจ้งเตือน
-    </h2>
-
-    {notifs.length === 0 ? (
-      <div
-        style={{
-          ...cardStyle,
-          padding: "60px 20px",
-          width: "100%",
-          textAlign: "center",
-          color: COLORS.gray,
-          borderRadius: "20px",
-        }}
-      >
-        <div style={{ fontSize: "45px", marginBottom: "10px" }}>
-          <NotiIcon />
+  const renderNotifications = () => (
+    <div>
+      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>การแจ้งเตือน</h2>
+      {notifs.length === 0 ? (
+        <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
+          <div style={{ fontSize: "45px", marginBottom: "10px" }}><NotiIcon/></div>
+          ไม่มีการแจ้งเตือน
         </div>
-        ไม่มีการแจ้งเตือน
-      </div>
-    ) : (
-      <div style={{ maxWidth: "900px", margin: "0 auto" }}>
-
-        {/* วันนี้ */}
-        <div
-          style={{
-            fontSize: "14px",
-            fontWeight: "800",
-            color: "#777",
-            marginBottom: "10px",
-          }}
-        >
-          วันนี้
-        </div>
-
+      ) : (
         <div style={{ display: "grid", gap: "12px" }}>
           {notifs.map((notification, index) => (
-            <div
-              key={getNotifKey(notification) || index}
-              style={{
-                ...cardStyle,
-                padding: "17px 20px",
-                borderLeft: `5px solid ${COLORS.orange}`,
-                borderRadius: "16px",
-                position: "relative",
-                background: "#fff",
-                boxShadow: "0 4px 15px rgba(0,0,0,0.05)",
-              }}
-            >
-              {/* หัวแจ้งเตือน */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  fontWeight: "900",
-                  fontSize: "15px",
-                  color: "#17213a",
-                }}
-              >
-                <div
-                  style={{
-                    width: "34px",
-                    height: "34px",
-                    borderRadius: "50%",
-                    background: "#fff3ed",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: COLORS.orange,
-                    flexShrink: 0,
-                  }}
-                >
-                  <NotiIcon />
-                </div>
-
-                <span>Only Foods</span>
-
-                {/* จุดแจ้งเตือนใหม่ */}
-                <div
-                  style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: COLORS.orange,
-                    marginLeft: "auto",
-                    flexShrink: 0,
-                  }}
-                />
-              </div>
-
-              {/* ข้อความ */}
-              <div
-                style={{
-                  color: COLORS.gray,
-                  fontSize: "13px",
-                  marginTop: "8px",
-                  marginLeft: "44px",
-                  lineHeight: "1.5",
-                }}
-              >
-                {notification.Message}
-              </div>
-
-              {/* เวลา */}
-              {notification.CreatedAt && (
-                <div
-                  style={{
-                    color: "#aaa",
-                    fontSize: "11px",
-                    marginTop: "7px",
-                    marginLeft: "44px",
-                  }}
-                >
-                  {notification.CreatedAt}
-                </div>
-              )}
+            <div key={getNotifKey(notification) || index} style={{ ...cardStyle, padding: "18px", borderLeft: `5px solid ${COLORS.orange}` }}>
+              <div style={{ fontWeight: "900", marginBottom: "3px" }}><NotiIcon /> Only Foods</div>
+              <div style={{ color: COLORS.gray, fontSize: "13px" }}>{notification.Message}</div>
+              {notification.CreatedAt && <div style={{ color: "#aaa", fontSize: "11px", marginTop: "8px" }}>{notification.CreatedAt}</div>}
             </div>
           ))}
         </div>
-
-      </div>
-    )}
-  </div>
-);
+      )}
+    </div>
+  );
 
   // CART SLIDE OVER MODAL
   const renderCart = () => {
@@ -2048,7 +1938,7 @@ const renderNotifications = () => (
     );
   };
 
-  // 💳 PAYMENT MODAL WITH MULTIPLE CARDS SELECTION
+  // PAYMENT MODAL WITH MULTIPLE CARDS SELECTION
   const renderPaymentModal = () => {
     if (!isPaymentModalOpen) return null;
 
@@ -2131,7 +2021,6 @@ const renderNotifications = () => (
             </>
           )}
 
-          {/* 💳 CREDIT CARD SELECTION */}
           {paymentMethod === "CreditCard" && (
             <div style={{ textAlign: "left", marginBottom: "15px" }}>
               <div style={{ fontWeight: "900", fontSize: "15px", marginBottom: "12px", color: COLORS.navy }}>
@@ -2238,7 +2127,6 @@ const renderNotifications = () => (
             </div>
           )}
 
-          {/* TRUEMONEY */}
           {paymentMethod === "TrueMoney" && (
             <>
               <div style={{ margin: "15px 0", background: "#FFFFFF", padding: "15px", borderRadius: "16px", display: "inline-block", border: `2px solid ${COLORS.navy}` }}>
@@ -2851,7 +2739,31 @@ const renderNotifications = () => (
           @keyframes sparkleTwinkle { 0% {transform: scale(0.8) rotate(0deg); opacity: 0.4;} 50% {transform: scale(1.25) rotate(90deg); opacity: 1;
           filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));} 100% {transform: scale(0.8) rotate(180deg); opacity: 0.4;}}
           .animated-sparkle {animation: sparkleTwinkle 2s infinite ease-in-out; display: inline-block;}
-        `}
+          @media (max-width: 600px) {
+          .customer-store-grid,
+          .customer-product-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 10px !important;
+          }
+
+          .customer-store-grid > div,
+          .customer-product-grid > div {
+            padding: 10px !important;
+            border-radius: 14px !important;
+          }
+
+          .customer-store-grid img {
+            height: 100px !important;
+            border-radius: 10px !important;
+            margin-bottom: 8px !important;
+          }
+
+          .customer-product-grid img {
+            height: 115px !important;
+            border-radius: 10px 10px 0 0 !important;
+          }
+        }
+      `}
       </style>
       <div style={containerStyle}>
         {/* HEADER BAR */}
