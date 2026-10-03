@@ -510,7 +510,7 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                 UPDATE Users 
                 SET FullName = %s, 
                     Phone = %s, 
-                    ProfileImg = %s,
+                    ProfileImg = COALESCE(%s, ProfileImg),
                     CardHolderName = COALESCE(%s, CardHolderName),
                     CardLast4 = COALESCE(%s, CardLast4),
                     CardExpiry = COALESCE(%s, CardExpiry)

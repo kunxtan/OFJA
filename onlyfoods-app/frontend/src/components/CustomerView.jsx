@@ -1460,7 +1460,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   setEditPhone(phone);
                   setIsEditing(true);
                 }}
-                style={{ width: "100%", padding: "12px", background: COLORS.navy, color: COLORS.white, border: "none", borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+                style={{ width: "100%", padding: "12px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
               >
                 แก้ไขข้อมูลส่วนตัว
               </button>
