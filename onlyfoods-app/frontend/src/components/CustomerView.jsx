@@ -11,8 +11,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [editName, setEditName] = useState(fullName);
   const [editPhone, setEditPhone] = useState(phone);
 
-  // 💳 MULTIPLE CARDS STATE
-  const [cards, setCards] = useState([]); // [{ id, cardHolderName, cardLast4, cardExpiry }]
+  // MULTIPLE CARDS STATE
+  const [cards, setCards] = useState([]); //
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [isAddingCard, setIsAddingCard] = useState(false);
   const [editCardHolderName, setEditCardHolderName] = useState("");
@@ -347,44 +347,45 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       if (!userId) return;
       try {
         const res = await fetch(`${apiBase}/api/users/${userId}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          console.error("โหลดข้อมูลโปรไฟล์ไม่สำเร็จ");
+        return;
+        }
         const data = await res.json();
 
         setFullName(data.FullName || "");
         setPhone(data.Phone || "");
         setProfileImage(data.ProfileImg || data.ProfileImage || data.avatar || null);
 
-        if (Array.isArray(data.Cards)) {
-        // หากส่ง Cards มา (ไม่ว่าจะเปิดเป็น [บัตร1, บัตร2] หรือเป็นอาเรย์ว่าง []) ให้ยึดตามนี้เลย
-        setCards(data.Cards);
-        setSelectedCardId(data.Cards.length > 0 ? data.Cards[0].id : null);
-      } else if (data.cards && Array.isArray(data.cards)) {
-        setCards(data.cards);
-        setSelectedCardId(data.cards.length > 0 ? data.cards[0].id : null);
-      } else if (data.CardLast4 && data.CardLast4.trim() !== "") {
-        // ดึง CardLast4 เฉพาะกรณีที่ไม่มีคอลัมน์ Cards และ CardLast4 มีค่าอยู่จริงๆ
-        const initialCard = {
-          id: "card_1",
-          cardHolderName: data.CardHolderName || "",
-          cardLast4: data.CardLast4 || "",
-          cardExpiry: data.CardExpiry || "",
-        };
-        setCards([initialCard]);
-        setSelectedCardId("card_1");
-      } else {
-        setCards([]);
-        setSelectedCardId(null);
+        let loadedCards = [];
+        if (Array.isArray(data.Cards) && data.Cards.length > 0) {
+          loadedCards = data.Cards;
+        } else if (Array.isArray(data.cards) && data.cards.length > 0) {
+          loadedCards = data.cards;
+        } else if (data.CardLast4 && data.CardLast4.trim() !== "") {
+          // Fallback กรณีเดิมมีข้อมูลเฉพาะบัตรใบเดียวในคอลัมน์เดี่ยว
+          loadedCards = [
+            {
+              id: "card_1",
+              cardHolderName: data.CardHolderName || "",
+              cardLast4: data.CardLast4 || "",
+              cardExpiry: data.CardExpiry || "",
+            },
+          ];
+        }
+
+        setCards(loadedCards);
+        setSelectedCardId(loadedCards.length > 0 ? loadedCards[0].id : null);
+
+        setEditName(data.FullName || "");
+        setEditPhone(data.Phone || "");
+      } catch (error) {
+        console.error("Load user profile error:", error);
       }
+    };
 
-      setEditName(data.FullName || "");
-      setEditPhone(data.Phone || "");
-    } catch (error) {
-      console.error("Load user profile error:", error);
-    }
-  };
-
-  loadUserProfile();
-}, [userId, apiBase]);
+    loadUserProfile();
+  }, [userId, apiBase]);
 
   useEffect(() => {
     if (selectedStore) fetchProducts();
@@ -717,7 +718,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // 💳 ADD CARD HANDLER
+  // ADD CARD HANDLER
   const handleAddNewCard = async (e) => {
     e.preventDefault();
 
