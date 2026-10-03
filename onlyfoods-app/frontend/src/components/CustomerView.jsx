@@ -11,8 +11,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [editName, setEditName] = useState(fullName);
   const [editPhone, setEditPhone] = useState(phone);
 
-  // 💳 MULTIPLE CARDS STATE
-  const [cards, setCards] = useState([]); // [{ id, cardHolderName, cardLast4, cardExpiry }]
+  // CARDS STATE
+  const [cards, setCards] = useState([]);
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [isAddingCard, setIsAddingCard] = useState(false);
   const [editCardHolderName, setEditCardHolderName] = useState("");
@@ -150,16 +150,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   );
 
   // CUSTOM ALERT STATE
-  const [alertData, setAlertData] = useState({
-    isOpen: false,
-    title: "",
-    message: "",
-    type: "success",
-  });
-
-  const customAlert = (title, message = "", type = "success", onConfirm = null) => {
-    setAlertData({ isOpen: true, title, message, type, onConfirm });
-  };
+  const [alertData, setAlertData] = useState({isOpen: false, title: "", message: "", type: "success",});
+  const customAlert = (title, message = "", type = "success", onConfirm = null) => {setAlertData({ isOpen: true, title, message, type, onConfirm });};
 
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -326,19 +318,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  useEffect(() => {
-    fetchStores();
-    fetchMyOrders();
-    fetchNotifs();
-    fetchFoodCourtStatus();
-
-    const interval = setInterval(() => {
-      fetchStores();
-      fetchMyOrders();
-      fetchNotifs();
-      fetchFoodCourtStatus();
-    }, 5000);
-
+  useEffect(() => {fetchStores();
+                  fetchMyOrders();
+                  fetchNotifs();
+                  fetchFoodCourtStatus();
+    const interval = setInterval(() => {fetchStores();
+                                        fetchMyOrders();
+                                        fetchNotifs();
+                                        fetchFoodCourtStatus();
+                                        }, 5000);
     return () => clearInterval(interval);
   }, [userId, apiBase]);
 
@@ -354,7 +342,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         setPhone(data.Phone || "");
         setProfileImage(data.ProfileImg || data.ProfileImage || data.avatar || null);
 
-        // 💳 Load Cards (หาก backend คืนค่า cards เป็น array ให้ใส่เลย ถ้าไม่มีให้จัดรูปแบบเป็น array)
         if (Array.isArray(data.Cards) && data.Cards.length > 0) {
           setCards(data.Cards);
           setSelectedCardId(data.Cards[0].id);
@@ -378,17 +365,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         console.error("Load user profile error:", error);
       }
     };
-
     loadUserProfile();
   }, [userId, apiBase]);
 
-  useEffect(() => {
-    if (selectedStore) fetchProducts();
-  }, [selectedStore, apiBase]);
+  useEffect(() => {if (selectedStore) fetchProducts();}, [selectedStore, apiBase]);
 
-  useEffect(() => {
-    fetchMyIssueReports();
-  }, [userId]);
+  useEffect(() => {fetchMyIssueReports();}, [userId]);
 
   useEffect(() => {
     const pendingOutOfStock = myOrders.find(
@@ -437,17 +419,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   }, [notifs, isInitialized]);
 
-  const activeStore = useMemo(
-    () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
-    [stores, selectedStore]
-  );
+  const activeStore = useMemo(() => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {}, [stores, selectedStore]);
 
   const cartCount = useMemo(() => cart.length, [cart]);
 
-  const totalAmount = useMemo(
-    () => cart.reduce((sum, item) => sum + Number(item.UnitPrice || 0), 0),
-    [cart]
-  );
+  const totalAmount = useMemo(() => cart.reduce((sum, item) => sum + Number(item.UnitPrice || 0), 0), [cart]);
 
   const filteredStores = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -475,10 +451,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  const handleSelectStore = (storeId) => {
-    setSelectedStore(storeId);
-    setViewMode("products");
-  };
+  const handleSelectStore = (storeId) => {setSelectedStore(storeId);
+                                          setViewMode("products");
+                                          };
 
   // CART HANDLERS
   const createCartRow = (product) => {
@@ -507,9 +482,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setIsCartOpen(true);
   };
 
-  const removeFromCart = (index) => {
-    setCart((prev) => prev.filter((_, i) => i !== index));
-  };
+  const removeFromCart = (index) => {setCart((prev) => prev.filter((_, i) => i !== index));};
 
   const increaseQty = (index) => {
     setCart((prev) => {
@@ -520,13 +493,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     });
   };
 
-  const decreaseQty = (index) => {
-    setCart((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const updateItemNote = (index, note) => {
-    setCart((prev) => prev.map((item, i) => (i === index ? { ...item, item_note: note } : item)));
-  };
+  const decreaseQty = (index) => {setCart((prev) => prev.filter((_, i) => i !== index));};
+  const updateItemNote = (index, note) => {setCart((prev) => prev.map((item, i) => (i === index ? { ...item, item_note: note } : item)));};
 
   // OUT OF STOCK HANDLERS
   const handleCancelOutOfStockOrder = async (customReason = "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด") => {
@@ -673,10 +641,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  const handleRemoveProfileImage = () => {
-    setProfileImage(null);
-    customAlert("สำเร็จ", "ลบรูปโปรไฟล์เรียบร้อยแล้ว", "success");
-  };
+  const handleRemoveProfileImage = () => { setProfileImage(null); 
+                                           customAlert("สำเร็จ", "ลบรูปโปรไฟล์เรียบร้อยแล้ว", "success");
+                                         };
 
   const handleSaveProfileData = async (e) => {
     e.preventDefault();
@@ -713,7 +680,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // 💳 ADD CARD HANDLER
   const handleAddNewCard = async (e) => {
     e.preventDefault();
 
@@ -774,7 +740,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // 💳 DELETE CARD HANDLER
   const handleDeleteCard = async (cardIdToDelete) => {
     const updatedCards = cards.filter((c) => c.id !== cardIdToDelete);
 
@@ -1460,7 +1425,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   setEditPhone(phone);
                   setIsEditing(true);
                 }}
-                style={{ width: "100%", padding: "12px", background: COLORS.navy, color: COLORS.white, border: "none", borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+                style={{ width: "100%", padding: "12px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
               >
                 แก้ไขข้อมูลส่วนตัว
               </button>
@@ -1468,11 +1433,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           </>
         )}
 
-        {/* 💳 SECTION 2: MULTIPLE CARDS MANAGEMENT */}
         <div style={{ marginTop: "30px", paddingTop: "20px", borderTop: `2px dashed ${COLORS.border}`, textAlign: "left" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
             <div style={{ fontSize: "15px", fontWeight: "900", color: COLORS.navy }}>
-              บัตรเครดิต / เดบิต ของฉัน ({cards.length})
+              บัตรของฉัน ({cards.length})
             </div>
             {!isAddingCard && (
               <button

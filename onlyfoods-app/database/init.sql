@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS Users (
     Phone VARCHAR(20) NULL,
     Email VARCHAR(100) NULL,
     ProfileImg LONGTEXT NULL,
+    Cards LONGTEXT NULL,
     CardHolderName VARCHAR(100) NULL,
     CardLast4 VARCHAR(4) NULL,
     CardExpiry VARCHAR(5) NULL,
