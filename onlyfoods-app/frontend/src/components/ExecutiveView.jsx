@@ -1565,23 +1565,11 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                   <Icon name="settings" size={17} color={T.ink}/>
                 </>)}
             </button>
-
-            {profileOpen && (<div style={profilePanelStyle}>
-                <div>
-                  <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: T.ink, lineHeight: 1.5 }}>
-                    {greetingText()}, {accountName}
-                  </h4>
-                  <p style={{ margin: '4px 0 16px', fontSize: '13px', color: T.muted }}>
-                    {accountRole} (ผู้บริหารศูนย์อาหาร)
-                  </p>
-                </div>
-
-                <hr style={{ border: 'none', borderTop: `1px solid ${T.line}`, margin: '0 0 12px' }}/>
-
-                <button type="button" className="of-dropdown-item" style={dropdownItemStyle} onClick={handleLogout}>
-                  <Icon name="logout" size={18}/> ออกจากระบบ
-                </button>
-              </div>)}
+                {profileOpen && <div style={{ ...profilePanelStyle, ...(isPhone ? { position: 'fixed', top: '92px', left: '16px', right: '16px', width: 'auto', maxWidth: 'none', boxSizing: 'border-box', zIndex: 9999 } : {}) }}>
+    <div><h4 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: T.ink, lineHeight: 1.5 }}>{greetingText()}, {accountName}</h4><p style={{ margin: '4px 0 16px', fontSize: '13px', color: T.muted }}>{accountRole} (ผู้บริหารศูนย์อาหาร)</p></div>
+    <hr style={{ border: 'none', borderTop: `1px solid ${T.line}`, margin: '0 0 12px' }}/>
+    <button type="button" className="of-dropdown-item" style={dropdownItemStyle} onClick={handleLogout}><Icon name="logout" size={18}/> ออกจากระบบ</button>
+</div>}
           </div>
         </header>
 
@@ -3723,13 +3711,13 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
       </Field>
 
-      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',gap: '12px'}}>
+      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',gap: '12px'}}>
         <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
-          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={inputStyle}/>
+          <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={{...inputStyle,width: '100%',minWidth: 0,maxWidth: '100%',boxSizing: 'border-box'}}/>
         </Field>
 
         <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
-          <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={inputStyle}>
+          <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
             <option value="">— เลือกระยะเวลา —</option>
             <option value="6m">6 เดือน</option>
             <option value="1y">1 ปี</option>
@@ -3754,7 +3742,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
             min={form.contractStartDate || undefined}
             onChange={update('contractEndDate')}
             disabled={form.contractDuration !== 'custom'}
-            style={{...inputStyle,background:form.contractDuration!== 'custom'? '#F7F8FB':inputStyle.background,color:form.contractDuration!== 'custom'?T.muted:T.ink,cursor:form.contractDuration!== 'custom'? 'not-allowed': 'pointer'}}
+            style={{ ...inputStyle, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }}
           />
         </Field>
       </div>
