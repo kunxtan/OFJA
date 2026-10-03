@@ -131,7 +131,6 @@ USER_EXTRA_COLUMNS = {
     "Email": "VARCHAR(255) NULL",
     "Phone": "VARCHAR(30) NULL",
     "ProfileImg": "LONGTEXT NULL",
-    "Cards": "LONGTEXT NULL",
     "CardHolderName": "VARCHAR(100) NULL",
     "CardLast4": "VARCHAR(4) NULL",
     "CardExpiry": "VARCHAR(5) NULL",
@@ -309,7 +308,6 @@ class UpdateProfileSchema(BaseModel):
     phone: Optional[str] = None
     profile_img: Optional[str] = None
     profileImg: Optional[str] = None
-    cards: Optional[List[dict]] = None
     card_holder_name: Optional[str] = None
     card_last4: Optional[str] = None
     card_expiry: Optional[str] = None
@@ -491,7 +489,6 @@ def register(data: RegisterSchema, db=Depends(get_db)):
 def logout():
     return {"success": True, "message": "ออกจากระบบเรียบร้อยแล้ว"}
 
-
 @app.put("/api/users/profile")
 def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
     ensure_user_columns(db)
@@ -506,67 +503,35 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="กรุณากรอกชื่อ-นามสกุลและเบอร์โทรศัพท์ให้ครบถ้วน")
 
     try:
-        # ตรวจสอบว่าส่งบัตรมาหรือไม่
-        cards_json = json.dumps(data.cards, ensure_ascii=False) if data.cards is not None else None
-        
-        # กรณีลบบัตรจนเหลือ 0 ใบ (cards เป็นอาเรย์ว่าง []) ให้ล้างค่าข้อมูลบัตรเดิมใน DB ด้วย
-        is_empty_cards = (data.cards is not None and len(data.cards) == 0)
-
         with db.cursor() as cur:
-            if is_empty_cards:
-                # ล้างข้อมูลคอลัมน์ Cards และคอลัมน์บัตรเดี่ยวเดิมทั้งหมด
-                cur.execute(
-                    """
-                    UPDATE Users 
-                    SET FullName = %s, 
-                        Phone = %s, 
-                        ProfileImg = %s,
-                        Cards = '[]',
-                        CardHolderName = NULL,
-                        CardLast4 = NULL,
-                        CardExpiry = NULL
-                    WHERE UserId = %s
-                    """,
-                    (name, phone, img if img != "" else None, uid)
+            # ใช้ COALESCE เพื่อที่หากไม่ได้ส่งข้อมูลบัตรมา จะคงค่าเดิมใน DB ไว้
+            cur.execute(
+                """
+                UPDATE Users 
+                SET FullName = %s, 
+                    Phone = %s, 
+                    ProfileImg = %s,
+                    CardHolderName = COALESCE(%s, CardHolderName),
+                    CardLast4 = COALESCE(%s, CardLast4),
+                    CardExpiry = COALESCE(%s, CardExpiry)
+                WHERE UserId = %s
+                """,
+                (
+                    name, 
+                    phone, 
+                    img if img != "" else None, 
+                    data.card_holder_name, 
+                    data.card_last4, 
+                    data.card_expiry, 
+                    uid
                 )
-            else:
-                # กรณีมีข้อมูลบัตรหรือไม่มีการแก้ไขบัตร ให้ใช้ COALESCE ตามปกติ
-                cur.execute(
-                    """
-                    UPDATE Users 
-                    SET FullName = %s, 
-                        Phone = %s, 
-                        ProfileImg = %s,
-                        Cards = COALESCE(%s, Cards),
-                        CardHolderName = COALESCE(%s, CardHolderName),
-                        CardLast4 = COALESCE(%s, CardLast4),
-                        CardExpiry = COALESCE(%s, CardExpiry)
-                    WHERE UserId = %s
-                    """,
-                    (
-                        name, 
-                        phone, 
-                        img if img != "" else None, 
-                        cards_json, 
-                        data.card_holder_name, 
-                        data.card_last4, 
-                        data.card_expiry, 
-                        uid
-                    )
-                )
+            )
             db.commit()
 
             cur.execute("SELECT * FROM Users WHERE UserId = %s", (uid,))
             user = cur.fetchone()
             if not user:
                 raise HTTPException(status_code=404, detail="ไม่พบข้อมูลผู้ใช้นี้ในระบบ")
-            
-            if user.get("Cards"):
-                try:
-                    user["Cards"] = json.loads(user["Cards"])
-                except Exception:
-                    user["Cards"] = []
-
             return user
 
     except HTTPException:
@@ -575,7 +540,7 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดในการบันทึกข้อมูล: {str(e)}")
-
+    
 @app.post("/api/reset-password")
 def reset_password(req: ResetPasswordReq, db=Depends(get_db)):
     cursor = db.cursor(pymysql.cursors.DictCursor)
@@ -1600,15 +1565,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 note_val = item.item_note or item.note or ""
                 validated_items.append((item.product_id, item.qty, real_price, note_val))
 
-            # --- แก้ไข: รันเลขคิวตามลำดับออเดอร์ของร้าน และรีเซ็ตใหม่ทุกวัน ---
-                cur.execute("""
-                    SELECT COUNT(*) AS today_count 
-                    FROM `Order` 
-                    WHERE StoreId = %s AND DATE(CreatedAt) = CURRENT_DATE()
-                """, (data.store_id,))
-                row = cur.fetchone()
-                next_queue = (row['today_count'] if row else 0) + 1
-                queue_no = f"{next_queue:03d}"    
+            queue_no = f"OF-{random.randint(100, 999)}"
             initial_status = 'Pending' if data.is_walk_in else 'Verifying_Slip'
             
             cur.execute("""
@@ -1627,7 +1584,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
             if data.user_id:
                 send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ!")
                 
-            log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน {st['StoreName']} ID:{data.store_id}")
+            log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน ID:{data.store_id}")
             
             db.commit()
             return {"success": True, "order_id": order_id, "queue_no": queue_no, "total": total}
@@ -1641,7 +1598,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
 @app.put("/api/orders/{order_id}/verify-slip")
 def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
     with db.cursor() as cur:
-        cur.execute("SELECT o. * , s.StoreName FROM `Order`o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s", (order_id,))
+        cur.execute("SELECT * FROM `Order` WHERE OrderID=%s", (order_id,))
         ord_data = cur.fetchone()
         if not ord_data:
             raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อ")
@@ -1652,13 +1609,13 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
             cur.execute("UPDATE `Order` SET Status='Pending' WHERE OrderID=%s", (order_id,))
             if ord_data.get('UserId'):
                 send_notif(db, ord_data['UserId'], f"สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
-            log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id} ร้าน {ord_data['StoreName']} (ID:{ord_data['StoreId']})")
+            log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id}")
         else:
             reason = payload.reason or 'สลิปไม่ถูกต้อง'
             cur.execute("UPDATE `Order` SET Status='Cancelled', CancelReason=%s WHERE OrderID=%s", (reason, order_id))
             if ord_data.get('UserId'):
                 send_notif(db, ord_data['UserId'], f"❌ สลิปคิว {ord_data['QueueNo']} ถูกปฏิเสธ: {reason}")
-            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id} ร้าน {ord_data['StoreName']} (ID:{ord_data['StoreId']}): {reason}")
+            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id}: {reason}")
 
         db.commit()
         return {"success": True}
@@ -1902,11 +1859,9 @@ def customer_cancel_order(
         with db.cursor() as cur:
             cur.execute(
                 """
-                SELECT o.OrderID, o.UserId, o.QueueNo, o.Status, o.CancelDeadline,
-                o.StoreId, s.StoreName
-                FROM `Order` o
-                JOIN Store s ON o.StoreId = s.StoreId
-                WHERE o.OrderID=%s
+                SELECT OrderID, UserId, QueueNo, Status, CancelDeadline
+                FROM `Order`
+                WHERE OrderID=%s
                 """,
                 (order_id,),
             )
@@ -1955,7 +1910,7 @@ def customer_cancel_order(
                 db,
                 "CUSTOMER_CANCEL_ORDER",
                 f"User:{payload.user_id}",
-                f"Order {order_id} ลูกค้ายืนยันยกเลิก ร้าน {order['StoreName']} (ID:{order['StoreId']}): {reason}"
+                f"Order {order_id} ลูกค้ายืนยันยกเลิก: {reason}"
             )
 
         db.commit()
@@ -2038,7 +1993,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                     (payload.status, payload.cancel_reason, order_id)
                 )
             
-            cur.execute("SELECT o.UserId, o.QueueNo, o.StoreId, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s", (order_id,))            
+            cur.execute("SELECT UserId, QueueNo FROM `Order` WHERE OrderID=%s", (order_id,))
             o = cur.fetchone()
             if o and o.get('UserId'):
                 status_map = {
@@ -2050,10 +2005,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 }
                 send_notif(db, o['UserId'], f"ออเดอร์คิว {o['QueueNo']} {status_map.get(payload.status, payload.status)}")
             
-            if payload.status == 'Cancelled':
-                log_audit(db, "CANCEL_ORDER", payload.user_role, f"Order {order_id} -> Cancelled ร้าน {o['StoreName']} (ID:{o['StoreId']})" + (f" | เหตุผล: {payload.cancel_reason}" if payload.cancel_reason else ""))
-            else:
-                log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}  ร้าน {o['StoreName']} (ID:{o['StoreId']})")
+            log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}")
             db.commit()
             return {"success": True}
     except Exception as e:
@@ -2070,12 +2022,13 @@ def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_d
             SET Status='Pending_Cancellation', CancelReason=%s, CancelDeadline=%s 
             WHERE OrderID=%s
         """, (payload.reason, deadline, order_id))
-        cur.execute("SELECT o.UserId, o.QueueNo, o.StoreId, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s", (order_id,))
+        
+        cur.execute("SELECT UserId, QueueNo FROM `Order` WHERE OrderID=%s", (order_id,))
         o = cur.fetchone()
         if o and o['UserId']:
             send_notif(db, o['UserId'], f"คิว {o['QueueNo']} มีปัญหา: {payload.reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)")
         
-        log_audit(db, "CANCEL_REQUEST", "Front Staff", f"Order {order_id} รอการยืนยันยกเลิก ร้าน {o['StoreName']} (ID:{o['StoreId']})")
+        log_audit(db, "CANCEL_REQUEST", "Front Staff", f"Order {order_id} รอการยืนยันยกเลิก")
         db.commit()
         return {"success": True}
 
@@ -2122,11 +2075,6 @@ def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
                 performed_by or "Executive",
                 "เปิดศูนย์อาหาร" if is_open else "ปิดศูนย์อาหาร"
             )
-
-            # แจ้งเตือนเปิดปิดศูนย์อาหาร
-            message = ("ศูนย์อาหารเปิดให้บริการแล้ว" if is_open else "ศูนย์อาหารปิดให้บริการแล้ว")
-            cur.execute("SELECT UserId FROM Users WHERE Role IN ('Customer', 'Shop Owner')"); recipients = cur.fetchall()
-            for user in recipients: send_notif(db, user["UserId"], message)
 
         db.commit()
 
