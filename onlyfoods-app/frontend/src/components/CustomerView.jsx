@@ -1218,13 +1218,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                             border: `1px solid ${COLORS.yellow}50`
                           }}
                         >
-                          <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                            <span style={{ color: COLORS.yellow, display: "flex", alignItems: "center" }}><StarIcon size={24}/></span>
-                            <span style={{ fontWeight: "900", fontSize: "14px", color: COLORS.navy }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "5px", whiteSpace: "nowrap" }}>
+                            <span style={{ color: COLORS.yellow, display: "flex", alignItems: "center", flexShrink: 0 }}><StarIcon size={24}/></span>
+                            <span style={{ fontWeight: "900", fontSize: avgRating > 0 ? "14px" : "12px", color: COLORS.navy, whiteSpace: "nowrap" }}>
                               {avgRating > 0 ? avgRating.toFixed(1) : "ยังไม่มีรีวิว"}
                             </span>
                             {totalReviews > 0 && (
-                              <span style={{ fontSize: "11px", color: COLORS.gray }}>({totalReviews})</span>
+                              <span style={{ fontSize: "11px", color: COLORS.gray, whiteSpace: "nowrap" }}>({totalReviews})</span>
                             )}
                           </div>
 
@@ -2814,31 +2814,33 @@ export default function CustomerView({ user, apiBase, onLogout }) {
             <div style={logoStyle} onClick={() => handleSelectTab("menu")}>
               Only<span style={{ color: COLORS.orange }}>Foods</span>
             </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "5px 12px",
-                borderRadius: "20px",
-                fontSize: "12px",
-                fontWeight: "800",
-                background: isFoodCourtOpen ? "#E8F8F3" : "#FFF0ED",
-                color: isFoodCourtOpen ? COLORS.green : COLORS.red,
-                border: `1px solid ${isFoodCourtOpen ? COLORS.green + "40" : COLORS.red + "40"}`
-              }}
-            >
-              <span
+            {activeTab === "menu" && (
+              <div
                 style={{
-                  width: "8px",
-                  height: "8px",
-                  borderRadius: "50%",
-                  background: isFoodCourtOpen ? COLORS.green : COLORS.red,
-                  display: "inline-block"
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "5px 12px",
+                  borderRadius: "20px",
+                  fontSize: "12px",
+                  fontWeight: "800",
+                  background: isFoodCourtOpen ? "#E8F8F3" : "#FFF0ED",
+                  color: isFoodCourtOpen ? COLORS.green : COLORS.red,
+                  border: `1px solid ${isFoodCourtOpen ? COLORS.green + "40" : COLORS.red + "40"}`
                 }}
-              />
-              {isFoodCourtOpen ? "ศูนย์อาหารเปิดให้บริการ" : "ศูนย์อาหารปิดให้บริการ"}
-            </div>
+              >
+                <span
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: isFoodCourtOpen ? COLORS.green : COLORS.red,
+                    display: "inline-block"
+                  }}
+                />
+                {isFoodCourtOpen ? "ศูนย์อาหารเปิดให้บริการ" : "ศูนย์อาหารปิดให้บริการ"}
+              </div>
+            )}
           </div>
 
           {activeTab === "menu" && (
