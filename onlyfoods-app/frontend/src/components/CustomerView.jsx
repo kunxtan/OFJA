@@ -1244,20 +1244,18 @@ const createCroppedImage = async () => {
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
-          <div style={{ fontSize: "clamp(50px, 9vw, 90px)", filter: "drop-shadow(0 8px 12px rgba(0,0,0,0.2))" }}><NoodleBowlArt width={145} height={130} /></div>
-          <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
-            <BurgerArt width={150} height={135} />
+          <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2 }}>
+          <div style={{ filter: "drop-shadow(0 10px 15px rgba(0,0,0,0.18))" }}>
+            <NoodleBowlArt width={150} height={120} />
           </div>
-          <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
-            <EggArt width={70} height={60} />
+          <div style={{ position: "absolute", top: "-15px", right: "-20px", transform: "rotate(15deg)", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>
+            <ThaiTeaArt width={45} height={85} />
           </div>
-          <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
-            <ThaiTeaArt width={60} height={110} />
-          </div>
-          <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
-            <PizzaArt width={55} height={70} />
+          <div style={{ position: "absolute", bottom: "-5px", left: "-25px", opacity: 0.8 }}>
+            <SparkleArt width={24} height={24} />
           </div>
         </div>
+      </div>
 
         {viewMode === "stores" && (
           <div>
@@ -1474,18 +1472,6 @@ const createCroppedImage = async () => {
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน </h2>
       <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", width: "100%", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}`, overflow: "visible" }}>
-        <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
-          <BurgerArt width={150} height={135} />
-        </div>
-        <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
-          <EggArt width={70} height={60} />
-        </div>
-        <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
-          <ThaiTeaArt width={60} height={110} />
-        </div>
-        <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
-          <PizzaArt width={55} height={70} />
-        </div>
         <div style={{ textAlign: "center", position: "relative" }}>
           <div style={{ position: "relative", width: "120px", height: "120px", margin: "0 auto 15px" }}>
             {profileImage ? (
@@ -1899,18 +1885,6 @@ const createCroppedImage = async () => {
   const renderOrders = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน </h2>
-      <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
-          <BurgerArt width={150} height={135} />
-        </div>
-        <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
-          <EggArt width={70} height={60} />
-        </div>
-        <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
-          <ThaiTeaArt width={60} height={110} />
-        </div>
-        <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
-          <PizzaArt width={55} height={70} />
-        </div>
       {myOrders.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/></div>ยังไม่มีคำสั่งซื้อ
@@ -2016,18 +1990,6 @@ const createCroppedImage = async () => {
   const renderNotifications = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>การแจ้งเตือน</h2>
-      <div style={{ position: "absolute", right: "20px", bottom: "0px", opacity: 0.9, transform: "rotate(-10deg)" }}>
-          <BurgerArt width={150} height={135} />
-        </div>
-        <div style={{ position: "absolute", left: "420px", top: "10px", opacity: 0.85, transform: "rotate(15deg)" }}>
-          <EggArt width={70} height={60} />
-        </div>
-        <div style={{ position: "absolute", right: "280px", bottom: "15px", opacity: 0.7, transform: "rotate(-25deg)" }}>
-          <ThaiTeaArt width={60} height={110} />
-        </div>
-        <div style={{ position: "absolute", left: "10px", top: "15px", opacity: 0.6 }}>
-          <PizzaArt width={55} height={70} />
-        </div>
       {notifs.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}><NotiIcon/></div>
