@@ -1,4 +1,5 @@
 import os
+import json
 import random
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -131,6 +132,7 @@ USER_EXTRA_COLUMNS = {
     "Email": "VARCHAR(255) NULL",
     "Phone": "VARCHAR(30) NULL",
     "ProfileImg": "LONGTEXT NULL",
+    "Cards": "LONGTEXT NULL",
     "CardHolderName": "VARCHAR(100) NULL",
     "CardLast4": "VARCHAR(4) NULL",
     "CardExpiry": "VARCHAR(5) NULL",
@@ -526,8 +528,10 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                     (name, phone, img, uid)
                 )
             elif data.cards is not None and len(cards_list) > 0:
-                # กรณีมีการส่งรายการบัตรใหม่มา (มีอย่างน้อย 1 ใบ)
-                first_card = data.cards[0]
+                first_card = cards_list[0]
+                holder = first_card.get("cardHolderName") or first_card.get("card_holder_name") or first_card.get("name")
+                last4 = first_card.get("cardLast4") or first_card.get("card_last4") or first_card.get("last4")
+                expiry = first_card.get("cardExpiry") or first_card.get("card_expiry") or first_card.get("expiry")
                 cur.execute(
                     """
                     UPDATE Users 
@@ -540,17 +544,9 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                         CardExpiry = %s
                     WHERE UserId = %s
                     """,
-                    (
-                        name, 
-                        phone, 
-                        img,
-                        cards_json, 
-                        first_card.get("cardHolderName"), 
-                        first_card.get("cardLast4"), 
-                        first_card.get("cardExpiry"), 
-                        uid
-                    )
+                    (name, phone, img, cards_json, holder, last4, expiry, uid)
                 )
+        
             else:
                 # กรณีอัปเดตแค่ชื่อ/เบอร์/รูป โดยไม่ได้ส่งข้อมูลบัตรมาด้วย
                 cur.execute(
