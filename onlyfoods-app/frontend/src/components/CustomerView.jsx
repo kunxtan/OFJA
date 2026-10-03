@@ -1112,7 +1112,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const renderMenu = () => {
     return (
       <>
-        <div style={heroStyle}>
+        <div className="hero-banner" style={heroStyle}>
           <div>
             <div style={{ fontSize: "14px", fontWeight: "600", marginBottom: "0px" }}>สวัสดี {fullName} <HiIcon/></div>
             <h1 style={{ margin: "0 0 8px", fontSize: "clamp(27px, 4vw, 40px)", fontWeight: "900" }}>หิวแล้วใช่ไหม?</h1>
@@ -2740,30 +2740,49 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));} 100% {transform: scale(0.8) rotate(180deg); opacity: 0.4;}}
           .animated-sparkle {animation: sparkleTwinkle 2s infinite ease-in-out; display: inline-block;}
           @media (max-width: 600px) {
-          .customer-store-grid,
-          .customer-product-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-            gap: 10px !important;
-          }
+            /* ลดขนาดในมือถือ */
+            .customer-store-grid,
+            .customer-product-grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+              gap: 10px !important;
+            }
 
-          .customer-store-grid > div,
-          .customer-product-grid > div {
-            padding: 10px !important;
-            border-radius: 14px !important;
-          }
+            .customer-store-grid > div,
+            .customer-product-grid > div {
+              padding: 10px !important;
+              border-radius: 14px !important;
+            }
 
-          .customer-store-grid img {
-            height: 100px !important;
-            border-radius: 10px !important;
-            margin-bottom: 8px !important;
-          }
+            .customer-store-grid img {
+              height: 100px !important;
+              border-radius: 10px !important;
+              margin-bottom: 8px !important;
+            }
 
-          .customer-product-grid img {
-            height: 115px !important;
-            border-radius: 10px 10px 0 0 !important;
+            .customer-product-grid img {
+              height: 115px !important;
+              border-radius: 10px 10px 0 0 !important;
+            }
+            .customer-store-grid > div > div:nth-child(2) {
+            font-size: 14px !important;
+            }
+
+            .customer-product-grid > div > div > div:first-child {
+              font-size: 14px !important;
+              line-height: 1.3 !important;
+            }
+
+            .customer-product-grid > div > div > div:nth-child(2) {
+              font-size: 11px !important;
+              line-height: 1.4 !important;
+            }
+            
+            .customer-view .hero-banner {
+              padding: 18px !important;
+              min-height: 135px !important;
+            }
           }
-        }
-      `}
+        `}
       </style>
       <div style={containerStyle}>
         {/* HEADER BAR */}
