@@ -364,7 +364,17 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const fetchData = () => {
     fetch(`${apiBase}/api/reports/dashboard?store_id=${storeId}`).then(r => r.json()).then(d => setDash(d[0] || {}));
-    fetch(`${apiBase}/api/stores/${storeId}`).then(r => r.json()).then(d => setStoreDetail(d)).catch(err => console.error(err));
+    
+    // อัปเดตการดึงข้อมูลเพื่อให้ได้ข้อมูลที่ถูกต้อง
+    fetch(`${apiBase}/api/stores`)
+      .then(r => r.json())
+      .then(d => {
+        const allStores = Array.isArray(d) ? d : [];
+        const myStore = allStores.find(s => String(s.StoreId) === String(storeId));
+        setStoreDetail(myStore || null);
+      })
+      .catch(err => console.error(err));
+
     fetch(`${apiBase}/api/food-court/status`).then(r => r.json()).then(d => setFoodCourtOpen(d.is_open ?? true)).catch(err => console.error(err));
     fetch(`${apiBase}/api/stores/${storeId}/reviews`).then(r => r.json()).then(d => setReviewsData(d)).catch(err => console.error(err));
     fetch(`${apiBase}/api/reports/issue/store/${storeId}`).then(r => r.json()).then(d => setIssues(Array.isArray(d) ? d : [])).catch(err => console.error(err));
@@ -784,7 +794,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   </button>
                   <Badge tone={dash.IsOpen ? 'success' : 'neutral'}>{dash.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}</Badge>
                   <Badge tone="success">สิทธิ์ปกติ</Badge>
-                  {storeDetail?.ContractEndDate && (
+                  {daysLeft !== null && (
                     <button 
                       onClick={() => setPage('contract')}
                       className={`berry-badge tone-${daysLeft > 30 ? 'success' : daysLeft > 0 ? 'warning' : 'danger'}`}
@@ -1260,8 +1270,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                         </div>
                       </td>
                       <td>
-                        <Badge tone={daysLeft > 30 ? 'success' : daysLeft > 0 ? 'warning' : 'danger'}>
-                          {daysLeft > 30 ? 'ปกติ' : daysLeft > 0 ? 'ใกล้หมดอายุ' : 'หมดอายุแล้ว'}
+                        <Badge tone={daysLeft === null ? 'neutral' : daysLeft > 30 ? 'success' : daysLeft > 0 ? 'warning' : 'danger'}>
+                          {daysLeft === null ? 'ยังไม่ระบุ' : daysLeft > 30 ? 'ปกติ' : daysLeft > 0 ? 'ใกล้หมดอายุ' : 'หมดอายุแล้ว'}
                         </Badge>
                       </td>
                     </tr>
