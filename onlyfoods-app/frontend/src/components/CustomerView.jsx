@@ -1906,34 +1906,27 @@ const renderOrders = () => (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
                   <div style={{
-                    background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
-                    color: "#ffffff",
-                    padding: "8px 16px",
-                    borderRadius: "12px",
-                    textAlign: "left",
-                    boxShadow: "0 4px 10px rgba(2, 132, 199, 0.25)",
-                    flex: "1",
-                    minWidth: "160px"
+                    background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)", color: "#ffffff", padding: "8px 16px", borderRadius: "12px", textAlign: "left", boxShadow: "0 4px 10px rgba(2, 132, 199, 0.25)",
+                    width: "100%", boxSizing: "border-box", marginBottom: "14px"
                   }}>
                     <div style={{ fontSize: "10px", opacity: 0.85, textTransform: "uppercase" }}>คิวของคุณ</div>
                     <div style={{ fontSize: "20px", fontWeight: "900" }}>#{order.QueueNo}</div>
                     <div style={{ fontSize: "13px", fontWeight: "700", marginTop: "2px" }}>{order.StoreName}</div>
                   </div>
-
-                  <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: "800" }}>
-                    {order.Status || "Pending"}
-                  </span>
                 </div>
-
-                {/* เวลาที่สั่ง และ เวลารับอาหาร */}
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: COLORS.gray, margin: "10px 0" }}>
-                  {(order.OrderTime || order.CreatedAt || order.order_time) && (
-                    <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
-                  )}
-                  {(order.PickupTime || order.pickup_time) && (
-                    <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
-                  )}
-                </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px",margin: "12px 0 16px",flexWrap: "wrap"}}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", color: COLORS.gray }}>
+                        {(order.OrderTime || order.CreatedAt || order.order_time) && (
+                          <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
+                        )}
+                        {(order.PickupTime || order.pickup_time) && (
+                          <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
+                        )}
+                      </div>
+                      <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800",whiteSpace: "nowrap"}}>
+                        {order.Status || "Pending"}
+                      </span>
+                    </div>
 
                 {order.items && order.items.length > 0 && (
                   <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: `1px solid ${COLORS.border}` }}>
