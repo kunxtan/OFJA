@@ -2759,6 +2759,22 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               margin-bottom: 8px !important;
             }
 
+            .customer-store-grid button {
+              font-family: 'Sarabun', sans-serif !important;
+              line-height: 1.2 !important;
+              white-space: nowrap !important;
+            }
+
+            .customer-store-grid button:first-of-type {
+              font-size: 11px !important;
+              font-weight: 500 !important;
+            }
+
+            .customer-store-grid button:last-of-type {
+              font-size: 12px !important;
+              font-weight: 700 !important;
+            }
+
             .customer-product-grid img {
               height: 115px !important;
               border-radius: 10px 10px 0 0 !important;
