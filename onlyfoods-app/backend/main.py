@@ -504,12 +504,9 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="กรุณากรอกชื่อ-นามสกุลและเบอร์โทรศัพท์ให้ครบถ้วน")
 
     try:
-        # 1. แปลงรายการบัตรเป็น JSON string
-        cards_json = json.dumps(data.cards, ensure_ascii=False) if data.cards is not None else None
-        
-        # 2. เช็คว่าเป็นการส่งรายการบัตรมาอัปเดตหรือไม่
-        has_cards_update = (data.cards is not None)
-        is_empty_cards = (has_cards_update and len(data.cards) == 0)
+        cards_list = data.cards if data.cards is not None else []
+        cards_json = json.dumps(cards_list, ensure_ascii=False)
+        is_empty_cards = (data.cards is not None and len(cards_list) == 0)
 
         with db.cursor() as cur:
             if is_empty_cards:
@@ -526,9 +523,9 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                         CardExpiry = NULL
                     WHERE UserId = %s
                     """,
-                    (name, phone, img if img != "" else None, uid)
+                    (name, phone, img, uid)
                 )
-            elif has_cards_update:
+            elif data.cards is not None and len(cards_list) > 0:
                 # กรณีมีการส่งรายการบัตรใหม่มา (มีอย่างน้อย 1 ใบ)
                 first_card = data.cards[0]
                 cur.execute(
@@ -546,7 +543,7 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                     (
                         name, 
                         phone, 
-                        img if img != "" else None, 
+                        img,
                         cards_json, 
                         first_card.get("cardHolderName"), 
                         first_card.get("cardLast4"), 
@@ -564,7 +561,7 @@ def update_profile(data: UpdateProfileSchema, db=Depends(get_db)):
                         ProfileImg = COALESCE(%s, ProfileImg)
                     WHERE UserId = %s
                     """,
-                    (name, phone, img if img != "" else None, uid)
+                    (name, phone, img, uid)
                 )
 
             db.commit()
