@@ -1237,9 +1237,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               boxSizing: "border-box",
                               maxWidth: "100%",
                               whiteSpace: "nowrap",
-                              padding: "4px 10px",
-                              fontSize: "11px",
-                              fontWeight: "800",
+                              padding: "3px 7px",
+                              fontSize: "8px",
+                              fontWeight: "700",
                               color: COLORS.navy,
                               cursor: "pointer",
                               boxShadow: "0 2px 5px rgba(0,0,0,0.04)"
@@ -2764,7 +2764,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
             .customer-store-grid button {
               font-family: 'Sarabun', sans-serif !important;
-              font-size: 8px !important;
+              font-size: 6px !important;
               font-weight: 600 !important;
               line-height: 1.2 !important;
               white-space: nowrap !important;
