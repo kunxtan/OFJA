@@ -10,13 +10,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(fullName);
   const [editPhone, setEditPhone] = useState(phone);
-  const [cardHolderName, setCardHolderName] = useState(user?.CardHolderName || "");
-  const [cardLast4, setCardLast4] = useState(user?.CardLast4 || "");
-  const [cardExpiry, setCardExpiry] = useState(user?.CardExpiry || "");
-  const [isEditingCard, setIsEditingCard] = useState(false);
+
+  // 💳 MULTIPLE CARDS STATE
+  const [cards, setCards] = useState([]); // [{ id, cardHolderName, cardLast4, cardExpiry }]
+  const [selectedCardId, setSelectedCardId] = useState(null);
+  const [isAddingCard, setIsAddingCard] = useState(false);
   const [editCardHolderName, setEditCardHolderName] = useState("");
   const [editCardNumber, setEditCardNumber] = useState("");
   const [editCardExpiry, setEditCardExpiry] = useState("");
+
   const [profileImage, setProfileImage] = useState(user?.ProfileImg || user?.ProfileImage || user?.avatar || null);
   const [cropImage, setCropImage] = useState(null);
   const [isCropModalOpen, setIsCropModalOpen] = useState(false);
@@ -35,7 +37,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [outOfStockOrder, setOutOfStockOrder] = useState(null);
   const [isChangeMenuMode, setIsChangeMenuMode] = useState(false);
   const [newSelectedProduct, setNewSelectedProduct] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(1800); // 30 นาที สำหรับยกเลิก/เปลี่ยนเมนู
+  const [timeLeft, setTimeLeft] = useState(1800);
 
   // NAVIGATION & VIEWS
   const [activeTab, setActiveTab] = useState("menu");
@@ -84,41 +86,20 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [myIssueReports, setMyIssueReports] = useState([]);
   const [isViewReportsModalOpen, setIsViewReportsModalOpen] = useState(false);
 
-  // ICON
-  const CameraIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-camera preview-icon"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg>);
-  const UserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user preview-icon"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>)
-  const BigUserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user preview-icon"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>)
-  const NotiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-bell preview-icon"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>)
-  const HomeIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-house preview-icon"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>)
-  const OrderIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-notebook-pen preview-icon"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></svg>)
-  const HiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-hand preview-icon"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>)
-  const CartIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shopping-cart preview-icon"><path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>)
-  const CartIconPlus = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-shopping-cart-plus preview-icon"><path d="M16 5h6"/><path d="M19 2v6"/><path d="m2.05 2.05 1.099-.028a1 1 0 011.008.815l2.69 14.347A1 1 0 007.83 18H18"/><path d="M4.564 5H12"/><path d="M6.25 14h12.712a2 2 0 001.991-1.57l.172-1.041"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>)
-  const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="22" height="22" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>)
-  const CommentIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-messages-square preview-icon"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg>)
-  const BurgerArt = ({ width = 240, height = 216, className = "", style = {}, ...props }) => (
-    <svg viewBox="0 0 240 216" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
-      <ellipse cx="120" cy="207" rx="94" ry="8" fill="rgba(80,30,0,0.2)" />
-      <path d="M30 172 H210 Q210 198 178 198 H62 Q30 198 30 172Z" fill="#E88F25" />
-      <rect x="22" y="150" width="196" height="28" rx="14" fill="#5E3219" />
-      <rect x="36" y="155" width="64" height="5" rx="2.5" fill="rgba(255,255,255,0.2)" />
-      <path d="M26 142 H214 V154 H198 L188 176 L174 154 H66 L52 174 L40 154 H26Z" fill="#FFC72C" />
-      <rect x="28" y="130" width="184" height="18" rx="9" fill="#E8412F" />
-      <rect x="44" y="134" width="50" height="4" rx="2" fill="rgba(255,255,255,0.3)" />
-      <path d="M20 112 H220 V128 Q208 140 196 128 Q184 140 172 128 Q160 140 148 128 Q136 140 124 128 Q112 140 100 128 Q88 140 76 128 Q64 140 52 128 Q40 140 28 128 Q22 134 20 128Z" fill="#5CB85C" />
-      <path d="M24 120 Q24 44 120 44 Q216 44 216 120Z" fill="#F4A93B" />
-      <path d="M26 106 Q24 112 24 120 H216 Q216 112 214 106 Q120 118 26 106Z" fill="#E48B24" />
-      <path d="M46 98 Q50 64 84 54" stroke="rgba(255,255,255,0.42)" strokeWidth="7" strokeLinecap="round" fill="none" />
-      <g fill="#FFF3D6">
-        <ellipse cx="100" cy="76" rx="6" ry="3" transform="rotate(-20 100 76)" />
-        <ellipse cx="136" cy="64" rx="6" ry="3" transform="rotate(15 136 64)" />
-        <ellipse cx="164" cy="86" rx="6" ry="3" transform="rotate(-8 164 86)" />
-        <ellipse cx="120" cy="96" rx="6" ry="3" transform="rotate(25 120 96)" />
-        <ellipse cx="82" cy="98" rx="6" ry="3" transform="rotate(10 82 98)" />
-        <ellipse cx="184" cy="102" rx="5" ry="2.6" transform="rotate(-25 184 102)" />
-      </g>
-    </svg>
-  )
+  // ICONS
+  const CameraIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg>);
+  const UserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>);
+  const BigUserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>);
+  const NotiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>);
+  const HomeIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>);
+  const OrderIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></svg>);
+  const HiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>);
+  const CartIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>);
+  const CartIconPlus = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 5h6"/><path d="M19 2v6"/><path d="m2.05 2.05 1.099-.028a1 1 0 011.008.815l2.69 14.347A1 1 0 007.83 18H18"/><path d="M4.564 5H12"/><path d="M6.25 14h12.712a2 2 0 001.991-1.57l.172-1.041"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>);
+  const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="22" height="22" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>);
+  const CommentIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg>);
+  const CreditCardIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>);
+
   const NoodleBowlArt = ({ width = 220, height = 170, className = "", style = {}, ...props }) => (
     <svg viewBox="0 0 220 170" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <ellipse cx="110" cy="161" rx="80" ry="7" fill="rgba(80,30,0,0.2)" />
@@ -147,25 +128,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       <path d="M28 94 Q30 122 52 142" stroke="rgba(255,255,255,0.3)" strokeWidth="6" strokeLinecap="round" fill="none" />
     </svg>
   );
-  const PizzaArt = ({ width = 200, height = 190, className = "", style = {}, ...props }) => (
-    <svg viewBox="0 0 200 190" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
-      <path d="M14 54 H186 L100 176Z" fill="#FFC83D" stroke="#FFC83D" strokeWidth="12" strokeLinejoin="round" />
-      <path d="M4 44 Q100 18 196 44 Q202 66 190 70 Q100 46 10 70 Q-2 66 4 44Z" fill="#E8A04A" />
-      <g>
-        <circle cx="66" cy="92" r="14" fill="#D63A2A" />
-        <circle cx="62" cy="88" r="5" fill="rgba(255,255,255,0.25)" />
-        <circle cx="122" cy="88" r="14" fill="#D63A2A" />
-        <circle cx="118" cy="84" r="5" fill="rgba(255,255,255,0.25)" />
-        <circle cx="98" cy="132" r="12" fill="#D63A2A" />
-        <circle cx="95" cy="129" r="4" fill="rgba(255,255,255,0.25)" />
-      </g>
-      <g fill="#5CB85C">
-        <rect x="90" y="96" width="12" height="5" rx="2.5" transform="rotate(30 96 98)" />
-        <rect x="140" y="106" width="12" height="5" rx="2.5" transform="rotate(-20 146 108)" />
-        <rect x="76" y="116" width="12" height="5" rx="2.5" transform="rotate(-35 82 118)" />
-      </g>
-    </svg>
-  )
+
   const ThaiTeaArt = ({ width = 100, height = 192, className = "", style = {}, ...props }) => (
     <svg viewBox="0 0 100 192" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <ellipse cx="50" cy="189" rx="34" ry="4" fill="rgba(80,30,0,0.2)" />
@@ -178,46 +141,26 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       <rect x="10" y="32" width="80" height="10" rx="5" fill="#FFFFFF" />
       <line x1="66" y1="2" x2="56" y2="132" stroke="#3D5AFE" strokeWidth="8" strokeLinecap="round" />
     </svg>
-  )
-  const EggArt = ({ width = 120, height = 100, className = "", style = {}, ...props }) => (
-    <svg viewBox="0 0 120 100" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
-      <path d="M18 52 Q10 20 46 16 Q70 0 96 22 Q116 40 100 68 Q90 90 56 86 Q24 86 18 52Z" fill="#FFFFFF" />
-      <circle cx="58" cy="50" r="20" fill="#FFB400" />
-      <circle cx="51" cy="43" r="6" fill="rgba(255,255,255,0.45)" />
-    </svg>
-  )
-  const LimeArt = ({ width = 60, height = 60, className = "", style = {}, ...props }) => (
-    <svg viewBox="0 0 60 60" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
-      <circle cx="30" cy="30" r="28" fill="#7CC34F" />
-      <circle cx="30" cy="30" r="22" fill="#D9F2A8" />
-      <g stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round">
-        <line x1="30" y1="10" x2="30" y2="50" />
-        <line x1="10" y1="30" x2="50" y2="30" />
-        <line x1="16" y1="16" x2="44" y2="44" />
-        <line x1="44" y1="16" x2="16" y2="44" />
-      </g>
-      <circle cx="30" cy="30" r="4" fill="#FFFFFF" />
-    </svg>
   );
+
   const SparkleArt = ({ width = 24, height = 24, className = "", style = {}, ...props }) => (
     <svg viewBox="-12 -12 24 24" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
       <path d="M0 -11 Q0 0 11 0 Q0 0 0 11 Q0 0 -11 0 Q0 0 0 -11Z" fill="#FFFFFF" />
     </svg>
-  )
+  );
 
   // CUSTOM ALERT STATE
   const [alertData, setAlertData] = useState({
     isOpen: false,
     title: "",
     message: "",
-    type: "success", // "success", "error", "warning"
+    type: "success",
   });
 
   const customAlert = (title, message = "", type = "success", onConfirm = null) => {
     setAlertData({ isOpen: true, title, message, type, onConfirm });
   };
 
-  // CONSTANTS
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
   const COLORS = {
@@ -234,8 +177,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     red: "#E0523B",
   };
 
-  const getNotifKey = (n) =>
-    n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
+  const getNotifKey = (n) => n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
 
   const formatTimeLeft = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -245,15 +187,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const getCurrentTimeFormatted = () => {
     const now = new Date();
-    return (
-      now.toLocaleTimeString("th-TH", {
-        timeZone: "Asia/Bangkok",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }) + " น."
-    );
+    return now.toLocaleTimeString("th-TH", {
+      timeZone: "Asia/Bangkok",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }) + " น.";
   };
 
   const getCurrentDateTimeForBackend = () => {
@@ -270,9 +210,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }).formatToParts(now);
 
     const getPart = (type) => parts.find((p) => p.type === type)?.value || "00";
-    return `${getPart("year")}-${getPart("month")}-${getPart("day")} ${getPart(
-      "hour"
-    )}:${getPart("minute")}:${getPart("second")}`;
+    return `${getPart("year")}-${getPart("month")}-${getPart("day")} ${getPart("hour")}:${getPart("minute")}:${getPart("second")}`;
   };
 
   const fetchStores = async () => {
@@ -283,12 +221,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const storesWithReviews = await Promise.all(
         data.map(async (store) => {
           try {
-            const reviewRes = await fetch(
-              `${apiBase}/api/stores/${store.StoreId}/reviews`
-            );
-            if (!reviewRes.ok) {
-              return { ...store, RatingAverage: 0, ReviewCount: 0 };
-            }
+            const reviewRes = await fetch(`${apiBase}/api/stores/${store.StoreId}/reviews`);
+            if (!reviewRes.ok) return { ...store, RatingAverage: 0, ReviewCount: 0 };
             const reviewData = await reviewRes.json();
             const summary = reviewData?.summary || {};
             return {
@@ -297,7 +231,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               ReviewCount: Number(summary.total || 0),
             };
           } catch (error) {
-            console.error(`Error fetching reviews for store ${store.StoreId}:`, error);
             return { ...store, RatingAverage: 0, ReviewCount: 0 };
           }
         })
@@ -305,15 +238,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
       setStores(storesWithReviews);
       setSelectedStore((prev) => {
-        if (
-          prev &&
-          storesWithReviews.some((store) => Number(store.StoreId) === Number(prev))
-        ) {
-          return prev;
-        }
-        if (storesWithReviews.length > 0) {
-          return Number(storesWithReviews[0].StoreId);
-        }
+        if (prev && storesWithReviews.some((store) => Number(store.StoreId) === Number(prev))) return prev;
+        if (storesWithReviews.length > 0) return Number(storesWithReviews[0].StoreId);
         return null;
       });
     } catch (error) {
@@ -375,18 +301,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const res = await fetch(`${apiBase}/api/stores/${storeId}/reviews`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        console.error("Fetch store reviews error:", data);
         setStoreReviewsList([]);
         return;
       }
-      const reviews = Array.isArray(data)
-        ? data
-        : Array.isArray(data.reviews)
-        ? data.reviews
-        : [];
+      const reviews = Array.isArray(data) ? data : Array.isArray(data.reviews) ? data.reviews : [];
       setStoreReviewsList(reviews);
     } catch (error) {
-      console.error("Error fetching store reviews:", error);
       setStoreReviewsList([]);
     } finally {
       setIsLoadingReviews(false);
@@ -406,7 +326,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // Polling ข้อมูลทุกๆ 5 วินาที
   useEffect(() => {
     fetchStores();
     fetchMyOrders();
@@ -423,63 +342,54 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [userId, apiBase]);
 
-    useEffect(() => {
-  const loadUserProfile = async () => {
-    if (!userId) return;
-
-    try {
-      const res = await fetch(`${apiBase}/api/users/${userId}`);
-
-      console.log("PROFILE API STATUS:", res.status);
-
-      if (!res.ok) {
-        console.error("โหลดข้อมูลโปรไฟล์ไม่สำเร็จ");
-        return;
-      }
-
-      const data = await res.json();
-
-      console.log("PROFILE DATA:", data);
-      console.log("PROFILE IMAGE:", data.ProfileImg);
-
-      setFullName(data.FullName || "");
-      setPhone(data.Phone || "");
-
-      setProfileImage(
-        data.ProfileImg ||
-        data.ProfileImage ||
-        data.avatar ||
-        null
-      );
-
-      setCardHolderName(data.CardHolderName || "");
-      setCardLast4(data.CardLast4 || "");
-      setCardExpiry(data.CardExpiry || "");
-
-      setEditName(data.FullName || "");
-      setEditPhone(data.Phone || "");
-
-    } catch (error) {
-      console.error("Load user profile error:", error);
-    }
-  };
-
-  loadUserProfile();
-}, [userId, apiBase]);
-
-  // โหลดสินค้าเมื่อเปลี่ยนร้าน
   useEffect(() => {
-    if (selectedStore) {
-      fetchProducts();
-    }
+    const loadUserProfile = async () => {
+      if (!userId) return;
+      try {
+        const res = await fetch(`${apiBase}/api/users/${userId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        setFullName(data.FullName || "");
+        setPhone(data.Phone || "");
+        setProfileImage(data.ProfileImg || data.ProfileImage || data.avatar || null);
+
+        // 💳 Load Cards (หาก backend คืนค่า cards เป็น array ให้ใส่เลย ถ้าไม่มีให้จัดรูปแบบเป็น array)
+        if (Array.isArray(data.Cards) && data.Cards.length > 0) {
+          setCards(data.Cards);
+          setSelectedCardId(data.Cards[0].id);
+        } else if (data.CardLast4) {
+          const initialCard = {
+            id: "card_1",
+            cardHolderName: data.CardHolderName || "",
+            cardLast4: data.CardLast4 || "",
+            cardExpiry: data.CardExpiry || "",
+          };
+          setCards([initialCard]);
+          setSelectedCardId("card_1");
+        } else {
+          setCards([]);
+          setSelectedCardId(null);
+        }
+
+        setEditName(data.FullName || "");
+        setEditPhone(data.Phone || "");
+      } catch (error) {
+        console.error("Load user profile error:", error);
+      }
+    };
+
+    loadUserProfile();
+  }, [userId, apiBase]);
+
+  useEffect(() => {
+    if (selectedStore) fetchProducts();
   }, [selectedStore, apiBase]);
 
-  // โหลดรายการแจ้งปัญหาส่วนตัว
   useEffect(() => {
     fetchMyIssueReports();
   }, [userId]);
 
-  // ตรวจจับออเดอร์ของหมด (Pending_Cancellation)
   useEffect(() => {
     const pendingOutOfStock = myOrders.find(
       (ord) =>
@@ -491,13 +401,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (pendingOutOfStock) {
       if (!outOfStockOrder || outOfStockOrder.OrderID !== pendingOutOfStock.OrderID) {
         setOutOfStockOrder(pendingOutOfStock);
-        const storeId =
-          pendingOutOfStock.StoreId ||
-          pendingOutOfStock.StoreID ||
-          pendingOutOfStock.store_id;
-        if (storeId) {
-          setSelectedStore(Number(storeId));
-        }
+        const storeId = pendingOutOfStock.StoreId || pendingOutOfStock.StoreID || pendingOutOfStock.store_id;
+        if (storeId) setSelectedStore(Number(storeId));
       }
     } else {
       setOutOfStockOrder(null);
@@ -506,7 +411,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   }, [myOrders]);
 
-  // ตัวนับถอยหลัง 30 นาที (1800 วินาที)
   useEffect(() => {
     let timer = null;
     if (outOfStockOrder) {
@@ -515,19 +419,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         setTimeLeft((prevTime) => {
           if (prevTime <= 1) {
             clearInterval(timer);
-            handleCancelOutOfStockOrder(
-              "หมดเวลาเลือกเมนูทดแทนภายใน 30 นาที ระบบยกเลิกออเดอร์อัตโนมัติ"
-            );
+            handleCancelOutOfStockOrder("หมดเวลาเลือกเมนูทดแทนภายใน 30 นาที ระบบยกเลิกออเดอร์อัตโนมัติ");
             return 0;
           }
           return prevTime - 1;
         });
       }, 1000);
     }
-
-    return () => {
-      if (timer) clearInterval(timer);
-    };
+    return () => { if (timer) clearInterval(timer); };
   }, [outOfStockOrder?.OrderID]);
 
   useEffect(() => {
@@ -550,25 +449,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     [cart]
   );
 
-  const totalSpentAmount = useMemo(
-    () => myOrders.reduce((sum, ord) => sum + Number(ord.TotalAmount || 0), 0),
-    [myOrders]
-  );
-
   const filteredStores = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return stores;
-    return stores.filter((store) =>
-      String(store.StoreName || "").toLowerCase().includes(keyword)
-    );
+    return stores.filter((store) => String(store.StoreName || "").toLowerCase().includes(keyword));
   }, [stores, search]);
 
   const filteredProducts = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return products;
-    return products.filter((product) =>
-      String(product.ProductName || "").toLowerCase().includes(keyword)
-    );
+    return products.filter((product) => String(product.ProductName || "").toLowerCase().includes(keyword));
   }, [products, search]);
 
   const unreadNotifsCount = useMemo(
@@ -592,10 +482,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // CART HANDLERS
   const createCartRow = (product) => {
-    const uniqueId =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const uniqueId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     return { ...product, cartItemId: uniqueId, qty: 1, item_note: "" };
   };
 
@@ -636,31 +525,20 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const updateItemNote = (index, note) => {
-    setCart((prev) =>
-      prev.map((item, i) => (i === index ? { ...item, item_note: note } : item))
-    );
+    setCart((prev) => prev.map((item, i) => (i === index ? { ...item, item_note: note } : item)));
   };
 
   // OUT OF STOCK HANDLERS
-  const handleCancelOutOfStockOrder = async (
-    customReason = "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด"
-  ) => {
+  const handleCancelOutOfStockOrder = async (customReason = "ลูกค้าขอยกเลิกเนื่องจากวัตถุดิบหมด") => {
     if (!outOfStockOrder) return;
     try {
-      const res = await fetch(
-        `${apiBase}/api/orders/${outOfStockOrder.OrderID}/cancel`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: userId, reason: customReason }),
-        }
-      );
+      const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/cancel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, reason: customReason }),
+      });
       if (res.ok) {
-        customAlert(
-          "สำเร็จ",
-          "ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบกำลังดำเนินการคืนเงิน",
-          "success"
-        );
+        customAlert("สำเร็จ", "ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบกำลังดำเนินการคืนเงิน", "success");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
@@ -679,29 +557,22 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     const originalItem = (outOfStockOrder.items || [])[0];
 
     try {
-      const res = await fetch(
-        `${apiBase}/api/orders/${outOfStockOrder.OrderID}/change-item`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            user_id: Number(userId),
-            detail_id: originalItem?.DetailID || originalItem?.DetailId || null,
-            product_id: Number(originalItem?.ProductId || 0),
-            new_product_id: Number(newSelectedProduct.ProductId),
-            new_product_name: String(newSelectedProduct.ProductName),
-            unit_price: Number(newSelectedProduct.UnitPrice),
-          }),
-        }
-      );
+      const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/change-item`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: Number(userId),
+          detail_id: originalItem?.DetailID || originalItem?.DetailId || null,
+          product_id: Number(originalItem?.ProductId || 0),
+          new_product_id: Number(newSelectedProduct.ProductId),
+          new_product_name: String(newSelectedProduct.ProductName),
+          unit_price: Number(newSelectedProduct.UnitPrice),
+        }),
+      });
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && (data.success || data.message)) {
-        customAlert(
-          "สำเร็จ",
-          "เปลี่ยนเมนูสำเร็จ ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว",
-          "success"
-        );
+        customAlert("สำเร็จ", "เปลี่ยนเมนูสำเร็จ ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว", "success");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
@@ -717,31 +588,27 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // PROFILE HANDLERS
   const handleProfileImageChange = (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+    const file = e.target.files[0];
+    if (!file) return;
 
-  if (file.size > MAX_FILE_SIZE) {
-    customAlert("ขนาดไฟล์รูปโปรไฟล์ต้องไม่เกิน 5MB", "", "warning");
+    if (file.size > MAX_FILE_SIZE) {
+      customAlert("ขนาดไฟล์รูปโปรไฟล์ต้องไม่เกิน 5MB", "", "warning");
+      e.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setCropImage(event.target.result);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setIsCropModalOpen(true);
+    };
+    reader.readAsDataURL(file);
     e.target.value = "";
-    return;
-  }
-
-  const reader = new FileReader();
-
-  reader.onload = (event) => {
-    setCropImage(event.target.result);
-    setCrop({ x: 0, y: 0 });
-    setZoom(1);
-    setIsCropModalOpen(true);
   };
 
-  reader.readAsDataURL(file);
-
-  // ให้เลือกไฟล์เดิมซ้ำได้
-  e.target.value = "";
-};
-
-const createCroppedImage = async () => {
+  const createCroppedImage = async () => {
     if (!cropImage || !croppedAreaPixels) return;
 
     try {
@@ -765,16 +632,13 @@ const createCroppedImage = async () => {
         croppedAreaPixels.y,
         croppedAreaPixels.width,
         croppedAreaPixels.height,
-        0,
-        0,
+        0, 0,
         croppedAreaPixels.width,
         croppedAreaPixels.height
       );
 
-      // แปลงรูปภาพเป็น Base64 ความคมชัดพอเหมาะ (0.8)
       const croppedBase64 = canvas.toDataURL("image/jpeg", 0.8);
 
-      // 🟢 1. อัปเดตรูปบน UI และสั่งปิด ป๊อปอัป ทันที (ไม่ต้องรอ API)
       setProfileImage(croppedBase64);
       setIsCropModalOpen(false);
       setCropImage(null);
@@ -782,7 +646,6 @@ const createCroppedImage = async () => {
       setZoom(1);
       setCroppedAreaPixels(null);
 
-      // 🟢 2. ส่งรูปภาพไปบันทึกลง Database ด้านหลัง
       const res = await fetch(`${apiBase}/api/users/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -791,7 +654,6 @@ const createCroppedImage = async () => {
           full_name: fullName,
           phone: phone,
           profile_img: croppedBase64,
-          card_holder_name: cardHolderName,
         }),
       });
 
@@ -802,12 +664,9 @@ const createCroppedImage = async () => {
 
       const updatedUser = await res.json();
       setProfileImage(updatedUser.ProfileImg || croppedBase64);
-
       customAlert("สำเร็จ", "อัปเดตรูปโปรไฟล์เรียบร้อยแล้ว!", "success");
-
     } catch (error) {
       console.error("Crop/Save image error:", error);
-      // หากเกิดข้อผิดพลาด ให้เคลียร์ค่าและปิด Modal เสมอ
       setIsCropModalOpen(false);
       setCropImage(null);
       customAlert("เกิดข้อผิดพลาด", error.message || "ไม่สามารถบันทึกรูปภาพได้", "error");
@@ -818,95 +677,68 @@ const createCroppedImage = async () => {
     setProfileImage(null);
     customAlert("สำเร็จ", "ลบรูปโปรไฟล์เรียบร้อยแล้ว", "success");
   };
-  
+
   const handleSaveProfileData = async (e) => {
-  e.preventDefault();
-
-  // ตรวจสอบข้อมูลชื่อและเบอร์โทร
-  if (!editName.trim()) {
-    return customAlert("กรุณากรอกชื่อ-นามสกุล", "", "warning");
-  }
-
-  if (!editPhone.trim()) {
-    return customAlert("กรุณากรอกเบอร์โทรศัพท์", "", "warning");
-  }
-  try {
-    const res = await fetch(`${apiBase}/api/users/profile`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        user_id: userId,
-        full_name: editName,
-        phone: editPhone,
-        profile_img: profileImage,
-        card_holder_name: cardHolderName,
-        //card_last4: last4,
-        //card_expiry: savedCardExpiry,
-      }),
-    });
-
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => null);
-
-      throw new Error(
-        errorData?.detail || "แก้ไขข้อมูลไม่สำเร็จ"
-      );
-    }
-
-    const updatedUser = await res.json();
-    setFullName(updatedUser.FullName || editName);
-    setPhone(updatedUser.Phone || editPhone);
-    setProfileImage(updatedUser.ProfileImg || profileImage || null);
-    setCardHolderName(updatedUser.CardHolderName || "");
-    setCardLast4(updatedUser.CardLast4 || "");
-    setCardExpiry(updatedUser.CardExpiry || "");
-
-    // ล้างเลขบัตรเต็มออกจากหน้าจอ
-    setEditCardNumber("");
-    setIsEditing(false);
-    customAlert("อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว!");
-
-  } catch (err) {
-    console.error("Update profile error:", err);
-
-    customAlert(
-      "เกิดข้อผิดพลาดในการบันทึกข้อมูล",
-      err.message,
-      "error"
-    );
-  }
-};
-
-  const handleSaveCardData = async (e) => {
     e.preventDefault();
 
-    const cardName = cardHolderName || editCardHolderName;
+    if (!editName.trim()) return customAlert("กรุณากรอกชื่อ-นามสกุล", "", "warning");
+    if (!editPhone.trim()) return customAlert("กรุณากรอกเบอร์โทรศัพท์", "", "warning");
+
+    try {
+      const res = await fetch(`${apiBase}/api/users/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          full_name: editName,
+          phone: editPhone,
+          profile_img: profileImage,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.detail || "แก้ไขข้อมูลไม่สำเร็จ");
+      }
+
+      const updatedUser = await res.json();
+      setFullName(updatedUser.FullName || editName);
+      setPhone(updatedUser.Phone || editPhone);
+      setProfileImage(updatedUser.ProfileImg || profileImage || null);
+      setIsEditing(false);
+      customAlert("อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว!");
+    } catch (err) {
+      console.error("Update profile error:", err);
+      customAlert("เกิดข้อผิดพลาดในการบันทึกข้อมูล", err.message, "error");
+    }
+  };
+
+  // 💳 ADD CARD HANDLER
+  const handleAddNewCard = async (e) => {
+    e.preventDefault();
+
+    const cardName = editCardHolderName.trim();
     const cleanCardNumber = editCardNumber.replace(/\D/g, "");
     const cardExp = editCardExpiry.trim();
 
-    if (!cardName) {
-      return customAlert("กรุณากรอกชื่อและนามสกุลบนบัตร", "", "warning");
-    }
-
+    if (!cardName) return customAlert("กรุณากรอกชื่อและนามสกุลบนบัตร", "", "warning");
     const nameParts = cardName.split(/\s+/).filter(Boolean);
-    if (nameParts.length < 2) {
-      return customAlert("กรุณากรอกทั้งชื่อและนามสกุลบนบัตร", "", "warning");
-    }
+    if (nameParts.length < 2) return customAlert("กรุณากรอกทั้งชื่อและนามสกุลบนบัตร", "", "warning");
 
-    if (!cleanCardNumber && !cardLast4) {
-      return customAlert("กรุณากรอกหมายเลขบัตร 16 หลัก", "", "warning");
-    }
-
-    if (cleanCardNumber && cleanCardNumber.length !== 16) {
-      return customAlert("หมายเลขบัตรต้องมี 16 หลัก", "", "warning");
-    }
+    if (cleanCardNumber.length !== 16) return customAlert("หมายเลขบัตรต้องมี 16 หลัก", "", "warning");
 
     const expiryPattern = /^(0[1-9]|1[0-2])\/\d{2}$/;
-    if (!expiryPattern.test(cardExp)) {
-      return customAlert("รูปแบบวันหมดอายุไม่ถูกต้อง (MM/YY)", "", "warning");
-    }
+    if (!expiryPattern.test(cardExp)) return customAlert("รูปแบบวันหมดอายุไม่ถูกต้อง (MM/YY)", "", "warning");
 
-    const last4 = cleanCardNumber ? cleanCardNumber.slice(-4) : cardLast4;
+    const last4 = cleanCardNumber.slice(-4);
+    const newCardObj = {
+      id: `card_${Date.now()}`,
+      cardHolderName: cardName,
+      cardLast4: last4,
+      cardExpiry: cardExp,
+    };
+
+    const updatedCards = [...cards, newCardObj];
 
     try {
       const res = await fetch(`${apiBase}/api/users/profile`, {
@@ -916,6 +748,7 @@ const createCroppedImage = async () => {
           user_id: userId,
           full_name: fullName,
           phone: phone,
+          cards: updatedCards,
           card_holder_name: cardName,
           card_last4: last4,
           card_expiry: cardExp,
@@ -927,17 +760,46 @@ const createCroppedImage = async () => {
         throw new Error(errorData?.detail || "บันทึกข้อมูลบัตรไม่สำเร็จ");
       }
 
-      const updatedUser = await res.json();
-      setCardHolderName(updatedUser.CardHolderName || cardName);
-      setCardLast4(updatedUser.CardLast4 || last4);
-      setCardExpiry(updatedUser.CardExpiry || cardExp);
+      setCards(updatedCards);
+      setSelectedCardId(newCardObj.id);
+      setEditCardHolderName("");
       setEditCardNumber("");
-      setIsEditingCard(false);
+      setEditCardExpiry("");
+      setIsAddingCard(false);
 
-      customAlert("อัปเดตข้อมูลบัตรเรียบร้อยแล้ว!");
+      customAlert("เพิ่มบัตรเครดิต/เดบิต เรียบร้อยแล้ว!");
     } catch (err) {
-      console.error("Update card error:", err);
+      console.error("Add card error:", err);
       customAlert("เกิดข้อผิดพลาดในการบันทึกข้อมูลบัตร", err.message, "error");
+    }
+  };
+
+  // 💳 DELETE CARD HANDLER
+  const handleDeleteCard = async (cardIdToDelete) => {
+    const updatedCards = cards.filter((c) => c.id !== cardIdToDelete);
+
+    try {
+      const res = await fetch(`${apiBase}/api/users/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          full_name: fullName,
+          phone: phone,
+          cards: updatedCards,
+        }),
+      });
+
+      if (!res.ok) throw new Error("ไม่สามารถลบบัตรได้");
+
+      setCards(updatedCards);
+      if (selectedCardId === cardIdToDelete) {
+        setSelectedCardId(updatedCards.length > 0 ? updatedCards[0].id : null);
+      }
+      customAlert("สำเร็จ", "ลบบัตรเรียบร้อยแล้ว", "success");
+    } catch (err) {
+      console.error("Delete card error:", err);
+      customAlert("เกิดข้อผิดพลาด", "ไม่สามารถลบบัตรได้", "error");
     }
   };
 
@@ -974,6 +836,15 @@ const createCroppedImage = async () => {
       return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
     }
 
+    if (paymentMethod === "CreditCard") {
+      if (cards.length === 0) {
+        return customAlert("ไม่พบข้อมูลบัตร", "กรุณาเพิ่มบัตรเครดิต/เดบิต ก่อนชำระเงิน", "warning");
+      }
+      if (!selectedCardId) {
+        return customAlert("กรุณาเลือกบัตร", "กรุณาเลือกบัตรที่ต้องการใช้ชำระเงิน", "warning");
+      }
+    }
+
     const currentOrderTime = getCurrentDateTimeForBackend();
     const displayOrderTime = getCurrentTimeFormatted();
     const finalPickupTime = pickupTime ? `${pickupTime} น.` : displayOrderTime;
@@ -985,6 +856,8 @@ const createCroppedImage = async () => {
       item_note: item.item_note || "",
     }));
 
+    const selectedCardObj = cards.find((c) => c.id === selectedCardId);
+
     const orderData = {
       store_id: Number(selectedStore),
       user_id: userId,
@@ -994,6 +867,7 @@ const createCroppedImage = async () => {
       note: orderNote || "",
       pickup_time: finalPickupTime,
       order_time: currentOrderTime,
+      card_info: paymentMethod === "CreditCard" ? selectedCardObj : null,
     };
 
     setIsSubmittingOrder(true);
@@ -1132,11 +1006,9 @@ const createCroppedImage = async () => {
 
   // REPORT HANDLERS
   const handleOpenReportModal = (order = null) => {
-    // 1 ออเดอร์แจ้งปัญหาได้เพียง 1 ครั้ง
     if (order) {
       const hasReportedIssue = myIssueReports.some(
-        (report) =>
-          Number(report.OrderID || report.order_id) === Number(order.OrderID)
+        (report) => Number(report.OrderID || report.order_id) === Number(order.OrderID)
       );
 
       if (hasReportedIssue) {
@@ -1153,15 +1025,11 @@ const createCroppedImage = async () => {
   };
 
   const handleSubmitReport = async () => {
-    if (!issueDescription.trim())
-      return customAlert("", "กรุณากรอกรายละเอียดปัญหาที่พบ", "warning");
+    if (!issueDescription.trim()) return customAlert("", "กรุณากรอกรายละเอียดปัญหาที่พบ", "warning");
 
-    // ป้องกันการส่งซ้ำสำหรับออเดอร์เดิม
     if (selectedOrderForReport) {
       const hasReportedIssue = myIssueReports.some(
-        (report) =>
-          Number(report.OrderID || report.order_id) ===
-          Number(selectedOrderForReport.OrderID)
+        (report) => Number(report.OrderID || report.order_id) === Number(selectedOrderForReport.OrderID)
       );
 
       if (hasReportedIssue) {
@@ -1180,9 +1048,7 @@ const createCroppedImage = async () => {
         body: JSON.stringify({
           user_id: userId,
           order_id: selectedOrderForReport ? selectedOrderForReport.OrderID : null,
-          store_id: selectedOrderForReport
-            ? selectedOrderForReport.StoreId || selectedOrderForReport.StoreID
-            : null,
+          store_id: selectedOrderForReport ? selectedOrderForReport.StoreId || selectedOrderForReport.StoreID : null,
           issue_type: issueType,
           description: issueDescription,
         }),
@@ -1194,7 +1060,6 @@ const createCroppedImage = async () => {
         setIsReportModalOpen(false);
         setIssueDescription("");
 
-        // อัปเดตสถานะในหน้าเว็บทันที เพื่อให้ออเดอร์นี้แจ้งปัญหาได้ครั้งเดียว
         if (selectedOrderForReport) {
           setMyIssueReports((prev) => [
             ...prev,
@@ -1245,20 +1110,20 @@ const createCroppedImage = async () => {
             <p style={{ margin: 0, fontSize: "14px" }}>เลือกอาหารร้านโปรด แล้วสั่งได้ง่าย ๆ</p>
           </div>
           <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 4 }}>
-          <div style={{ filter: "drop-shadow(0 10px 15px rgba(0,0,0,0.18))" }}>
-            <NoodleBowlArt width={150} height={120} />
-          </div>
-          <div style={{ position: "absolute", top: "-15px", right: "-10px", transform: "rotate(15deg)", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>
-            <ThaiTeaArt width={45} height={85} />
-          </div>
-          <div className="animated-sparkle" style={{ position: "absolute", bottom: "-5px", left: "-25px"}}>
-            <SparkleArt width={24} height={24} />
-          </div>
-          <div className="animated-sparkle" style={{ position: "absolute", top: "-10px", left: "10px", animationDelay: "1s" }}>
-            <SparkleArt width={18} height={18} />
+            <div style={{ filter: "drop-shadow(0 10px 15px rgba(0,0,0,0.18))" }}>
+              <NoodleBowlArt width={150} height={120} />
+            </div>
+            <div style={{ position: "absolute", top: "-15px", right: "-10px", transform: "rotate(15deg)", filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.15))"}}>
+              <ThaiTeaArt width={45} height={85} />
+            </div>
+            <div className="animated-sparkle" style={{ position: "absolute", bottom: "-5px", left: "-25px"}}>
+              <SparkleArt width={24} height={24} />
+            </div>
+            <div className="animated-sparkle" style={{ position: "absolute", top: "-10px", left: "10px", animationDelay: "1s" }}>
+              <SparkleArt width={18} height={18} />
+            </div>
           </div>
         </div>
-      </div>
 
         {viewMode === "stores" && (
           <div>
@@ -1268,16 +1133,7 @@ const createCroppedImage = async () => {
             </div>
 
             {!isFoodCourtOpen ? (
-              <div
-                style={{
-                  ...cardStyle,
-                  textAlign: "center",
-                  padding: "60px 20px",
-                  background: "#FFF0ED",
-                  border: `1px solid ${COLORS.red}40`,
-                  borderRadius: "24px"
-                }}
-              >
+              <div style={{ ...cardStyle, textAlign: "center", padding: "60px 20px", background: "#FFF0ED", border: `1px solid ${COLORS.red}40`, borderRadius: "24px" }}>
                 <div style={{ fontSize: "55px", marginBottom: "12px" }}>🛑</div>
                 <h3 style={{ fontSize: "22px", fontWeight: "900", color: COLORS.red, margin: "0 0 8px 0" }}>
                   ไม่สามารถสั่งอาหารได้เนื่องจากศูนย์อาหารปิด
@@ -1314,7 +1170,7 @@ const createCroppedImage = async () => {
                         transition: "transform 0.2s, box-shadow 0.2s",
                         display: "flex",
                         flexDirection: "column",
-                        justifyContent: "space-between"
+                        justify: "space-between"
                       }}
                       onMouseEnter={(e) => {
                         if (!store.IsSuspended) {
@@ -1344,7 +1200,7 @@ const createCroppedImage = async () => {
                           style={{ 
                             display: "flex", 
                             alignItems: "center", 
-                            justify: "space-between", 
+                            justifyContent: "space-between", 
                             background: "#FFF9F0", 
                             padding: "8px 12px", 
                             borderRadius: "12px", 
@@ -1570,17 +1426,7 @@ const createCroppedImage = async () => {
             <div style={{ display: "flex", gap: "10px" }}>
               <button
                 type="submit"
-                style={{
-                  flex: 1,
-                  padding: "11px",
-                  background: COLORS.orange,
-                  color: COLORS.white,
-                  border: "none",
-                  borderRadius: "10px",
-                  fontWeight: "800",
-                  cursor: "pointer",
-                  fontFamily: "inherit"
-                }}
+                style={{ flex: 1, padding: "11px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
               >
                 บันทึกข้อมูลส่วนตัว
               </button>
@@ -1622,83 +1468,77 @@ const createCroppedImage = async () => {
           </>
         )}
 
-        {/* SECTION 2: CARD MANAGEMENT (SEPARATE BOX) */}
+        {/* 💳 SECTION 2: MULTIPLE CARDS MANAGEMENT */}
         <div style={{ marginTop: "30px", paddingTop: "20px", borderTop: `2px dashed ${COLORS.border}`, textAlign: "left" }}>
-          <div style={{ fontSize: "15px", fontWeight: "900", marginBottom: "12px", color: COLORS.navy }}>
-            บัตรเครดิต / เดบิต
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <div style={{ fontSize: "15px", fontWeight: "900", color: COLORS.navy }}>
+              บัตรเครดิต / เดบิต ของฉัน ({cards.length})
+            </div>
+            {!isAddingCard && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditCardHolderName("");
+                  setEditCardNumber("");
+                  setEditCardExpiry("");
+                  setIsAddingCard(true);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: COLORS.orange,
+                  fontWeight: "800",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  fontFamily: "inherit"
+                }}
+              >
+                ＋ เพิ่มบัตรใหม่
+              </button>
+            )}
           </div>
 
-          {!isEditingCard ? (
-            <div style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "16px" }}>
-              {cardLast4 ? (
-                <>
-                  <div style={{ marginBottom: "8px" }}>
-                    <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "2px" }}>ชื่อบนบัตร</div>
-                    <div style={{ fontWeight: "800" }}>{cardHolderName || "-"}</div>
+          {/* Card List */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "15px" }}>
+            {cards.map((card) => (
+              <div key={card.id} style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: "12px", color: COLORS.gray }}>{card.cardHolderName}</div>
+                  <div style={{ fontWeight: "800", fontSize: "14px", color: COLORS.navy, marginTop: "2px" }}>
+                    •••• •••• •••• {card.cardLast4}
                   </div>
-                  <div style={{ marginBottom: "8px" }}>
-                    <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "2px" }}>หมายเลขบัตร</div>
-                    <div style={{ fontWeight: "800" }}>•••• •••• •••• {cardLast4}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "2px" }}>วันหมดอายุ</div>
-                    <div style={{ fontWeight: "800" }}>{cardExpiry || "--/--"}</div>
-                  </div>
+                  <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "2px" }}>Exp: {card.cardExpiry}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCard(card.id)}
+                  style={{
+                    background: "#FFF0ED",
+                    border: `1px solid ${COLORS.red}40`,
+                    color: COLORS.red,
+                    borderRadius: "8px",
+                    padding: "6px 10px",
+                    fontSize: "12px",
+                    fontWeight: "800",
+                    cursor: "pointer"
+                  }}
+                >
+                  ลบ
+                </button>
+              </div>
+            ))}
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditCardHolderName(cardHolderName);
-                      setEditCardNumber("");
-                      setEditCardExpiry(cardExpiry);
-                      setIsEditingCard(true);
-                    }}
-                    style={{
-                      marginTop: "12px",
-                      background: "none",
-                      border: "none",
-                      padding: "0",
-                      color: COLORS.orange,
-                      fontWeight: "800",
-                      fontSize: "13px",
-                      cursor: "pointer",
-                      fontFamily: "inherit"
-                    }}
-                  >
-                    แก้ไขข้อมูลบัตร
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div style={{ color: COLORS.gray, fontSize: "13px", marginBottom: "8px" }}>
-                    ยังไม่ได้เพิ่มบัตร
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditCardHolderName("");
-                      setEditCardNumber("");
-                      setEditCardExpiry("");
-                      setIsEditingCard(true);
-                    }}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      padding: "0",
-                      color: COLORS.orange,
-                      fontWeight: "800",
-                      fontSize: "13px",
-                      cursor: "pointer",
-                      fontFamily: "inherit"
-                    }}
-                  >
-                    ＋ เพิ่มบัตร
-                  </button>
-                </>
-              )}
-            </div>
-          ) : (
-            <form onSubmit={handleSaveCardData} style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "16px" }}>
+            {cards.length === 0 && !isAddingCard && (
+              <div style={{ color: COLORS.gray, fontSize: "13px", padding: "10px 0" }}>
+                ยังไม่มีบัตรที่บันทึกไว้ กด "＋ เพิ่มบัตรใหม่" เพื่อเพิ่มบัตร
+              </div>
+            )}
+          </div>
+
+          {/* Form Add New Card */}
+          {isAddingCard && (
+            <form onSubmit={handleAddNewCard} style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "16px" }}>
+              <div style={{ fontSize: "14px", fontWeight: "800", marginBottom: "12px", color: COLORS.navy }}>กรอกข้อมูลบัตรใหม่</div>
               <div style={{ marginBottom: "12px" }}>
                 <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>ชื่อบนบัตร</label>
                 <input
@@ -1717,10 +1557,11 @@ const createCroppedImage = async () => {
                   type="text"
                   value={editCardNumber}
                   onChange={(e) => setEditCardNumber(e.target.value.replace(/\D/g, ""))}
-                  placeholder={cardLast4 ? `บัตรเดิม: •••• ${cardLast4}` : "กรอกหมายเลขบัตร 16 หลัก"}
+                  placeholder="กรอกหมายเลขบัตร 16 หลัก"
                   maxLength="16"
                   inputMode="numeric"
                   style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
+                  required
                 />
               </div>
 
@@ -1746,34 +1587,14 @@ const createCroppedImage = async () => {
               <div style={{ display: "flex", gap: "10px" }}>
                 <button
                   type="submit"
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    background: COLORS.orange,
-                    color: COLORS.white,
-                    border: "none",
-                    borderRadius: "10px",
-                    fontWeight: "800",
-                    cursor: "pointer",
-                    fontFamily: "inherit"
-                  }}
+                  style={{ flex: 1, padding: "10px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
                 >
-                  บันทึกบัตร
+                  บันทึกบัตรนี้
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsEditingCard(false)}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    background: COLORS.lightGray,
-                    color: COLORS.navy,
-                    border: "none",
-                    borderRadius: "10px",
-                    fontWeight: "800",
-                    cursor: "pointer",
-                    fontFamily: "inherit"
-                  }}
+                  onClick={() => setIsAddingCard(false)}
+                  style={{ flex: 1, padding: "10px", background: COLORS.lightGray, color: COLORS.navy, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
                 >
                   ยกเลิก
                 </button>
@@ -1787,31 +1608,21 @@ const createCroppedImage = async () => {
           <button
             onClick={() => {
               customAlert("สำเร็จ", "ออกจากระบบสำเร็จ", "success");
-              setTimeout(() => {
-                if (onLogout) onLogout();
-              }, 1000);
+              setTimeout(() => { if (onLogout) onLogout(); }, 1000);
             }}
-            style={{
-              width: "100%",
-              padding: "12px",
-              background: "#FFF0ED",
-              color: COLORS.red,
-              border: `1px solid ${COLORS.red}40`,
-              borderRadius: "12px",
-              fontWeight: "800",
-              cursor: "pointer",
-              fontFamily: "inherit"
-            }}
+            style={{ width: "100%", padding: "12px", background: "#FFF0ED", color: COLORS.red, border: `1px solid ${COLORS.red}40`, borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
           >
             ออกจากระบบ
           </button>
         </div>
       </div>
-      <div style={{ Width: "100%", margin: "0 auto" }}>
+
+      <div style={{ width: "100%", margin: "0 auto" }}>
         <h3 style={{ fontSize: "20px", fontWeight: "900", marginBottom: "15px" }}> ประวัติการสั่งซื้อและรีวิวของฉัน</h3>
         {myOrders.length === 0 ? (
           <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
-          <div style={{ fontSize: "45px", marginBottom: "10px" }}><OrderIcon/> </div> ยังไม่มีประวัติการสั่งซื้อ </div>
+            <div style={{ fontSize: "45px", marginBottom: "10px" }}><OrderIcon/> </div> ยังไม่มีประวัติการสั่งซื้อ 
+          </div>
         ) : (
           <div style={{ display: "grid", gap: "15px" }}>
             {myOrders.map((order) => {
@@ -1871,7 +1682,7 @@ const createCroppedImage = async () => {
                           fontFamily: "inherit"
                         }}
                       >
-                         {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
+                        {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
                       </button>
                     )}
                   </div>
@@ -1885,7 +1696,7 @@ const createCroppedImage = async () => {
   );
 
   // ORDERS TAB
-const renderOrders = () => (
+  const renderOrders = () => (
     <div>
       <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน</h2>
       {myOrders.length === 0 ? (
@@ -1905,32 +1716,31 @@ const renderOrders = () => (
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
-                  <div style={{ background: order.Status === "Completed"
-                                ? "#FFEBD9": "#FF8A00",
-                                color: order.Status === "Completed"
-                                  ? "#D96000": (typeof PALETTE !== "undefined" && PALETTE.slateText) ? PALETTE.slateText : "#1E293B",
-                                padding: "12px 20px", borderRadius: "14px", textAlign: "left",
-                                boxShadow: order.Status === "Completed" ? "none" : "0 4px 12px rgba(255, 138, 0, 0.25)",
-                                width: "100%", boxSizing: "border-box", marginBottom: "14px", transition: "all 0.3s ease"
-                              }}>
+                  <div style={{
+                    background: order.Status === "Completed" ? "#FFEBD9" : "#FF8A00",
+                    color: order.Status === "Completed" ? "#D96000" : "#1E293B",
+                    padding: "12px 20px", borderRadius: "14px", textAlign: "left",
+                    boxShadow: order.Status === "Completed" ? "none" : "0 4px 12px rgba(255, 138, 0, 0.25)",
+                    width: "100%", boxSizing: "border-box", marginBottom: "14px", transition: "all 0.3s ease"
+                  }}>
                     <div style={{ fontSize: "10px", opacity: 0.85, textTransform: "uppercase" }}>คิวของคุณ</div>
                     <div style={{ fontSize: "20px", fontWeight: "900" }}>#{order.QueueNo}</div>
                     <div style={{ fontSize: "13px", fontWeight: "700", marginTop: "2px" }}>{order.StoreName}</div>
                   </div>
                 </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px",margin: "12px 0 16px",flexWrap: "wrap"}}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", color: COLORS.gray }}>
-                        {(order.OrderTime || order.CreatedAt || order.order_time) && (
-                          <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
-                        )}
-                        {(order.PickupTime || order.pickup_time) && (
-                          <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
-                        )}
-                      </div>
-                      <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800",whiteSpace: "nowrap"}}>
-                        {order.Status || "Pending"}
-                      </span>
-                    </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", margin: "12px 0 16px", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", color: COLORS.gray }}>
+                    {(order.OrderTime || order.CreatedAt || order.order_time) && (
+                      <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
+                    )}
+                    {(order.PickupTime || order.pickup_time) && (
+                      <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
+                    )}
+                  </div>
+                  <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
+                    {order.Status || "Pending"}
+                  </span>
+                </div>
 
                 {order.items && order.items.length > 0 && (
                   <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: `1px solid ${COLORS.border}` }}>
@@ -2043,7 +1853,8 @@ const renderOrders = () => (
 
           {cart.length === 0 ? (
             <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
-            <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/> </div> ยังไม่มีสินค้าในตะกร้า </div>
+              <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon/> </div> ยังไม่มีสินค้าในตะกร้า 
+            </div>
           ) : (
             <>
               <div style={{ marginTop: "25px" }}>
@@ -2101,10 +1912,11 @@ const renderOrders = () => (
                 <button 
                   onClick={handleProceedToPayment} 
                   disabled={!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen}
-                  style={{width: "100%", padding: "15px", marginTop: "15px", border: "none", borderRadius: "15px", 
-                          background: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
-                          color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
-                        }}
+                  style={{
+                    width: "100%", padding: "15px", marginTop: "15px", border: "none", borderRadius: "15px", 
+                    background: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
+                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
+                  }}
                 >
                   {activeStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !activeStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
                 </button>
@@ -2116,394 +1928,252 @@ const renderOrders = () => (
     );
   };
 
-// PAYMENT QR CODE & SLIP MODAL
-const renderPaymentModal = () => {
-  if (!isPaymentModalOpen) return null;
+  // 💳 PAYMENT MODAL WITH MULTIPLE CARDS SELECTION
+  const renderPaymentModal = () => {
+    if (!isPaymentModalOpen) return null;
 
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(42,44,65,0.6)",
-        zIndex: 2000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "20px",
-        boxSizing: "border-box",
-        overflowY: "auto",
-      }}
-      onClick={() => setIsPaymentModalOpen(false)}
-    >
+    const selectedCard = cards.find((c) => c.id === selectedCardId);
+
+    return (
       <div
-        onClick={(e) => e.stopPropagation()}
         style={{
-          background: COLORS.white,
-          width: "min(500px, 100%)",
-          maxHeight: "90vh",
-          overflowY: "auto",
-          borderRadius: "24px",
-          padding: "25px",
+          position: "fixed",
+          inset: 0,
+          background: "rgba(42,44,65,0.6)",
+          zIndex: 2000,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px",
           boxSizing: "border-box",
-          textAlign: "center",
+          overflowY: "auto",
         }}
+        onClick={() => setIsPaymentModalOpen(false)}
       >
-        {/* HEADER */}
         <div
+          onClick={(e) => e.stopPropagation()}
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "15px",
+            background: COLORS.white,
+            width: "min(500px, 100%)",
+            maxHeight: "90vh",
+            overflowY: "auto",
+            borderRadius: "24px",
+            padding: "25px",
+            boxSizing: "border-box",
+            textAlign: "center",
           }}
         >
-          <h3
-            style={{
-              margin: 0,
-              fontSize: "20px",
-              fontWeight: "900",
-            }}
-          >
-            ชำระเงิน
-          </h3>
+          {/* HEADER */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
+            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}>ชำระเงิน</h3>
+            <button
+              onClick={() => setIsPaymentModalOpen(false)}
+              style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}
+            >
+              ×
+            </button>
+          </div>
 
+          {/* TOTAL */}
+          <div style={{ background: "#FFF9F5", padding: "15px", borderRadius: "15px", marginBottom: "18px", border: `1px solid ${COLORS.border}` }}>
+            <div style={{ fontSize: "13px", color: COLORS.gray }}>ยอดชำระสุทธิ</div>
+            <div style={{ fontSize: "28px", fontWeight: "900", color: COLORS.orange }}>{totalAmount.toFixed(2)} ฿</div>
+          </div>
+
+          {/* PROMPTPAY */}
+          {paymentMethod === "PromptPay" && (
+            <>
+              <div style={{ margin: "15px 0", background: "#FFFFFF", padding: "15px", borderRadius: "16px", display: "inline-block", border: `2px solid ${COLORS.navy}` }}>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
+                  alt="PromptPay QR Code"
+                  style={{ width: "180px", height: "180px", display: "block" }}
+                />
+                <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "8px", fontWeight: "700" }}>PromptPay (จำลองระบบ)</div>
+              </div>
+
+              <div style={{ marginTop: "15px", textAlign: "left" }}>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleSlipChange}
+                  style={{ width: "100%", padding: "10px", borderRadius: "10px", border: `1px dashed ${COLORS.orange}`, background: COLORS.bg, fontSize: "12px", boxSizing: "border-box" }}
+                />
+              </div>
+
+              {slipPreview && (
+                <div style={{ marginTop: "12px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: COLORS.green, fontWeight: "800", marginBottom: "4px" }}>✓ เลือกรูปภาพเรียบร้อย</div>
+                  <img src={slipPreview} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* 💳 CREDIT CARD SELECTION */}
+          {paymentMethod === "CreditCard" && (
+            <div style={{ textAlign: "left", marginBottom: "15px" }}>
+              <div style={{ fontWeight: "900", fontSize: "15px", marginBottom: "12px", color: COLORS.navy }}>
+                เลือกบัตรเครดิต/เดบิต
+              </div>
+
+              {cards.length > 0 ? (
+                <>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "15px" }}>
+                    {cards.map((card) => {
+                      const isSelected = card.id === selectedCardId;
+                      return (
+                        <div
+                          key={card.id}
+                          onClick={() => setSelectedCardId(card.id)}
+                          style={{
+                            padding: "12px 15px",
+                            borderRadius: "14px",
+                            border: `2px solid ${isSelected ? COLORS.orange : COLORS.border}`,
+                            background: isSelected ? "#FFF9F5" : COLORS.white,
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between"
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                            <div style={{ color: isSelected ? COLORS.orange : COLORS.gray }}>
+                              <CreditCardIcon />
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: "800", fontSize: "14px", color: COLORS.navy }}>
+                                •••• •••• •••• {card.cardLast4}
+                              </div>
+                              <div style={{ fontSize: "12px", color: COLORS.gray }}>
+                                {card.cardHolderName} (Exp: {card.cardExpiry})
+                              </div>
+                            </div>
+                          </div>
+                          <input
+                            type="radio"
+                            name="selected_card"
+                            checked={isSelected}
+                            onChange={() => setSelectedCardId(card.id)}
+                            style={{ accentColor: COLORS.orange, cursor: "pointer" }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPaymentModalOpen(false);
+                      setActiveTab("profile");
+                      setIsAddingCard(true);
+                    }}
+                    style={{
+                      background: "none",
+                      border: `1px dashed ${COLORS.orange}`,
+                      color: COLORS.orange,
+                      width: "100%",
+                      padding: "10px",
+                      borderRadius: "12px",
+                      fontWeight: "800",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      marginBottom: "15px"
+                    }}
+                  >
+                    ＋ เพิ่มบัตรใหม่
+                  </button>
+                </>
+              ) : (
+                <div style={{ background: "#F8F8FA", padding: "20px", borderRadius: "16px", textAlign: "center", border: `1px solid ${COLORS.border}` }}>
+                  <div style={{ color: COLORS.gray, fontSize: "14px", marginBottom: "12px" }}>
+                    คุณยังไม่มีบัตรเครดิต/เดบิตที่บันทึกไว้
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPaymentModalOpen(false);
+                      setActiveTab("profile");
+                      setIsAddingCard(true);
+                    }}
+                    style={{
+                      background: COLORS.orange,
+                      color: COLORS.white,
+                      border: "none",
+                      padding: "10px 20px",
+                      borderRadius: "12px",
+                      fontWeight: "800",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      fontFamily: "inherit"
+                    }}
+                  >
+                    ＋ เพิ่มบัตรเครดิต/เดบิต
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TRUEMONEY */}
+          {paymentMethod === "TrueMoney" && (
+            <>
+              <div style={{ margin: "15px 0", background: "#FFFFFF", padding: "15px", borderRadius: "16px", display: "inline-block", border: `2px solid ${COLORS.navy}` }}>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
+                  alt="TrueMoney QR Code"
+                  style={{ width: "180px", height: "180px", display: "block" }}
+                />
+                <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "8px", fontWeight: "700" }}>TrueMoney (จำลองระบบ)</div>
+              </div>
+
+              <div style={{ marginTop: "15px", textAlign: "left" }}>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleSlipChange}
+                  style={{ width: "100%", padding: "10px", borderRadius: "10px", border: `1px dashed ${COLORS.orange}`, background: COLORS.bg, fontSize: "12px", boxSizing: "border-box" }}
+                />
+              </div>
+
+              {slipPreview && (
+                <div style={{ marginTop: "12px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: COLORS.green, fontWeight: "800", marginBottom: "4px" }}>✓ เลือกรูปภาพเรียบร้อย</div>
+                  <img src={slipPreview} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* SUBMIT */}
           <button
-            onClick={() => setIsPaymentModalOpen(false)}
+            onClick={submitOrder}
+            disabled={isSubmittingOrder}
             style={{
+              width: "100%",
+              padding: "15px",
+              marginTop: "10px",
               border: "none",
-              background: COLORS.lightGray,
-              width: "35px",
-              height: "35px",
-              borderRadius: "50%",
-              cursor: "pointer",
-              fontSize: "18px",
+              borderRadius: "15px",
+              background: isSubmittingOrder ? "#BBBBBB" : COLORS.green,
+              color: COLORS.white,
+              fontSize: "16px",
+              fontWeight: "900",
+              cursor: isSubmittingOrder ? "not-allowed" : "pointer",
+              fontFamily: "inherit",
             }}
           >
-            ×
+            {isSubmittingOrder ? "กำลังส่งคำสั่งซื้อ..." : "ยืนยันการชำระเงินและสั่งซื้อ"}
           </button>
         </div>
-
-        {/* TOTAL */}
-        <div
-          style={{
-            background: "#FFF9F5",
-            padding: "15px",
-            borderRadius: "15px",
-            marginBottom: "18px",
-            border: `1px solid ${COLORS.border}`,
-          }}
-        >
-          <div
-            style={{
-              fontSize: "13px",
-              color: COLORS.gray,
-            }}
-          >
-            ยอดชำระสุทธิ
-          </div>
-
-          <div
-            style={{
-              fontSize: "28px",
-              fontWeight: "900",
-              color: COLORS.orange,
-            }}
-          >
-            {totalAmount.toFixed(2)} ฿
-          </div>
-        </div>
-
-        {/* PAYMENT DETAIL */}
-        {paymentMethod === "PromptPay" && (
-          <>
-            <div
-              style={{
-                margin: "15px 0",
-                background: "#FFFFFF",
-                padding: "15px",
-                borderRadius: "16px",
-                display: "inline-block",
-                border: `2px solid ${COLORS.navy}`,
-              }}
-            >
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
-                alt="PromptPay QR Code"
-                style={{
-                  width: "180px",
-                  height: "180px",
-                  display: "block",
-                }}
-              />
-
-              <div
-                style={{
-                  fontSize: "11px",
-                  color: COLORS.gray,
-                  marginTop: "8px",
-                  fontWeight: "700",
-                }}
-              >
-                PromptPay (จำลองระบบ)
-              </div>
-            </div>
-
-            {/* SLIP */}
-            <div
-              style={{
-                marginTop: "15px",
-                textAlign: "left",
-              }}
-            >
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "13px",
-                  fontWeight: "800",
-                  marginBottom: "6px",
-                }}
-              >
-                แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):
-              </label>
-
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleSlipChange}
-                style={{
-                  width: "100%",
-                  padding: "10px",
-                  borderRadius: "10px",
-                  border: `1px dashed ${COLORS.orange}`,
-                  background: COLORS.bg,
-                  fontSize: "12px",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-
-            {slipPreview && (
-              <div
-                style={{
-                  marginTop: "12px",
-                  textAlign: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "11px",
-                    color: COLORS.green,
-                    fontWeight: "800",
-                    marginBottom: "4px",
-                  }}
-                >
-                  ✓ เลือกรูปภาพเรียบร้อย
-                </div>
-
-                <img
-                  src={slipPreview}
-                  alt="Slip Preview"
-                  style={{
-                    width: "120px",
-                    maxHeight: "160px",
-                    objectFit: "contain",
-                    borderRadius: "10px",
-                    border: `1px solid ${COLORS.border}`,
-                  }}
-                />
-              </div>
-            )}
-          </>
-        )}
-
-        {paymentMethod === "CreditCard" && (
-          <div
-            style={{
-              background: "#F5F8FF",
-              padding: "18px",
-              borderRadius: "16px",
-              textAlign: "left",
-              marginBottom: "15px",
-            }}
-          >
-            <div
-              style={{
-                fontWeight: "900",
-                fontSize: "15px",
-                marginBottom: "10px",
-              }}
-            >
-              Debit/Cradit Card
-            </div>
-
-            <div style={{ fontSize: "13px", lineHeight: "1.8" }}>
-              <div style={{ marginBottom: "8px" }}>
-                <b>ชื่อบนบัตร:</b> {cardHolderName || "-"}
-              </div>
-              <div style={{ marginBottom: "8px" }}>
-                <b>หมายเลขบัตร:</b>{" "}
-                •••• •••• •••• {cardLast4 || "----"}
-              </div>
-              <div>
-                <b>วันหมดอายุ:</b> {cardExpiry || "--/--"}
-              </div>
-              <div>
-                <b>ยอดเงิน:</b>{" "}
-                <span style={{ color: COLORS.orange, fontWeight: "900" }}>
-                  {totalAmount.toFixed(2)} ฿
-                </span>
-              </div>
-            </div>
-
-            <div
-              style={{
-                marginTop: "12px",
-                padding: "10px",
-                background: COLORS.white,
-                borderRadius: "10px",
-                fontSize: "11px",
-                color: COLORS.gray,
-                textAlign: "center",
-              }}
-            >
-              ระบบนี้เป็นเพียงการจำลอง
-            </div>
-          </div>
-        )}
-
-        {paymentMethod === "TrueMoney" && (
-          <>
-            <div
-              style={{
-                margin: "15px 0",
-                background: "#FFFFFF",
-                padding: "15px",
-                borderRadius: "16px",
-                display: "inline-block",
-                border: `2px solid ${COLORS.navy}`,
-              }}
-            >
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
-                alt="TrueMoney QR Code"
-                style={{
-                  width: "180px",
-                  height: "180px",
-                  display: "block",
-                }}
-              />
-
-              <div
-                style={{
-                  fontSize: "11px",
-                  color: COLORS.gray,
-                  marginTop: "8px",
-                  fontWeight: "700",
-                }}
-              >
-                TrueMoney (จำลองระบบ)
-              </div>
-            </div>
-
-            {/* SLIP */}
-            <div
-              style={{
-                marginTop: "15px",
-                textAlign: "left",
-              }}
-            >
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "13px",
-                  fontWeight: "800",
-                  marginBottom: "6px",
-                }}
-              >
-                แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):
-              </label>
-
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleSlipChange}
-                style={{
-                  width: "100%",
-                  padding: "10px",
-                  borderRadius: "10px",
-                  border: `1px dashed ${COLORS.orange}`,
-                  background: COLORS.bg,
-                  fontSize: "12px",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-
-            {slipPreview && (
-              <div
-                style={{
-                  marginTop: "12px",
-                  textAlign: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "11px",
-                    color: COLORS.green,
-                    fontWeight: "800",
-                    marginBottom: "4px",
-                  }}
-                >
-                  ✓ เลือกรูปภาพเรียบร้อย
-                </div>
-
-                <img
-                  src={slipPreview}
-                  alt="Slip Preview"
-                  style={{
-                    width: "120px",
-                    maxHeight: "160px",
-                    objectFit: "contain",
-                    borderRadius: "10px",
-                    border: `1px solid ${COLORS.border}`,
-                  }}
-                />
-              </div>
-            )}
-          </>
-        )}
-
-        {/* SUBMIT */}
-        <button
-          onClick={submitOrder}
-          disabled={isSubmittingOrder}
-          style={{
-            width: "100%",
-            padding: "15px",
-            marginTop: "5px",
-            border: "none",
-            borderRadius: "15px",
-            background: isSubmittingOrder
-              ? "#BBBBBB"
-              : COLORS.green,
-            color: COLORS.white,
-            fontSize: "16px",
-            fontWeight: "900",
-            cursor: isSubmittingOrder
-              ? "not-allowed"
-              : "pointer",
-            fontFamily: "inherit",
-          }}
-        >
-          {isSubmittingOrder
-            ? "กำลังส่งคำสั่งซื้อ..."
-            : "ยืนยันการชำระเงินและสั่งซื้อ"}
-        </button>
       </div>
-    </div>
-  );
-};
+    );
+  };
+
   // REVIEW MODAL
   const renderReviewModal = () => {
     if (!reviewOrder) return null;
@@ -2741,7 +2411,8 @@ const renderPaymentModal = () => {
               <div style={{ textAlign: "center", padding: "40px 0", color: COLORS.gray }}>กำลังโหลดรีวิว...</div>
             ) : storeReviewsList.length === 0 ? (
               <div style={{ textAlign: "center", padding: "40px 0", color: COLORS.gray }}>
-                <div style={{ fontSize: "40px", marginBottom: "8px" } }> <CommentIcon/> </div> ยังไม่มีความคิดเห็นสำหรับร้านนี้ </div>
+                <div style={{ fontSize: "40px", marginBottom: "8px" }}> <CommentIcon/> </div> ยังไม่มีความคิดเห็นสำหรับร้านนี้ 
+              </div>
             ) : (
               <div style={{ display: "grid", gap: "12px" }}>
                 {storeReviewsList.map((rev, index) => (
@@ -2926,10 +2597,10 @@ const renderPaymentModal = () => {
                     แจ้งเมื่อ:{" "}
                     {report.CreatedAt || report.created_at
                       ? new Date(report.CreatedAt || report.created_at).toLocaleString("th-TH", {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                      })
-                    : "-"}
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })
+                      : "-"}
                   </div>
                 </div>
               ))}
@@ -2953,42 +2624,26 @@ const renderPaymentModal = () => {
 
     const getIcon = () => {
       switch (alertData.type) {
-        case "success":
-          return "✔";
-        case "error":
-          return "✖";
-        case "warning":
-          return "🛇";
-        default:
-          return "✔";
+        case "success": return "✔";
+        case "error": return "✖";
+        case "warning": return "🛇";
+        default: return "✔";
       }
     };
 
     const getButtonColor = () => {
       switch (alertData.type) {
-        case "success":
-          return COLORS.green;
-        case "error":
-          return COLORS.red;
-        case "warning":
-          return COLORS.orange;
-        default:
-          return COLORS.green;
+        case "success": return COLORS.green;
+        case "error": return COLORS.red;
+        case "warning": return COLORS.orange;
+        default: return COLORS.green;
       }
     };
 
-    const closeAlert = () => {
-      setAlertData({
-        ...alertData,
-        isOpen: false,
-      });
-    };
+    const closeAlert = () => setAlertData({ ...alertData, isOpen: false });
 
     const handleConfirm = () => {
-      if (alertData.onConfirm) {
-        alertData.onConfirm();
-      }
-
+      if (alertData.onConfirm) alertData.onConfirm();
       closeAlert();
     };
 
@@ -3019,59 +2674,23 @@ const renderPaymentModal = () => {
             boxSizing: "border-box",
           }}
         >
-          <div
-            style={{
-              fontSize: "55px",
-              marginBottom: "15px",
-            }}
-          >
-            {getIcon()}
-          </div>
+          <div style={{ fontSize: "55px", marginBottom: "15px" }}>{getIcon()}</div>
 
-          <h3
-            style={{
-              margin: "0 0 10px",
-              fontSize: "22px",
-              fontWeight: "900",
-              color: COLORS.navy,
-            }}
-          >
+          <h3 style={{ margin: "0 0 10px", fontSize: "22px", fontWeight: "900", color: COLORS.navy }}>
             {alertData.title}
           </h3>
 
-          <div
-            style={{
-              margin: "0 0 25px",
-              fontSize: "14px",
-              color: COLORS.gray,
-              whiteSpace: "pre-line",
-              lineHeight: "1.6",
-            }}
-          >
+          <div style={{ margin: "0 0 25px", fontSize: "14px", color: COLORS.gray, whiteSpace: "pre-line", lineHeight: "1.6" }}>
             {alertData.message}
           </div>
 
-          {/* ถ้ามี onConfirm ให้แสดง 2 ปุ่ม */}
           {alertData.onConfirm ? (
-            <div
-              style={{
-                display: "flex",
-                gap: "10px",
-              }}
-            >
+            <div style={{ display: "flex", gap: "10px" }}>
               <button
                 onClick={closeAlert}
                 style={{
-                  flex: 1,
-                  padding: "14px",
-                  border: "1px solid #ddd",
-                  borderRadius: "14px",
-                  background: COLORS.white,
-                  color: COLORS.gray,
-                  fontWeight: "900",
-                  fontSize: "15px",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
+                  flex: 1, padding: "14px", border: "1px solid #ddd", borderRadius: "14px",
+                  background: COLORS.white, color: COLORS.gray, fontWeight: "900", fontSize: "15px", cursor: "pointer", fontFamily: "inherit",
                 }}
               >
                 ยกเลิก
@@ -3080,36 +2699,19 @@ const renderPaymentModal = () => {
               <button
                 onClick={handleConfirm}
                 style={{
-                  flex: 1,
-                  padding: "14px",
-                  border: "none",
-                  borderRadius: "14px",
-                  background: getButtonColor(),
-                  color: COLORS.white,
-                  fontWeight: "900",
-                  fontSize: "15px",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
+                  flex: 1, padding: "14px", border: "none", borderRadius: "14px",
+                  background: getButtonColor(), color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: "pointer", fontFamily: "inherit",
                 }}
               >
                 เปลี่ยนร้าน
               </button>
             </div>
           ) : (
-            /* Alert ปกติยังใช้ปุ่มเดียวเหมือนเดิม */
             <button
               onClick={closeAlert}
               style={{
-                width: "100%",
-                padding: "14px",
-                border: "none",
-                borderRadius: "14px",
-                background: getButtonColor(),
-                color: COLORS.white,
-                fontWeight: "900",
-                fontSize: "16px",
-                cursor: "pointer",
-                fontFamily: "inherit",
+                width: "100%", padding: "14px", border: "none", borderRadius: "14px",
+                background: getButtonColor(), color: COLORS.white, fontWeight: "900", fontSize: "16px", cursor: "pointer", fontFamily: "inherit",
               }}
             >
               ตกลง
@@ -3252,134 +2854,116 @@ const renderPaymentModal = () => {
       {renderReportModal()}
       {renderViewReportsModal()}
       {renderCustomAlert()}
+
       {isCropModalOpen && cropImage && (
-  <div
-    style={{
-      position: "fixed",
-      inset: 0,
-      background: "rgba(0,0,0,0.7)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 9999,
-      padding: "20px",
-      boxSizing: "border-box",
-    }}
-  >
-    <div
-      style={{
-        background: COLORS.white,
-        borderRadius: "20px",
-        padding: "20px",
-        width: "100%",
-        maxWidth: "500px",
-      }}
-    >
-      <h3
-        style={{
-          margin: "0 0 15px",
-          textAlign: "center",
-          fontWeight: "900",
-        }}
-      >
-        ครอปรูปโปรไฟล์
-      </h3>
-
-      <div
-        style={{
-          position: "relative",
-          width: "100%",
-          height: "350px",
-          background: "#222",
-          borderRadius: "15px",
-          overflow: "hidden",
-        }}
-      >
-        <Cropper
-          image={cropImage}
-          crop={crop}
-          zoom={zoom}
-          aspect={1}
-          cropShape="round"
-          showGrid={false}
-          onCropChange={setCrop}
-          onCropComplete={(croppedArea, croppedAreaPixels) => {
-            setCroppedAreaPixels(croppedAreaPixels);
-          }}
-          onZoomChange={setZoom}
-        />
-      </div>
-
-      <div style={{ marginTop: "15px" }}>
-        <label
+        <div
           style={{
-            display: "block",
-            fontSize: "13px",
-            fontWeight: "800",
-            marginBottom: "5px",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "20px",
+            boxSizing: "border-box",
           }}
         >
-          ซูมรูป
-        </label>
+          <div
+            style={{
+              background: COLORS.white,
+              borderRadius: "20px",
+              padding: "20px",
+              width: "100%",
+              maxWidth: "500px",
+            }}
+          >
+            <h3 style={{ margin: "0 0 15px", textAlign: "center", fontWeight: "900" }}>
+              ครอปรูปโปรไฟล์
+            </h3>
 
-        <input
-          type="range"
-          min={1}
-          max={3}
-          step={0.1}
-          value={zoom}
-          onChange={(e) => setZoom(Number(e.target.value))}
-          style={{ width: "100%" }}
-        />
-      </div>
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                height: "350px",
+                background: "#222",
+                borderRadius: "15px",
+                overflow: "hidden",
+              }}
+            >
+              <Cropper
+                image={cropImage}
+                crop={crop}
+                zoom={zoom}
+                aspect={1}
+                cropShape="round"
+                showGrid={false}
+                onCropChange={setCrop}
+                onCropComplete={(croppedArea, croppedAreaPixels) => {
+                  setCroppedAreaPixels(croppedAreaPixels);
+                }}
+                onZoomChange={setZoom}
+              />
+            </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: "10px",
-          marginTop: "20px",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => {
-            setIsCropModalOpen(false);
-            setCropImage(null);
-          }}
-          style={{
-            flex: 1,
-            padding: "11px",
-            background: COLORS.lightGray,
-            color: COLORS.navy,
-            border: "none",
-            borderRadius: "10px",
-            fontWeight: "800",
-            cursor: "pointer",
-          }}
-        >
-          ยกเลิก
-        </button>
+            <div style={{ marginTop: "15px" }}>
+              <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "5px" }}>
+                ซูมรูป
+              </label>
 
-        <button
-          type="button"
-          onClick={createCroppedImage}
-          style={{
-            flex: 1,
-            padding: "11px",
-            background: COLORS.orange,
-            color: COLORS.white,
-            border: "none",
-            borderRadius: "10px",
-            fontWeight: "800",
-            cursor: "pointer",
-          }}
-        >
-          ใช้รูปนี้
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.1}
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCropModalOpen(false);
+                  setCropImage(null);
+                }}
+                style={{
+                  flex: 1,
+                  padding: "11px",
+                  background: COLORS.lightGray,
+                  color: COLORS.navy,
+                  border: "none",
+                  borderRadius: "10px",
+                  fontWeight: "800",
+                  cursor: "pointer",
+                }}
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                onClick={createCroppedImage}
+                style={{
+                  flex: 1,
+                  padding: "11px",
+                  background: COLORS.orange,
+                  color: COLORS.white,
+                  border: "none",
+                  borderRadius: "10px",
+                  fontWeight: "800",
+                  cursor: "pointer",
+                }}
+              >
+                ใช้รูปนี้
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
