@@ -664,6 +664,44 @@ def get_customer_profile(user_id: int, db=Depends(get_db)):
         user['TotalOrders'] = orders_count['TotalOrders']
         return user
 
+# ประวัติการใช้งานผู้ใช้
+@app.get("/api/executive/customers")
+def search_customers(search: Optional[str] = None, db=Depends(get_db)):
+    ensure_user_columns(db)
+    with db.cursor() as cur:
+        query = """SELECT UserId, Username, FullName, Role, Email, Phone
+                   FROM Users WHERE Role = 'Customer'"""
+        params = []
+        if search and search.strip():
+            keyword = search.strip()
+            if keyword.isdigit():
+                query += """ AND (UserId = %s OR Username LIKE %s OR FullName LIKE %s)"""
+                params.extend([int(keyword), f"%{keyword}%", f"%{keyword}%"])
+            else:
+                query += """ AND (Username LIKE %s OR FullName LIKE %s)"""
+                params.extend([f"%{keyword}%", f"%{keyword}%"])
+        query += " ORDER BY UserId ASC LIMIT 20"
+        cur.execute(query, params)
+        customers = cur.fetchall()
+
+        for customer in customers:
+            email = customer.get("Email")
+            phone = customer.get("Phone")
+
+            # Mask Email เช่น user1001@example.test -> u***@example.test
+            if email and "@" in email:
+                name, domain = email.split("@", 1)
+                customer["Email"] = f"{name[:1]}***@{domain}"
+
+            # Mask Phone เช่น 0812345678 -> 081****678
+            if phone:
+                phone = str(phone)
+                if len(phone) >= 6:
+                    customer["Phone"] = f"{phone[:3]}****{phone[-3:]}"
+
+        return customers
+
+
 @app.get("/api/users/{user_id}")
 def get_user_profile(user_id: int, db=Depends(get_db)):
     ensure_user_columns(db)
@@ -1154,7 +1192,19 @@ def create_review(data: ReviewCreateSchema, db=Depends(get_db)):
         cur.execute("UPDATE `Order` SET IsReviewed=1 WHERE OrderID=%s", (data.order_id,))
         db.commit()
         return {"success": True}
-
+# ดูรีวิวในหน้าของประวัติลูกค้า
+@app.get("/api/executive/customers/{user_id}/reviews")
+def get_customer_reviews(user_id: int, db=Depends(get_db)):
+    ensure_review_table(db)
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT r.ReviewId,r.OrderID, r.StoreId,s.StoreName,r.Rating,r.Comment,r.ImageUrl,r.CreatedAt
+            FROM Review r
+            LEFT JOIN Store s ON r.StoreId = s.StoreId WHERE r.UserId = %s
+            ORDER BY r.CreatedAt DESC, r.ReviewId DESC
+        """, (user_id,))
+        return cur.fetchall()
+    
 @app.get("/api/stores/{store_id}/reviews")
 def get_store_reviews(store_id: int, db=Depends(get_db)):
     ensure_review_table(db)
@@ -1647,8 +1697,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
             if data.user_id:
                 send_notif(db, data.user_id, f"สั่งซื้อคิว {queue_no} สำเร็จ!")
                 
-            log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน ID:{data.store_id}")
-            
+            log_audit(db, "CREATE_ORDER", f"User:{data.user_id or 'WalkIn'}", f"คิว {queue_no} ยอด {total}B ร้าน {st['StoreName']} ID:{data.store_id}")     
             db.commit()
             return {"success": True, "order_id": order_id, "queue_no": queue_no, "total": total}
 
@@ -1661,7 +1710,7 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
 @app.put("/api/orders/{order_id}/verify-slip")
 def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
     with db.cursor() as cur:
-        cur.execute("SELECT * FROM `Order` WHERE OrderID=%s", (order_id,))
+        cur.execute("""SELECT o.*, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s""", (order_id,))
         ord_data = cur.fetchone()
         if not ord_data:
             raise HTTPException(status_code=404, detail="ไม่พบคำสั่งซื้อ")
@@ -1672,14 +1721,13 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
             cur.execute("UPDATE `Order` SET Status='Pending' WHERE OrderID=%s", (order_id,))
             if ord_data.get('UserId'):
                 send_notif(db, ord_data['UserId'], f"สลิปการชำระเงินคิว {ord_data['QueueNo']} ได้รับการยืนยันแล้ว")
-            log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id}")
+            log_audit(db, "VERIFY_SLIP_APPROVE", "Staff/Owner", f"อนุมัติสลิป Order ID:{order_id} ร้าน {ord_data['StoreName']} (ID:{ord_data['StoreId']})")
         else:
             reason = payload.reason or 'สลิปไม่ถูกต้อง'
             cur.execute("UPDATE `Order` SET Status='Cancelled', CancelReason=%s WHERE OrderID=%s", (reason, order_id))
             if ord_data.get('UserId'):
                 send_notif(db, ord_data['UserId'], f"❌ สลิปคิว {ord_data['QueueNo']} ถูกปฏิเสธ: {reason}")
-            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id}: {reason}")
-
+            log_audit(db, "VERIFY_SLIP_REJECT", "Staff/Owner", f"ปฏิเสธสลิป Order ID:{order_id} ร้าน {ord_data['StoreName']} (ID:{ord_data['StoreId']}): {reason}")
         db.commit()
         return {"success": True}
 
@@ -1922,9 +1970,9 @@ def customer_cancel_order(
         with db.cursor() as cur:
             cur.execute(
                 """
-                SELECT OrderID, UserId, QueueNo, Status, CancelDeadline
-                FROM `Order`
-                WHERE OrderID=%s
+                SELECT o.OrderID, o.UserId, o.QueueNo, o.Status, o.CancelDeadline, o.StoreId, s.StoreName
+                FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId
+                WHERE o.OrderID=%s
                 """,
                 (order_id,),
             )
@@ -1973,7 +2021,7 @@ def customer_cancel_order(
                 db,
                 "CUSTOMER_CANCEL_ORDER",
                 f"User:{payload.user_id}",
-                f"Order {order_id} ลูกค้ายืนยันยกเลิก: {reason}"
+                f"Order {order_id} ลูกค้ายืนยันยกเลิก ร้าน {order['StoreName']} (ID:{order['StoreId']}): {reason}"
             )
 
         db.commit()
@@ -2056,7 +2104,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                     (payload.status, payload.cancel_reason, order_id)
                 )
             
-            cur.execute("SELECT UserId, QueueNo FROM `Order` WHERE OrderID=%s", (order_id,))
+            cur.execute("""SELECT o.UserId, o.QueueNo, o.StoreId, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s""", (order_id,))
             o = cur.fetchone()
             if o and o.get('UserId'):
                 status_map = {
@@ -2068,7 +2116,10 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 }
                 send_notif(db, o['UserId'], f"ออเดอร์คิว {o['QueueNo']} {status_map.get(payload.status, payload.status)}")
             
-            log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status}")
+            if payload.status == 'Cancelled':
+                log_audit(db, "CANCEL_ORDER", payload.user_role, f"Order {order_id} -> Cancelled ร้าน {o['StoreName']} (ID:{o['StoreId']})" + (f" | เหตุผล: {payload.cancel_reason}" if payload.cancel_reason else ""))
+            else:
+                log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status} ร้าน {o['StoreName']} (ID:{o['StoreId']})")
             db.commit()
             return {"success": True}
     except Exception as e:
@@ -2086,15 +2137,20 @@ def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_d
             WHERE OrderID=%s
         """, (payload.reason, deadline, order_id))
         
-        cur.execute("SELECT UserId, QueueNo FROM `Order` WHERE OrderID=%s", (order_id,))
+        cur.execute("""SELECT o.UserId, o.QueueNo, o.StoreId, s.StoreName
+        FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s""", (order_id,))
         o = cur.fetchone()
         if o and o['UserId']:
             send_notif(db, o['UserId'], f"คิว {o['QueueNo']} มีปัญหา: {payload.reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)")
         
-        log_audit(db, "CANCEL_REQUEST", "Front Staff", f"Order {order_id} รอการยืนยันยกเลิก")
+        log_audit(
+    db,
+    "CANCEL_REQUEST",
+    "Front Staff",
+    f"Order {order_id} รอการยืนยันยกเลิก ร้าน {o['StoreName']} (ID:{o['StoreId']})"
+)
         db.commit()
         return {"success": True}
-
 @app.post("/api/reports/issue", status_code=201)
 def create_issue_report(data: CreateIssueReportSchema, db=Depends(get_db)):
     ensure_issue_report_table(db)
@@ -2138,6 +2194,20 @@ def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
                 performed_by or "Executive",
                 "เปิดศูนย์อาหาร" if is_open else "ปิดศูนย์อาหาร"
             )
+            # แจ้งเตือนเปิด/ปิดศูนย์อาหารให้ลูกค้าและเจ้าของร้าน
+            message = (
+                "ศูนย์อาหารเปิดให้บริการแล้ว"
+                if is_open
+                else "ศูนย์อาหารปิดให้บริการแล้ว"
+            )
+
+            cur.execute(
+                "SELECT UserId FROM Users WHERE Role IN ('Customer', 'Shop Owner')"
+            )
+            recipients = cur.fetchall()
+
+            for user in recipients:
+                send_notif(db, user["UserId"], message)
 
         db.commit()
 
@@ -2209,4 +2279,14 @@ def get_store_issue_reports(store_id: int, db=Depends(get_db)):
             ORDER BY r.CreatedAt DESC, r.ReportID DESC
         """, (store_id,))
 
+        return cur.fetchall()
+
+
+@app.get("/api/executive/customers/{user_id}/issues")
+def get_customer_issues(user_id: int, db=Depends(get_db)):
+    ensure_issue_report_table(db)
+    with db.cursor() as cur:
+        cur.execute("""SELECT i.ReportID, i.OrderID, i.StoreId, s.StoreName, i.IssueType, i.Description, i.AdminNote, i.CreatedAt
+                       FROM IssueReport i LEFT JOIN Store s ON i.StoreId = s.StoreId
+                       WHERE i.UserId = %s ORDER BY i.CreatedAt DESC, i.ReportID DESC""", (user_id,))
         return cur.fetchall()
