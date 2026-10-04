@@ -5190,7 +5190,7 @@ function CustomerInfoPage({ ctx }) {
                     }
 
                     return <tr key={activity.id} style={{ borderBottom: `1px solid ${T.line}` }}>
-                        <td style={historyTdStyle}><div style={{ color: T.muted, whiteSpace: 'nowrap' }}>{activity.date ? new Date(activity.date).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'ไม่ระบุวันที่'}</div></td>
+                        <td style={historyTdStyle}><div style={{ color: T.muted, whiteSpace: 'nowrap' }}>{activity.date ?  thaiDateTime(activity.date): 'ไม่ระบุวันที่'}</div></td>
                         <td style={historyTdStyle}><div style={{ fontWeight: 700, color: T.ink }}>{activityName}</div></td>
                         <td style={historyTdStyle}>{storeName}</td>
                         <td style={{ ...historyTdStyle, minWidth: '280px' }}>{detail}</td>
