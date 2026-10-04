@@ -5078,6 +5078,7 @@ const historyTdStyle = { padding: '16px', textAlign: 'left', verticalAlign: 'top
 
 function CustomerInfoPage({ ctx }) {
     const { API } = ctx;
+    const isCompact = useIsNarrow(700);
     const [query, setQuery] = useState(''), [customers, setCustomers] = useState([]), [loading, setLoading] = useState(false), [searched, setSearched] = useState(false), [error, setError] = useState('');
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [activities, setActivities] = useState([]);
