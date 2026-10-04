@@ -77,6 +77,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [printConfirmOrder, setPrintConfirmOrder] = useState(null); // { order, type }
   const [recallBusy, setRecallBusy] = useState({});
   const [printBusy, setPrintBusy] = useState(false);
+  const dateKey = (d) => {
+    const x = new Date(d);
+    if (isNaN(x)) return '';
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  };
+  const [historyDate, setHistoryDate] = useState(() => dateKey(Date.now()));
   const autoPromptedJobsRef = useRef(new Set()); // job ที่เด้ง popup อัตโนมัติไปแล้ว (ปิดแล้วไม่เด้งซ้ำ ยังกดจากแถบเหลืองได้)
   const [noShowModal, setNoShowModal] = useState(null);
   const NO_SHOW_WARNING_MINUTES = 15;
@@ -531,11 +537,14 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   const verifyingOrders = orders.filter(o => o.Status === 'Verifying_Slip');
   const activeOrders = orders.filter(o => o.Status !== 'Verifying_Slip' && o.Status !== 'Completed' && o.Status !== 'Cancelled' && o.Status !== 'NoShow');
-  const staleOrders = orders.filter(o => o.Status === 'Ready').sort((a, b) => new Date(a.ReadyAt || 0) - new Date(b.ReadyAt || 0));
+  const historyOrders = orders
+    .filter(o => dateKey(o.CreatedAt) === historyDate)
+    .sort((a, b) => (b.OrderID || 0) - (a.OrderID || 0));
+  const canReprint = (o) => !['Verifying_Slip', 'Cancelled', 'NoShow'].includes(o.Status);
 
   const navItems = [
     { id: 'orders', label: 'Queue & Slips', caption: 'จัดการคิว & ตรวจสลิป', icon: 'orders', badge: verifyingOrders.length || null },
-    { id: 'stale', label: 'คิวรอรับอาหาร', caption: 'แจ้งเตือน 15น. / ตัดสินใจเอง', icon: 'stale', badge: staleOrders.length || null },
+    { id: 'history', label: 'ประวัติออเดอร์', caption: 'ประวัติรายวัน / ดูลูกค้า / พิมพ์ใบเสร็จ', icon: 'stale' },
     { id: 'walkin', label: 'Walk-in POS', caption: 'แคชเชียร์สั่งอาหารหน้าร้าน', icon: 'walkin' },
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
     { id: 'reports', label: 'Reports', caption: 'รายงานการขายและปัญหา', icon: 'orders' },
@@ -793,6 +802,15 @@ export default function CounterView({ user, apiBase, onLogout }) {
                               </td>
                               <td>
                                 <Badge tone={getStatusBadgeTone(o.Status)}>{getStatusLabel(o.Status)}</Badge>
+                                {o.Status === 'Ready' && (
+                                  <div style={{ marginTop: '6px' }}>
+                                    <Badge tone={is120Reminder(o.ReadyAt) ? 'danger' : isPickupWarning(o.ReadyAt) ? 'warning' : 'neutral'}>
+                                      รอมาแล้ว {getElapsedLabel(o.ReadyAt)}
+                                      {isPickupWarning(o.ReadyAt) && !is120Reminder(o.ReadyAt) ? ' ⚠️ ยังไม่มารับ' : ''}
+                                      {is120Reminder(o.ReadyAt) ? ' ⏰ เกิน 120 นาที' : ''}
+                                    </Badge>
+                                  </div>
+                                )}
                                 {isPendingCancel && (
                                   <div style={{ fontSize: '11px', color: PALETTE.coral, fontWeight: '700', marginTop: '4px' }}>
                                     เหลือเวลา: {getRemainingLabel(o.CancelDeadline)}
@@ -808,6 +826,16 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                       </button>
                                       <button onClick={() => updateStatus(o.OrderID, 'Completed')} className="cv-btn btn-success">
                                         ✅ ส่งมอบอาหาร
+                                      </button>
+                                      <button
+                                        onClick={() => openNoShowModal(o)}
+                                        disabled={!isPickupWarning(o.ReadyAt)}
+                                        className="cv-btn btn-danger"
+                                        title="กดได้เมื่อเกิน 15 นาทีหลังอาหารเสร็จ"
+                                      >
+                                        🚫 {isPickupWarning(o.ReadyAt)
+                                          ? 'ลูกค้าไม่มารับอาหาร'
+                                          : `ลูกค้าไม่มารับ (อีก ${(() => { const r = Math.max(0, Math.ceil(NO_SHOW_WARNING_MINUTES * 60 - minutesWaiting(o.ReadyAt) * 60)); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}`; })()})`}
                                       </button>
                                     </>
                                   )}
@@ -841,13 +869,23 @@ export default function CounterView({ user, apiBase, onLogout }) {
             </div>
           )}
 
-          {/* TAB 2: STALE ORDERS */}
-          {activeTab === 'stale' && (
+          {/* TAB 2: ประวัติออเดอร์ (รายวัน) */}
+          {activeTab === 'history' && (
             <div className="cv-card">
               <div className="cv-card-head">
                 <div>
-                  <h3>ออเดอร์ตกค้าง (ลูกค้ายังไม่มารับอาหาร)</h3>
-                  <div className="caption">แจ้งเตือนเมื่อเกิน 15 นาที • เรียกคิวซ้ำได้เรื่อย ๆ • การตัดเป็น No-Show เป็นการตัดสินใจของพนักงานเท่านั้น (ไม่อัตโนมัติ)</div>
+                  <h3>ประวัติออเดอร์ทั้งหมดของวัน</h3>
+                  <div className="caption">ดูประวัติลูกค้า และสั่งพิมพ์ใบเสร็จซ้ำ (ต้องกดยืนยันก่อนพิมพ์ทุกครั้ง)</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="date"
+                    value={historyDate}
+                    max={dateKey(nowTick)}
+                    onChange={e => e.target.value && setHistoryDate(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${PALETTE.border}`, fontFamily: 'inherit' }}
+                  />
+                  <button className="cv-btn btn-ghost" onClick={() => setHistoryDate(dateKey(nowTick))}>วันนี้</button>
                 </div>
               </div>
               <div className="cv-table-wrapper">
@@ -855,43 +893,44 @@ export default function CounterView({ user, apiBase, onLogout }) {
                   <thead>
                     <tr>
                       <th>คิว</th>
+                      <th>เวลาสั่ง</th>
+                      <th>ลูกค้า</th>
                       <th>รายการอาหาร</th>
-                      <th>เวลาที่ปรุงเสร็จแล้ว</th>
-                      <th>การจัดการ</th>
+                      <th>ยอดรวม</th>
+                      <th>สถานะ</th>
+                      <th style={{ textAlign: 'right' }}>การจัดการ</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {staleOrders.length === 0 ? (
-                      <tr><td colSpan="4" className="empty-state">ไม่มีออเดอร์ตกค้างที่รอรับ</td></tr>
+                    {historyOrders.length === 0 ? (
+                      <tr><td colSpan="7" className="empty-state">ไม่มีออเดอร์ในวันที่เลือก</td></tr>
                     ) : (
-                      staleOrders.map(o => {
-                        const warning = isPickupWarning(o.ReadyAt);
-                        const longWait = is120Reminder(o.ReadyAt);
-                        return (
-                          <tr key={o.OrderID}>
-                            <td><span className="queue-pill bold">{o.QueueNo}</span></td>
-                            <td>{o.items?.map(i => `${i.ProductName} (x${i.Qty})`).join(', ')}</td>
-                            <td>
-                              <Badge tone={overdue ? 'danger' : 'warning'}>
-                                รอมาแล้ว {getElapsedLabel(o.ReadyAt)} {warning ? '⚠️ ยังไม่มารับ' : ''} {longWait ? '⏰ เกิน 120 นาที' : ''}
-                              </Badge>
-                            </td>
-                            <td>
-                              <div className="cv-stale-actions">
-                                <button onClick={() => recallQueue(o)} className="cv-btn btn-warning-light">
-                                  📢 เรียกคิวอีกครั้ง
-                                </button>
-                                <button onClick={() => viewCustomerProfile(o)} className="cv-btn btn-dark">
-                                  📞 ข้อมูลติดต่อ
-                                </button>
-                                <button onClick={() => openNoShowModal(o)} disabled={!warning} className="cv-btn btn-danger">
-                                  🚫 ลูกค้าไม่มารับอาหาร
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
+                      historyOrders.map(o => (
+                        <tr key={o.OrderID}>
+                          <td>
+                            <span className="queue-pill bold">{o.QueueNo}</span>
+                            {o.IsWalkIn === 1 && <span className="walkin-tag">Walk-in</span>}
+                          </td>
+                          <td>{o.CreatedAt ? new Date(o.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                          <td>{o.CustomerName || o.UserName || 'ลูกค้า Walk-in'}</td>
+                          <td>{o.items?.map(i => `${i.ProductName} (x${i.Qty})`).join(', ')}</td>
+                          <td className="bold">฿{fmtMoney(o.TotalAmount)}</td>
+                          <td><Badge tone={getStatusBadgeTone(o.Status)}>{getStatusLabel(o.Status)}</Badge></td>
+                          <td>
+                            <div className="cv-stale-actions" style={{ justifyContent: 'flex-end' }}>
+                              <button onClick={() => viewCustomerProfile(o)} className="cv-btn btn-dark">👤 ประวัติลูกค้า</button>
+                              <button
+                                onClick={() => openPrintConfirm(o, 'REPRINT')}
+                                disabled={!canReprint(o)}
+                                className="cv-btn btn-ghost"
+                                title={canReprint(o) ? 'พิมพ์ใบสั่งซื้อ (ต้องยืนยัน)' : 'ออเดอร์นี้ไม่สามารถพิมพ์ได้'}
+                              >
+                                🖨️ พิมพ์ใบเสร็จ
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
