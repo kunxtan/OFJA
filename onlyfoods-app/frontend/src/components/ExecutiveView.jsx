@@ -1572,10 +1572,10 @@ const returnFoodCourtToAuto = async () => {
     </>
 }>
     <Field label="เวลาเปิดอัตโนมัติ" required hint="ศูนย์อาหารจะเริ่มรับออเดอร์ใหม่ตั้งแต่เวลานี้">
-        <input type="time" value={foodCourtOpenInput} onChange={e => setFoodCourtOpenInput(e.target.value)} disabled={savingFoodCourtSchedule} style={inputStyle} />
+        <input type="time" value={foodCourtOpenInput} onChange={e => setFoodCourtOpenInput(e.target.value)} disabled={savingFoodCourtSchedule} style={{ ...inputStyle, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', fontSize: '16px' }} />
     </Field>
     <Field label="เวลาปิดอัตโนมัติ" required hint="เมื่อถึงเวลานี้ ระบบจะหยุดรับออเดอร์ใหม่">
-        <input type="time" value={foodCourtCloseInput} onChange={e => setFoodCourtCloseInput(e.target.value)} disabled={savingFoodCourtSchedule} style={inputStyle} />
+        <input type="time" value={foodCourtCloseInput} onChange={e => setFoodCourtCloseInput(e.target.value)} disabled={savingFoodCourtSchedule} style={{ ...inputStyle, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', fontSize: '16px' }} />
     </Field>
     <div style={{ marginTop: '4px', padding: '11px 13px', borderRadius: T.radiusMd, background: T.accentSoft, color: '#8A5A00', fontSize: '12.5px', lineHeight: 1.6 }}>
         การปิดศูนย์อาหารจะหยุดรับออเดอร์ใหม่เท่านั้น ออเดอร์ที่สร้างไว้ก่อนแล้วจะดำเนินการต่อได้ตามปกติ
