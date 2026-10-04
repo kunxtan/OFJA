@@ -134,11 +134,18 @@ CREATE TABLE IF NOT EXISTS IssueReport (
 CREATE TABLE IF NOT EXISTS FoodCourtSetting (
     SettingId TINYINT PRIMARY KEY,
     IsOpen TINYINT(1) NOT NULL DEFAULT 1,
-    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    OpenTime TIME NOT NULL DEFAULT '08:00:00',
+    CloseTime TIME NOT NULL DEFAULT '20:00:00',
+    ManualOverride VARCHAR(10) NOT NULL DEFAULT 'AUTO',
+    OverrideUntil DATETIME NULL,
+    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ข้อมูลตั้งต้น
-INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen) VALUES (1, 1);
+-- ตั้งค่าเวลาเปิด-ปิดศูนย์อาหาร และสถานะ Manual Override
+INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen, OpenTime, CloseTime, ManualOverride, OverrideUntil)
+VALUES (1, 1, '08:00:00', '20:00:00', 'AUTO', NULL);
 -- อัปเดตข้อมูลตั้งต้นของร้านค้า (ใส่ ImageUrl และ Description)
 INSERT INTO Store (StoreId, StoreName, IsOpen, IsSuspended, ImageUrl, Description) VALUES 
 (1, 'ร้านข้าวแกงวิศวะเดือด', 1, 0, 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600', 'ข้าวแกงรสเด็ด เมนูหลากหลาย ทำสดใหม่ทุกวัน'), 

@@ -870,6 +870,15 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const [notifOpen, setNotifOpen] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
     const profileRef = useRef(null);
+    const [foodCourtOpenTime, setFoodCourtOpenTime] = useState('08:00');
+    const [foodCourtCloseTime, setFoodCourtCloseTime] = useState('20:00');
+    const [foodCourtMode, setFoodCourtMode] = useState('AUTO');
+// เปิดปิดโรงอาหารอัตโนมัติ
+    const [showFoodCourtSettings, setShowFoodCourtSettings] = useState(false);
+    const [foodCourtOpenInput, setFoodCourtOpenInput] = useState('08:00');
+    const [foodCourtCloseInput, setFoodCourtCloseInput] = useState('20:00');
+    const [savingFoodCourtSchedule, setSavingFoodCourtSchedule] = useState(false);
+    const [returningFoodCourtAuto, setReturningFoodCourtAuto] = useState(false);
     const [locallyRead, setLocallyRead] = useState(() => {
         try {
             return JSON.parse(window.localStorage.getItem('executiveSyntheticRead') || '[]');
@@ -946,16 +955,17 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             setLoading(false);
         }
     }, [API, pushToast]);
-    const loadFoodCourt = useCallback(async (silent = true) => {
-        try {
-            const data = await callApi(`${API}/api/food-court/status`);
-            setFoodCourtOpen(Boolean(data?.is_open));
-        }
-        catch (err) {
-            if (!silent)
-                pushToast(err.message, 'error');
-        }
-    }, [API, pushToast]);
+    const loadFoodCourt = useCallback(async (silent = false) => {
+    try {
+        const data = await callApi(`${API}/api/food-court/status`);
+        setFoodCourtOpen(Boolean(data?.is_open));
+        setFoodCourtOpenTime(data?.open_time || '08:00');
+        setFoodCourtCloseTime(data?.close_time || '20:00');
+        setFoodCourtMode(data?.mode || 'AUTO');
+    } catch (err) {
+        if (!silent) pushToast(err.message, 'error');
+    }
+}, [API, pushToast]);
     const loadIssueAlerts = useCallback(async () => {
         const currentStores = storesRef.current;
         if (!Array.isArray(currentStores) || currentStores.length === 0) {
@@ -1059,6 +1069,13 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     useEffect(() => {
         setSidebarOpen(!isNarrow);
     }, [isNarrow]);
+
+    const openFoodCourtSettings = () => {
+    setFoodCourtOpenInput(foodCourtOpenTime);
+    setFoodCourtCloseInput(foodCourtCloseTime);
+    setShowFoodCourtSettings(true);
+};
+
     const toggleFoodCourt = async () => {
         const closing = foodCourtOpen;
         const ok = await ask({
@@ -1078,7 +1095,11 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         try {
             const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive`, { method: 'PUT' });
             setFoodCourtOpen(Boolean(data?.is_open));
+            setFoodCourtMode(data?.mode || 'AUTO');
+
+            await loadFoodCourt(true);
             await loadStores();
+
             pushToast(data?.message || 'อัปเดตสถานะศูนย์อาหารแล้ว');
         }
         catch (err) {
@@ -1088,6 +1109,53 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             setSwitchingCourt(false);
         }
     };
+
+    // บันทึกเวลาเปิดปิดโณงอาหาร
+    const saveFoodCourtSchedule = async () => {
+    if (!foodCourtOpenInput || !foodCourtCloseInput) return pushToast('กรุณาระบุเวลาเปิดและเวลาปิด', 'error');
+    if (foodCourtOpenInput >= foodCourtCloseInput) return pushToast('เวลาปิดต้องอยู่หลังเวลาเปิด', 'error');
+
+    setSavingFoodCourtSchedule(true);
+    try {
+        const data = await callApi(`${API}/api/food-court/schedule?performed_by=Executive`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ open_time: foodCourtOpenInput, close_time: foodCourtCloseInput })
+        });
+        setFoodCourtOpen(Boolean(data?.is_open));
+        setFoodCourtOpenTime(data?.open_time || foodCourtOpenInput);
+        setFoodCourtCloseTime(data?.close_time || foodCourtCloseInput);
+        setFoodCourtMode(data?.mode || 'AUTO');
+        setShowFoodCourtSettings(false);
+        await loadFoodCourt(true);
+        pushToast(data?.message || 'บันทึกเวลาทำการเรียบร้อยแล้ว');
+    } catch (err) {
+        pushToast(err.message, 'error');
+    } finally {
+        setSavingFoodCourtSchedule(false);
+    }
+};
+
+// กลับสู่ระบบอัตโนมัติ
+const returnFoodCourtToAuto = async () => {
+    const ok = await ask({ title: 'กลับสู่ระบบอัตโนมัติ', message: 'ต้องการยกเลิกสถานะที่กำหนดด้วยตนเอง และกลับมาใช้เวลาทำการอัตโนมัติใช่หรือไม่', confirmText: 'กลับสู่ระบบอัตโนมัติ' });
+    if (!ok) return;
+
+    setReturningFoodCourtAuto(true);
+    try {
+        const data = await callApi(`${API}/api/food-court/auto?performed_by=Executive`, { method: 'PUT' });
+        setFoodCourtOpen(Boolean(data?.is_open));
+        setFoodCourtMode('AUTO');
+        await loadFoodCourt(true);
+        await loadStores();
+        pushToast(data?.message || 'กลับสู่ระบบอัตโนมัติเรียบร้อยแล้ว');
+    } catch (err) {
+        pushToast(err.message, 'error');
+    } finally {
+        setReturningFoodCourtAuto(false);
+    }
+};
+
     const rememberSyntheticRead = useCallback((notifId) => {
         setLocallyRead((prev) => {
             if (prev.includes(notifId))
@@ -1486,7 +1554,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
                   </span>
                 </div>)}
 
-              {activeMenu === 'overview' && (<OverviewPage ctx={ctx} foodCourtOpen={foodCourtOpen} switchingCourt={switchingCourt} onToggleCourt={toggleFoodCourt}/>)}
+              {activeMenu === 'overview' && (<OverviewPage ctx={ctx} foodCourtOpen={foodCourtOpen} foodCourtOpenTime={foodCourtOpenTime} foodCourtCloseTime={foodCourtCloseTime} foodCourtMode={foodCourtMode} switchingCourt={switchingCourt} returningFoodCourtAuto={returningFoodCourtAuto} onToggleCourt={toggleFoodCourt} onOpenSettings={openFoodCourtSettings} onReturnAuto={returnFoodCourtToAuto} />)}
               {activeMenu === 'store-sales' && <StoreSalesPage ctx={ctx}/>}
               {activeMenu === 'store-manage' && <StoreManagePage ctx={ctx}/>}
               {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx}/>}
@@ -1497,13 +1565,29 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
           </main>
         </div>
 
+      <Modal open={showFoodCourtSettings} title="ตั้งค่าเวลาทำการ" subtitle="กำหนดเวลาเปิดและปิดศูนย์อาหารอัตโนมัติ" onClose={() => { if (!savingFoodCourtSchedule) setShowFoodCourtSettings(false); }} width={460} footer={
+    <>
+        <Button variant="ghost" onClick={() => setShowFoodCourtSettings(false)} disabled={savingFoodCourtSchedule}>ยกเลิก</Button>
+        <Button variant="primary" icon="check" onClick={saveFoodCourtSchedule} disabled={savingFoodCourtSchedule}>{savingFoodCourtSchedule ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+    </>
+}>
+    <Field label="เวลาเปิดอัตโนมัติ" required hint="ศูนย์อาหารจะเริ่มรับออเดอร์ใหม่ตั้งแต่เวลานี้">
+        <input type="time" value={foodCourtOpenInput} onChange={e => setFoodCourtOpenInput(e.target.value)} disabled={savingFoodCourtSchedule} style={inputStyle} />
+    </Field>
+    <Field label="เวลาปิดอัตโนมัติ" required hint="เมื่อถึงเวลานี้ ระบบจะหยุดรับออเดอร์ใหม่">
+        <input type="time" value={foodCourtCloseInput} onChange={e => setFoodCourtCloseInput(e.target.value)} disabled={savingFoodCourtSchedule} style={inputStyle} />
+    </Field>
+    <div style={{ marginTop: '4px', padding: '11px 13px', borderRadius: T.radiusMd, background: T.accentSoft, color: '#8A5A00', fontSize: '12.5px', lineHeight: 1.6 }}>
+        การปิดศูนย์อาหารจะหยุดรับออเดอร์ใหม่เท่านั้น ออเดอร์ที่สร้างไว้ก่อนแล้วจะดำเนินการต่อได้ตามปกติ
+    </div>
+</Modal>
       <ConfirmDialog state={confirmState} onCancel={() => closeConfirm(false)} onConfirm={() => closeConfirm(true)}/>
       <ToastStack toasts={toasts} onDismiss={dismissToast}/>
       </div>
     </>);
 }
 // ===== ภาพรวมศูนย์อาหาร: สรุปยอดขาย ออเดอร์ ร้านค้า และกราฟ =====
-function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
+function OverviewPage({ ctx, foodCourtOpen,foodCourtOpenTime,foodCourtCloseTime,foodCourtMode, switchingCourt,returningFoodCourtAuto, onToggleCourt ,onOpenSettings,onReturnAuto }) {
     const { API, orders, stores, loading, pushToast, navigateTo } = ctx;
     const [anchor, setAnchor] = useState(todayISO());
     const [days, setDays] = useState(1);
@@ -1788,59 +1872,39 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         }}
       >
         {/* การควบคุมศูนย์อาหาร */}
-        <Card style={{ marginBottom: '0' }}>
-          <div style={{
-            ...courtControlStyle,
-            minHeight: '132px',
-            padding: '18px 20px'
-          }}>
-            <div style={{
-              display: 'flex',
-              gap: '16px',
-              alignItems: 'flex-start',
-              minWidth: 0
-            }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                minWidth: '48px',
-                borderRadius: T.radiusMd,
-                display: 'grid',
-                placeItems: 'center',
-                background: foodCourtOpen ? T.greenSoft : T.redSoft,
-                color: foodCourtOpen ? T.up : T.down
-              }}>
-                <Icon
-                  name="power"
-                  size={22}
-                  color={foodCourtOpen ? T.up : T.down}
-                />
-              </div>
-
-              <div style={{ minWidth: 0 }}>
-                <h3 style={h3Style}>การควบคุมศูนย์อาหาร</h3>
-                <p style={{ ...bodyStyle, margin: '6px 0 0' }}>
-                  สถานะปัจจุบัน:{' '}
-                  <strong style={{ color: foodCourtOpen ? T.up : T.down }}>
-                    {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
-                  </strong>
-                </p>
-                <p style={captionStyle}>
-                  สถานะนี้เก็บในฐานข้อมูล ทุกโรลจึงเห็นตรงกัน และระบบจะบล็อกการสั่งอาหารให้อัตโนมัติเมื่อปิด
-                </p>
-              </div>
+<Card style={{ marginBottom: '0' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0, flex: '1 1 260px' }}>
+            <div style={{ width: '44px', height: '44px', minWidth: '44px', borderRadius: T.radiusMd, display: 'grid', placeItems: 'center', background: foodCourtOpen ? T.greenSoft : T.redSoft }}>
+                <Icon name="power" size={21} color={foodCourtOpen ? T.up : T.down} />
             </div>
+            <div style={{ minWidth: 0 }}>
+                <h3 style={{ ...h3Style, margin: 0 }}>การควบคุมศูนย์อาหาร</h3>
+                <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: foodCourtOpen ? T.up : T.down }} />
+                    <span style={{ fontSize: '13.5px', fontWeight: 700, color: foodCourtOpen ? T.up : T.down }}>{foodCourtOpen ? 'ศูนย์อาหารเปิดให้บริการ' : 'ศูนย์อาหารปิดให้บริการ'}</span>
+                </div>
+                <div style={{ marginTop: '7px', color: T.muted, fontSize: '13px' }}>เวลาทำการ {foodCourtOpenTime} - {foodCourtCloseTime}</div>
+                <div style={{ marginTop: '4px', color: foodCourtMode === 'AUTO' ? T.muted : '#B7791F', fontSize: '12.5px' }}>{foodCourtMode === 'AUTO' ? 'ระบบเปิด-ปิดอัตโนมัติ' : 'กำลังใช้สถานะที่ผู้บริหารกำหนดเอง'}</div>
+            </div>
+        </div>
 
-            <Button
-              variant={foodCourtOpen ? 'danger' : 'primary'}
-              icon="power"
-              onClick={onToggleCourt}
-              disabled={switchingCourt}
-            >
-              {switchingCourt ? 'กำลังบันทึก...' : foodCourtOpen ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร'}
-            </Button>
-          </div>
-        </Card>
+        <button type="button" onClick={onOpenSettings} title="ตั้งค่าเวลาทำการ" aria-label="ตั้งค่าเวลาทำการ" style={{ width: '40px', height: '40px', minWidth: '40px', borderRadius: T.radiusMd, border: `1px solid ${T.line}`, background: T.surface, color: T.muted, display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+            <Icon name="settings" size={18} />
+        </button>
+    </div>
+
+    <div style={{ marginTop: '20px', paddingTop: '18px', borderTop: `1px solid ${T.line}`, display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <Button variant={foodCourtOpen ? 'danger' : 'primary'} icon="power" onClick={onToggleCourt} disabled={switchingCourt}>
+            {switchingCourt ? 'กำลังบันทึก...' : foodCourtOpen ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร'}
+        </Button>
+        {foodCourtMode !== 'AUTO' && <Button variant="ghost" icon="refresh" onClick={onReturnAuto} disabled={returningFoodCourtAuto}>{returningFoodCourtAuto ? 'กำลังกลับสู่ระบบอัตโนมัติ...' : 'กลับสู่ระบบอัตโนมัติ'}</Button>}
+    </div>
+
+    {foodCourtMode !== 'AUTO' && <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: T.radiusMd, background: T.accentSoft, color: '#8A5A00', fontSize: '12.5px', lineHeight: 1.6 }}>
+        สถานะที่กำหนดด้วยตนเองจะมีผลจนถึงเวลาเปลี่ยนสถานะอัตโนมัติครั้งถัดไป
+    </div>}
+</Card>
 
         {/* สถานะร้านค้า */}
         <Card style={{ marginBottom: '0' }}>
