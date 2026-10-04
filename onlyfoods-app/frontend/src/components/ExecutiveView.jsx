@@ -1601,14 +1601,10 @@ const storeRows = Array.from(storeMap.values())
         };
     })
     .sort((a, b) => b.sales - a.sales);
-        const byHour = Array.from({ length: 24 }, () => 0);
-        now.completed.forEach((o) => {
-            const at = parseOrderDate(o.CreatedAt);
-            if (at)
-                byHour[at.getHours()] += Number(o.TotalAmount || 0);
-        });
-        const peakHour = byHour.indexOf(Math.max(...byHour));
-        const peakSales = byHour[peakHour] || 0;
+        const ordersByHour = Array.from({ length: 24 }, () => 0);
+        now.completed.forEach(o => { const at = parseOrderDate(o.CreatedAt); if (at) ordersByHour[at.getHours()] += 1; });
+        const peakHour = ordersByHour.indexOf(Math.max(...ordersByHour));
+        const peakOrderCount = ordersByHour[peakHour] || 0;
         return {
             now,
             before,
@@ -1618,8 +1614,8 @@ const storeRows = Array.from(storeMap.values())
             buckets: customRange
               ? buildBucketsForRange(now.completed, customStart, customEnd)
               : buildBuckets(now.completed, anchor, days ),
-            peakHour: peakSales > 0 ? peakHour : null,
-            peakSales,
+            peakHour: peakOrderCount > 0 ? peakHour : null,
+            peakOrderCount,
             activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
         };
     }, [orders, stores, anchor, days ,  customRange, customStart, customEnd]);
@@ -1742,8 +1738,9 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
             ['ออเดอร์สำเร็จ', report.now.completedCount], ['ออเดอร์ยกเลิก', report.now.cancelledCount],
             ['ยอดขายก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)], ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
             ['อัตราการยกเลิก (%)', report.now.cancelRate === null ? 'N/A' : Number(report.now.cancelRate.toFixed(2))],
-            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))], ['ช่วงเวลาขายดี', peakTime],
-            ['ยอดขายช่วงเวลาขายดี (บาท)', report.peakHour === null ? '-' : Math.round(report.peakSales)]
+           ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
+            ['ช่วงเวลาขายดี', peakTime],
+            ['จำนวนออเดอร์ช่วงเวลาขายดี', report.peakHour === null ? '-' : report.peakOrderCount]
         ];
 
         const storeRows = [
@@ -2004,7 +2001,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         <KpiCard size="sm" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก" value={money(report.now.grossSales)} unit="บาท" hint="รวมมูลค่าออเดอร์สำเร็จและออเดอร์ที่ถูกยกเลิก" delta={changePct(report.now.grossSales, report.before.grossSales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="wallet" tone="blue"/>
         <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="ban" tone="amber" invertDelta/>
         <KpiCard size="sm" label="อัตราการยกเลิก" value={report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`} delta={ report.now.cancelRate !== null && report.before.cancelRate !== null  ? report.now.cancelRate - report.before.cancelRate : null } deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} hint={report.now.cancelRate === null ? 'ไม่มีออเดอร์ในช่วงนี้' : undefined} icon="info" tone="amber" invertDelta />
-        <KpiCard size="sm" label="ช่วงเวลาขายดี" value={report.peakHour === null ? '—' : `${pad2(report.peakHour)}:00`} unit={report.peakHour === null ? '' : 'น.'} hint={report.peakHour === null ? 'ยังไม่มียอดขาย' : `ทำยอดได้ ${money(report.peakSales)} บาท`} delta={null} icon="calendar" tone="purple"/>
+        <KpiCard size="sm" label="ช่วงเวลาขายดี" value={report.peakHour === null ? '—' : `${pad2(report.peakHour)}:00`} unit={report.peakHour === null ? '' : 'น.'} hint={report.peakHour === null ? 'ยังไม่มีออเดอร์สำเร็จ' : `มี ${money(report.peakOrderCount)} ออเดอร์`} delta={null} icon="calendar" tone="purple" />
       </div>
 
       <div style={chartGridStyle}>
