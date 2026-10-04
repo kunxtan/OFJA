@@ -71,6 +71,17 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [viewingCustomer, setViewingCustomer] = useState(null);
   const [toast, setToast] = useState({ show: false, msg: '' });
 
+  // ===== Print / Recall / No-Show controls =====
+  const [printerStatus, setPrinterStatus] = useState('READY'); // READY | OFFLINE (Mock)
+  const [pendingPrintJobs, setPendingPrintJobs] = useState([]);
+  const [printConfirmOrder, setPrintConfirmOrder] = useState(null); // { order, type }
+  const [recallBusy, setRecallBusy] = useState({});
+  const [printBusy, setPrintBusy] = useState(false);
+  const autoPromptedJobsRef = useRef(new Set()); // job ที่เด้ง popup อัตโนมัติไปแล้ว (ปิดแล้วไม่เด้งซ้ำ ยังกดจากแถบเหลืองได้)
+  const [noShowModal, setNoShowModal] = useState(null);
+  const NO_SHOW_WARNING_MINUTES = 15;
+  const NO_SHOW_MANUAL_REMINDER_MINUTES = 120;
+
   // 🔴 Modal ยกเลิกคำสั่งซื้อแบบใหม่
   const [cancelModal, setCancelModal] = useState(null); // { order, actionType: 'immediate' | 'window' }
   const [cancelReasonTag, setCancelReasonTag] = useState('วัตถุดิบหมด');
@@ -82,6 +93,17 @@ export default function CounterView({ user, apiBase, onLogout }) {
     const t = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // ครัวกด "ปรุงเสร็จ" -> backend สร้าง PrintJob PENDING -> เด้ง popup ยืนยันพิมพ์ที่หน้าร้านอัตโนมัติ
+  useEffect(() => {
+    if (printConfirmOrder || !pendingPrintJobs.length) return;
+    const job = pendingPrintJobs.find(j => !autoPromptedJobsRef.current.has(j.PrintJobID));
+    if (!job) return;
+    const order = orders.find(o => o.OrderID === job.OrderID);
+    if (!order) return; // รอ orders โหลดก่อน
+    autoPromptedJobsRef.current.add(job.PrintJobID);
+    openPrintConfirm(order, 'FIRST_PRINT');
+  }, [pendingPrintJobs, orders, printConfirmOrder]);
 
   const showToast = (msg) => {
     setToast({ show: true, msg });
@@ -100,6 +122,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
       .then(d => setProducts(Array.isArray(d) ? d : []))
       .catch(err => console.error("Error products:", err));
 
+    fetch(`${apiBase}/api/print-jobs/pending?store_id=${activeStoreId}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setPendingPrintJobs(Array.isArray(d) ? d : []))
+      .catch(err => console.error("Error print jobs:", err));
   };
 
   const fetchReports = () => {
@@ -221,7 +247,148 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }).catch(() => showToast('เชื่อมต่อระบบออเดอร์ไม่สำเร็จ'));
   };
 
-  const printStub = (queueNo) => alert(`🖨️ กำลังพิมพ์ใบตั๋วอาหาร สำหรับคิว: ${queueNo}`);
+  const buildPrintData = (order) => ({
+    orderId: order.OrderID,
+    queueNo: order.QueueNo,
+    customerName: order.CustomerName || order.UserName || 'ลูกค้า Walk-in',
+    items: (order.items || []).map(item => ({
+      productName: item.ProductName,
+      qty: Number(item.Qty),
+      unitPrice: Number(item.UnitPrice)
+    })),
+    totalAmount: Number(order.TotalAmount || 0)
+  });
+
+  const validatePrintData = (order) => {
+    const data = buildPrintData(order);
+    if (!data.orderId) return 'ไม่มี Order ID';
+    if (!data.queueNo) return 'ไม่มีเลขคิว';
+    if (!data.items.length) return 'ไม่มีรายการอาหาร';
+    if (data.items.some(i => !i.productName || i.qty <= 0 || i.unitPrice < 0)) return 'ข้อมูลเมนู จำนวน หรือราคาไม่ถูกต้อง';
+    if (data.totalAmount < 0) return 'ราคารวมไม่ถูกต้อง';
+    const sum = data.items.reduce((a, i) => a + i.qty * i.unitPrice, 0);
+    if (Math.abs(sum - data.totalAmount) > 0.01) return `ราคารวม ฿${data.totalAmount} ไม่ตรงกับยอดรายการ ฿${sum}`;
+    return null;
+  };
+
+  const openPrintConfirm = (order, type = 'FIRST_PRINT') => {
+    const error = validatePrintData(order);
+    if (error) return showToast(`ข้อมูลสำหรับพิมพ์ไม่ถูกต้อง: ${error}`);
+    setPrintConfirmOrder({ order, type });
+  };
+
+  const apiErr = (res, data, fallback) =>
+    (res.status === 404 && data?.detail === 'Not Found')
+      ? 'เซิร์ฟเวอร์ยังไม่มี API นี้ (404 Not Found) — ต้อง deploy backend เวอร์ชันใหม่'
+      : (data?.detail || fallback);
+
+  const confirmPrint = async () => {
+    if (!printConfirmOrder || printBusy) return;
+    const { order, type } = printConfirmOrder;
+    if (printerStatus !== 'READY') {
+      showToast('❌ เครื่องพิมพ์ไม่พร้อมใช้งาน');
+      return;
+    }
+    const error = validatePrintData(order);
+    if (error) {
+      showToast(`ข้อมูลสำหรับพิมพ์ไม่ถูกต้อง: ${error}`);
+      return;
+    }
+
+    const local = buildPrintData(order);
+    setPrintBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/print`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ print_type: type, printer: 'MOCK_PRINTER_01', user_role: 'Front Staff' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(apiErr(res, data, 'ไม่สามารถพิมพ์ใบสั่งซื้อได้'));
+        if (res.status === 409) { setPrintConfirmOrder(null); fetchData(); }
+        return;
+      }
+      const server = data.print_data;
+      console.log('[PRINT_LOG] ส่งไปเครื่องพิมพ์:', server);
+      const diffs = [];
+      if (!server) diffs.push('ไม่มีข้อมูลตอบกลับ');
+      else {
+        if (String(server.queueNo) !== String(local.queueNo)) diffs.push('เลขคิว');
+        if (server.customerName !== local.customerName) diffs.push('ชื่อลูกค้า');
+        if (Math.abs(Number(server.totalAmount) - local.totalAmount) > 0.001) diffs.push('ราคารวม');
+        const norm = (arr) => JSON.stringify(arr.sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+        const l = norm(local.items.map(i => [i.productName, i.qty, i.unitPrice]));
+        const s = norm((server.items || []).map(i => [i.product, Number(i.qty), Number(i.unit_price)]));
+        if (l !== s) diffs.push('เมนู/จำนวน/ราคา');
+      }
+      if (diffs.length) {
+        console.warn('[PRINT_LOG] ข้อมูลไม่ตรงกัน:', diffs, { local, server });
+        showToast(`⚠️ พิมพ์แล้ว แต่ข้อมูลไม่ตรงกับออเดอร์: ${diffs.join(', ')}`);
+      } else {
+        showToast(type === 'REPRINT' ? `พิมพ์ซ้ำคิว ${order.QueueNo} สำเร็จ (ข้อมูลตรงกับออเดอร์)` : `พิมพ์ใบคิว ${order.QueueNo} สำเร็จ (ข้อมูลตรงกับออเดอร์)`);
+      }
+      setPrintConfirmOrder(null);
+      fetchData();
+    } catch {
+      showToast('ไม่สามารถเชื่อมต่อระบบพิมพ์ได้');
+    } finally {
+      setPrintBusy(false);
+    }
+  };
+
+  const recallQueue = async (order) => {
+    if (recallBusy[order.OrderID]) return;
+    setRecallBusy(prev => ({ ...prev, [order.OrderID]: true }));
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/recall`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queue_no: order.QueueNo, user_role: 'Front Staff' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(apiErr(res, data, 'ไม่สามารถเรียกคิวซ้ำได้'));
+        return;
+      }
+      showToast(`📢 เรียกคิว ${order.QueueNo} อีกครั้ง`);
+      fetchData();
+    } catch {
+      showToast('ไม่สามารถเชื่อมต่อระบบเรียกคิว');
+    } finally {
+      setRecallBusy(prev => ({ ...prev, [order.OrderID]: false }));
+    }
+  };
+
+  const openNoShowModal = (order) => {
+    const minutes = order.ReadyAt ? (nowTick - new Date(order.ReadyAt).getTime()) / 60000 : 0;
+    if (minutes < NO_SHOW_WARNING_MINUTES) {
+      showToast(`คิว ${order.QueueNo} ยังไม่ถึง ${NO_SHOW_WARNING_MINUTES} นาที`);
+      return;
+    }
+    setNoShowModal(order);
+  };
+
+  const confirmNoShow = async () => {
+    if (!noShowModal) return;
+    const order = noShowModal;
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/status`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'NoShow', user_role: 'Front Staff', cancel_reason: 'ลูกค้าไม่มารับอาหาร (พนักงานยืนยัน)' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.detail || 'ไม่สามารถตัดออเดอร์เป็น No-Show ได้');
+        return;
+      }
+      showToast(`ตัดคิว ${order.QueueNo} เป็นลูกค้าไม่มารับอาหารแล้ว`);
+      setNoShowModal(null);
+      fetchData();
+    } catch {
+      showToast('เชื่อมต่อระบบตัดออเดอร์ไม่สำเร็จ');
+    }
+  };
 
   // 🔴 เปิด Modal ยกเลิกคำสั่งซื้อ (แทนการใช้ prompt)
   const openCancelModal = (order, defaultAction = 'immediate') => {
@@ -255,10 +422,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }
   };
 
-  const markNoShow = (order) => {
-    if (!window.confirm(`ยืนยันว่าคิว ${order.QueueNo} เกินเวลา และต้องการเคลียร์เป็น No-Show (Food Waste)?`)) return;
-    updateStatus(order.OrderID, 'NoShow', 'ลูกค้าไม่มารับอาหารเกินเวลา (ตัดจำหน่าย)');
-  };
+  const markNoShow = openNoShowModal;
 
   const viewCustomerProfile = (order) => {
     if (!order.UserId) return alert('ออเดอร์นี้เป็นลูกค้า Walk-in ไม่มีข้อมูลโปรไฟล์');
@@ -361,7 +525,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
     return `${Math.max(0, Math.floor((nowTick - new Date(timestamp).getTime()) / 60000))} นาที`;
   };
 
-  const isOverdue = (timestamp) => timestamp && ((nowTick - new Date(timestamp).getTime()) / 60000 > 120);
+  const minutesWaiting = (timestamp) => timestamp ? Math.max(0, (nowTick - new Date(timestamp).getTime()) / 60000) : 0;
+  const isPickupWarning = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_WARNING_MINUTES;
+  const is120Reminder = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_MANUAL_REMINDER_MINUTES;
 
   const verifyingOrders = orders.filter(o => o.Status === 'Verifying_Slip');
   const activeOrders = orders.filter(o => o.Status !== 'Verifying_Slip' && o.Status !== 'Completed' && o.Status !== 'Cancelled' && o.Status !== 'NoShow');
@@ -369,7 +535,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   const navItems = [
     { id: 'orders', label: 'Queue & Slips', caption: 'จัดการคิว & ตรวจสลิป', icon: 'orders', badge: verifyingOrders.length || null },
-    { id: 'stale', label: 'Stale Orders', caption: 'ออเดอร์ตกค้าง (120น.)', icon: 'stale', badge: staleOrders.length || null },
+    { id: 'stale', label: 'คิวรอรับอาหาร', caption: 'แจ้งเตือน 15น. / ตัดสินใจเอง', icon: 'stale', badge: staleOrders.length || null },
     { id: 'walkin', label: 'Walk-in POS', caption: 'แคชเชียร์สั่งอาหารหน้าร้าน', icon: 'walkin' },
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
     { id: 'reports', label: 'Reports', caption: 'รายงานการขายและปัญหา', icon: 'orders' },
@@ -476,6 +642,19 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
         {/* ===== CONTENT AREA ===== */}
         <main className="cv-content">
+          {pendingPrintJobs.length > 0 && (
+            <div className="cv-print-alert">
+              <div>
+                <b>🖨️ มีใบสั่งซื้อรอยืนยันการพิมพ์ {pendingPrintJobs.length} รายการ</b>
+                <small>อาหารปรุงเสร็จแล้วจากครัว กรุณาตรวจสอบข้อมูลบนตั๋วก่อนยืนยันการพิมพ์</small>
+              </div>
+              <button className="cv-btn btn-dark" onClick={() => {
+                const job = pendingPrintJobs[0];
+                const order = orders.find(o => o.OrderID === job.OrderID);
+                if (order) openPrintConfirm(order, 'FIRST_PRINT');
+              }}>ตรวจสอบและยืนยัน</button>
+            </div>
+          )}
           {!foodCourtOpen && (
             <div className="foodcourt-closed-banner">
               <span>🔒</span>
@@ -492,6 +671,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
           {/* TAB 1: QUEUE & SLIPS */}
           {activeTab === 'orders' && (
             <div className="cv-stack">
+              <div className="cv-printer-control">
+                <span>🖨️ Mock Printer: <b>{printerStatus}</b></span>
+                <button className="cv-btn btn-ghost" onClick={() => setPrinterStatus(v => v === 'READY' ? 'OFFLINE' : 'READY')}>
+                  เปลี่ยนเป็น {printerStatus === 'READY' ? 'OFFLINE' : 'READY'}
+                </button>
+              </div>
               <div className="cv-stat-grid">
                 <div className="cv-card cv-bg-coral">
                   <div className="cv-decor-circle-1" />
@@ -617,11 +802,16 @@ export default function CounterView({ user, apiBase, onLogout }) {
                               <td>
                                 <div className="cv-action-buttons">
                                   {o.Status === 'Ready' && (
-                                    <button onClick={() => updateStatus(o.OrderID, 'Completed')} className="cv-btn btn-success">
-                                      ✅ ส่งมอบอาหาร
-                                    </button>
+                                    <>
+                                      <button onClick={() => recallQueue(o)} className="cv-btn btn-warning-light" disabled={recallBusy[o.OrderID]}>
+                                        📢 {recallBusy[o.OrderID] ? 'กำลังเรียก...' : 'เรียกคิวอีกครั้ง'}
+                                      </button>
+                                      <button onClick={() => updateStatus(o.OrderID, 'Completed')} className="cv-btn btn-success">
+                                        ✅ ส่งมอบอาหาร
+                                      </button>
+                                    </>
                                   )}
-                                  <button onClick={() => printStub(o.QueueNo)} className="cv-btn-icon" title="พิมพ์ตั๋วคิว"><Icon name="print" size={16} /></button>
+                                  <button onClick={() => openPrintConfirm(o, 'REPRINT')} className="cv-btn-icon" title="พิมพ์ใบสั่งซื้อ (ต้องยืนยัน)"><Icon name="print" size={16} /></button>
                                   <button onClick={() => viewCustomerProfile(o)} className="cv-btn-icon" title="ข้อมูลลูกค้า"><Icon name="user" size={16} /></button>
                                   
                                   {/* ของหมด/ยกเลิกใช้ได้เฉพาะคิวที่ยังไม่เสร็จ */}
@@ -657,7 +847,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div className="cv-card-head">
                 <div>
                   <h3>ออเดอร์ตกค้าง (ลูกค้ายังไม่มารับอาหาร)</h3>
-                  <div className="caption">เกณฑ์กำหนด: ปรุงเสร็จแล้ววางทิ้งไว้เกิน 120 นาที (2 ชม.) สามารถตัดจำหน่ายเป็น Food Waste</div>
+                  <div className="caption">แจ้งเตือนเมื่อเกิน 15 นาที • เรียกคิวซ้ำได้เรื่อย ๆ • การตัดเป็น No-Show เป็นการตัดสินใจของพนักงานเท่านั้น (ไม่อัตโนมัติ)</div>
                 </div>
               </div>
               <div className="cv-table-wrapper">
@@ -675,20 +865,29 @@ export default function CounterView({ user, apiBase, onLogout }) {
                       <tr><td colSpan="4" className="empty-state">ไม่มีออเดอร์ตกค้างที่รอรับ</td></tr>
                     ) : (
                       staleOrders.map(o => {
-                        const overdue = isOverdue(o.ReadyAt);
+                        const warning = isPickupWarning(o.ReadyAt);
+                        const longWait = is120Reminder(o.ReadyAt);
                         return (
                           <tr key={o.OrderID}>
                             <td><span className="queue-pill bold">{o.QueueNo}</span></td>
                             <td>{o.items?.map(i => `${i.ProductName} (x${i.Qty})`).join(', ')}</td>
                             <td>
                               <Badge tone={overdue ? 'danger' : 'warning'}>
-                                รอมาแล้ว {getElapsedLabel(o.ReadyAt)} {overdue ? '⚠️ เกิน 2 ชม.' : ''}
+                                รอมาแล้ว {getElapsedLabel(o.ReadyAt)} {warning ? '⚠️ ยังไม่มารับ' : ''} {longWait ? '⏰ เกิน 120 นาที' : ''}
                               </Badge>
                             </td>
                             <td>
-                              <button onClick={() => markNoShow(o)} className="cv-btn btn-danger">
-                                🚫 เคลียร์คิว (ไม่มารับ/ทิ้งอาหาร)
-                              </button>
+                              <div className="cv-stale-actions">
+                                <button onClick={() => recallQueue(o)} className="cv-btn btn-warning-light">
+                                  📢 เรียกคิวอีกครั้ง
+                                </button>
+                                <button onClick={() => viewCustomerProfile(o)} className="cv-btn btn-dark">
+                                  📞 ข้อมูลติดต่อ
+                                </button>
+                                <button onClick={() => openNoShowModal(o)} disabled={!warning} className="cv-btn btn-danger">
+                                  🚫 ลูกค้าไม่มารับอาหาร
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -854,6 +1053,57 @@ export default function CounterView({ user, apiBase, onLogout }) {
       </div>
 
       {/* 🔴 NEW MODAL: CANCEL ORDER (RECEIPT & BILL BREAKDOWN STYLE) */}
+      {printConfirmOrder && (
+        <div className="cv-modal-overlay" onClick={() => setPrintConfirmOrder(null)}>
+          <div className="cv-modal cv-print-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-modal-head">
+              <div><h3>🖨️ ยืนยันการพิมพ์</h3><div className="caption">ตรวจข้อมูลสำคัญก่อนส่งไปยัง Mock Printer</div></div>
+              <button onClick={() => setPrintConfirmOrder(null)} className="cv-modal-close">✖</button>
+            </div>
+            <div className="print-ticket-preview">
+              <div><b>เลขคิว:</b> {printConfirmOrder.order.QueueNo}</div>
+              <div><b>ชื่อลูกค้า:</b> {printConfirmOrder.order.CustomerName || printConfirmOrder.order.UserName || 'ลูกค้า Walk-in'}</div>
+              <div className="receipt-divider" />
+              {(printConfirmOrder.order.items || []).map((i, idx) => (
+                <div className="receipt-item-row" key={idx}><span>{i.ProductName} × {i.Qty}</span><span>฿{fmtMoney(Number(i.UnitPrice) * Number(i.Qty))}</span></div>
+              ))}
+              <div className="receipt-divider" />
+              <div className="receipt-total-row"><span>รวม</span><span className="receipt-total-val">฿{fmtMoney(printConfirmOrder.order.TotalAmount)}</span></div>
+            </div>
+            <div className={printerStatus === 'READY' ? 'cv-printer-ready' : 'cv-printer-offline'}>
+              🖨️ สถานะเครื่องพิมพ์: <b>{printerStatus}</b>
+            </div>
+            <div className="modal-footer-btns">
+              <button onClick={() => setPrintConfirmOrder(null)} className="cv-btn btn-ghost">ยกเลิก</button>
+              <button onClick={confirmPrint} className="cv-btn btn-dark" disabled={printerStatus !== 'READY' || printBusy}>{printBusy ? 'กำลังพิมพ์...' : 'ยืนยันการพิมพ์'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {noShowModal && (
+        <div className="cv-modal-overlay" onClick={() => setNoShowModal(null)}>
+          <div className="cv-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-modal-head">
+              <div><h3>🚫 ยืนยันลูกค้าไม่มารับอาหาร</h3><div className="caption">การตัดคิวเป็นการตัดสินใจของพนักงาน ไม่ตัดอัตโนมัติ</div></div>
+              <button onClick={() => setNoShowModal(null)} className="cv-modal-close">✖</button>
+            </div>
+            <div className="cv-customer-info">
+              <div className="info-row"><span>คิว</span><b>{noShowModal.QueueNo}</b></div>
+              <div className="info-row"><span>ลูกค้า</span><b>{noShowModal.CustomerName || 'ลูกค้า Walk-in'}</b></div>
+              <div className="info-row"><span>โทรศัพท์</span><b>{noShowModal.CustomerPhone || '-'}</b></div>
+              <div className="info-row"><span>อีเมล</span><b>{noShowModal.CustomerEmail || '-'}</b></div>
+              <div className="info-row"><span>รอมาแล้ว</span><b>{getElapsedLabel(noShowModal.ReadyAt)}</b></div>
+            </div>
+            <p style={{ marginTop: 14, color: PALETTE.textSub, fontSize: 13 }}>สามารถเรียกคิวซ้ำได้ตลอดเวลา หากยังไม่แน่ใจว่าไม่มารับอาหาร ไม่จำเป็นต้องตัดคิวทันที</p>
+            <div className="modal-footer-btns">
+              <button onClick={() => setNoShowModal(null)} className="cv-btn btn-ghost">ยกเลิก</button>
+              <button onClick={confirmNoShow} className="cv-btn btn-danger">ยืนยัน ลูกค้าไม่มารับ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cancelModal && (
         <div className="cv-modal-overlay" onClick={() => setCancelModal(null)}>
           <div className="cv-modal cv-cancel-modal" onClick={e => e.stopPropagation()}>
@@ -1290,6 +1540,16 @@ const CV_STYLES = `
 .report-card small { display: block; font-size: 12px; color: ${PALETTE.textSub}; }
 @media (max-width: 900px) { .report-grid { grid-template-columns: repeat(2, 1fr); } }
 
+.cv-print-alert { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:16px 18px; margin-bottom:16px; border:1px solid ${PALETTE.yellow}; background:${PALETTE.yellowLight}; border-radius:var(--radius-lg); }
+.cv-print-alert small { display:block; color:${PALETTE.textSub}; margin-top:4px; }
+.cv-printer-control { display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-bottom:12px; font-size:13px; color:${PALETTE.textSub}; }
+.cv-printer-control b { color:${PALETTE.dark}; }
+.cv-stale-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.cv-print-modal { width:500px; }
+.print-ticket-preview { background:#fff; border:1px dashed ${PALETTE.border}; border-radius:var(--radius-md); padding:16px; margin-bottom:12px; }
+.cv-printer-ready, .cv-printer-offline { padding:10px 12px; border-radius:var(--radius-md); margin-top:10px; font-size:13px; }
+.cv-printer-ready { background:${PALETTE.greenLight}; color:${PALETTE.green}; }
+.cv-printer-offline { background:${PALETTE.redLight}; color:${PALETTE.red}; }
 /* ---------- Modals ---------- */
 .cv-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000; padding: 16px; }
 .cv-modal { background: ${PALETTE.white}; padding: 24px; border-radius: var(--radius-lg); width: 440px; max-width: 100%; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }

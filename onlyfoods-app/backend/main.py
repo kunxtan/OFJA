@@ -363,6 +363,15 @@ class StatusUpdateSchema(BaseModel):
     user_role: str
     cancel_reason: Optional[str] = None
 
+class PrintRequestSchema(BaseModel):
+    print_type: str = 'FIRST_PRINT'
+    printer: str = 'MOCK_PRINTER_01'
+    user_role: str = 'Front Staff'
+
+class RecallRequestSchema(BaseModel):
+    queue_no: str
+    user_role: str = 'Front Staff'
+
 class StoreCreateSchema(BaseModel):
     store_name: str
 
@@ -1779,12 +1788,154 @@ def verify_slip(order_id: int, payload: VerifySlipSchema, db=Depends(get_db)):
         db.commit()
         return {"success": True}
 
+def ensure_print_tables(db):
+    with db.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS PrintJob (
+                PrintJobID INT AUTO_INCREMENT PRIMARY KEY,
+                OrderID INT NOT NULL,
+                Status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+                PrintType VARCHAR(20) NOT NULL DEFAULT 'FIRST_PRINT',
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PrintedAt DATETIME NULL,
+                PrintedBy VARCHAR(100) NULL,
+                UNIQUE KEY uq_printjob_order_first (OrderID, PrintType),
+                FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS PrintLog (
+                PrintLogID INT AUTO_INCREMENT PRIMARY KEY,
+                OrderID INT NOT NULL,
+                PrintJobID INT NULL,
+                PrintType VARCHAR(20) NOT NULL,
+                Printer VARCHAR(100) NOT NULL,
+                QueueNo VARCHAR(20) NOT NULL,
+                CustomerName VARCHAR(100) NULL,
+                ItemsJson LONGTEXT NOT NULL,
+                TotalAmount DECIMAL(10,2) NOT NULL,
+                Status VARCHAR(20) NOT NULL,
+                PerformedBy VARCHAR(100) NOT NULL,
+                CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+@app.get("/api/print-jobs/pending")
+def get_pending_print_jobs(store_id: int, db=Depends(get_db)):
+    ensure_print_tables(db)
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT pj.PrintJobID, pj.OrderID, pj.Status, pj.PrintType, pj.CreatedAt,
+                   o.QueueNo, o.TotalAmount
+            FROM PrintJob pj
+            JOIN `Order` o ON o.OrderID=pj.OrderID
+            WHERE o.StoreId=%s AND pj.Status='PENDING' AND pj.PrintType='FIRST_PRINT'
+            ORDER BY pj.CreatedAt ASC
+        """, (store_id,))
+        return cur.fetchall()
+
+@app.get("/api/orders/{order_id}/print-logs")
+def get_print_logs(order_id: int, db=Depends(get_db)):
+    ensure_print_tables(db)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM PrintLog WHERE OrderID=%s ORDER BY PrintLogID DESC", (order_id,))
+        return cur.fetchall()
+
+@app.post("/api/orders/{order_id}/print")
+def print_order(order_id: int, payload: PrintRequestSchema, db=Depends(get_db)):
+    ensure_print_tables(db)
+    allowed_roles = {'Front Staff', 'Kitchen Staff', 'Shop Owner'}
+    if payload.user_role not in allowed_roles:
+        raise HTTPException(status_code=403, detail='ไม่มีสิทธิ์พิมพ์ใบสั่งซื้อ')
+    try:
+        with db.cursor() as cur:
+            cur.execute("""
+                SELECT o.*, u.FullName AS CustomerName, u.Phone AS CustomerPhone, u.Email AS CustomerEmail
+                FROM `Order` o
+                LEFT JOIN Users u ON u.UserId=o.UserId
+                WHERE o.OrderID=%s
+                FOR UPDATE
+            """, (order_id,))
+            order = cur.fetchone()
+            if not order:
+                raise HTTPException(status_code=404, detail='ไม่พบออเดอร์')
+            if order['Status'] in ('Cancelled', 'NoShow'):
+                raise HTTPException(status_code=400, detail='ออเดอร์นี้ไม่สามารถพิมพ์ได้')
+            cur.execute("""
+                SELECT od.ProductId, od.Qty, od.UnitPrice, p.ProductName
+                FROM OrderDetail od JOIN Product p ON p.ProductId=od.ProductId
+                WHERE od.OrderID=%s ORDER BY od.DetailID
+            """, (order_id,))
+            items = cur.fetchall()
+            if not order['QueueNo'] or not items:
+                raise HTTPException(status_code=400, detail='ข้อมูลใบพิมพ์ไม่ครบ')
+            if any(not i['ProductName'] or int(i['Qty']) <= 0 or float(i['UnitPrice']) < 0 for i in items):
+                raise HTTPException(status_code=400, detail='ข้อมูลเมนู จำนวน หรือราคาไม่ถูกต้อง')
+            print_type = payload.print_type if payload.print_type in ('FIRST_PRINT','REPRINT') else 'FIRST_PRINT'
+            job_id = None
+            if print_type == 'FIRST_PRINT':
+                cur.execute("SELECT * FROM PrintJob WHERE OrderID=%s AND PrintType='FIRST_PRINT' LIMIT 1", (order_id,))
+                job = cur.fetchone()
+                if job and job['Status'] == 'PRINTED':
+                    raise HTTPException(status_code=409, detail='ใบสั่งซื้อนี้พิมพ์แล้ว หากต้องการพิมพ์อีกครั้งให้ใช้ Reprint')
+                if not job:
+                    cur.execute("INSERT INTO PrintJob (OrderID, Status, PrintType) VALUES (%s,'PENDING','FIRST_PRINT')", (order_id,))
+                    job_id = cur.lastrowid
+                else:
+                    job_id = job['PrintJobID']
+            else:
+                cur.execute("SELECT PrintJobID FROM PrintJob WHERE OrderID=%s AND PrintType='FIRST_PRINT' LIMIT 1", (order_id,))
+                job = cur.fetchone()
+                job_id = job['PrintJobID'] if job else None
+            customer_name = order.get('CustomerName') or 'ลูกค้า Walk-in'
+            items_json = json.dumps([{'product': i['ProductName'], 'qty': int(i['Qty']), 'unit_price': float(i['UnitPrice'])} for i in items], ensure_ascii=False)
+            total = float(order['TotalAmount'] or 0)
+            cur.execute("""
+                INSERT INTO PrintLog
+                (OrderID, PrintJobID, PrintType, Printer, QueueNo, CustomerName, ItemsJson, TotalAmount, Status, PerformedBy)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PRINTED',%s)
+            """, (order_id, job_id, print_type, payload.printer, order['QueueNo'], customer_name, items_json, total, payload.user_role))
+            log_id = cur.lastrowid
+            if print_type == 'FIRST_PRINT' and job_id:
+                cur.execute("UPDATE PrintJob SET Status='PRINTED', PrintedAt=%s, PrintedBy=%s WHERE PrintJobID=%s", (datetime.now(), payload.user_role, job_id))
+            log_audit(db, 'PRINT_ORDER' if print_type == 'FIRST_PRINT' else 'REPRINT_ORDER', payload.user_role, f"Order {order_id} Queue {order['QueueNo']} PrintType={print_type} LogID={log_id}")
+            db.commit()
+            return {'success': True, 'print_data': {'orderId': order_id, 'queueNo': order['QueueNo'], 'customerName': customer_name, 'items': json.loads(items_json), 'totalAmount': total, 'printer': payload.printer, 'printType': print_type}}
+    except HTTPException:
+        db.rollback(); raise
+    except Exception as e:
+        db.rollback(); raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/orders/{order_id}/recall")
+def recall_order(order_id: int, payload: RecallRequestSchema, db=Depends(get_db)):
+    ensure_order_columns(db)
+    allowed_roles = {'Front Staff', 'Kitchen Staff', 'Shop Owner'}
+    if payload.user_role not in allowed_roles:
+        raise HTTPException(status_code=403, detail='ไม่มีสิทธิ์เรียกคิวซ้ำ')
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT o.*, s.StoreName FROM `Order` o JOIN Store s ON s.StoreId=o.StoreId WHERE o.OrderID=%s", (order_id,))
+            order = cur.fetchone()
+            if not order: raise HTTPException(status_code=404, detail='ไม่พบออเดอร์')
+            if order['Status'] != 'Ready': raise HTTPException(status_code=400, detail='เรียกคิวซ้ำได้เฉพาะออเดอร์ที่พร้อมรับ')
+            if str(order['QueueNo']) != str(payload.queue_no): raise HTTPException(status_code=400, detail='เลขคิวไม่ตรงกับออเดอร์')
+            log_audit(db, 'RECALL_QUEUE', payload.user_role, f"Order {order_id} Queue {order['QueueNo']} เรียกคิวเดิมซ้ำ")
+            if order.get('UserId'):
+                send_notif(db, order['UserId'], f"ออเดอร์คิว {order['QueueNo']} อาหารพร้อมรับแล้ว!")
+            db.commit()
+            return {'success': True, 'order_id': order_id, 'queue_no': order['QueueNo']}
+    except HTTPException:
+        db.rollback(); raise
+    except Exception as e:
+        db.rollback(); raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/orders")
 def get_orders(store_id: Optional[int] = None, user_id: Optional[int] = None, db=Depends(get_db)):
     ensure_order_columns(db)
     ensure_product_columns(db)
     with db.cursor() as cur:
-        query = "SELECT o.*, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE 1=1"
+        query = "SELECT o.*, s.StoreName, u.FullName AS CustomerName, u.Username AS UserName, u.Phone AS CustomerPhone, u.Email AS CustomerEmail FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId LEFT JOIN Users u ON u.UserId=o.UserId WHERE 1=1"
         params = []
         if store_id:
             query += " AND o.StoreId = %s"
@@ -2110,6 +2261,7 @@ def get_kitchen_summary(store_id: int, db=Depends(get_db)):
 @app.put("/api/orders/{order_id}/status")
 def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)):
     ensure_order_columns(db)
+    ensure_print_tables(db)
     try:
         with db.cursor() as cur:
             cur.execute("SELECT Status FROM `Order` WHERE OrderID=%s", (order_id,))
@@ -2118,6 +2270,10 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 raise HTTPException(status_code=404, detail="ไม่พบออเดอร์นี้")
 
             current_status = current['Status']
+
+            # กดสถานะซ้ำ (เช่น Ready ซ้ำ) -> ไม่ทำอะไร ไม่รีเซ็ต ReadyAt ไม่ส่งแจ้งเตือน/ตั๋วซ้ำ
+            if current_status == payload.status and payload.status in ('Ready', 'Completed', 'Cancelled', 'NoShow'):
+                return {"success": True, "unchanged": True}
             
             # [ปรับปรุง] ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ห้ามย้อนกลับสถานะ
             if current_status == 'Completed' and payload.status != 'Completed':
@@ -2132,6 +2288,17 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
             status_code=400,
             detail="คนครัวสามารถเปลี่ยนสถานะได้เฉพาะ ปรุงเสร็จ หรือ ย้อนกลับเป็นกำลังปรุง เท่านั้น"
         )
+
+            if payload.status == 'NoShow':
+                if payload.user_role not in {'Front Staff', 'Kitchen Staff', 'Shop Owner'}:
+                    raise HTTPException(status_code=403, detail='ไม่มีสิทธิ์ตัดออเดอร์เป็นลูกค้าไม่มารับ')
+                if current_status != 'Ready':
+                    raise HTTPException(status_code=400, detail='ตัดเป็น No-Show ได้เฉพาะออเดอร์สถานะ Ready')
+                cur.execute("SELECT ReadyAt FROM `Order` WHERE OrderID=%s", (order_id,))
+                ready_row = cur.fetchone()
+                ready_at = ready_row.get('ReadyAt') if ready_row else None
+                if not ready_at or (datetime.now() - ready_at).total_seconds() < 15 * 60:
+                    raise HTTPException(status_code=400, detail='ออเดอร์นี้ยังไม่ถึง 15 นาทีหลังปรุงเสร็จ')
 
             terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
             if current_status in terminal_statuses and payload.status != current_status:
@@ -2151,6 +2318,14 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                     "UPDATE `Order` SET Status=%s, CancelReason=%s WHERE OrderID=%s", 
                     (payload.status, payload.cancel_reason, order_id)
                 )
+
+            if payload.status == 'Ready':
+                cur.execute("SELECT PrintJobID, Status FROM PrintJob WHERE OrderID=%s AND PrintType='FIRST_PRINT' LIMIT 1", (order_id,))
+                existing_job = cur.fetchone()
+                if not existing_job:
+                    cur.execute("INSERT INTO PrintJob (OrderID, Status, PrintType) VALUES (%s,'PENDING','FIRST_PRINT')", (order_id,))
+                elif existing_job['Status'] != 'PRINTED':
+                    cur.execute("UPDATE PrintJob SET Status='PENDING' WHERE PrintJobID=%s", (existing_job['PrintJobID'],))
             
             cur.execute("""SELECT o.UserId, o.QueueNo, o.StoreId, s.StoreName FROM `Order` o JOIN Store s ON o.StoreId = s.StoreId WHERE o.OrderID=%s""", (order_id,))
             o = cur.fetchone()
@@ -2170,6 +2345,9 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status} ร้าน {o['StoreName']} (ID:{o['StoreId']})")
             db.commit()
             return {"success": True}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

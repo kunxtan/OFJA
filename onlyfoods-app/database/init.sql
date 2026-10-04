@@ -173,3 +173,32 @@ INSERT INTO Users (Username, Password, FullName, Role, StoreId, Points, Phone, E
 ('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0, '0901234567', 'exec01@example.com')
 ON DUPLICATE KEY UPDATE FullName=VALUES(FullName);
 
+
+-- TC-2-13 to TC-2-31: Print / Recall / No-Show support
+CREATE TABLE IF NOT EXISTS PrintJob (
+    PrintJobID INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID INT NOT NULL,
+    Status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    PrintType VARCHAR(20) NOT NULL DEFAULT 'FIRST_PRINT',
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PrintedAt DATETIME NULL,
+    PrintedBy VARCHAR(100) NULL,
+    UNIQUE KEY uq_printjob_order_type (OrderID, PrintType),
+    FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS PrintLog (
+    PrintLogID INT AUTO_INCREMENT PRIMARY KEY,
+    OrderID INT NOT NULL,
+    PrintJobID INT NULL,
+    PrintType VARCHAR(20) NOT NULL,
+    Printer VARCHAR(100) NOT NULL,
+    QueueNo VARCHAR(20) NOT NULL,
+    CustomerName VARCHAR(100) NULL,
+    ItemsJson LONGTEXT NOT NULL,
+    TotalAmount DECIMAL(10,2) NOT NULL,
+    Status VARCHAR(20) NOT NULL,
+    PerformedBy VARCHAR(100) NOT NULL,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (OrderID) REFERENCES `Order`(OrderID) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
