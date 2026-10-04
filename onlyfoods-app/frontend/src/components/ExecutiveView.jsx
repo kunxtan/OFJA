@@ -1507,9 +1507,6 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
     const { API, orders, stores, loading, pushToast, navigateTo } = ctx;
     const [anchor, setAnchor] = useState(todayISO());
     const [days, setDays] = useState(1);
-    const [customRange, setCustomRange] = useState(false);
-    const [customStart, setCustomStart] = useState(todayISO());
-    const [customEnd, setCustomEnd] = useState(todayISO());
     const [exportPreview, setExportPreview] = useState(null);
     const [issueReports, setIssueReports] = useState([]);
     const [issueLoading, setIssueLoading] = useState(true);
@@ -1542,14 +1539,10 @@ function OverviewPage({ ctx, foodCourtOpen, switchingCourt, onToggleCourt }) {
         return () => { cancelled = true; };
     }, [API, stores]);
 
-    useEffect(() => { setShowAllIssueStores(false); }, [days, anchor , customRange, customStart, customEnd]);
+    useEffect(() => { setShowAllIssueStores(false); }, [days, anchor]);
     const report = useMemo(() => {
-        const bounds = customRange
-        ? customPeriodBounds(customStart, customEnd)
-        : periodBounds(anchor, days);
-       const prevBounds = customRange
-        ? previousBoundsForRange(customStart, customEnd)
-        : previousBounds(anchor, days);
+        const bounds = periodBounds(anchor, days);
+        const prevBounds = previousBounds(anchor, days);
         const current = orders.filter((o) => inRange(o, bounds));
         const previous = orders.filter((o) => inRange(o, prevBounds));
         const now = summarize(current);
@@ -1614,34 +1607,16 @@ const storeRows = Array.from(storeMap.values())
             current,
             hasPreviousData: previous.length > 0,
             storeRows,
-            buckets: customRange
-              ? buildBucketsForRange(now.completed,customStart,customEnd )
-              : buildBuckets(now.completed,anchor,days ),
+            buckets: buildBuckets(now.completed, anchor, days),
             peakHour: peakSales > 0 ? peakHour : null,
             peakSales,
             activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
         };
-    }, [orders, stores, anchor, days , customRange,customStart,customEnd]);
-    const effectiveDays = customRange
-    ? rangeDayCount(customStart, customEnd)
-    : days;
-
-const periodLabel = customRange
-    ? effectiveDays === 1
-        ? `วันที่ ${thaiDate(customStart)}`
-        : `${thaiDate(customStart)} – ${thaiDate(customEnd)}`
-    : days === 1
-        ? `วันที่ ${thaiDate(anchor)}`
-        : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
-
-const compareLabel = customRange
-    ? `เทียบ ${effectiveDays} วันก่อนหน้า`
-    : days === 1
-        ? 'เทียบวันก่อนหน้า'
-        : `เทียบ ${days} วันก่อนหน้า`;
+    }, [orders, stores, anchor, days]);
+    const periodLabel = days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+    const compareLabel = days === 1 ? 'เทียบวันก่อนหน้า' : `เทียบ ${days} วันก่อนหน้า`;
     const visibleStoreRows = report.storeRows;
-    const issueBounds = customRange
-    ? customPeriodBounds(customStart, customEnd): periodBounds(anchor, days);
+    const issueBounds = periodBounds(anchor, days);
     const periodIssueReports = issueReports.filter((item) => {
         const at = parseOrderDate(item.CreatedAt);
         return at && at >= issueBounds.start && at < issueBounds.end;
@@ -1677,7 +1652,7 @@ const compareLabel = customRange
     ];
 
     // 1 วัน: แสดงข้อมูลแยกร้าน
-    if (effectiveDays === 1) {
+    if (days === 1) {
         return [
             [
                 'ร้านค้า',
@@ -1703,7 +1678,7 @@ const compareLabel = customRange
         ];
     }
 
-   // หลายวัน: แสดงข้อมูลแยกรายวัน
+    // 7 / 14 / 30 วัน: แสดงข้อมูลแยกรายวัน
     const dailyRows = report.buckets.map((bucket) => {
         const bucketOrders = report.current.filter((o) => {
             const at = parseOrderDate(o.CreatedAt);
@@ -1740,7 +1715,7 @@ const compareLabel = customRange
     ];
 };
     const saveCsv = () => {
-        exportCsv(`onlyfoods-executive-report-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.csv`, csvRows());
+        exportCsv(`onlyfoods-executive-report-${anchor}-${days}d.csv`, csvRows());
         setExportPreview(null);
         pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
     };
@@ -1762,9 +1737,9 @@ const compareLabel = customRange
             ...report.storeRows.map(s => [s.StoreName, s.completedCount, s.cancelledCount, Math.round(s.grossSales), Math.round(s.sales), s.cancelRate === null ? 'N/A' : Number(s.cancelRate.toFixed(2))])
         ];
 
-        const timelineRows = [[effectiveDays === 1 ? 'ช่วงเวลา' : 'วันที่', 'ออเดอร์สำเร็จ', 'ออเดอร์ยกเลิก', 'ยอดขายก่อนหักยกเลิก (บาท)', 'ยอดขายสุทธิ (บาท)', 'อัตราการยกเลิก (%)']];
+        const timelineRows = [[days === 1 ? 'ช่วงเวลา' : 'วันที่', 'ออเดอร์สำเร็จ', 'ออเดอร์ยกเลิก', 'ยอดขายก่อนหักยกเลิก (บาท)', 'ยอดขายสุทธิ (บาท)', 'อัตราการยกเลิก (%)']];
 
-        if (effectiveDays === 1) {
+        if (days === 1) {
             for (let h = 0; h < 24; h += 1) {
                 const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && at.getHours() === h; });
                 const summary = summarize(bucketOrders);
@@ -1778,7 +1753,7 @@ const compareLabel = customRange
             });
         }
 
-        exportXlsx(`onlyfoods-overview-${customRange ? `${customStart}-to-${customEnd}` : `${anchor}-${days}d`}.xlsx`, [
+        exportXlsx(`onlyfoods-overview-${anchor}-${days}d.xlsx`, [
             { name: 'สรุปภาพรวม', rows: overviewRows, widths: [38, 24] },
             { name: 'รายงานรายร้าน', rows: storeRows, widths: [32, 18, 18, 30, 22, 22] },
             { name: 'ยอดขายตามเวลา', rows: timelineRows, widths: [18, 18, 18, 30, 22, 22] }
@@ -2024,9 +1999,9 @@ const compareLabel = customRange
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
               <div style={{ color: T.muted, fontSize: '14px', fontWeight: 500 }}>
-                {effectiveDays === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}
+                {days === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}
               </div>
-              <StorePeriodPicker anchor={anchor} setAnchor={setAnchor} days={days} setDays={setDays} custom={customRange} setCustom={setCustomRange} startDate={customStart} setStartDate={setCustomStart} endDate={customEnd} setEndDate={setCustomEnd} />
+              <PeriodPicker anchor={anchor} setAnchor={setAnchor} days={days} setDays={setDays}/>
             </div>
             <h3 style={{ margin: '6px 0 0', fontSize: '24px', fontWeight: 700, color: T.ink }}>
               {money(report.now.sales)} บาท
@@ -2101,10 +2076,10 @@ const compareLabel = customRange
 
       <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={periodLabel} loading={loading} showStore onStoreClick={(storeId) => ctx.navigateTo('store-sales', storeId)}/>
 
-      <Card title="รายงานปัญหาจากลูกค้า" subtitle={effectiveDays === 1? `รายงานที่แจ้งใน${periodLabel}` : `จำนวนรายงานแยกตามร้าน · ${periodLabel}`} style={{ marginTop: '16px' }} right={<Badge tone="warning">{money(periodIssueReports.length)} รายการ</Badge>}>
+      <Card title="รายงานปัญหาจากลูกค้า" subtitle={days === 1 ? `รายงานที่แจ้งในวันที่ ${thaiDate(anchor)}` : `จำนวนรายงานแยกตามร้าน · ${periodLabel}`} style={{ marginTop: '16px' }} right={<Badge tone="warning">{money(periodIssueReports.length)} รายการ</Badge>}>
         {issueLoading ? <EmptyState text="กำลังโหลดรายงานปัญหา..."/> : periodIssueReports.length === 0 ? (
           <EmptyState text="ไม่มีรายงานปัญหาในช่วงเวลาที่เลือก"/>
-        ) : effectiveDays === 1 ? (
+        ) : days === 1 ? (
           <div style={{ display: 'grid', gap: '10px' }}>
             {periodIssueReports.slice(0, 5).map((item) => (
               <button key={item.ReportID} type="button" onClick={() => navigateTo('store-sales', item.StoreId, true)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', width: '100%', textAlign: 'left', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '13px 14px', background: '#FFF', cursor: 'pointer', fontFamily: FONT_STACK }}>
@@ -2178,15 +2153,15 @@ const compareLabel = customRange
                   <strong style={{ display: 'block', color: T.ink, marginTop: '6px', fontSize: '16px' }}>{value}</strong>
                 </div>))}
             </div>
-            <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>{exportPreview === 'csv' && effectiveDays > 1 ? 'ตัวอย่างข้อมูลสรุปผลรายวัน' : 'ตัวอย่างข้อมูลสรุปผลรายร้าน'}</div>
+            <div style={{ ...captionStyle, color: T.text, fontWeight: 700, marginBottom: '8px' }}>{exportPreview === 'csv' && days > 1 ? 'ตัวอย่างข้อมูลสรุปผลรายวัน' : 'ตัวอย่างข้อมูลสรุปผลรายร้าน'}</div>
 
 <div style={{ overflowX: 'auto' }}><table style={tableStyle}>
     <thead><tr>
-        <th style={thStyle}>{exportPreview === 'csv' && effectiveDays > 1 ? 'วันที่' : 'ร้านค้า'}</th>
+        <th style={thStyle}>{exportPreview === 'csv' && days > 1 ? 'วันที่' : 'ร้านค้า'}</th>
         <th style={thRightStyle}>ออเดอร์สำเร็จ</th><th style={thRightStyle}>ออเดอร์ที่ยกเลิก</th><th style={thRightStyle}>ยอดขายก่อนหักยกเลิก</th><th style={thRightStyle}>ยอดขายสุทธิ</th><th style={thRightStyle}>อัตราการยกเลิก</th>
     </tr></thead>
     <tbody>
-        {exportPreview === 'csv' && effectiveDays > 1 ? <>
+        {exportPreview === 'csv' && days > 1 ? <>
             {report.buckets.slice(0, 6).map(bucket => {
                 const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && toISODate(at) === bucket.key; }), summary = summarize(bucketOrders);
                 return <tr key={bucket.key} style={trStyle}>
@@ -2207,8 +2182,8 @@ const compareLabel = customRange
     </tbody>
 </table></div>
 
-{exportPreview === 'csv' && effectiveDays > 1 && report.buckets.length > 6 && <p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>และอีก {report.buckets.length - 6} วันในไฟล์จริง</p>}
-{!(exportPreview === 'csv' && effectiveDays > 1) && report.storeRows.length > 6 && <p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>และอีก {report.storeRows.length - 6} ร้านในไฟล์จริง</p>}
+{exportPreview === 'csv' && days > 1 && report.buckets.length > 6 && <p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>และอีก {report.buckets.length - 6} วันในไฟล์จริง</p>}
+{!(exportPreview === 'csv' && days > 1) && report.storeRows.length > 6 && <p style={{ ...captionStyle, textAlign: 'center', marginTop: '10px' }}>และอีก {report.storeRows.length - 6} ร้านในไฟล์จริง</p>}
           </div>
         </div>
       </Modal>
