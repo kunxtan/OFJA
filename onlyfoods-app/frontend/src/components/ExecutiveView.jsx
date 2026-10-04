@@ -5085,16 +5085,18 @@ function CustomerInfoPage({ ctx }) {
     const [activityLoading, setActivityLoading] = useState(false);
     const [activityError, setActivityError] = useState('');
     const searchCustomers = async () => {
-        const keyword = query.trim();
-        if (!keyword) { setCustomers([]); setSearched(false); setError(''); return; }
-        setLoading(true); setError('');
-        try {
-            const data = await callApi(`${API}/api/executive/customers?search=${encodeURIComponent(keyword)}`);
-            setCustomers(Array.isArray(data) ? data : []); setSearched(true);
-        } catch (err) { setCustomers([]); setSearched(true); setError(err.message); }
-        finally { setLoading(false); }
-    };
-
+    const keyword = query.trim();
+    if (!keyword) {
+        setCustomers([]); setSearched(false); setError(''); setSelectedCustomer(null); setActivities([]); setActivityError(''); return;
+    }
+    setSelectedCustomer(null); setActivities([]); setActivityError(''); setLoading(true); setError('');
+    try {
+        const data = await callApi(`${API}/api/executive/customers?search=${encodeURIComponent(keyword)}`);
+        setCustomers(Array.isArray(data) ? data : []); setSearched(true);
+    } catch (err) {
+        setCustomers([]); setSearched(true); setError(err.message);
+    } finally { setLoading(false); }
+};
     const openCustomer = async (customer) => {
     setSelectedCustomer(customer); setActivities([]); setActivityLoading(true); setActivityError('');
     try {
