@@ -2485,7 +2485,7 @@ def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
 
         with db.cursor() as cur:
             cur.execute("""UPDATE FoodCourtSetting SET IsOpen = %s, ManualOverride = %s, OverrideUntil = %s WHERE SettingId = 1""", (1 if new_status else 0, new_mode, override_until))
-            log_audit(db, "OPEN_FOOD_COURT" if new_status else "CLOSE_FOOD_COURT", performed_by or "Executive", "เปิดศูนย์อาหารด้วยตนเอง" if new_status else "ปิดศูนย์อาหารด้วยตนเอง")
+            log_audit(db, "OPEN_FOOD_COURT" if new_status else "CLOSE_FOOD_COURT", performed_by or "Executive", "เปิดศูนย์อาหารโดยผู้บริหาร" if new_status else "ปิดศูนย์อาหารโดยผู้บริหาร")
             message = "ศูนย์อาหารเปิดให้บริการแล้ว" if new_status else "ศูนย์อาหารปิดให้บริการแล้ว"
             cur.execute("""SELECT UserId FROM Users WHERE Role IN ('Customer', 'Shop Owner')""")
             for user in cur.fetchall(): send_notif(db, user["UserId"], message)
