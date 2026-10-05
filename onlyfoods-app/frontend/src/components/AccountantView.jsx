@@ -749,6 +749,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [detailStoreId, setDetailStoreId] = useState(null);
   const [auditSearch, setAuditSearch] = useState('');
   const [cancelStoreFilter, setCancelStoreFilter] = useState('all');
+  const [cancelRange, setCancelRange] = useState('all');   // 'all' | 'today' | 7 | 14 | 30 | 'custom' — ค่าเริ่มต้น: ทั้งหมด
   
   const [reportType, setReportType] = useState('store');
   const [reportFormat, setReportFormat] = useState('csv');
@@ -760,6 +761,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [salesStart, setSalesStart] = useState(reportStart);
   const [salesEnd, setSalesEnd] = useState(reportEnd);
+  const [cancelCustomStart, setCancelCustomStart] = useState(reportStart);
+  const [cancelCustomEnd, setCancelCustomEnd] = useState(reportEnd);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -809,10 +812,29 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     return { totalGross, totalOrders, totalCancelled, rate, abnormalStores: storeSummary.filter(s => s.status === 'bad' && !s.isDeleted) };
   }, [storeSummary]);
 
+  // ช่วงเวลาของหน้า Cancellation (ทั้งหมด = ไม่จำกัดวันที่)
+  const cancelBounds = useMemo(() => {
+    if (cancelRange === 'all') return { start: '', end: '' };
+    if (cancelRange === 'custom') return { start: cancelCustomStart, end: cancelCustomEnd };
+    const { currStart, currEnd } = getPeriodBounds(cancelRange);
+    return { start: currStart, end: currEnd };
+  }, [cancelRange, cancelCustomStart, cancelCustomEnd]);
+  const cancelOrders = useMemo(() => filterOrdersByRange(orders, cancelBounds.start, cancelBounds.end, 'all'), [orders, cancelBounds]);
+  const cancelStoreSummary = useMemo(
+    () => buildStoreSummary(stores, cancelOrders, cancelBounds.start || undefined),
+    [stores, cancelOrders, cancelBounds]
+  );
+  const cancelOverview = useMemo(() => {
+    const totalOrders = cancelStoreSummary.reduce((a, s) => a + s.totalOrders, 0);
+    const totalCancelled = cancelStoreSummary.reduce((a, s) => a + s.cancelledOrders, 0);
+    const rate = totalOrders > 0 ? +((totalCancelled / totalOrders) * 100).toFixed(1) : null;
+    return { totalOrders, totalCancelled, rate, abnormalStores: cancelStoreSummary.filter(s => s.status === 'bad' && !s.isDeleted) };
+  }, [cancelStoreSummary]);
+
   // เรียงจากอัตราการยกเลิกมากที่สุด -> น้อยที่สุด
   const cancelSummary = useMemo(
-    () => [...storeSummary].sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.cancelledOrders - a.cancelledOrders || b.totalOrders - a.totalOrders),
-    [storeSummary]
+    () => [...cancelStoreSummary].sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.cancelledOrders - a.cancelledOrders || b.totalOrders - a.totalOrders),
+    [cancelStoreSummary]
   );
   const cancelTableRows = cancelStoreFilter === 'all'
     ? cancelSummary
@@ -913,6 +935,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   useEffect(() => {
     if (salesStoreFilter !== 'all' && !salesStoreSummary.some(x => String(x.storeId) === String(salesStoreFilter))) setSalesStoreFilter('all');
   }, [salesStoreSummary, salesStoreFilter]);
+  useEffect(() => {
+    if (cancelStoreFilter !== 'all' && !cancelStoreSummary.some(x => String(x.storeId) === String(cancelStoreFilter))) setCancelStoreFilter('all');
+  }, [cancelStoreSummary, cancelStoreFilter]);
   const reportColumns = REPORT_COLUMNS[reportType] || REPORT_COLUMNS.store;
 
   const exportReport = () => {
@@ -1277,8 +1302,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               </div>
 
               <div className="berry-stats-row-4">
-                <BerryStatCard label="ยอดขายรวม" value={`฿${fmtMoney(salesTotals.gross)}`} />
-                <BerryStatCard label="ยอดขายสุทธิ" value={`฿${fmtMoney(salesTotals.net)}`} />
+                <BerryStatCard bgTone="orange" label="ยอดขายรวม" value={`฿${fmtMoney(salesTotals.gross)}`} />
+                <BerryStatCard bgTone="dark" label="ยอดขายสุทธิ" value={`฿${fmtMoney(salesTotals.net)}`} />
                 <BerryStatCard label="Orders สำเร็จ" value={fmtMoney(salesTotals.completed)} />
                 <BerryStatCard label="Orders ยกเลิก" value={fmtMoney(salesTotals.cancelled)} />
               </div>
@@ -1391,14 +1416,37 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
           {page === 'cancel' && (
             <div className="berry-dashboard-grid">
+              <div className="berry-panel berry-filter-row" style={{ flexWrap: 'wrap' }}>
+                <label>ช่วงเวลา:</label>
+                <div className="berry-toggle-pills">
+                  {[['all', 'ทั้งหมด'], ['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['custom', 'กำหนดเอง']].map(([val, label]) => (
+                    <button
+                      key={val}
+                      className={cancelRange === val ? 'active' : ''}
+                      onClick={() => setCancelRange(val)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {cancelRange === 'custom' && (
+                  <>
+                    <label>ตั้งแต่วันที่:</label>
+                    <input type="date" className="berry-input" value={cancelCustomStart} max={cancelCustomEnd || undefined} onChange={e => setCancelCustomStart(e.target.value)} />
+                    <label>ถึงวันที่:</label>
+                    <input type="date" className="berry-input" value={cancelCustomEnd} min={cancelCustomStart || undefined} onChange={e => setCancelCustomEnd(e.target.value)} />
+                  </>
+                )}
+              </div>
+
               <div className="berry-stats-row-4">
-                <BerryStatCard label="Order ทั้งหมด" value={fmtMoney(overview.totalOrders)} />
-                <BerryStatCard label="Cancelled" value={fmtMoney(overview.totalCancelled)} />
-                <BerryStatCard label="Cancellation Rate เฉลี่ย" value={fmtRate(overview.rate)} />
+                <BerryStatCard bgTone="orange" label="Order ทั้งหมด" value={fmtMoney(cancelOverview.totalOrders)} />
+                <BerryStatCard bgTone="dark" label="Cancelled" value={fmtMoney(cancelOverview.totalCancelled)} />
+                <BerryStatCard label="Cancellation Rate เฉลี่ย" value={fmtRate(cancelOverview.rate)} />
                 <BerryStatCard
                   label="ร้านที่ผิดปกติ"
-                  value={`${overview.abnormalStores.length} ร้าน`}
-                  tone={overview.abnormalStores.length ? 'red' : 'green'}
+                  value={`${cancelOverview.abnormalStores.length} ร้าน`}
+                  tone={cancelOverview.abnormalStores.length ? 'red' : 'green'}
                 />
               </div>
 
@@ -1421,9 +1469,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 </div>
                 <div className="berry-panel" style={{ flex: '1 1 320px' }}>
                   <div className="berry-panel-header"><h3>Cancellation Alert</h3></div>
-                  {overview.abnormalStores.length === 0 ? (
-                    <div className="berry-empty-note">ไม่มีร้านที่ผิดปกติในขณะนี้</div>
-                  ) : overview.abnormalStores.map(s => (
+                  {cancelOverview.abnormalStores.length === 0 ? (
+                    <div className="berry-empty-note">ไม่มีร้านที่ผิดปกติในช่วงเวลานี้</div>
+                  ) : cancelOverview.abnormalStores.map(s => (
                     <div className="berry-alert-item" key={s.storeId}>
                       <Icon name="cancel" size={20} color="#FF4D4F" />
                       <div>
