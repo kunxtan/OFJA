@@ -46,11 +46,23 @@ def get_db():
         conn.close()
 
 def log_audit(db, action: str, performed_by: str, details: str):
+    """เขียน AuditLog ให้รองรับ schema ใหม่ที่ PerformedBy เป็น UserId (INT)"""
     try:
+        performed_id = None
+        if performed_by is not None:
+            text = str(performed_by)
+            if text.isdigit():
+                performed_id = int(text)
+            elif text.startswith("User:") and text[5:].isdigit():
+                performed_id = int(text[5:])
+
         with db.cursor() as cur:
             cur.execute(
-                "INSERT INTO AuditLog (Action, PerformedBy, Details) VALUES (%s, %s, %s)",
-                (action, performed_by, details)
+                """
+                INSERT INTO AuditLog (Action, PerformedBy, PerformerRole, Details)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (action, performed_id, str(performed_by) if performed_by else None, details)
             )
     except Exception:
         pass
@@ -233,64 +245,21 @@ def ensure_review_table(db):
     db.commit()
     _review_table_ready = True
 
-# เปิดปิดโรงอาหารอัตโนมัติ เวลาทำการ+สถานะ
 def ensure_food_court_setting(db):
     with db.cursor() as cur:
-        cur.execute("""CREATE TABLE IF NOT EXISTS FoodCourtSetting (
-            SettingId TINYINT PRIMARY KEY, IsOpen TINYINT(1) NOT NULL DEFAULT 1,
-            OpenTime TIME NOT NULL DEFAULT '08:00:00',
-            CloseTime TIME NOT NULL DEFAULT '20:00:00',
-            ManualOverride VARCHAR(10) NOT NULL DEFAULT 'AUTO', OverrideUntil DATETIME NULL,
-            UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
-
-        cur.execute("""SELECT COLUMN_NAME FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'FoodCourtSetting'""")
-        existing = {row["COLUMN_NAME"] for row in cur.fetchall()}
-        extra_columns = {"OpenTime": "TIME NOT NULL DEFAULT '08:00:00'", "CloseTime": "TIME NOT NULL DEFAULT '20:00:00'", "ManualOverride": "VARCHAR(10) NOT NULL DEFAULT 'AUTO'", "OverrideUntil": "DATETIME NULL"}
-
-        for name, ddl in extra_columns.items():
-            if name not in existing: cur.execute(f"ALTER TABLE FoodCourtSetting ADD COLUMN `{name}` {ddl}")
-
-        cur.execute("""INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen, OpenTime, CloseTime, ManualOverride)
-            VALUES (1, 1, '08:00:00', '20:00:00', 'AUTO')""")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS FoodCourtSetting (
+                SettingId TINYINT PRIMARY KEY,
+                IsOpen TINYINT(1) NOT NULL DEFAULT 1,
+                UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+            INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen)
+            VALUES (1, 1)
+        """)
     db.commit()
-
-def bangkok_now(): return datetime.utcnow() + timedelta(hours=7)
-
-# แปลงค่าเวลาส่งให้ฟ้อนเอน
-def food_court_time_to_minutes(value):
-    if isinstance(value, timedelta): return int(value.total_seconds() // 60)
-    if hasattr(value, "hour") and hasattr(value, "minute"): return value.hour * 60 + value.minute
-    parts = str(value).split(":")
-    return int(parts[0]) * 60 + int(parts[1])
-def food_court_time_to_hhmm(value):
-    minutes = food_court_time_to_minutes(value)
-    return f"{minutes // 60:02d}:{minutes % 60:02d}"
-
-# หาเวลาเปลี่ยนสถานะอัตโนมัติครั้งถัดไป แอัตโนมัติมีผลถึงกี่โมง
-def next_food_court_transition(open_time, close_time, now=None):
-    now = now or bangkok_now()
-    open_minutes, close_minutes = food_court_time_to_minutes(open_time), food_court_time_to_minutes(close_time)
-    current_minutes = now.hour * 60 + now.minute
-    if current_minutes < open_minutes:
-        transition = now.replace(hour=open_minutes // 60, minute=open_minutes % 60, second=0, microsecond=0)
-    elif current_minutes < close_minutes:
-        transition = now.replace(hour=close_minutes // 60, minute=close_minutes % 60, second=0, microsecond=0)
-    else:
-        tomorrow = now + timedelta(days=1)
-        transition = tomorrow.replace(hour=open_minutes // 60, minute=open_minutes % 60, second=0, microsecond=0)
-    return transition
-# หาสถานะจริงของศูนย์อาหาร 
-def get_effective_food_court_status(setting):
-    now = bangkok_now()
-    manual_override = str(setting.get("ManualOverride") or "AUTO").upper()
-    override_until = setting.get("OverrideUntil")
-    if manual_override in ("OPEN", "CLOSED") and override_until is not None and now < override_until:
-        return manual_override == "OPEN"
-    open_minutes, close_minutes = food_court_time_to_minutes(setting["OpenTime"]), food_court_time_to_minutes(setting["CloseTime"])
-    return open_minutes <= now.hour * 60 + now.minute < close_minutes
-
 
 _issue_report_table_ready = False
 def ensure_issue_report_table(db):
@@ -845,7 +814,7 @@ def get_executive_contract_notifications(user_id: int, db=Depends(get_db)):
         if not user: raise HTTPException(status_code=404, detail="ไม่พบผู้ใช้งาน")
         if user.get("Role") != "Executive": raise HTTPException(status_code=403, detail="สำหรับ Executive เท่านั้น")
 
-        today = bangkok_now().date()
+        today = datetime.now().date()
         cur.execute("""SELECT StoreId, StoreName, ContractEndDate FROM Store WHERE IsDeleted = 0 AND ContractEndDate IS NOT NULL""")
         stores = cur.fetchall()
 
@@ -1161,14 +1130,18 @@ def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(g
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
 
             new_status = not bool(store["IsOpen"])
-            # ร้านเปิดได้เฉพาะตอนที่ศูนย์อาหารเปิดให้บริการ 
+            # ปิดโรงอาหารทุกร้านเปิดเองไม่ได้ 
             if new_status:
-              _, food_court_is_open = sync_food_court_status(db)
+             cur.execute(
+                "SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1"
+            )
+             food_court = cur.fetchone()
 
-              if not food_court_is_open:
-                  raise HTTPException(
-                      status_code=400,detail="ไม่สามารถเปิดร้านได้ เนื่องจากศูนย์อาหารปิดให้บริการ")
-            
+             if not food_court or not food_court["IsOpen"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ศูนย์อาหารปิดให้บริการ ไม่สามารถเปิดร้านได้"
+        )
 
             # เปิดร้านเองไม่ได้โดนระงับอยู่
             if new_status and store["IsSuspended"]:
@@ -1226,7 +1199,7 @@ def renew_store_contract(store_id: int, data: RenewContractSchema, db=Depends(ge
             old_end = store["ContractEndDate"]
             new_start = datetime.strptime(data.contract_start_date,"%Y-%m-%d" ).date()
             new_end = datetime.strptime(data.contract_end_date,"%Y-%m-%d").date()
-            today = bangkok_now().date()
+            today = datetime.now().date()
 
             if new_start < today:
                 raise HTTPException(status_code=400, detail="วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว")
@@ -1712,7 +1685,7 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema, db=Depen
         """, (product_id,))
         affected = cur.fetchall()
 
-        deadline = bangkok_now() + timedelta(minutes=payload.response_window_minutes)
+        deadline = datetime.now() + timedelta(minutes=payload.response_window_minutes)
         for o in affected:
             cur.execute("""
                 UPDATE `Order` 
@@ -1737,11 +1710,10 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
     ensure_food_court_setting(db)
     try:
         with db.cursor() as cur:
-            _, food_court_is_open = sync_food_court_status(db)
-
-            if not food_court_is_open:
-                raise HTTPException(
-                    status_code=400,detail="ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้")
+            cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
+            fc_status = cur.fetchone()
+            if fc_status and int(fc_status['IsOpen']) == 0:
+                raise HTTPException(status_code=400, detail="ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้")
 
             cur.execute("SELECT IsOpen, IsSuspended, StoreName FROM Store WHERE StoreId=%s", (data.store_id,))
             st = cur.fetchone()
@@ -1895,7 +1867,6 @@ def print_order(order_id: int, payload: PrintRequestSchema, db=Depends(get_db)):
                 FROM `Order` o
                 LEFT JOIN Users u ON u.UserId=o.UserId
                 WHERE o.OrderID=%s
-                FOR UPDATE
             """, (order_id,))
             order = cur.fetchone()
             if not order:
@@ -1938,7 +1909,7 @@ def print_order(order_id: int, payload: PrintRequestSchema, db=Depends(get_db)):
             """, (order_id, job_id, print_type, payload.printer, order['QueueNo'], customer_name, items_json, total, payload.user_role))
             log_id = cur.lastrowid
             if print_type == 'FIRST_PRINT' and job_id:
-                cur.execute("UPDATE PrintJob SET Status='PRINTED', PrintedAt=%s, PrintedBy=%s WHERE PrintJobID=%s", (bangkok_now(), payload.user_role, job_id))
+                cur.execute("UPDATE PrintJob SET Status='PRINTED', PrintedAt=%s, PrintedBy=%s WHERE PrintJobID=%s", (datetime.now(), payload.user_role, job_id))
             log_audit(db, 'PRINT_ORDER' if print_type == 'FIRST_PRINT' else 'REPRINT_ORDER', payload.user_role, f"Order {order_id} Queue {order['QueueNo']} PrintType={print_type} LogID={log_id}")
             db.commit()
             return {'success': True, 'print_data': {'orderId': order_id, 'queueNo': order['QueueNo'], 'customerName': customer_name, 'items': json.loads(items_json), 'totalAmount': total, 'printer': payload.printer, 'printType': print_type}}
@@ -1962,7 +1933,7 @@ def recall_order(order_id: int, payload: RecallRequestSchema, db=Depends(get_db)
             if str(order['QueueNo']) != str(payload.queue_no): raise HTTPException(status_code=400, detail='เลขคิวไม่ตรงกับออเดอร์')
             log_audit(db, 'RECALL_QUEUE', payload.user_role, f"Order {order_id} Queue {order['QueueNo']} เรียกคิวเดิมซ้ำ")
             if order.get('UserId'):
-                send_notif(db, order['UserId'], f"ออเดอร์คิว {order['QueueNo']} อาหารพร้อมรับแล้ว!")
+                send_notif(db, order['UserId'], f"📢 เรียกคิว {order['QueueNo']} อีกครั้ง กรุณามารับอาหาร")
             db.commit()
             return {'success': True, 'order_id': order_id, 'queue_no': order['QueueNo']}
     except HTTPException:
@@ -2025,7 +1996,7 @@ def customer_change_order_item(
                     detail="ออเดอร์นี้ไม่ได้อยู่ในสถานะรอเปลี่ยนเมนู"
                 )
 
-            if order.get("CancelDeadline") and bangkok_now() > order["CancelDeadline"]:
+            if order.get("CancelDeadline") and datetime.now() > order["CancelDeadline"]:
                 raise HTTPException(
                     status_code=400,
                     detail="หมดเวลาสำหรับเปลี่ยนเมนูหรือยกเลิกออเดอร์แล้ว"
@@ -2230,7 +2201,7 @@ def customer_cancel_order(
                     detail="ออเดอร์นี้ไม่อยู่ในสถานะที่สามารถยกเลิกได้"
                 )
 
-            if order.get("CancelDeadline") and bangkok_now() > order["CancelDeadline"]:
+            if order.get("CancelDeadline") and datetime.now() > order["CancelDeadline"]:
                 raise HTTPException(
                     status_code=400,
                     detail="หมดเวลาสำหรับยกเลิกออเดอร์แล้ว"
@@ -2310,10 +2281,6 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 raise HTTPException(status_code=404, detail="ไม่พบออเดอร์นี้")
 
             current_status = current['Status']
-
-            # กดสถานะซ้ำ (เช่น Ready ซ้ำ) -> ไม่ทำอะไร ไม่รีเซ็ต ReadyAt ไม่ส่งแจ้งเตือน/ตั๋วซ้ำ
-            if current_status == payload.status and payload.status in ('Ready', 'Completed', 'Cancelled', 'NoShow'):
-                return {"success": True, "unchanged": True}
             
             # [ปรับปรุง] ถ้าหน้าร้านส่งมอบไปแล้ว (Completed) ห้ามย้อนกลับสถานะ
             if current_status == 'Completed' and payload.status != 'Completed':
@@ -2337,7 +2304,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 cur.execute("SELECT ReadyAt FROM `Order` WHERE OrderID=%s", (order_id,))
                 ready_row = cur.fetchone()
                 ready_at = ready_row.get('ReadyAt') if ready_row else None
-                if not ready_at or (bangkok_now() - ready_at).total_seconds() < 15 * 60:
+                if not ready_at or (datetime.now() - ready_at).total_seconds() < 15 * 60:
                     raise HTTPException(status_code=400, detail='ออเดอร์นี้ยังไม่ถึง 15 นาทีหลังปรุงเสร็จ')
 
             terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
@@ -2351,7 +2318,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
             if payload.status == 'Ready':
                 cur.execute(
                     "UPDATE `Order` SET Status=%s, CancelReason=%s, ReadyAt=%s WHERE OrderID=%s", 
-                    (payload.status, payload.cancel_reason, bangkok_now(), order_id)
+                    (payload.status, payload.cancel_reason, datetime.now(), order_id)
                 )
             else:
                 cur.execute(
@@ -2385,9 +2352,6 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 log_audit(db, "UPDATE_STATUS", payload.user_role, f"Order {order_id} -> {payload.status} ร้าน {o['StoreName']} (ID:{o['StoreId']})")
             db.commit()
             return {"success": True}
-    except HTTPException:
-        db.rollback()
-        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -2396,7 +2360,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
 def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_db)):
     ensure_order_columns(db)
     with db.cursor() as cur:
-        deadline = bangkok_now() + timedelta(minutes=payload.response_window_minutes)
+        deadline = datetime.now() + timedelta(minutes=payload.response_window_minutes)
         cur.execute("""
             UPDATE `Order` 
             SET Status='Pending_Cancellation', CancelReason=%s, CancelDeadline=%s 
@@ -2432,117 +2396,60 @@ def create_issue_report(data: CreateIssueReportSchema, db=Depends(get_db)):
 # =====================================================================
 # Food Court Global Settings Endpoints
 # =====================================================================
-class FoodCourtScheduleSchema(BaseModel):
-    open_time: str
-    close_time: str
 
-
-def get_food_court_setting_row(db):
-    ensure_food_court_setting(db)
-    with db.cursor() as cur:
-        cur.execute("""SELECT SettingId, IsOpen, OpenTime, CloseTime, ManualOverride, OverrideUntil
-            FROM FoodCourtSetting WHERE SettingId = 1""")
-        return cur.fetchone()
-
-# Sync สถานะปัจจุบัน:หมดเวลา Manual -> กลับ AUTO และคำนวณสถานะจากเวลาทำการ
-def sync_food_court_status(db):
-    setting = get_food_court_setting_row(db)
-    if not setting: raise HTTPException(status_code=500, detail="ไม่พบการตั้งค่าศูนย์อาหาร")
-
-    now = bangkok_now()
-    manual_override = str(setting.get("ManualOverride") or "AUTO").upper()
-    override_until = setting.get("OverrideUntil")
-
-    if manual_override in ("OPEN", "CLOSED") and override_until is not None and now >= override_until:
-        with db.cursor() as cur:
-            cur.execute("""UPDATE FoodCourtSetting SET ManualOverride = 'AUTO', OverrideUntil = NULL WHERE SettingId = 1""")
-        db.commit()
-        setting["ManualOverride"], setting["OverrideUntil"] = "AUTO", None
-
-    is_open = get_effective_food_court_status(setting)
-    if bool(setting.get("IsOpen")) != is_open:
-        with db.cursor() as cur:
-            cur.execute("""UPDATE FoodCourtSetting SET IsOpen = %s WHERE SettingId = 1""", (1 if is_open else 0,))
-        db.commit()
-
-    setting["IsOpen"] = 1 if is_open else 0
-    return setting, is_open
-
-# ดูสถานะและเวลาทำการปัจจุบัน
 @app.get("/api/food-court/status")
 def get_food_court_status(db=Depends(get_db)):
-    setting, is_open = sync_food_court_status(db)
-    return {"is_open": is_open, "open_time": food_court_time_to_hhmm(setting["OpenTime"]), "close_time": food_court_time_to_hhmm(setting["CloseTime"]), "mode": str(setting.get("ManualOverride") or "AUTO").upper(), "override_until": setting["OverrideUntil"].strftime("%Y-%m-%d %H:%M:%S") if setting.get("OverrideUntil") else None}
+    ensure_food_court_setting(db)
+    with db.cursor() as cur:
+        cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
+        result = cur.fetchone()
+        return {"is_open": bool(result["IsOpen"])}
 
-# เปิด/ปิดด้วยตนเอง
 @app.put("/api/food-court/toggle")
 def toggle_food_court(performed_by: Optional[str] = None, db=Depends(get_db)):
     ensure_food_court_setting(db)
     try:
-        setting, current_status = sync_food_court_status(db)
-        new_status, new_mode = not current_status, "OPEN" if not current_status else "CLOSED"
-        override_until = next_food_court_transition(setting["OpenTime"], setting["CloseTime"])
-
         with db.cursor() as cur:
-            cur.execute("""UPDATE FoodCourtSetting SET IsOpen = %s, ManualOverride = %s, OverrideUntil = %s WHERE SettingId = 1""", (1 if new_status else 0, new_mode, override_until))
-            log_audit(db, "OPEN_FOOD_COURT" if new_status else "CLOSE_FOOD_COURT", performed_by or "Executive", "เปิดศูนย์อาหารโดยผู้บริหาร" if new_status else "ปิดศูนย์อาหารโดยผู้บริหาร")
-            message = "ศูนย์อาหารเปิดให้บริการแล้ว" if new_status else "ศูนย์อาหารปิดให้บริการแล้ว"
-            cur.execute("""SELECT UserId FROM Users WHERE Role IN ('Customer', 'Shop Owner')""")
-            for user in cur.fetchall(): send_notif(db, user["UserId"], message)
+            cur.execute("UPDATE FoodCourtSetting SET IsOpen = NOT IsOpen WHERE SettingId = 1")
+            cur.execute("SELECT IsOpen FROM FoodCourtSetting WHERE SettingId = 1")
+            result = cur.fetchone()
+            is_open = bool(result["IsOpen"])
+            # ถ้าผู้บริหารปิดโรงทุกร้านจะปิดหมด
+            if not is_open:
+                cur.execute("UPDATE Store SET IsOpen = 0")
+
+            log_audit(
+                db,
+                "OPEN_FOOD_COURT" if is_open else "CLOSE_FOOD_COURT",
+                performed_by or "Executive",
+                "เปิดศูนย์อาหาร" if is_open else "ปิดศูนย์อาหาร"
+            )
+            # แจ้งเตือนเปิด/ปิดศูนย์อาหารให้ลูกค้าและเจ้าของร้าน
+            message = (
+                "ศูนย์อาหารเปิดให้บริการแล้ว"
+                if is_open
+                else "ศูนย์อาหารปิดให้บริการแล้ว"
+            )
+
+            cur.execute(
+                "SELECT UserId FROM Users WHERE Role IN ('Customer', 'Shop Owner')"
+            )
+            recipients = cur.fetchall()
+
+            for user in recipients:
+                send_notif(db, user["UserId"], message)
 
         db.commit()
-        return {"success": True, "is_open": new_status, "mode": new_mode, "override_until": override_until.strftime("%Y-%m-%d %H:%M:%S"), "message": "เปิดศูนย์อาหารเรียบร้อยแล้ว" if new_status else "ปิดศูนย์อาหารเรียบร้อยแล้ว"}
-    except HTTPException:
-        db.rollback(); raise
+
+        return {
+            "success": True,
+            "is_open": is_open,
+            "message": "เปิดศูนย์อาหารเรียบร้อยแล้ว" if is_open else "ปิดศูนย์อาหารเรียบร้อยแล้ว"
+        }
+
     except Exception as error:
-        db.rollback(); raise HTTPException(status_code=500, detail=str(error))
-
-# Executive แก้ไขเวลาเปิด-ปิดอัตโนมัติ
-@app.put("/api/food-court/schedule")
-def update_food_court_schedule(data: FoodCourtScheduleSchema, performed_by: Optional[str] = None, db=Depends(get_db)):
-    ensure_food_court_setting(db)
-    try:
-        try:
-            open_dt, close_dt = datetime.strptime(data.open_time, "%H:%M"), datetime.strptime(data.close_time, "%H:%M")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="รูปแบบเวลาต้องเป็น HH:MM")
-
-        open_minutes, close_minutes = open_dt.hour * 60 + open_dt.minute, close_dt.hour * 60 + close_dt.minute
-        if open_minutes >= close_minutes: raise HTTPException(status_code=400, detail="เวลาปิดต้องอยู่หลังเวลาเปิด")
-
-        with db.cursor() as cur:
-            cur.execute("""SELECT ManualOverride FROM FoodCourtSetting WHERE SettingId = 1""")
-            current = cur.fetchone()
-            manual_override = str(current.get("ManualOverride") or "AUTO").upper()
-            new_override_until = next_food_court_transition(data.open_time, data.close_time) if manual_override in ("OPEN", "CLOSED") else None
-
-            cur.execute("""UPDATE FoodCourtSetting SET OpenTime = %s, CloseTime = %s, OverrideUntil = %s WHERE SettingId = 1""", (data.open_time, data.close_time, new_override_until))
-            log_audit(db, "UPDATE_FOOD_COURT_SCHEDULE", performed_by or "Executive", f"ตั้งเวลาเปิด-ปิดศูนย์อาหาร {data.open_time} - {data.close_time}")
-
-        db.commit()
-        setting, is_open = sync_food_court_status(db)
-        return {"success": True, "is_open": is_open, "open_time": food_court_time_to_hhmm(setting["OpenTime"]), "close_time": food_court_time_to_hhmm(setting["CloseTime"]), "mode": str(setting.get("ManualOverride") or "AUTO").upper(), "message": "บันทึกเวลาทำการเรียบร้อยแล้ว"}
-    except HTTPException:
-        db.rollback(); raise
-    except Exception as error:
-        db.rollback(); raise HTTPException(status_code=500, detail=str(error))
-
-# ยกเลิก Manual Override และกลับสู่ระบบอัตโนมัติทันที
-@app.put("/api/food-court/auto")
-def return_food_court_to_auto(performed_by: Optional[str] = None, db=Depends(get_db)):
-    ensure_food_court_setting(db)
-    try:
-        with db.cursor() as cur:
-            cur.execute("""UPDATE FoodCourtSetting SET ManualOverride = 'AUTO', OverrideUntil = NULL WHERE SettingId = 1""")
-            log_audit(db, "FOOD_COURT_AUTO_MODE", performed_by or "Executive", "กลับสู่ระบบเปิด-ปิดศูนย์อาหารอัตโนมัติ")
-
-        db.commit()
-        setting, is_open = sync_food_court_status(db)
-        return {"success": True, "is_open": is_open, "open_time": food_court_time_to_hhmm(setting["OpenTime"]), "close_time": food_court_time_to_hhmm(setting["CloseTime"]), "mode": "AUTO", "message": "กลับสู่ระบบอัตโนมัติเรียบร้อยแล้ว"}
-    except HTTPException:
-        db.rollback(); raise
-    except Exception as error:
-        db.rollback(); raise HTTPException(status_code=500, detail=str(error))
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(error))
 
 # =====================================================================
 # Reports & Audit Logs Endpoints
