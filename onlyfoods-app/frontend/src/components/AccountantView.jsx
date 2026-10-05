@@ -259,6 +259,35 @@ function buildTopMenu(orders, storeId, limit = 10, stores = []) {
   return Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, limit);
 }
 
+// ยอดขายตามช่วงวันที่ที่เลือก (Sales Summary): วันเดียว = รายชั่วโมง, หลายวัน = รายวัน
+function buildRangeTrend(orders, start, end) {
+  const completed = (orders || []).filter(isSettled);
+  if (!start || !end || start > end) return [];
+  if (start === end) {
+    const buckets = Array.from({ length: 24 }, (_, h) => ({ label: `${String(h).padStart(2, '0')}:00`, value: 0 }));
+    completed.forEach(o => {
+      const dt = parseOrderDate(o.CreatedAt);
+      if (!dt || dateOnly(dt) !== start) return;
+      buckets[dt.getHours()].value += Number(o.TotalAmount || 0);
+    });
+    return buckets;
+  }
+  const buckets = [];
+  const cur = new Date(`${start}T00:00:00`);
+  const last = new Date(`${end}T00:00:00`);
+  while (cur <= last && buckets.length < 366) {
+    buckets.push({ label: `${String(cur.getDate()).padStart(2, '0')}/${String(cur.getMonth() + 1).padStart(2, '0')}`, key: dateOnly(cur), value: 0 });
+    cur.setDate(cur.getDate() + 1);
+  }
+  const index = {};
+  buckets.forEach(b => { index[b.key] = b; });
+  completed.forEach(o => {
+    const b = index[dateOnly(o.CreatedAt)];
+    if (b) b.value += Number(o.TotalAmount || 0);
+  });
+  return buckets;
+}
+
 /* ---------------- Report Config ---------------- */
 const REPORT_TYPES = [
   { id: 'store', title: 'Store Summary', sub: 'สรุปยอดรายร้านครบทุกมิติ' },
@@ -415,14 +444,25 @@ function BerryStatCard({ label, value, tone, delta, deltaSuffix = '%', invertDel
 }
 
 /* Line chart — มีเส้น Grid + แกน Y มองเห็นตลอด และ มี Custom Tooltip เมื่อ Hover */
-function BerryLineChart({ data, height = 220, valueFormat, color = '#FF724C' }) {
+function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '#FF724C' }) {
   const [hoverIndex, setHoverIndex] = useState(null);
 
   if (!data || data.length === 0) {
     return <div className="berry-empty-note" style={{ height }}>ยังไม่มีข้อมูล</div>;
   }
 
-  const max = Math.max(1, ...data.map(d => d.value));
+  // แกน Y: เลือกจำนวนช่อง (3-6) ที่ทำให้แกนสูงสุดใกล้ค่าสูงสุดของข้อมูลที่สุด ให้พีคอยู่ใกล้ขอบบน
+  // ขั้นของแกนปัดเป็นพหุคูณของ unit; ตั้งแต่หลักพัน unit >= 100 เพื่อให้ป้าย k มีทศนิยม 1 ตำแหน่งพอดี (เช่น 1.4k)
+  const rawMax = Math.max(1, ...data.map(d => d.value));
+  const exp = Math.floor(Math.log10(rawMax));
+  const unit = rawMax >= 1000 ? Math.max(100, Math.pow(10, exp - 1)) : Math.max(1, 5 * Math.pow(10, exp - 1));
+  let TICKS = 4, niceStep = 0, max = Infinity;
+  [4, 5, 3, 6].forEach(n => {
+    const step = Math.max(unit, Math.ceil(rawMax / n / unit) * unit);
+    if (step * n < max) { TICKS = n; niceStep = step; max = step * n; }
+  });
+  // ป้ายแกน Y: ตั้งแต่หลักพันใช้ k ทศนิยม 1 ตำแหน่ง เพื่อประหยัดพื้นที่ (tooltip ยังแสดงเต็ม)
+  const fmtAxis = axisFormat || ((v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v))));
   const w = 600, h = 190, padX = 45, padY = 20, padBottom = 30;
   const stepX = data.length > 1 ? (w - padX * 2) / (data.length - 1) : 0;
   
@@ -447,14 +487,14 @@ function BerryLineChart({ data, height = 220, valueFormat, color = '#FF724C' }) 
         </defs>
 
         {/* 1. เส้น Grid และแกน Y */}
-        {[0, 0.5, 1].map(ratio => {
+        {Array.from({ length: TICKS + 1 }, (_, i) => i / TICKS).map(ratio => {
           const yPos = padY + ratio * (h - padY - padBottom);
           const val = max * (1 - ratio);
           return (
             <g key={ratio}>
               <line x1={padX} y1={yPos} x2={w - padX} y2={yPos} stroke="rgba(42, 44, 65, 0.12)" strokeDasharray="4 4" />
               <text x={padX - 8} y={yPos + 4} fontSize="11" fill="rgba(42, 44, 65, 0.6)" textAnchor="end">
-                {valueFormat ? valueFormat(val) : Math.round(val)}
+                {fmtAxis(val)}
               </text>
             </g>
           );
@@ -759,8 +799,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [rangeEnd, setRangeEnd] = useState(reportEnd);
   const [reportStoreFilter, setReportStoreFilter] = useState('all');
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [salesStart, setSalesStart] = useState(reportStart);
-  const [salesEnd, setSalesEnd] = useState(reportEnd);
+  const [salesRange, setSalesRange] = useState(7);   // 'today' | 7 | 14 | 30 | 'custom' — ค่าเริ่มต้น: 7 วัน
+  const [salesCustomStart, setSalesCustomStart] = useState(reportStart);
+  const [salesCustomEnd, setSalesCustomEnd] = useState(reportEnd);
   const [cancelCustomStart, setCancelCustomStart] = useState(reportStart);
   const [cancelCustomEnd, setCancelCustomEnd] = useState(reportEnd);
 
@@ -840,6 +881,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     ? cancelSummary
     : cancelSummary.filter(s => String(s.storeId) === String(cancelStoreFilter));
 
+  // ช่วงวันที่ของ Sales Summary: ตามปุ่มที่เลือก หรือกำหนดเอง
+  const { salesStart, salesEnd } = useMemo(() => {
+    if (salesRange === 'custom') return { salesStart: salesCustomStart, salesEnd: salesCustomEnd };
+    const { currStart, currEnd } = getPeriodBounds(salesRange);
+    return { salesStart: currStart, salesEnd: currEnd };
+  }, [salesRange, salesCustomStart, salesCustomEnd]);
   const salesOrders = useMemo(() => filterOrdersByRange(orders, salesStart, salesEnd, 'all'), [orders, salesStart, salesEnd]);
   const salesStoreSummary = useMemo(() => buildStoreSummary(stores, salesOrders, salesStart), [stores, salesOrders, salesStart]);
 
@@ -861,6 +908,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   }, [salesFilteredRows]);
 
   const topMenu = useMemo(() => buildTopMenu(salesOrders, salesStoreFilter, 10, stores), [salesOrders, salesStoreFilter, stores]);
+  // ยอดขายตามช่วงเวลาของร้านที่เลือกใน Sales Summary (แสดงเมื่อกรองแยกร้านเท่านั้น)
+  const salesTrend = useMemo(() => {
+    if (salesStoreFilter === 'all') return [];
+    const ords = salesOrders.filter(o => String(o.StoreId) === String(salesStoreFilter));
+    return buildRangeTrend(ords, salesStart, salesEnd);
+  }, [salesOrders, salesStoreFilter, salesStart, salesEnd]);
   const hourlyTrend = useMemo(() => buildSalesTrend(orders, trendDays), [orders, trendDays]);
 
   // ดึงข้อมูลเมนูของร้านที่ถูกเลือกเพื่อแสดงใน Modal แบบละเอียด
@@ -1147,7 +1200,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       ))}
                     </div>
                   </div>
-                  <BerryLineChart data={hourlyTrend} height={290} valueFormat={(v) => `฿${fmtMoney(v)}`} />
+                  <BerryLineChart data={hourlyTrend} height={290} valueFormat={(v) => `฿${fmtMoney(v)}`} axisFormat={(v) => (v >= 1000 ? `฿${(v / 1000).toFixed(1)}k` : `฿${Math.round(v)}`)} />
                 </div>
                 <div className="berry-panel" style={{ flex: '1 1 380px' }}>
                   <div className="berry-panel-header">
@@ -1278,27 +1331,48 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   {salesStoreSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
                 </select>
 
-                {/* --- เพิ่ม Input เลือกวันที่ 2 อันตรงนี้ --- */}
-                <label>ตั้งแต่วันที่:</label>
-                <input 
-                  type="date" 
-                  className="berry-input" 
-                  value={salesStart} 
-                  onChange={e => setSalesStart(e.target.value)} 
-                />
+                <label>ช่วงเวลา:</label>
+                <div className="berry-toggle-pills">
+                  {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['custom', 'กำหนดเอง']].map(([val, label]) => (
+                    <button
+                      key={val}
+                      className={salesRange === val ? 'active' : ''}
+                      onClick={() => {
+                        // กดกำหนดเอง -> เริ่มจากช่วงวันที่ที่กำลังดูอยู่ แล้วค่อยแก้ต่อ
+                        if (val === 'custom') { setSalesCustomStart(salesStart); setSalesCustomEnd(salesEnd); }
+                        setSalesRange(val);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
 
-                <label>ถึงวันที่:</label>
-                <input 
-                  type="date" 
-                  className="berry-input" 
-                  value={salesEnd} 
-                  onChange={e => setSalesEnd(e.target.value)} 
-                />
-                {/* -------------------------------------- */}
+                {salesRange === 'custom' && (
+                  <>
+                    <label>ตั้งแต่วันที่:</label>
+                    <input
+                      type="date"
+                      className="berry-input"
+                      value={salesCustomStart}
+                      max={salesCustomEnd || undefined}
+                      onChange={e => setSalesCustomStart(e.target.value)}
+                    />
 
-                <button className="berry-btn primary" onClick={() => showToast('อัปเดตตารางยอดขายแล้ว')}>
-                  ค้นหา
-                </button>
+                    <label>ถึงวันที่:</label>
+                    <input
+                      type="date"
+                      className="berry-input"
+                      value={salesCustomEnd}
+                      min={salesCustomStart || undefined}
+                      onChange={e => setSalesCustomEnd(e.target.value)}
+                    />
+
+                    <button className="berry-btn primary" onClick={() => showToast('อัปเดตตารางยอดขายแล้ว')}>
+                      ค้นหา
+                    </button>
+                  </>
+                )}
               </div>
 
               <div className="berry-stats-row-4">
@@ -1306,6 +1380,45 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <BerryStatCard bgTone="dark" label="ยอดขายสุทธิ" value={`฿${fmtMoney(salesTotals.net)}`} />
                 <BerryStatCard label="Orders สำเร็จ" value={fmtMoney(salesTotals.completed)} />
                 <BerryStatCard label="Orders ยกเลิก" value={fmtMoney(salesTotals.cancelled)} />
+              </div>
+
+              <div className="berry-chart-row">
+                {salesStoreFilter !== 'all' && (
+                  <div className="berry-panel" style={{ flex: '1 1 380px', minWidth: 0 }}>
+                    <div className="berry-panel-header">
+                      <div>
+                        <div className="berry-growth-title">ยอดขายตามช่วงเวลา</div>
+                        <div className="berry-panel-caption">
+                          {salesStoreSummary.find(x => String(x.storeId) === String(salesStoreFilter))?.storeName || ''} • {salesStart === salesEnd ? 'รายชั่วโมง' : 'รายวัน'}
+                        </div>
+                      </div>
+                    </div>
+                    <BerryLineChart data={salesTrend} height={290} valueFormat={(v) => `฿${fmtMoney(v)}`} axisFormat={(v) => (v >= 1000 ? `฿${(v / 1000).toFixed(1)}k` : `฿${Math.round(v)}`)} />
+                  </div>
+                )}
+              <div className="berry-panel" style={{ flex: '1 1 380px', minWidth: 0 }}>
+                <div className="berry-panel-header"><h3>เมนูขายดี Top 10</h3></div>
+                {topMenu.length === 0 ? (
+                  <div className="berry-empty-note">ยังไม่มีข้อมูลรายการเมนูที่ขาย</div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="berry-table">
+                      <thead><tr><th>อันดับ</th><th>เมนู</th>{salesStoreFilter === 'all' && <th>ร้านค้า</th>}<th>จำนวนที่ขาย</th></tr></thead>
+                      <tbody>
+                        {topMenu.map((m, i) => (
+                          <tr key={`${m.storeId}-${m.name}`}>
+                            <td>#{i + 1}</td>
+                            <td>{m.name}</td>
+                            {salesStoreFilter === 'all' && <td>{m.storeName}</td>}
+                            <td>{fmtMoney(m.qty)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              
               </div>
 
               <div className="berry-panel">
@@ -1353,29 +1466,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 </div>
               </div>
 
-              <div className="berry-panel">
-                <div className="berry-panel-header"><h3>เมนูขายดี Top 10</h3></div>
-                {topMenu.length === 0 ? (
-                  <div className="berry-empty-note">ยังไม่มีข้อมูลรายการเมนูที่ขาย</div>
-                ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="berry-table">
-                      <thead><tr><th>อันดับ</th><th>เมนู</th>{salesStoreFilter === 'all' && <th>ร้านค้า</th>}<th>จำนวนที่ขาย</th></tr></thead>
-                      <tbody>
-                        {topMenu.map((m, i) => (
-                          <tr key={`${m.storeId}-${m.name}`}>
-                            <td>#{i + 1}</td>
-                            <td>{m.name}</td>
-                            {salesStoreFilter === 'all' && <td>{m.storeName}</td>}
-                            <td>{fmtMoney(m.qty)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-              
               {/* ===== Modal ดูรายละเอียดเมนูขายดีสำหรับร้านที่เลือก ===== */}
               {detailStoreId && (
                 <div className="berry-modal-overlay" onClick={() => setDetailStoreId(null)}>
