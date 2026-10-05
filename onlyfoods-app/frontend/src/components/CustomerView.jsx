@@ -49,6 +49,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [pickupTime, setPickupTime] = useState("");
+  const [foodCourtOpenTime, setFoodCourtOpenTime] = useState("");
   const [foodCourtCloseTime, setFoodCourtCloseTime] = useState("");
   const [orderNote, setOrderNote] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("PromptPay");
@@ -443,7 +444,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   }, [notifs, isInitialized]);
 
-   useEffect(() => {
+  useEffect(() => {
     const fetchFoodCourtStatus = async () => {
       try {
         const res = await fetch(
@@ -454,12 +455,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
         const data = await res.json();
 
+        setFoodCourtOpenTime(
+          data?.open_time || ""
+        );
+
         setFoodCourtCloseTime(
           data?.close_time || ""
         );
       } catch (error) {
         console.error(
-          "โหลดเวลาปิดศูนย์อาหารไม่สำเร็จ:",
+          "โหลดเวลาเปิด-ปิดศูนย์อาหารไม่สำเร็จ:",
           error
         );
       }
@@ -474,6 +479,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     return () => clearInterval(interval);
   }, [apiBase]);
+
 
   const activeStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
@@ -1932,14 +1938,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> เวลารับอาหาร</label>
-                  <input type="time" value={pickupTime} max={foodCourtCloseTime || undefined} onChange={e => {
-                      const selectedTime = e.target.value;
-                      if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
-                        customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`, "warning");
-                      }
-                      setPickupTime(selectedTime);
-                    }}
-                    style={{width: "100%", boxSizing: "border-box", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit"}}
+                  <input type="time" value={pickupTime} min={foodCourtOpenTime || undefined} max={foodCourtCloseTime || undefined} 
+                      onChange={(e) => {
+                        const selectedTime = e.target.value;
+                          if (foodCourtOpenTime && selectedTime < foodCourtOpenTime) {
+                            customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารตั้งแต่ ${foodCourtOpenTime} น. เป็นต้นไป`, "warning");
+                            return;
+                          }
+                          if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
+                            customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`,"warning");
+                            return;
+                          }
+                          setPickupTime(selectedTime);
+                        }}
                   />
                   <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
                 </div>
