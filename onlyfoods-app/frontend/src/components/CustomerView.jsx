@@ -49,6 +49,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [pickupTime, setPickupTime] = useState("");
+  const [foodCourtCloseTime, setFoodCourtCloseTime] = useState("");
   const [orderNote, setOrderNote] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("PromptPay");
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
@@ -441,6 +442,38 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       setIsInitialized(true);
     }
   }, [notifs, isInitialized]);
+
+   useEffect(() => {
+    const fetchFoodCourtStatus = async () => {
+      try {
+        const res = await fetch(
+          `${apiBase}/api/food-court/status`
+        );
+
+        if (!res.ok) return;
+
+        const data = await res.json();
+
+        setFoodCourtCloseTime(
+          data?.close_time || ""
+        );
+      } catch (error) {
+        console.error(
+          "โหลดเวลาปิดศูนย์อาหารไม่สำเร็จ:",
+          error
+        );
+      }
+    };
+
+    fetchFoodCourtStatus();
+
+    const interval = setInterval(
+      fetchFoodCourtStatus,
+      30000
+    );
+
+    return () => clearInterval(interval);
+  }, [apiBase]);
 
   const activeStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
@@ -1899,7 +1932,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> เวลารับอาหาร</label>
-                  <input type="time" value={pickupTime} onChange={e => setPickupTime(e.target.value)} style={{ width: "100%", boxSizing: "border-box", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }} />
+                  <input type="time" value={pickupTime} max={foodCourtCloseTime || undefined} onChange={e => {
+                      const selectedTime = e.target.value;
+                      if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
+                        alert(`กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`);
+                        return;
+                      }
+                      setPickupTime(selectedTime);
+                    }}
+                    style={{width: "100%", boxSizing: "border-box", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit"}}
+                  />
                   <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
                 </div>
 
