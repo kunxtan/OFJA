@@ -1032,7 +1032,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 />
                 <BerryStatCard
                   bgTone="dark"
-                  label="จำนวนออเดอร์ (บันทึกบัญชีแล้ว)"
+                  label="จำนวนออเดอร์"
                   value={fmtMoney(periodStats.curr.totalOrders)}
                   delta={periodStats.deltaOrders}
                   compareLabel={periodStats.compareLabel}
