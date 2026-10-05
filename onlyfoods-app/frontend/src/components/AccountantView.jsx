@@ -239,8 +239,10 @@ function buildSalesTrend(orders, range) {
   return buckets;
 }
 
-function buildTopMenu(orders, storeId, limit = 10) {
+function buildTopMenu(orders, storeId, limit = 10, stores = []) {
   const map = {};
+  const storeNameById = {};
+  (stores || []).forEach(s => { storeNameById[s.StoreId] = s.StoreName; });
   (orders || []).forEach(o => {
     if (!isSettled(o)) return;
     if (storeId && storeId !== 'all' && String(o.StoreId) !== String(storeId)) return;
@@ -248,10 +250,13 @@ function buildTopMenu(orders, storeId, limit = 10) {
     items.forEach(it => {
       const name = it.MenuName || it.ItemName || it.ProductName || it.Name || it.menuName || '-';
       const qty = Number(it.Quantity || it.Qty || it.quantity || 1);
-      map[name] = (map[name] || 0) + qty;
+      // แยกนับตามร้าน: เมนูชื่อเดียวกันแต่คนละร้านจะไม่ถูกรวมกัน
+      const key = `${o.StoreId}||${name}`;
+      if (!map[key]) map[key] = { name, qty: 0, storeId: o.StoreId, storeName: o.StoreName || storeNameById[o.StoreId] || `ร้าน #${o.StoreId}` };
+      map[key].qty += qty;
     });
   });
-  return Object.entries(map).map(([name, qty]) => ({ name, qty })).sort((a, b) => b.qty - a.qty).slice(0, limit);
+  return Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, limit);
 }
 
 /* ---------------- Report Config ---------------- */
@@ -833,14 +838,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     return { gross, net, completed, cancelled };
   }, [salesFilteredRows]);
 
-  const topMenu = useMemo(() => buildTopMenu(salesOrders, salesStoreFilter, 10), [salesOrders, salesStoreFilter]);
+  const topMenu = useMemo(() => buildTopMenu(salesOrders, salesStoreFilter, 10, stores), [salesOrders, salesStoreFilter, stores]);
   const hourlyTrend = useMemo(() => buildSalesTrend(orders, trendDays), [orders, trendDays]);
 
   // ดึงข้อมูลเมนูของร้านที่ถูกเลือกเพื่อแสดงใน Modal แบบละเอียด
   const detailStoreMenus = useMemo(() => {
     if (!detailStoreId) return [];
-    return buildTopMenu(salesOrders, detailStoreId, 100); // ดึงสูงสุด 100 เมนูที่ขายได้ของร้านที่เลือก
-  }, [salesOrders, detailStoreId]);
+    return buildTopMenu(salesOrders, detailStoreId, 100, stores); // ดึงสูงสุด 100 เมนูที่ขายได้ของร้านที่เลือก
+  }, [salesOrders, detailStoreId, stores]);
 
   const periodStats = useMemo(() => {
     const { currStart, currEnd, prevStart, prevEnd } = getPeriodBounds(trendDays);
@@ -849,9 +854,10 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       const gross = s.reduce((a, x) => a + x.grossSales, 0);
       const net = s.reduce((a, x) => a + x.netSales, 0); 
       const totalOrders = s.reduce((a, x) => a + x.totalOrders, 0);
+      const completed = s.reduce((a, x) => a + x.completedOrders, 0);   // ออเดอร์ที่สำเร็จ (Completed + NoShow)
       const cancelled = s.reduce((a, x) => a + x.cancelledOrders, 0);
       const rate = totalOrders > 0 ? +((cancelled / totalOrders) * 100).toFixed(1) : null;
-      return { gross, net, totalOrders, cancelled, rate, storesData: s }; 
+      return { gross, net, totalOrders, completed, cancelled, rate, storesData: s }; 
     };
     
       const curr = summarize(filterOrdersByRange(orders, currStart, currEnd, 'all'), currStart);
@@ -867,7 +873,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
         curr, prev, compareLabel,
         deltaGross: pctChange(curr.gross, prev.gross),
         deltaNet: pctChange(curr.net, prev.net), 
-        deltaOrders: pctChange(curr.totalOrders, prev.totalOrders),
+        deltaOrders: pctChange(curr.completed, prev.completed),
         deltaCancelled: pctChange(curr.cancelled, prev.cancelled),
         deltaRate: curr.rate === null || prev.rate === null ? null : +(curr.rate - prev.rate).toFixed(1),
       };
@@ -1074,8 +1080,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 />
                 <BerryStatCard
                   bgTone="dark"
-                  label="จำนวนออเดอร์"
-                  value={fmtMoney(periodStats.curr.totalOrders)}
+                  label="จำนวนออเดอร์ที่สำเร็จ"
+                  value={fmtMoney(periodStats.curr.completed)}
                   delta={periodStats.deltaOrders}
                   compareLabel={periodStats.compareLabel}
                 />
@@ -1329,12 +1335,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
                     <table className="berry-table">
-                      <thead><tr><th>อันดับ</th><th>เมนู</th><th>จำนวนที่ขาย</th></tr></thead>
+                      <thead><tr><th>อันดับ</th><th>เมนู</th>{salesStoreFilter === 'all' && <th>ร้านค้า</th>}<th>จำนวนที่ขาย</th></tr></thead>
                       <tbody>
                         {topMenu.map((m, i) => (
-                          <tr key={m.name}>
+                          <tr key={`${m.storeId}-${m.name}`}>
                             <td>#{i + 1}</td>
                             <td>{m.name}</td>
+                            {salesStoreFilter === 'all' && <td>{m.storeName}</td>}
                             <td>{fmtMoney(m.qty)}</td>
                           </tr>
                         ))}
