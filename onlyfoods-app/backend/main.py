@@ -845,7 +845,7 @@ def get_executive_contract_notifications(user_id: int, db=Depends(get_db)):
         if not user: raise HTTPException(status_code=404, detail="ไม่พบผู้ใช้งาน")
         if user.get("Role") != "Executive": raise HTTPException(status_code=403, detail="สำหรับ Executive เท่านั้น")
 
-        today = datetime.now().date()
+        today = bangkok_now().date()
         cur.execute("""SELECT StoreId, StoreName, ContractEndDate FROM Store WHERE IsDeleted = 0 AND ContractEndDate IS NOT NULL""")
         stores = cur.fetchall()
 
@@ -1226,7 +1226,7 @@ def renew_store_contract(store_id: int, data: RenewContractSchema, db=Depends(ge
             old_end = store["ContractEndDate"]
             new_start = datetime.strptime(data.contract_start_date,"%Y-%m-%d" ).date()
             new_end = datetime.strptime(data.contract_end_date,"%Y-%m-%d").date()
-            today = datetime.now().date()
+            today = bangkok_now().date()
 
             if new_start < today:
                 raise HTTPException(status_code=400, detail="วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว")
@@ -1712,7 +1712,7 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema, db=Depen
         """, (product_id,))
         affected = cur.fetchall()
 
-        deadline = datetime.now() + timedelta(minutes=payload.response_window_minutes)
+        deadline = bangkok_now() + timedelta(minutes=payload.response_window_minutes)
         for o in affected:
             cur.execute("""
                 UPDATE `Order` 
@@ -1938,7 +1938,7 @@ def print_order(order_id: int, payload: PrintRequestSchema, db=Depends(get_db)):
             """, (order_id, job_id, print_type, payload.printer, order['QueueNo'], customer_name, items_json, total, payload.user_role))
             log_id = cur.lastrowid
             if print_type == 'FIRST_PRINT' and job_id:
-                cur.execute("UPDATE PrintJob SET Status='PRINTED', PrintedAt=%s, PrintedBy=%s WHERE PrintJobID=%s", (datetime.now(), payload.user_role, job_id))
+                cur.execute("UPDATE PrintJob SET Status='PRINTED', PrintedAt=%s, PrintedBy=%s WHERE PrintJobID=%s", (bangkok_now(), payload.user_role, job_id))
             log_audit(db, 'PRINT_ORDER' if print_type == 'FIRST_PRINT' else 'REPRINT_ORDER', payload.user_role, f"Order {order_id} Queue {order['QueueNo']} PrintType={print_type} LogID={log_id}")
             db.commit()
             return {'success': True, 'print_data': {'orderId': order_id, 'queueNo': order['QueueNo'], 'customerName': customer_name, 'items': json.loads(items_json), 'totalAmount': total, 'printer': payload.printer, 'printType': print_type}}
@@ -2025,7 +2025,7 @@ def customer_change_order_item(
                     detail="ออเดอร์นี้ไม่ได้อยู่ในสถานะรอเปลี่ยนเมนู"
                 )
 
-            if order.get("CancelDeadline") and datetime.now() > order["CancelDeadline"]:
+            if order.get("CancelDeadline") and bangkok_now() > order["CancelDeadline"]:
                 raise HTTPException(
                     status_code=400,
                     detail="หมดเวลาสำหรับเปลี่ยนเมนูหรือยกเลิกออเดอร์แล้ว"
@@ -2230,7 +2230,7 @@ def customer_cancel_order(
                     detail="ออเดอร์นี้ไม่อยู่ในสถานะที่สามารถยกเลิกได้"
                 )
 
-            if order.get("CancelDeadline") and datetime.now() > order["CancelDeadline"]:
+            if order.get("CancelDeadline") and bangkok_now() > order["CancelDeadline"]:
                 raise HTTPException(
                     status_code=400,
                     detail="หมดเวลาสำหรับยกเลิกออเดอร์แล้ว"
@@ -2337,7 +2337,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
                 cur.execute("SELECT ReadyAt FROM `Order` WHERE OrderID=%s", (order_id,))
                 ready_row = cur.fetchone()
                 ready_at = ready_row.get('ReadyAt') if ready_row else None
-                if not ready_at or (datetime.now() - ready_at).total_seconds() < 15 * 60:
+                if not ready_at or (bangkok_now() - ready_at).total_seconds() < 15 * 60:
                     raise HTTPException(status_code=400, detail='ออเดอร์นี้ยังไม่ถึง 15 นาทีหลังปรุงเสร็จ')
 
             terminal_statuses = {'Completed', 'Cancelled', 'NoShow'}
@@ -2351,7 +2351,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
             if payload.status == 'Ready':
                 cur.execute(
                     "UPDATE `Order` SET Status=%s, CancelReason=%s, ReadyAt=%s WHERE OrderID=%s", 
-                    (payload.status, payload.cancel_reason, datetime.now(), order_id)
+                    (payload.status, payload.cancel_reason, bangkok_now(), order_id)
                 )
             else:
                 cur.execute(
@@ -2396,7 +2396,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema, db=Depends(get_db)
 def request_cancel(order_id: int, payload: CancelRequestSchema, db=Depends(get_db)):
     ensure_order_columns(db)
     with db.cursor() as cur:
-        deadline = datetime.now() + timedelta(minutes=payload.response_window_minutes)
+        deadline = bangkok_now() + timedelta(minutes=payload.response_window_minutes)
         cur.execute("""
             UPDATE `Order` 
             SET Status='Pending_Cancellation', CancelReason=%s, CancelDeadline=%s 
