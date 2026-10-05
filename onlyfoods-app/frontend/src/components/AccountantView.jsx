@@ -328,24 +328,61 @@ function BerryStatCard({ label, value, tone, delta, deltaSuffix = '%', invertDel
   // เช็คว่าพื้นหลังเป็นสีทึบหรือไม่
   const isDarkBg = bgTone === 'orange' || bgTone === 'dark';
 
-  if (delta !== undefined && delta !== null) {
-    const isFlat = delta === 0;
-    const isPositive = delta > 0;
-    const isGood = isFlat ? null : (invertDelta ? !isPositive : isPositive);
-    
-    // ปรับสียอด % ให้สว่างขึ้นเมื่อพื้นหลังสีทึบ
-    let color = isFlat ? 'var(--berry-text-muted)' : isGood ? 'var(--berry-green)' : 'var(--berry-red)';
-    if (isDarkBg) {
-      color = isFlat ? 'rgba(255,255,255,0.7)' : isGood ? '#a7f3d0' : '#fecaca';
-    }
+  if (delta === null) {
+  deltaEl = (
+    <div className="berry-stat-delta">
+      <span>N/A</span>
+      {compareLabel && (
+        <span
+          className="berry-stat-delta-caption"
+          style={{
+            color: isDarkBg ? '#f3f3f3' : 'var(--berry-text-muted)'
+          }}
+        >
+          ไม่มีข้อมูลช่วงก่อนหน้า
+        </span>
+      )}
+    </div>
+  );
+} else if (delta !== undefined) {
+  const isFlat = delta === 0;
+  const isPositive = delta > 0;
+  const isGood = isFlat ? null : (invertDelta ? !isPositive : isPositive);
 
-    deltaEl = (
-      <div className="berry-stat-delta" style={{ color }}>
-        {!isFlat && <Icon name={isPositive ? 'arrowUp' : 'arrowDown'} size={12} color={color} />}
-        <span>{isFlat ? 'ไม่เปลี่ยนแปลง' : `${Math.abs(delta)}${deltaSuffix}`}</span>
-        {compareLabel && <span className="berry-stat-delta-caption" style={isDarkBg ? { color: 'rgba(255,255,255,0.6)' } : {}}>{compareLabel}</span>}
-      </div>
-    );
+  let color = isFlat
+    ? 'var(--berry-text-muted)'
+    : isGood
+      ? 'var(--berry-green)'
+      : 'var(--berry-red)';
+
+  if (isDarkBg) {
+    color = isFlat
+      ? 'rgba(255,255,255,0.7)'
+      : isGood
+        ? '#a7f3d0'
+        : '#fecaca';
+  }
+
+  deltaEl = (
+    <div className="berry-stat-delta" style={{ color }}>
+      {!isFlat && (
+        <Icon
+          name={isPositive ? 'arrowUp' : 'arrowDown'}
+          size={12}
+          color={color}
+        />
+      )}
+      <span>{isFlat ? 'ไม่เปลี่ยนแปลง' : `${Math.abs(delta)}${deltaSuffix}`}</span>
+      {compareLabel && (
+        <span
+          className="berry-stat-delta-caption"
+          style={isDarkBg ? { color: 'rgba(255,255,255,0.6)' } : {}}
+        >
+          {compareLabel}
+        </span>
+      )}
+    </div>
+  );
   }
 
   // สร้าง Style ให้แต่ละการ์ดตาม bgTone ที่กำหนด
@@ -819,7 +856,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     
       const curr = summarize(filterOrdersByRange(orders, currStart, currEnd, 'all'), currStart);
       const prev = summarize(filterOrdersByRange(orders, prevStart, prevEnd, 'all'), prevStart);
-      const pctChange = (c, p) => (p > 0 ? +(((c - p) / p) * 100).toFixed(1) : (c > 0 ? 100 : 0));
+      const pctChange = (c, p) => {
+        if (p === 0) {
+          return c === 0 ? 0 : null;
+        }
+        return +(((c - p) / p) * 100).toFixed(1);
+      };
       const compareLabel = trendDays === 'today' ? 'เทียบกับเมื่อวาน' : `เทียบกับ ${trendDays} วันก่อนหน้า`;
       return {
         curr, prev, compareLabel,
