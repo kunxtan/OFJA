@@ -64,8 +64,8 @@ def log_audit(db, action: str, performed_by: str, details: str):
                 """,
                 (action, performed_id, str(performed_by) if performed_by else None, details)
             )
-    except Exception:
-        pass
+    except Exception as error:
+        print(f"[AUDIT ERROR] {action}: {error}")
 
 def send_notif(db, user_id: int, msg: str):
     if user_id:
