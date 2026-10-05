@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Cropper from 'react-easy-crop';
 import * as XLSX from 'xlsx';
 // ===== ตั้งค่าหลักของหน้า Executive =====
-const ORDER_TIME_IS_UTC = true;
+const ORDER_TIME_IS_UTC = false;
 const MAX_IMAGE_MB = 5;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const REFRESH_MS = 2000;
@@ -1478,7 +1478,7 @@ const returnFoodCourtToAuto = async () => {
                         <span style={{ minWidth: 0 }}>
                           <span style={{ display: 'block', color: T.text, fontSize: '13px' }}>{n.Message}</span>
                           <span style={{ display: 'block', color: T.muted, fontSize: '11.5px', marginTop: '3px' }}>
-                            {parseOrderDate(n.CreatedAt)?.toLocaleString('th-TH') || ''}
+                            {n.CreatedAt ? thaiDateTime(n.CreatedAt) : ''}
                           </span>
                         </span>
                       </button>))}
@@ -5175,9 +5175,10 @@ function CustomerInfoPage({ ctx }) {
         const reviewEvents = (Array.isArray(reviews) ? reviews : []).map(review => ({ type: 'review', id: `review-${review.ReviewId}`, date: review.CreatedAt, data: review }));
         const issueEvents = (Array.isArray(issues) ? issues : []).map(issue => ({ type: 'issue', id: `issue-${issue.ReportID}`, date: issue.CreatedAt, data: issue }));
         const combined = [...orderEvents, ...reviewEvents, ...issueEvents].sort((a, b) => {
-            const aTime = a.date ? new Date(a.date).getTime() : 0, bTime = b.date ? new Date(b.date).getTime() : 0;
-            return bTime - aTime;
-        });
+        const aTime = parseOrderDate(a.date)?.getTime() || 0;
+        const bTime = parseOrderDate(b.date)?.getTime() || 0;
+        return bTime - aTime;
+    });
         setActivities(combined);
     } catch (err) { setActivityError(err.message); }
     finally { setActivityLoading(false); }};
