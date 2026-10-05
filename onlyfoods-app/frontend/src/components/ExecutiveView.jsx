@@ -5035,7 +5035,7 @@ function AuditHistoryPage({ ctx }) {
         const q = query.trim().toLowerCase();
         if (!q)
             return true;
-        return `${actionName(log.Action)} ${log.Action || ''} ${log.PerformerDisplay || log.PerformedBy || ''} ${log.PerformerRole || ''} ${log.Details || ''}`
+        return `${actionName(log.Action)} ${log.Action || ''} ${log.PerformedBy || ''} ${log.PerformerRole || ''} ${log.Details || ''}`
             .toLowerCase()
             .includes(q);
     });
@@ -5122,8 +5122,8 @@ function AuditHistoryPage({ ctx }) {
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-                        <span style={{width: '30px',height: '30px',borderRadius: '50%',display: 'grid',placeItems: 'center',background:T.deepSoft,color:T.deep,fontSize: '12px',fontWeight:700,flexShrink:0}}>{String(log.PerformerDisplay || log.PerformerRole || log.PerformedBy || 'E').charAt(0).toUpperCase()}</span>
-                        <span style={{ fontWeight: 500, color: T.text }}>{log.PerformerDisplay || log.PerformerRole || log.PerformedBy || '—'}</span>
+                        <span style={{width: '30px',height: '30px',borderRadius: '50%',display: 'grid',placeItems: 'center',background:T.deepSoft,color:T.deep,fontSize: '12px',fontWeight:700,flexShrink:0}}>{String(log.PerformerRole || log.PerformedBy || 'E').charAt(0).toUpperCase()}</span>
+                        <span style={{ fontWeight: 500, color: T.text }}>{log.PerformerRole || log.PerformedBy || '—'}</span>
                       </div>
                     </td>
                     <td style={{ ...tdStyle, lineHeight: 1.55 }}>{log.Details || '—'}</td>

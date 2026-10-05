@@ -2643,14 +2643,7 @@ def get_cancellations(store_id: Optional[int] = None, db=Depends(get_db)):
 @app.get("/api/audit-logs")
 def get_logs(db=Depends(get_db)):
     with db.cursor() as cur:
-        cur.execute("""SELECT a.LogID, a.Action, a.PerformedBy, a.PerformerRole, a.EntityType, a.EntityId, a.OldValue, a.NewValue, a.IpAddress, a.CreatedAt,
-            COALESCE(a.Details, JSON_UNQUOTE(JSON_EXTRACT(a.NewValue, '$.details'))) AS Details,
-            COALESCE(u.FullName, u.Username, a.PerformerRole,
-                CASE WHEN a.PerformedBy IS NOT NULL THEN CONCAT('User #', a.PerformedBy) ELSE NULL END) AS PerformerDisplay
-            FROM AuditLog a
-            LEFT JOIN Users u ON u.UserId = a.PerformedBy
-            ORDER BY a.LogID DESC
-            LIMIT 50""")
+        cur.execute("SELECT * FROM AuditLog ORDER BY LogID DESC LIMIT 50")
         return cur.fetchall()
     
 @app.get("/api/reports/issue/store/{store_id}")
