@@ -1935,8 +1935,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <input type="time" value={pickupTime} max={foodCourtCloseTime || undefined} onChange={e => {
                       const selectedTime = e.target.value;
                       if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
-                        alert(`กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`);
-                        return;
+                        customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`, "warning");
                       }
                       setPickupTime(selectedTime);
                     }}
