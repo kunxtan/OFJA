@@ -45,33 +45,27 @@ def get_db():
     finally:
         conn.close()
 
-def log_audit(db, action: str, performed_by=None, details: str = "", entity_type: Optional[str] = None, entity_id: Optional[int] = None, old_value=None, new_value=None, ip_address: Optional[str] = None):
-  
-    """บันทึก Audit Logรองรับทั้งโค้ดเดิมของระบบ:log_audit(db, action, performed_by, details)
-    และรองรับ schema ใหม่ที่สามารถเก็บ:EntityType, EntityId, OldValue, NewValue, IpAddress"""
+def log_audit(db, action: str, performed_by: str, details: str):
+    """เขียน AuditLog ให้รองรับ schema ใหม่ที่ PerformedBy เป็น UserId (INT)"""
     try:
-        performed_id, performer_role = None, None
+        performed_id = None
         if performed_by is not None:
-            actor = str(performed_by).strip()
-            if actor.isdigit(): performed_id = int(actor)
-            elif actor.startswith("User:") and actor[5:].isdigit(): performed_id = int(actor[5:])
-            elif actor: performer_role = actor
+            text = str(performed_by)
+            if text.isdigit():
+                performed_id = int(text)
+            elif text.startswith("User:") and text[5:].isdigit():
+                performed_id = int(text[5:])
 
         with db.cursor() as cur:
-            if performed_id is not None:
-                cur.execute("""SELECT Role FROM Users WHERE UserId = %s""", (performed_id,))
-                user = cur.fetchone()
-                if user: performer_role = user.get("Role")
-
-            if new_value is None and details: new_value = {"details": details}
-            old_value_json = json.dumps(old_value, ensure_ascii=False) if old_value is not None else None
-            new_value_json = json.dumps(new_value, ensure_ascii=False) if new_value is not None else None
-
-            cur.execute("""INSERT INTO AuditLog (Action, PerformedBy, PerformerRole, EntityType, EntityId, OldValue, NewValue, IpAddress, Details)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (action, performed_id, performer_role, entity_type, entity_id, old_value_json, new_value_json, ip_address, details or None))
-    except Exception as error:
-        print(f"[AUDIT LOG ERROR] action={action}: {error}")
+            cur.execute(
+                """
+                INSERT INTO AuditLog (Action, PerformedBy, PerformerRole, Details)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (action, performed_id, str(performed_by) if performed_by else None, details)
+            )
+    except Exception:
+        pass
 
 def send_notif(db, user_id: int, msg: str):
     if user_id:
