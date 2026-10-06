@@ -3,6 +3,24 @@ CREATE DATABASE IF NOT EXISTS onlyfoods_db CHARACTER SET utf8mb4 COLLATE utf8mb4
 USE onlyfoods_db;
 
 -- ========================================================
+-- 0. กลุ่มข้อมูลสิทธิ์และสถานะ (Master Data)
+-- ========================================================
+
+-- Roles: สิทธิ์การใช้งานในระบบ
+CREATE TABLE IF NOT EXISTS Roles (
+    RoleId INT AUTO_INCREMENT PRIMARY KEY,
+    RoleName VARCHAR(50) NOT NULL UNIQUE,
+    Description VARCHAR(255) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- OrderStatus: สถานะของคำสั่งซื้อ
+CREATE TABLE IF NOT EXISTS OrderStatus (
+    StatusId INT AUTO_INCREMENT PRIMARY KEY,
+    StatusName VARCHAR(50) NOT NULL UNIQUE,
+    Description VARCHAR(255) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ========================================================
 -- 1. กลุ่มศูนย์อาหาร ร้านค้า และสิทธิ์การใช้งาน (Setup & Master)
 -- ========================================================
 
@@ -37,7 +55,7 @@ CREATE TABLE IF NOT EXISTS Store (
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Users: ผู้ใช้งานทุกบทบาท (Customer, Staff, Owner, Accountant, Executive)
+-- Users: ผู้ใช้งานทุกบทบาท
 CREATE TABLE IF NOT EXISTS Users (
     UserId INT AUTO_INCREMENT PRIMARY KEY,
     Username VARCHAR(50) NOT NULL UNIQUE,
@@ -46,7 +64,7 @@ CREATE TABLE IF NOT EXISTS Users (
     FullName VARCHAR(100) NOT NULL,
     Phone VARCHAR(20) NULL,
     Email VARCHAR(100) NULL,
-    Role ENUM('Customer', 'Front Staff', 'Kitchen Staff', 'Shop Owner', 'Accountant', 'Executive') NOT NULL,
+    RoleId INT NOT NULL,                      -- อ้างอิงตาราง Roles แทน ENUM
     StoreId INT NULL,                         -- สังกัดร้าน (NULL สำหรับ Customer, Accountant, Executive)
     Points INT DEFAULT 0,                     -- แต้มสะสมลูกค้า
     ProfileImgUrl LONGTEXT NULL,
@@ -55,6 +73,7 @@ CREATE TABLE IF NOT EXISTS Users (
     LockedUntil DATETIME NULL,
     CreatedBy INT NULL,                       -- ผู้บริหารสร้างบัญชีให้ Owner
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (RoleId) REFERENCES Roles(RoleId) ON DELETE RESTRICT,
     FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE SET NULL,
     FOREIGN KEY (CreatedBy) REFERENCES Users(UserId) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -143,17 +162,7 @@ CREATE TABLE IF NOT EXISTS `Order` (
     TotalAmount DECIMAL(10, 2) NOT NULL,
     Note TEXT NULL,                           -- หมายเหตุรวมของออเดอร์
     IsWalkIn TINYINT(1) DEFAULT 0,
-    Status ENUM(
-        'Verifying_Slip',        -- รอตรวจสอบสลิป/การชำระเงินออนไลน์
-        'Pending',               -- ชำระแล้ว รอคิว/เตรียมปรุง
-        'Cooking',               -- ครัวกำลังทำอาหาร
-        'Cooked',                -- ครัวทำเสร็จแล้ว
-        'Ready',                 -- หน้าร้านกด "เรียกคิว" (พร้อมส่งมอบ)
-        'Completed',             -- หน้าร้านกด "ส่งมอบแล้ว"
-        'Pending_Cancellation',  -- ของหมด รอเลือกลบ/เปลี่ยนเมนูใน 30 นาที
-        'Cancelled',             -- ยกเลิกออเดอร์ (หมดเวลา 30 นาที หรือลูกค้ายกเลิก)
-        'NoShow'                 -- ลูกค้าไม่มารับอาหารเกิน 60 นาที
-    ) DEFAULT 'Verifying_Slip',
+    StatusId INT NOT NULL DEFAULT 1,          -- อ้างอิงตาราง OrderStatus (Default 1: Verifying_Slip) แทน ENUM
     PickupTime DATETIME NULL,                 -- เวลานัดรับล่วงหน้าที่ลูกค้าเลือก
     CookedAt DATETIME NULL,                   -- เวลาที่ครัวกดทำเสร็จ
     ReadyAt DATETIME NULL,                    -- เวลาที่หน้าร้านกดเรียกคิว
@@ -164,7 +173,8 @@ CREATE TABLE IF NOT EXISTS `Order` (
     UNIQUE KEY uq_store_queue_date (StoreId, QueueNo, OrderDate),
     FOREIGN KEY (StoreId) REFERENCES Store(StoreId) ON DELETE RESTRICT,
     FOREIGN KEY (UserId) REFERENCES Users(UserId) ON DELETE SET NULL,
-    FOREIGN KEY (CreatedBy) REFERENCES Users(UserId) ON DELETE SET NULL
+    FOREIGN KEY (CreatedBy) REFERENCES Users(UserId) ON DELETE SET NULL,
+    FOREIGN KEY (StatusId) REFERENCES OrderStatus(StatusId) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- OrderDetail: รายการอาหารแต่ละจานในออเดอร์
@@ -180,7 +190,7 @@ CREATE TABLE IF NOT EXISTS OrderDetail (
     FOREIGN KEY (ProductId) REFERENCES Product(ProductId) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Payment: การชำระเงินออนไลน์ (1 Order มีได้ 1 รายการ Active แต่รองรับการอัปโหลดสลิปใหม่หากถูก Reject)
+-- Payment: การชำระเงินออนไลน์
 CREATE TABLE IF NOT EXISTS Payment (
     PaymentId INT AUTO_INCREMENT PRIMARY KEY,
     OrderID INT NOT NULL,
@@ -372,8 +382,8 @@ CREATE TABLE IF NOT EXISTS ExportLog (
 CREATE TABLE IF NOT EXISTS OrderStatusLog (
     LogId INT AUTO_INCREMENT PRIMARY KEY,
     OrderID INT NOT NULL,
-    OldStatus VARCHAR(50) NULL,
-    NewStatus VARCHAR(50) NOT NULL,
+    OldStatus VARCHAR(50) NULL,             -- เก็บชื่อสถานะเป็น String เหมือนเดิมเพื่อให้สอดคล้องกับ Log
+    NewStatus VARCHAR(50) NOT NULL,         -- เก็บชื่อสถานะเป็น String เหมือนเดิมเพื่อให้สอดคล้องกับ Log
     Reason VARCHAR(255) NULL,
     ChangedBy INT NULL,                       -- NULL กรณีระบบเปลี่ยนอัตโนมัติ (เช่น Auto-cancel 30 นาที)
     ChangedByType ENUM('User', 'System') NOT NULL DEFAULT 'User',
@@ -415,6 +425,27 @@ CREATE TABLE IF NOT EXISTS SecurityLog (
 -- 7. ข้อมูลตั้งต้น (Initial Seed Data)
 -- ========================================================
 
+-- เพิ่มข้อมูล Role เริ่มต้น
+INSERT IGNORE INTO Roles (RoleId, RoleName) VALUES 
+(1, 'Customer'), 
+(2, 'Front Staff'), 
+(3, 'Kitchen Staff'), 
+(4, 'Shop Owner'), 
+(5, 'Accountant'), 
+(6, 'Executive');
+
+-- เพิ่มข้อมูล OrderStatus เริ่มต้น
+INSERT IGNORE INTO OrderStatus (StatusId, StatusName) VALUES 
+(1, 'Verifying_Slip'), 
+(2, 'Pending'), 
+(3, 'Cooking'), 
+(4, 'Cooked'), 
+(5, 'Ready'), 
+(6, 'Completed'), 
+(7, 'Pending_Cancellation'), 
+(8, 'Cancelled'), 
+(9, 'NoShow');
+
 -- ตั้งค่าเวลาเปิด-ปิดศูนย์อาหาร
 INSERT IGNORE INTO FoodCourtSetting (SettingId, IsOpen, OpenTime, CloseTime, ManualOverride, OverrideUntil)
 VALUES (1, 1, '08:00:00', '20:00:00', 'AUTO', NULL);
@@ -429,19 +460,20 @@ ON DUPLICATE KEY UPDATE
     ImageUrl=VALUES(ImageUrl), 
     Description=VALUES(Description);
 
--- ข้อมูลผู้ใช้งานระบบครบทุก Role
-INSERT INTO Users (Username, PasswordHash, FullName, Role, StoreId, Points, Phone, Email) VALUES
-('uefa01', 'uefa01', 'คุณ ยูฟ่า (ลูกค้า VIP)', 'Customer', NULL, 250, '0812345678', 'uefa01@example.com'),
-('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน', 'Front Staff', 1, 0, '0823456789', 'staff01@example.com'),
-('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว', 'Kitchen Staff', 1, 0, '0834567890', 'kitchen01@example.com'),
-('owner01', 'owner01', 'เสี่ยฟลุ้ค เจ้าของร้านแกง', 'Shop Owner', 1, 0, '0845678901', 'owner01@example.com'),
-('staff02', 'staff02', 'พนักงานยูฟ่า หน้าร้าน (ชาไทย)', 'Front Staff', 2, 0, '0856789012', 'staff02@example.com'),
-('kitchen02', 'kitchen02', 'เชฟยูฟ่า ห้องครัว (ชาไทย)', 'Kitchen Staff', 2, 0, '0867890123', 'kitchen02@example.com'),
-('staff03', 'staff03', 'พนักงานโฟโต้ หน้าร้าน (ก๋วยเตี๋ยวเรือ)', 'Front Staff', 3, 0, '0878901234', 'staff03@example.com'),
-('kitchen03', 'kitchen03', 'เชฟโฟโต้ ห้องครัว (ก๋วยเตี๋ยวเรือ)', 'Kitchen Staff', 3, 0, '0889012345', 'kitchen03@example.com'),
-('account01', 'account01', 'คุณปัด ฝ่ายบัญชี', 'Accountant', NULL, 0, '0890123456', 'account01@example.com'),
-('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 'Executive', NULL, 0, '0901234567', 'exec01@example.com')
-ON DUPLICATE KEY UPDATE FullName=VALUES(FullName);
+-- ข้อมูลผู้ใช้งานระบบ (แก้ไขใช้ RoleId แทนชื่อ Role)
+INSERT INTO Users (Username, PasswordHash, FullName, RoleId, StoreId, Points, Phone, Email) VALUES
+('uefa01', 'uefa01', 'คุณ ยูฟ่า (ลูกค้า VIP)', 1, NULL, 250, '0812345678', 'uefa01@example.com'),
+('staff01', 'staff01', 'ฟลุ้ค หน้าร้าน', 2, 1, 0, '0823456789', 'staff01@example.com'),
+('kitchen01', 'kitchen01', 'เชฟฟลุ้ค ห้องครัว', 3, 1, 0, '0834567890', 'kitchen01@example.com'),
+('owner01', 'owner01', 'เสี่ยฟลุ้ค เจ้าของร้านแกง', 4, 1, 0, '0845678901', 'owner01@example.com'),
+('staff02', 'staff02', 'พนักงานยูฟ่า หน้าร้าน (ชาไทย)', 2, 2, 0, '0856789012', 'staff02@example.com'),
+('kitchen02', 'kitchen02', 'เชฟยูฟ่า ห้องครัว (ชาไทย)', 3, 2, 0, '0867890123', 'kitchen02@example.com'),
+('staff03', 'staff03', 'พนักงานโฟโต้ หน้าร้าน (ก๋วยเตี๋ยวเรือ)', 2, 3, 0, '0878901234', 'staff03@example.com'),
+('kitchen03', 'kitchen03', 'เชฟโฟโต้ ห้องครัว (ก๋วยเตี๋ยวเรือ)', 3, 3, 0, '0889012345', 'kitchen03@example.com'),
+('account01', 'account01', 'คุณปัด ฝ่ายบัญชี', 5, NULL, 0, '0890123456', 'account01@example.com'),
+('exec01', 'exec01', 'ท่านกัปตัน ผู้บริหารสูงสุด', 6, NULL, 0, '0901234567', 'exec01@example.com')
+ON DUPLICATE KEY UPDATE FullName=VALUES(FullName), RoleId=VALUES(RoleId);
+
 -- ========================================================
 -- 8. Compatibility columns for current Only Foods backend
 -- ========================================================

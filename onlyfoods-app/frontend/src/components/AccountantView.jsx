@@ -6,13 +6,22 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
    และปฏิบัติตามหลัก Effective Dashboard Design
    ============================================================ */
 
+// เขตเวลาของเซิร์ฟเวอร์/ฐานข้อมูล (ไทย = +07:00) ถ้า DB ของคุณเก็บเป็น UTC ให้เปลี่ยนเป็น 'Z'
+const SERVER_TZ = '+07:00';
+
 const RATE_WARN = 5;    // % -> เฝ้าระวัง (ตั้งแต่ค่านี้ขึ้นไป)
 const RATE_ALERT = 10;  // % -> แจ้งเตือน (Alert) เมื่อ Cancel Rate มากกว่าค่านี้
 
 // นักบัญชีบันทึกยอด/จำนวนออเดอร์ เฉพาะออเดอร์ที่ "จบ/กึ่งจบ" หรือ "ถูกยกเลิก" เท่านั้น
 const SETTLED_STATUSES = ['Completed', 'NoShow'];               // ส่งมอบสำเร็จ / กึ่งจบ (ลูกค้าไม่มารับ ร้านได้เงินแล้ว)
 const RECORDED_STATUSES = [...SETTLED_STATUSES, 'Cancelled'];   // สถานะที่นับเข้าบัญชี
-const isSettled = (o) => SETTLED_STATUSES.includes(o.Status);
+const normStatus = (st) => {
+  const t = String(st || '').trim();
+  const hit = RECORDED_STATUSES.concat(['Pending', 'Cooking', 'Ready', 'Verifying_Slip', 'Pending_Cancellation'])
+    .find(x => x.toLowerCase() === t.toLowerCase());
+  return hit || t;
+};
+const isSettled = (o) => SETTLED_STATUSES.includes(normStatus(o.Status));
 
 // โทนสีสำหรับแต่ละร้านค้า (ใช้เนกทีฟ/ส้ม/เหลือง/เทา ไม่แย่งซีนสีแจ้งเตือน)
 const STORE_COLORS = ['#FF724C', '#2A2C41', '#FDBF50', '#697586', '#E0532E', '#4A4D6B', '#8C91A4'];
@@ -26,14 +35,15 @@ const fmtMoney = (n) => {
   });
 };
 
-// สีของ Audit Log: แดง = ปฏิเสธสลิป/ร้านยกเลิก/ลูกค้ายกเลิก, เหลือง = อนุมัติแล้วแต่ของหมด, เขียว = อนุมัติสลิป
+// สีของ Audit Log: แดง = ยกเลิกออเดอร์ทุกกรณี (ปฏิเสธสลิป/ร้านยกเลิก/ลูกค้ายกเลิก), เขียว = ออเดอร์ Completed, อื่น ๆ (เช่น อนุมัติสลิป) ไม่มีสี
 // ตัดสินจากทั้งชื่อ Action และข้อความรายละเอียด เพื่อให้ทำงานได้กับ log ที่ backend เดิมบันทึกไว้
 function auditTone(action, details) {
   const a = String(action || '').toUpperCase();
   const d = String(details || '');
-  if (a.includes('OUT_OF_STOCK') || a === 'CANCEL_REQUEST' || d.includes('Pending_Cancellation') || d.includes('วัตถุดิบหมด')) return 'warn';
+  // ยังรอการตัดสินใจ/ยังไม่ถูกยกเลิกจริง -> ไม่มีสี
+  if (a.includes('OUT_OF_STOCK') || a === 'CANCEL_REQUEST' || a === 'CUSTOMER_CHANGE_ITEM' || d.includes('Pending_Cancellation')) return 'neutral';
   if (a.includes('REJECT') || a.includes('CANCEL') || /->\s*Cancelled/i.test(d) || d.includes('ปฏิเสธสลิป') || d.includes('ยกเลิก')) return 'bad';
-  if (a.includes('APPROVE')) return 'green';
+  if (a.includes('COMPLETE') || /->\s*Completed/i.test(d)) return 'green';
   return 'neutral';
 }
 
@@ -51,18 +61,43 @@ function classifyCancelledOrder(o) {
 function buildAuditRows(logs, orders) {
   const cutoff = Date.now() - AUDIT_RETENTION_MS;
   const orderById = {};
-  (orders || []).forEach(o => { orderById[String(o.OrderID)] = o; });
+  const userNameById = {};
+  (orders || []).forEach(o => {
+    orderById[String(o.OrderID)] = o;
+    if (o.UserId && (o.CustomerName || o.UserName)) userNameById[String(o.UserId)] = o.CustomerName || o.UserName;
+  });
+  // แปลงค่า PerformedBy / PerformerRole ให้เป็นข้อความที่คนอ่านรู้เรื่อง
+  const performerOf = (l) => {
+    if (l.PerformerLabel) return l.PerformerLabel;
+    const role = String(l.PerformerRole || '').trim();
+    const idText = l.PerformedBy != null ? String(l.PerformedBy) : (role.match(/^User:(\d+)$/) || [])[1];
+    if (idText && userNameById[idText]) return userNameById[idText];
+    if (role === 'User:WalkIn') return 'ลูกค้า Walk-in';
+    if (role) return role;
+    return idText ? `User #${idText}` : 'ระบบ';
+  };
   const coveredCancels = new Set();
   const rows = [];
 
-  (logs || []).forEach(l => {
-    const t = parseOrderDate(l.CreatedAt);
+  const loggedStatus = new Set();      // `${orderId}|${status}` ที่มี log อยู่แล้ว
+  const loggedApprove = new Set();     // orderId ที่มี log อนุมัติสลิปแล้ว
+  const loggedCreate = new Set();      // `${storeId}|${queue}|${day}` ของ CREATE_ORDER ที่มี log อยู่แล้ว
+  (logs || []).forEach((l, idx) => {
+    const logTime = l.CreatedAt || l.Timestamp || l.CreatedDate || l.LogTime || l.Time;
+    const t = parseOrderDate(logTime);
     if (t && t.getTime() < cutoff) return;
-    let details = String(l.Details || '');
+    let details = String(l.Details ?? l.Detail ?? l.Description ?? '');
+    if (!details && (l.NewValue || l.OldValue)) details = [l.OldValue, l.NewValue].filter(Boolean).map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' → ');
+    const stm = details.match(/Order(?:\s*ID)?\s*[:#]?\s*(\d+)\s*->\s*([A-Za-z_]+)/i);
+    if (stm) loggedStatus.add(`${stm[1]}|${normStatus(stm[2])}`);
+    if (String(l.Action) === 'CREATE_ORDER') {
+      const q = details.match(/คิว\s*(\d+)/), sid = details.match(/ID:(\d+)/);
+      if (q && sid) loggedCreate.add(`${sid[1]}|${q[1]}|${dateOnly(logTime)}`);
+    }
     const m = details.match(ORDER_ID_RE);
     const order = m ? orderById[m[1]] : null;
 
-    let action = l.Action;
+    let action = l.Action || l.Event || l.Type || '-';
     // backend เดิมบันทึกการยกเลิกของร้านเป็น UPDATE_STATUS ... -> Cancelled
     if (action === 'UPDATE_STATUS' && /->\s*Cancelled/i.test(details)) {
       action = order ? classifyCancelledOrder(order) : 'STORE_CANCEL_ORDER';
@@ -77,8 +112,9 @@ function buildAuditRows(logs, orders) {
       if (extra.length) details += ` | ${extra.join(' • ')}`;
     }
     if (m && tone === 'bad') coveredCancels.add(m[1]);
+    if (m && /APPROVE/i.test(String(action))) loggedApprove.add(m[1]);
 
-    rows.push({ key: `log-${l.LogID}`, time: l.CreatedAt, action, by: l.PerformedBy, details, tone, derived: false });
+    rows.push({ key: `log-${l.LogID ?? l.LogId ?? l.logId ?? idx}`, time: logTime, action, by: performerOf(l), details, tone, derived: false });
   });
 
   // เติมจากข้อมูลออเดอร์: ออเดอร์ที่ถูกยกเลิกแต่ไม่มี log รองรับ (เช่น log เก่าถูกตัดออกจากรายการ 50 ล่าสุด)
@@ -87,24 +123,51 @@ function buildAuditRows(logs, orders) {
     if (t && t.getTime() < cutoff) return;
     const head = `คิว ${o.QueueNo || '-'} (Order ${o.OrderID}) ร้าน ${o.StoreName || '-'} ยอด ${fmtMoney(o.TotalAmount)}B`;
     const reason = String(o.CancelReason || '');
-    if (o.Status === 'Cancelled' && !coveredCancels.has(String(o.OrderID))) {
+    // ข้อมูลออเดอร์ไม่ได้เก็บว่าพนักงานคนไหนทำ จึงระบุได้แค่ "พนักงานร้านไหน" หรือ "ลูกค้า"
+    const storeStaff = `พนักงานร้าน ${o.StoreName || '-'}`;
+    const customer = o.CustomerName || o.UserName || 'ลูกค้า';
+    if (normStatus(o.Status) === 'Cancelled' && !coveredCancels.has(String(o.OrderID))) {
       const action = classifyCancelledOrder(o);
       const label = action === 'VERIFY_SLIP_REJECT' ? 'ปฏิเสธสลิป' : action === 'CUSTOMER_CANCEL_ORDER' ? 'ลูกค้ายกเลิก' : 'ร้านค้ายกเลิก';
-      rows.push({ key: `drv-c-${o.OrderID}`, time: o.CreatedAt, action, by: 'ระบบ (จากข้อมูลออเดอร์)',
+      rows.push({ key: `drv-c-${o.OrderID}`, time: o.CreatedAt, action, by: action === 'CUSTOMER_CANCEL_ORDER' ? customer : storeStaff,
         details: `${label} ${head} เหตุผล: ${reason || '-'}`, tone: 'bad', derived: true });
+    }
+    if (!loggedCreate.has(`${o.StoreId}|${o.QueueNo}|${dateOnly(o.CreatedAt)}`)) {
+      const who = Number(o.IsWalkIn) === 1 ? 'ออเดอร์หน้าร้าน (Walk-in)' : `ลูกค้า ${o.CustomerName || o.UserName || ''}`.trim();
+      rows.push({ key: `drv-n-${o.OrderID}`, time: o.CreatedAt, action: 'CREATE_ORDER', by: o.CustomerName || o.UserName || (Number(o.IsWalkIn) === 1 ? 'ลูกค้า Walk-in' : 'ลูกค้า'),
+        details: `สร้างออเดอร์ ${head} — ${who}`, tone: 'neutral', derived: true });
+    }
+    const st = normStatus(o.Status);
+    const isWalkIn = Number(o.IsWalkIn) === 1;
+    const slipOk = !isWalkIn && !loggedApprove.has(String(o.OrderID)) && (
+      ['Pending', 'Cooking', 'Cooked', 'Ready', 'Completed', 'NoShow', 'Pending_Cancellation'].includes(st)
+      || (st === 'Cancelled' && (reason.includes('ลูกค้า') || reason.includes('หมด'))));   // ถูกยกเลิกหลังอนุมัติสลิปแล้ว (ไม่ใช่โดนปฏิเสธสลิป)
+    if (slipOk) {
+      rows.push({ key: `drv-a-${o.OrderID}`, time: o.CreatedAt, action: 'VERIFY_SLIP_APPROVE', by: storeStaff,
+        details: `อนุมัติสลิป ${head} (ชำระเงินแล้ว — เวลาโดยประมาณ)`, tone: 'neutral', derived: true });
+    }
+    // ออเดอร์ที่ถูกยกเลิกเพราะของหมดหลังอนุมัติสลิป -> เป็นการยกเลิก จึงเป็นสีแดง
+    if (st === 'Cancelled' && (reason.includes('เมนูหมด') || reason.startsWith('วัตถุดิบหมด'))) {
+      rows.push({ key: `drv-sc-${o.OrderID}`, time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: customer,
+        details: `${isWalkIn ? 'ออเดอร์หน้าร้าน' : 'อนุมัติสลิปแล้ว'} ${head} แต่สินค้าหมด — ลูกค้ายกเลิก`, tone: 'bad', derived: true });
+    }
+    if (['Cooking', 'Ready', 'Completed', 'NoShow'].includes(st) && !loggedStatus.has(`${o.OrderID}|${st}`)) {
+      const when = st === 'Ready' || st === 'NoShow' ? (o.ReadyAt || o.CreatedAt) : st === 'Completed' ? (o.CompletedAt || o.ReadyAt || o.CreatedAt) : o.CreatedAt;
+      rows.push({ key: `drv-st-${o.OrderID}-${st}`, time: when, action: 'UPDATE_STATUS', by: storeStaff,
+        details: `Order ${o.OrderID} -> ${st} ${head}`, tone: st === 'Completed' ? 'green' : 'neutral', derived: true });
     }
     if (o.Status === 'Pending_Cancellation' && reason.startsWith('วัตถุดิบหมด')) {
       const paid = Number(o.IsWalkIn) === 1 ? 'ออเดอร์หน้าร้าน' : 'อนุมัติสลิปแล้ว';
-      rows.push({ key: `drv-s-${o.OrderID}`, time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: 'ระบบ (จากข้อมูลออเดอร์)',
+      rows.push({ key: `drv-s-${o.OrderID}`, time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: storeStaff,
         details: `${paid} ${head} แต่${reason.replace('วัตถุดิบหมด:', '').trim() ? ` '${reason.replace('วัตถุดิบหมด:', '').trim()}'` : 'สินค้า'} หมด — รอลูกค้าตัดสินใจ`,
-        tone: 'warn', derived: true });
+        tone: 'neutral', derived: true });
     }
   });
 
   const ts = (r) => { const d = parseOrderDate(r.time); return d ? d.getTime() : 0; };
   return rows.sort((x, y) => ts(y) - ts(x));
 }
-const AUDIT_ROW_BG = { bad: '#FFF7F7', warn: '#FFFBF0' };
+const AUDIT_ROW_BG = { bad: '#FFF7F7', green: '#F1FBF5' };
 
 const colorForStore = (storeId) => STORE_COLORS[Number(storeId) % STORE_COLORS.length];
 const statusLabel = (s) => (s === 'na' ? 'N/A' : s === 'bad' ? 'สูงผิดปกติ' : s === 'warn' ? 'เฝ้าระวัง' : 'ปกติ');
@@ -116,7 +179,9 @@ function parseOrderDate(value) {
   if (value instanceof Date) return value;
   const normalized = String(value).trim().replace(' ', 'T');
   const alreadyHasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
-  const parsed = new Date(alreadyHasTimezone ? normalized : `${normalized}Z`);
+  // backend/MySQL ส่งเวลามาแบบไม่มี timezone (เช่น 2026-10-06T10:17:43) และเก็บเป็นเวลาไทย
+  // จึงต้องตีความเป็น UTC+7 (ไม่ใช่ UTC) ไม่งั้นเวลาจะคลาดไป 7 ชั่วโมง
+  const parsed = new Date(alreadyHasTimezone ? normalized : `${normalized}${SERVER_TZ}`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
@@ -158,14 +223,15 @@ function buildStoreSummary(stores, orders, rangeStart) {
   (stores || []).forEach(s => { map[s.StoreId] = blank(s.StoreId, s.StoreName, Number(s.IsDeleted) === 1 || s.IsDeleted === true, s.DeletedAt); });
   (orders || []).forEach(o => {
     // บันทึกเฉพาะออเดอร์ที่จบ/กึ่งจบ หรือถูกยกเลิก — ออเดอร์ที่ยังดำเนินการอยู่ไม่นับ
-    if (!RECORDED_STATUSES.includes(o.Status)) return;
+    const st = normStatus(o.Status);
+    if (!RECORDED_STATUSES.includes(st)) return;
     if (!map[o.StoreId]) map[o.StoreId] = blank(o.StoreId, o.StoreName || `ร้าน #${o.StoreId}`, false);
     const row = map[o.StoreId];
     const amount = Number(o.TotalAmount || 0);
     row.totalOrders += 1;
     row.grossSales += amount;
     if (isSettled(o)) row.completedOrders += 1;
-    if (o.Status === 'Cancelled') {
+    if (st === 'Cancelled') {
       row.cancelledOrders += 1;
       row.cancelledAmount += amount;
     }
@@ -815,22 +881,70 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const fetchData = () => {
-    Promise.all([
-      fetch(`${apiBase}/api/stores/history`).then(r => r.json())   // รวมร้านที่ถูกลบ เพื่อให้ตรวจย้อนหลังได้
-        .then(d => Array.isArray(d) ? d : fetch(`${apiBase}/api/stores`).then(r => r.json())),  // ถ้า endpoint ใช้ไม่ได้ ถอยไปใช้รายชื่อร้านปกติ จะได้ไม่เหลือแต่ร้านที่มีออเดอร์
-      fetch(`${apiBase}/api/orders`).then(r => r.json()),
-      fetch(`${apiBase}/api/audit-logs`).then(r => r.json()),
-    ]).then(([storesData, ordersData, logsData]) => {
-      setStores(Array.isArray(storesData) ? storesData : []);
-      setOrders(Array.isArray(ordersData) ? ordersData : []);
-      setLogs(Array.isArray(logsData) ? logsData : []);
+  const [loadError, setLoadError] = useState('');
+  const [connInfo, setConnInfo] = useState('');
+  const baseRef = useRef(null);
+
+  // หา URL ของ backend: ใช้ apiBase ที่ส่งเข้ามาก่อน ถ้าไม่มี/ต่อไม่ได้ ลองพอร์ต 8000 ของเครื่องเดียวกัน
+  const resolveBase = async () => {
+    if (baseRef.current) return baseRef.current;
+    const host = window.location.hostname || 'localhost';
+    const candidates = [...new Set(
+      [apiBase, `${window.location.protocol}//${host}:8000`, `http://127.0.0.1:8000`, `http://localhost:8000`, window.location.origin]
+        .filter(Boolean).map(b => String(b).trim().replace(/\/+$/, ''))
+    )];
+    const tried = [];
+    for (const b of candidates) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      try {
+        const r = await fetch(`${b}/api/stores`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (r.ok) { baseRef.current = b; return b; }
+        tried.push(`${b} → HTTP ${r.status}`);
+      } catch (e) {
+        clearTimeout(timer);
+        tried.push(`${b} → ${e.name === 'AbortError' ? 'ไม่ตอบสนอง' : 'เชื่อมต่อไม่ได้'}`);
+      }
+    }
+    throw new Error(tried.join('  |  '));
+  };
+
+  const fetchData = async () => {
+    let base;
+    try {
+      base = await resolveBase();
+    } catch (e) {
+      setLoadError(`เชื่อมต่อ backend ไม่ได้ — ${e.message}${apiBase ? '' : '  (ไม่ได้รับ apiBase จากหน้าหลัก)'}`);
       setLoading(false);
-      setLastUpdated(new Date());
-    }).catch(() => setLoading(false));
+      return;
+    }
+
+    const getList = (path) => fetch(`${base}${path}`)
+      .then(async r => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => null);
+          throw new Error(`${path} → HTTP ${r.status}${body && body.detail ? `: ${typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)}` : ''}`);
+        }
+        return r.json();
+      })
+      .then(d => (Array.isArray(d) ? d : Promise.reject(new Error(`${path} → ข้อมูลไม่ใช่รายการ`))));
+
+    const storesReq = getList('/api/stores/history').catch(() => getList('/api/stores'));  // ถ้า history ใช้ไม่ได้ ถอยไปใช้รายชื่อร้านปกติ
+    const [st, od, lg] = await Promise.allSettled([storesReq, getList('/api/orders'), getList('/api/audit-logs')]);
+    if (st.status === 'fulfilled') setStores(st.value);
+    if (od.status === 'fulfilled') setOrders(od.value);
+    if (lg.status === 'fulfilled') setLogs(lg.value);
+    const failed = [st, od, lg].filter(r => r.status === 'rejected').map(r => r.reason && r.reason.message);
+    setLoadError(failed.length ? `โหลดข้อมูลจากฐานข้อมูลไม่สำเร็จ — ${failed.join('  |  ')}` : '');
+    setConnInfo(failed.length === 0 && od.value.length === 0
+      ? `เชื่อมต่อ backend (${base}) สำเร็จ แต่ยังไม่มีออเดอร์ในฐานข้อมูล` : '');
+    if (failed.length < 3) setLastUpdated(new Date());
+    setLoading(false);
   };
 
   useEffect(() => {
+    baseRef.current = null;
     fetchData();
     const interval = setInterval(fetchData, 4000);
     return () => clearInterval(interval);
@@ -1083,7 +1197,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
           <div className="berry-profile-container" ref={profileRef}>
             <div className="berry-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
               <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>
-                {user?.name || 'Accountant'}
+                {user?.name || user?.FullName || 'Accountant'}
               </span>
               <Icon name="settings" size={18} color="var(--berry-text-dark)" />
             </div>
@@ -1133,6 +1247,16 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
         {/* MAIN CONTENT */}
         <main className="berry-content">
+          {!loadError && connInfo && (
+            <div style={{ background: '#FFFBF0', border: '1px solid #FDBF50', color: '#8a5a00', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+              ℹ️ {connInfo}
+            </div>
+          )}
+          {loadError && (
+            <div style={{ background: '#FFF7F7', border: '1px solid #fecaca', color: '#b42318', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+              ⚠️ {loadError} — ตัวเลขที่เห็นอาจไม่ครบ (ระบบจะลองใหม่อัตโนมัติ)
+            </div>
+          )}
           
           {page === 'dashboard' && (
             <div className="berry-dashboard-grid">
@@ -1629,9 +1753,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   onChange={e => setAuditSearch(e.target.value)}
                 />
                 <div className="berry-legend" style={{ marginTop: 12 }}>
-                  <span><i style={{ background: '#FF4D4F' }}></i>แดง: ปฏิเสธสลิป / ร้านยกเลิก</span>
-                  <span><i style={{ background: '#FDBF50' }}></i>เหลือง: อนุมัติแล้วแต่สินค้าหมด</span>
-                  <span><i style={{ background: '#00C853' }}></i>เขียว: อนุมัติสลิป</span>
+                  <span><i style={{ background: '#FF4D4F' }}></i>แดง: ยกเลิกออเดอร์</span>
+                  <span><i style={{ background: '#00C853' }}></i>เขียว: ออเดอร์สำเร็จ (Completed)</span>
                 </div>
               </div>
 
@@ -1651,9 +1774,21 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                           <td>{r.details}</td>
                         </tr>
                       ))}
+                      {filteredLogs.length === 0 && (
+                        <tr><td colSpan={4} style={{ textAlign: 'center', padding: 24, color: 'var(--berry-text-muted)' }}>
+                          {auditSearch.trim()
+                            ? 'ไม่พบรายการที่ตรงกับคำค้นหา'
+                            : loadError ? 'ยังโหลดข้อมูลไม่สำเร็จ (ดูข้อความแจ้งเตือนด้านบน)' : 'ยังไม่มีประวัติการทำรายการในฐานข้อมูล'}
+                        </td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
+                {auditRows.some(r => r.derived) && (
+                  <div style={{ padding: '8px 16px 14px', fontSize: 12, color: 'var(--berry-text-muted)' }}>
+                    หมายเหตุ: บางแถวสร้างจากข้อมูลออเดอร์จริงในฐานข้อมูล เนื่องจากไม่พบบันทึกในตาราง AuditLog ของรายการนั้น จึงระบุผู้ทำรายการได้เพียงร้านหรือลูกค้า ไม่ระบุตัวพนักงาน
+                  </div>
+                )}
               </div>
             </div>
           )}
