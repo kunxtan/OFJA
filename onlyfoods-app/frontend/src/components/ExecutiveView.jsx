@@ -4456,22 +4456,18 @@ function ContractTrackingPage({ ctx }) {
     const nextDayISO = (value) => addDaysISO(value, 1);
     const twoDaysAfterISO = (value) => addDaysISO(value, 2);
     
-    const defaultRenewStart = (currentEnd) => {
+    const defaultRenewStart = (store) => {
     const today = dateOnly(todayISO());
-    const end = dateOnly(currentEnd);
+    const end = dateOnly(store?.ContractEndDate);
 
-    // ไม่มีวันสิ้นสุดเดิม -> เริ่มวันนี้
-    if (!end) {
+    // ไม่มีสัญญาเดิม หรือสัญญาหมดแล้ว เริ่มต้นให้เป็นวันนี้ แต่ Executive เปลี่ยนเป็นวันอนาคตได้
+    if (!end || end < today) {
         return todayISO();
     }
 
-    // สัญญาหมดแล้ว -> เริ่มวันนี้
-    if (end < today) {
-        return todayISO();
-    }
-
-    // สัญญายังไม่หมด -> เริ่มวันถัดจากวันสิ้นสุดเดิม
-    return nextDayISO(toISODate(end));
+    // สัญญายังมีผล ระยะที่ต่อเพิ่มต้องเริ่มวันถัดจากวันสิ้นสุดเดิม
+    return nextDayISO(store.ContractEndDate);
+    // ตย.เดิม 9–10 → ช่องวันที่เริ่มช่วงต่อ = 11 เดิม 4–5 วันนี้ 7 → ช่องเริ่ม = 7 → เปลี่ยนเป็น 8, 9, 10... ได้
 };
 
 const calculateRenewEnd = (startISO, duration) => {
@@ -4514,8 +4510,7 @@ const calculateRenewEnd = (startISO, duration) => {
 };
 
 const openRenew = (store) => {
-    const start = defaultRenewStart(store?.ContractEndDate);
-
+    const start = defaultRenewStart(store);
     setRenewStore(store);
     setRenewStart(start);
     setRenewDuration('1y');
@@ -4545,7 +4540,8 @@ const renewNewEnd = renewStore
     )
     : '';
 
-const renewNewStart = renewStart;
+const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate) 
+>= dateOnly(todayISO()) ? (renewStore.CurrentContractStartDate || renewStore.ContractStartDate || renewStart) : renewStart) : '';
     
 
     const suspendExpiredStore = async (store) => {
@@ -4592,14 +4588,16 @@ const renewNewStart = renewStart;
             setRenewError('วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว');
             return;}
 
-        const minimumStart = dateOnly(defaultRenewStart(renewStore.ContractEndDate));
+            const currentEnd = dateOnly(renewStore.ContractEndDate);
+            if (currentEnd && currentEnd >= today) {
+                const requiredStart = dateOnly(nextDayISO(renewStore.ContractEndDate));
+                if (newStart.getTime() !== requiredStart.getTime()) {
+                    setRenewError(`สัญญาเดิมยังมีผล ช่วงที่ต่อเพิ่มต้องเริ่มวันที่ ${formatContractDate(nextDayISO(renewStore.ContractEndDate))}`);
+                    return;
+                }
+            }
 
-        if (minimumStart && newStart < minimumStart) {
-            setRenewError(
-                `วันที่เริ่มสัญญาใหม่ต้องไม่ก่อน ${formatContractDate(defaultRenewStart(renewStore.ContractEndDate))}`
-            );
-            return;
-        }
+        
 
         if (newEnd < newStart) {
             setRenewError('วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา');
@@ -4645,18 +4643,31 @@ const renewNewStart = renewStart;
             setRenewSaving(false);
         }
     };
-    const contractInfo = (store) => {
-        const end = dateOnly(store.ContractEndDate);
-        if (!end) return { key: 'missing', label: 'ยังไม่ระบุสัญญา', days: null, bg: '#F2F3F7', color: T.muted };
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const days = Math.ceil((end - today) / 86400000);
-        if (days <= 0) return {
+    const contractInfo = store => {
+    const start = dateOnly(store.CurrentContractStartDate || store.ContractStartDate), end = dateOnly(store.ContractEndDate);
+    if (!end) return { key: 'missing', label: 'ยังไม่ระบุสัญญา', days: null, bg: '#F2F3F7', color: T.muted };
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (start && start > today) {
+        const daysUntilStart = Math.ceil((start - today) / 86400000);
+        return { key: 'upcoming', label: 'ยังไม่เริ่มสัญญา', days: null, daysUntilStart, bg: T.deepSoft, color: T.deep };
+    }
+
+    const days = Math.ceil((end - today) / 86400000);
+
+        if (days < 0) return {
             key: 'expired',
-            label: days === 0 ? 'หมดอายุวันนี้' : 'หมดอายุแล้ว',
+            label: 'หมดอายุแล้ว',
             days,
             bg: T.redSoft,
             color: T.down
+        };
+
+        if (days === 0) return {
+            key: 'soon', label: 'หมดอายุวันนี้',days,
+            bg: T.accentSoft,color: T.accentDark
         };
         if (days <= 30) return { key: 'soon', label: 'ใกล้หมดอายุ', days, bg: T.accentSoft, color: T.accentDark };
         return { key: 'active', label: 'ปกติ', days, bg: T.greenSoft, color: T.up };
@@ -4682,8 +4693,10 @@ const renewNewStart = renewStart;
         ['all', 'ทั้งหมด'],
         ['active', 'ปกติ'],
         ['soon', 'ใกล้หมดอายุ'],
+        ['upcoming', 'ยังไม่เริ่ม'],
         ['expired', 'หมดอายุแล้ว'],
         ['missing', 'ยังไม่ระบุ']
+        
     ];
 
     const focusedStore = focusStoreId ? enriched.find((s) => String(s.StoreId) === String(focusStoreId)) : null;
@@ -4782,13 +4795,15 @@ const renewNewStart = renewStart;
                       </div>
                     </td>
                     <td style={tdStyle}>
-                      {store.contract.days === null
-                        ? '—'
-                        : store.contract.days < 0
-                          ? `เกินมา ${Math.abs(store.contract.days)} วัน`
-                          : store.contract.days === 0
-                            ? 'หมดอายุวันนี้'
-                            : `${store.contract.days} วัน`}
+                     {store.contract.key === 'upcoming'
+                        ? `เริ่มใน ${store.contract.daysUntilStart} วัน`
+                        : store.contract.days === null
+                            ? '—'
+                            : store.contract.days < 0
+                                ? `เกินมา ${Math.abs(store.contract.days)} วัน`
+                                : store.contract.days === 0
+                                    ? 'หมดอายุวันนี้'
+                                    : `${store.contract.days} วัน`}
                     </td>
                     <td style={tdStyle}>
                       <span style={{display: 'inline-flex',padding: '6px 10px',borderRadius: '999px',background:store.contract.bg,color:store.contract.color,fontSize: '11.5px',fontWeight:700,whiteSpace: 'nowrap'}}>{store.contract.label}</span>
@@ -4828,19 +4843,24 @@ const renewNewStart = renewStart;
     label="วันที่เริ่มสัญญาใหม่"
     required
     hint={renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO())
-    ? 'สัญญาเดิมยังไม่หมด วันเริ่มใหม่ต้องเป็นวันถัดจากวันสิ้นสุดสัญญาเดิมหรือหลังจากนั้น'
-    : 'สัญญาเดิมหมดอายุแล้ว สามารถเริ่มสัญญาใหม่ได้ตั้งแต่วันนี้'}
+    ? 'สัญญาเดิมยังมีผล ระยะที่ต่อเพิ่มจะเริ่มวันถัดจากวันสิ้นสุดสัญญาเดิมอัตโนมัติ'
+    : 'สัญญาเดิมหมดอายุแล้ว สามารถเลือกเริ่มสัญญาใหม่ตั้งแต่วันนี้หรือกำหนดวันล่วงหน้าได้'}
 >
     <input
         type="date"
         value={renewStart}
-        min={renewStore ? defaultRenewStart(renewStore.ContractEndDate) : todayISO()}
+       min={renewStore ? defaultRenewStart(renewStore) : todayISO()}
+       disabled={
+        renewStore &&
+        dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO())
+    }
         onChange={(e) => {
             setRenewStart(e.target.value);
             setRenewCustomEnd('');
             setRenewError('');
         }}
-        style={formDateInputStyle}
+        style={{ ...formDateInputStyle, background: renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO()) ? '#F6F7FB' : '#FFFFFF',
+             cursor: renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO()) ? 'not-allowed' : 'pointer' }}
     />
 </Field>
 
@@ -4992,7 +5012,7 @@ function AuditHistoryPage({ ctx }) {
         if (key.includes('SLIP') || key.includes('PAYMENT')) {
             return { group: 'payment', label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark };
         }
-        if (key.includes('ORDER') || key.includes('CANCEL')) {
+        if (key.includes('ORDER') || key.includes('CANCEL') || key.includes('STATUS') || key.includes('QUEUE') || key.includes('PRINT')) {
             return { group: 'order', label: 'ออเดอร์', bg: T.greenSoft, color: T.up };
         }
         return { group: 'other', label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text };
@@ -5021,6 +5041,10 @@ function AuditHistoryPage({ ctx }) {
             RESET_PASSWORD: 'เปลี่ยนรหัสผ่าน',
             VERIFY_SLIP_APPROVE: 'อนุมัติสลิปการชำระเงิน',
             VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน',
+            CREATE_ORDER: 'สร้างออเดอร์',
+            UPDATE_STATUS: 'อัปเดตสถานะออเดอร์',
+            PRINT_ORDER: 'พิมพ์ออเดอร์',
+            RECALL_QUEUE: 'เรียกคิวซ้ำ',
             CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
             CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
             CANCEL_ORDER: 'ยกเลิกออเดอร์'

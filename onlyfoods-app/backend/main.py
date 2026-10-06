@@ -281,6 +281,12 @@ _issue_report_table_ready = False
 # เวลาปัจจุบันสำหรับระบบเปิด-ปิดศูนย์อาหาร
 def bangkok_now():
     return datetime.now()
+ 
+# ก่อนวันเริ่มสัญญา = ใช้ไม่ได้ วันเริ่ม ถึง วันสิ้นสุด = ใช้ได้ หลังวันสิ้นสุด = ใช้ไม่ได้
+def is_store_contract_active(store, today=None):
+    today = today or bangkok_now().date()
+    start, end = store.get("CurrentContractStartDate"), store.get("ContractEndDate")
+    return not (start and today < start) and not (end and today > end)
 
 # แปลงเวลา TIME จาก MySQL เป็นจำนวนนาที
 def food_court_time_to_minutes(value):
@@ -1187,7 +1193,7 @@ def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(g
     ensure_food_court_setting(db)
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT StoreName, IsOpen, IsSuspended FROM Store WHERE StoreId = %s", (store_id,))
+            cur.execute("SELECT StoreName, IsOpen, IsSuspended ,CurrentContractStartDate,ContractEndDate FROM Store WHERE StoreId = %s", (store_id,))
             store = cur.fetchone()
             if not store:
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้า")
@@ -1209,6 +1215,13 @@ def toggle_store(store_id: int, performed_by: Optional[str] = None, db=Depends(g
                     status_code=400,
                     detail="ร้านถูกระงับสิทธิ์ ไม่สามารถเปิดร้านได้"
                 )
+# สัญญาหมดยังไม่ได้ต่อ
+            if new_status and not is_store_contract_active(store):
+                raise HTTPException(
+                    status_code=400,
+                    detail="สัญญาร้านหมดอายุหรือยังไม่มีผล ไม่สามารถเปิดร้านได้"
+                )
+            
             cur.execute("UPDATE Store SET IsOpen = %s WHERE StoreId = %s", (1 if new_status else 0, store_id))
             actor = performed_by or "Shop Owner"
             log_audit(db, "OPEN_STORE" if new_status else "CLOSE_STORE", actor, f"{'เปิดร้าน' if new_status else 'ปิดร้าน'} {store['StoreName']}")
@@ -1246,40 +1259,48 @@ def suspend_store(store_id: int, performed_by: Optional[str] = None, db=Depends(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(error))
 
-@app.put("/api/stores/{store_id}/renew-contract")    
+@app.put("/api/stores/{store_id}/renew-contract")
 def renew_store_contract(store_id: int, data: RenewContractSchema, db=Depends(get_db)):
     ensure_store_columns(db)
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT StoreName, ContractEndDate FROM Store WHERE StoreId = %s", (store_id,))
+            cur.execute("""SELECT StoreName, CurrentContractStartDate, ContractEndDate
+                FROM Store WHERE StoreId = %s""", (store_id,))
             store = cur.fetchone()
-            if not store:
-                raise HTTPException(status_code=404, detail="ไม่พบร้านค้านี้")
+            if not store: raise HTTPException(status_code=404, detail="ไม่พบร้านค้านี้")
 
-            old_end = store["ContractEndDate"]
-            new_start = datetime.strptime(data.contract_start_date,"%Y-%m-%d" ).date()
-            new_end = datetime.strptime(data.contract_end_date,"%Y-%m-%d").date()
-            today = datetime.now().date()
-
-            if new_start < today:
-                raise HTTPException(status_code=400, detail="วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว")
-
+            today = bangkok_now().date()
+            old_start, old_end = store["CurrentContractStartDate"], store["ContractEndDate"]
+            try:
+                  # วันที่ที่ Executive เลือกจากหน้าเว็บ
+                requested_start = datetime.strptime(data.contract_start_date, "%Y-%m-%d").date()
+                new_end = datetime.strptime(data.contract_end_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="รูปแบบวันที่สัญญาไม่ถูกต้อง")
+ # CASE 1: สัญญาเดิมยังมีผล  รวมถึงกรณีวันนี้เป็นวันสุดท้ายของสัญญา  ต่อสัญญา ดังนั้นช่วงสัญญาปัจจุบันต้องต่อเนื่องจากของเดิม
             if old_end and old_end >= today:
-                minimum_start = old_end + timedelta(days=1)
+                effective_start = old_start or today
+                # วันสิ้นสุดใหม่ต้องยาวกว่าสัญญาเดิมจริง
+                if new_end <= old_end:
+                    raise HTTPException(status_code=400, detail="วันสิ้นสุดสัญญาใหม่ต้องหลังวันสิ้นสุดสัญญาเดิม")
+            else:
+                 # CASE 2: สัญญาเดิมหมดแล้ว / ไม่มีสัญญาเดิม เป็นสัญญารอบใหม่ ใช้วันที่เริ่มที่ Executive เลือก สามารถเลือกวันนี้หรือวันในอนาคตได้
+                effective_start = requested_start
 
-                if new_start < minimum_start:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"สัญญาเดิมยังไม่สิ้นสุด วันที่เริ่มสัญญาใหม่ต้องไม่ก่อน {minimum_start}"
-                    )
-            if new_end < new_start:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"วันสิ้นสุดสัญญาใหม่ต้องไม่ก่อนวันเริ่มสัญญาใหม่ ({new_start})" )
-            cur.execute("UPDATE Store SET CurrentContractStartDate = %s,ContractEndDate = %s WHERE StoreId = %s", ( new_start,new_end,store_id))
-            log_audit(db, "RENEW_CONTRACT", data.performed_by or "Executive", f"ต่อสัญญาร้าน {store['StoreName']} ช่วง {new_start} ถึง {new_end}")
-            db.commit()
-            return {"success": True, "message": "ต่อสัญญาเรียบร้อยแล้ว", "current_contract_start_date": new_start.isoformat(),
+                # ห้ามกำหนดวันเริ่มย้อนหลัง
+                if effective_start < today:
+                    raise HTTPException(status_code=400, detail="วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว")
+                if new_end < effective_start:
+                    raise HTTPException(status_code=400, detail="วันสิ้นสุดสัญญาใหม่ต้องไม่ก่อนวันที่เริ่มสัญญา")
+
+            cur.execute("""UPDATE Store SET CurrentContractStartDate = %s, ContractEndDate = %s
+                WHERE StoreId = %s""", (effective_start, new_end, store_id))
+            log_audit(db, "RENEW_CONTRACT", data.performed_by or "Executive",
+                      f"ต่อสัญญาร้าน {store['StoreName']} ช่วง {effective_start} ถึง {new_end}")
+
+        db.commit()
+        return {"success": True, "message": "ต่อสัญญาเรียบร้อยแล้ว",
+                "current_contract_start_date": effective_start.isoformat(),
                 "contract_end_date": new_end.isoformat()}
     except HTTPException:
         db.rollback()
@@ -1778,12 +1799,14 @@ def create_order(data: CreateOrderSchema, db=Depends(get_db)):
                 status_code=400, detail="ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้" )
 
         with db.cursor() as cur:
-            cur.execute("SELECT IsOpen, IsSuspended, StoreName FROM Store WHERE StoreId=%s", (data.store_id,))
+            cur.execute("SELECT IsOpen, IsSuspended, StoreName , CurrentContractStartDate, ContractEndDate FROM Store WHERE StoreId=%s", (data.store_id,))
             st = cur.fetchone()
             if not st:
                 raise HTTPException(status_code=404, detail="ไม่พบร้านค้านี้")
             if st['IsSuspended']:
                 raise HTTPException(status_code=400, detail=f"ร้าน '{st['StoreName']}' ถูกระงับสิทธิ์การจำหน่ายชั่วคราว")
+            if not is_store_contract_active(st): 
+                raise HTTPException(status_code=400, detail=f"สัญญาร้าน '{st['StoreName']}' หมดอายุหรือยังไม่มีผล ไม่สามารถรับออเดอร์ใหม่ได้")
             if not st['IsOpen']:
                 raise HTTPException(status_code=400, detail=f"ร้าน '{st['StoreName']}' ปิดทำการอยู่ขณะนี้")
 
