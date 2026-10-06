@@ -851,9 +851,40 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
+  
+  const checkFoodCourtOrderTime = () => {
+    if (!foodCourtOpenTime || !foodCourtCloseTime) {
+      customAlert(
+        "ไม่สามารถตรวจสอบเวลาได้",
+        "กรุณารอสักครู่แล้วลองใหม่อีกครั้ง",
+        "warning"
+      );
+      return false;
+    }
+
+    const currentTime = getCurrentDateTimeForBackend()
+      .split(" ")[1]
+      .slice(0, 5);
+
+    if (
+      !isFoodCourtOpen ||
+      currentTime < foodCourtOpenTime ||
+      currentTime >= foodCourtCloseTime
+    ) {
+      customAlert(
+        "ไม่สามารถสั่งอาหารได้",
+        `เวลาสั่งอาหารคือ ${foodCourtOpenTime}–${foodCourtCloseTime} น.`,
+        "error"
+      );
+      return false;
+    }
+
+    return true;
+  };
+
   // ORDER SUBMISSION & PAYMENT HANDLERS
   const handleProceedToPayment = () => {
-    if (!isFoodCourtOpen) return customAlert("ขณะนี้ศูนย์อาหารปิดให้บริการชั่วคราว", "", "error");
+    if (!checkFoodCourtOrderTime()) return;
     if (cart.length === 0) return customAlert("กรุณาเลือกอาหารลงตะกร้าก่อนสั่งซื้อ", "", "error");
     if (!selectedStore) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
     setIsCartOpen(false);
@@ -875,6 +906,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
+    if (!checkFoodCourtOrderTime()) return;
 
     if (paymentMethod === "PromptPay" && !slipFile) {
       return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
