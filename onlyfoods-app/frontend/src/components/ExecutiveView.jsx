@@ -166,9 +166,7 @@ function summarize(orders) {
         grossSales,
         completedCount: completed.length,
         cancelledCount: cancelled.length,
-        // อัตราการยกเลิก = ยกเลิก / (สำเร็จ + ยกเลิก) : นับเฉพาะออเดอร์ที่จบแล้ว ให้ตรงกับคอลัมน์ในตาราง
-        // และตรงกับหน้าเจ้าของร้าน (เดิมหารด้วยออเดอร์ทั้งหมดรวมที่ยังทำอยู่ ทำให้ตัวเลขต่ำกว่าความจริง)
-        cancelRate: (completed.length + cancelled.length) ? (cancelled.length / (completed.length + cancelled.length)) * 100 : null,
+        cancelRate: orders.length ? (cancelled.length / orders.length) * 100 : null,
         avgOrder: completed.length ? sales / completed.length : 0,
         completed,
         cancelled
@@ -3275,11 +3273,6 @@ function validateStoreForm(form, mode = 'create') {
         errors.contractEndDate = 'กรุณาระบุวันที่สิ้นสุดสัญญา';
     if (form.contractStartDate && form.contractEndDate && form.contractEndDate < form.contractStartDate)
         errors.contractEndDate = 'วันที่สิ้นสุดสัญญาต้องไม่น้อยกว่าวันที่เริ่มสัญญา';
-    // ช่องวันที่เป็นปี ค.ศ. : กันพิมพ์ปี พ.ศ. (เช่น 2569)
-    if (Number(String(form.contractStartDate || '').slice(0, 4)) > 2400)
-        errors.contractStartDate = 'กรุณาระบุปีเป็น ค.ศ. (เช่น 2026 ไม่ใช่ 2569)';
-    if (Number(String(form.contractEndDate || '').slice(0, 4)) > 2400)
-        errors.contractEndDate = 'กรุณาระบุปีเป็น ค.ศ. (เช่น 2026 ไม่ใช่ 2569)';
 
     if (mode === 'create') {
         const ownerFullName = String(form.ownerFullName || '').trim();
@@ -3478,7 +3471,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
       </Field>
          
           <div style={{ width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
-    <Field label="วันที่เริ่มสัญญา (ปี ค.ศ.)" required error={errors.contractStartDate}>
+    <Field label="วันที่เริ่มสัญญา" required error={errors.contractStartDate}>
         <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={formDateInputStyle} />
     </Field>
 
@@ -3488,7 +3481,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </select>
     </Field>
 
-    <Field label="วันที่สิ้นสุดสัญญา (ปี ค.ศ.)" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
+    <Field label="วันที่สิ้นสุดสัญญา" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
         <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...formDateInputStyle, background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }} />
     </Field>
 </div>
@@ -4450,11 +4443,9 @@ function ContractTrackingPage({ ctx }) {
         const d = new Date(`${raw}T00:00:00`);
         return Number.isNaN(d.getTime()) ? null : d;
     };
-    // วันที่สัญญาแสดงเป็นปี ค.ศ. ทั้งหมด ให้ตรงกับช่องเลือกวันที่ (input type="date" ใช้ปี ค.ศ. เสมอ)
-    // เดิม th-TH แสดงเป็น พ.ศ. ขณะที่ช่องกรอกเป็น ค.ศ. จึงเห็นปีสองแบบในหน้าเดียวกัน
     const formatContractDate = (value) => {
         const d = dateOnly(value);
-        return d ? d.toLocaleDateString('th-TH-u-ca-gregory', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+        return d ? d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
     };
     const addDaysISO = (value, days) => {
         const d = dateOnly(value);
@@ -4591,11 +4582,6 @@ const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate)
 
         if (!newEnd) {
             setRenewError('รูปแบบวันสิ้นสุดสัญญาไม่ถูกต้อง');
-            return;}
-
-        // ช่องวันที่เป็นปี ค.ศ. : ถ้าพิมพ์ปี พ.ศ. (เช่น 2569) สัญญาจะยาวไปอีก 543 ปี
-        if (newStart.getFullYear() > 2400 || newEnd.getFullYear() > 2400) {
-            setRenewError('กรุณาระบุปีเป็น ค.ศ. (เช่น 2026 ไม่ใช่ 2569)');
             return;}
 
         if (newStart < today) {
@@ -4849,12 +4835,12 @@ const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate)
         onClose={closeRenew} width="620px">
         {renewStore && (<div>
           <div style={{ padding:'14px 16px', border:`1px solid ${T.line}`, borderRadius:T.radiusMd, background:'#FAFBFD', marginBottom:'18px' }}>
-            <div style={{ fontSize:'12px', color:T.muted, marginBottom:'5px' }}>สัญญาปัจจุบันสิ้นสุด (ปี ค.ศ.)</div>
+            <div style={{ fontSize:'12px', color:T.muted, marginBottom:'5px' }}>สัญญาปัจจุบันสิ้นสุด</div>
             <div style={{ fontSize:'18px', fontWeight:700, color:T.ink }}>{formatContractDate(renewStore.ContractEndDate)}</div>
           </div>
 
           <Field
-    label="วันที่เริ่มสัญญาใหม่ (ปี ค.ศ.)"
+    label="วันที่เริ่มสัญญาใหม่"
     required
     hint={renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO())
     ? 'สัญญาเดิมยังมีผล ระยะที่ต่อเพิ่มจะเริ่มวันถัดจากวันสิ้นสุดสัญญาเดิมอัตโนมัติ'
@@ -4891,7 +4877,7 @@ const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate)
 
           <div style={{ marginTop:'14px' }}>
     <Field
-        label="วันที่สิ้นสุดสัญญาใหม่ (ปี ค.ศ.)"
+        label="วันที่สิ้นสุดสัญญาใหม่"
         required
         hint={
             renewDuration === 'custom'

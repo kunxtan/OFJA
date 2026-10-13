@@ -12,9 +12,7 @@ function parseOrderDate(value) {
   if (value instanceof Date) return value;
   const normalized = String(value).trim().replace(' ', 'T');
   const alreadyHasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
-  // backend ส่งเวลาไทยแบบไม่มี timezone (เช่น 2026-10-10T15:14:47) : ต้องอ่านเป็น +07:00
-  // เดิมเติม Z (UTC) ทำให้เวลาบนกราฟ/รายงานเลื่อนไป 7 ชั่วโมง
-  const parsed = new Date(alreadyHasTimezone ? normalized : `${normalized}+07:00`);
+  const parsed = new Date(alreadyHasTimezone ? normalized : `${normalized}Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
@@ -902,7 +900,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                       <Icon name="power" size={18} /> 
                       {dash.IsOpen ? 'Turn Off Orders' : 'Turn On Orders'}
                     </button>
-                    {Boolean(storeDetail?.IsSuspended) && (
+                    {storeDetail?.IsSuspended && (
                       <div style={{ marginTop: '8px', color: 'var(--berry-red)', fontSize: '13px', fontWeight: '500', textAlign: 'center' }}>
                         *ร้านของคุณถูกระงับสิทธิ์ ไม่สามารถเปิดรับออเดอร์ได้
                       </div>
@@ -1284,9 +1282,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                       </td>
                       <td>
                         <div style={{ fontWeight: '600', color: 'var(--berry-text-dark)' }}>
-                          {storeDetail?.ContractStartDate ? new Date(storeDetail.ContractStartDate).toLocaleDateString('th-TH-u-ca-gregory', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'} 
+                          {storeDetail?.ContractStartDate ? new Date(storeDetail.ContractStartDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'} 
                           <span style={{ margin: '0 8px', color: 'var(--berry-text-muted)' }}>-</span>
-                          {storeDetail?.ContractEndDate ? new Date(storeDetail.ContractEndDate).toLocaleDateString('th-TH-u-ca-gregory', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                          {storeDetail?.ContractEndDate ? new Date(storeDetail.ContractEndDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
                         </div>
                       </td>
                       <td>

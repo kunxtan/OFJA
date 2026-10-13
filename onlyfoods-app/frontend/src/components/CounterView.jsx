@@ -21,9 +21,6 @@ const PALETTE = {
   redLight: '#FDEAE6',
 };
 
-// ออเดอร์ walk-in (ไม่มีบัญชีลูกค้า) : backend ส่ง IsWalkIn เป็น 0/1
-const isWalkInOrder = (o) => Boolean(Number(o?.IsWalkIn)) || !o?.UserId;
-
 const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
 function Icon({ name, size = 20 }) {
@@ -401,10 +398,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   // 🔴 เปิด Modal ยกเลิกคำสั่งซื้อ (แทนการใช้ prompt)
   const openCancelModal = (order, defaultAction = 'immediate') => {
-    const action = isWalkInOrder(order) ? 'immediate' : defaultAction;
     setCancelModal({ order });
-    setCancelActionChoice(action);
-    setCancelReasonTag(action === 'window' ? 'วัตถุดิบหมด' : 'ลูกค้าขอยกเลิกเอง');
+    setCancelActionChoice(defaultAction);
+    setCancelReasonTag(defaultAction === 'window' ? 'วัตถุดิบหมด' : 'ลูกค้าขอยกเลิกเอง');
     setCustomReason('');
   };
 
@@ -415,21 +411,16 @@ export default function CounterView({ user, apiBase, onLogout }) {
     const orderId = cancelModal.order.OrderID;
     const queueNo = cancelModal.order.QueueNo;
 
-    if (cancelActionChoice === 'window' && !isWalkInOrder(cancelModal.order)) {
+    if (cancelActionChoice === 'window') {
       // เรียก API แจ้งของหมด นับถอยหลัง 30 นาที
       fetch(`${apiBase}/api/orders/${orderId}/cancel-request`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: finalReason, response_window_minutes: 30 })
-      }).then(async res => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          showToast(data.detail || 'ไม่สามารถแจ้งของหมดได้');
-          return;
-        }
-        showToast(`แจ้งลูกค้าคิว ${queueNo} แล้ว (รอเลือกเมนูใหม่ 30 นาที)`);
+      }).then(() => {
+        showToast(`แจ้งเตือนคิว ${queueNo} แล้ว (รอเปลี่ยนเมนู 30 นาที)`);
         setCancelModal(null);
         fetchData();
-      }).catch(() => showToast('เชื่อมต่อระบบไม่สำเร็จ'));
+      });
     } else {
       // ยกเลิกคำสั่งซื้อทันที
       updateStatus(orderId, 'Cancelled', finalReason);
@@ -600,6 +591,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
             </span>
           </div>
 
+          <button className="cv-icon-btn yellow-light" onClick={() => setActiveTab('orders')} title="สลิปรอตรวจ">
+            <Icon name="bell" size={19} />
+            {verifyingOrders.length > 0 && <span className="cv-badge-dot-count">{verifyingOrders.length}</span>}
+          </button>
+
           <div className="cv-profile-container" ref={profileRef}>
             <div className="cv-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
               <span className="user-name">{user?.FullName || user?.name || 'พนักงานหน้าร้าน'}</span>
@@ -674,7 +670,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div><b>โรงอาหารปิดให้บริการ</b><small>ระบบยังจัดการออเดอร์เดิมได้ แต่ไม่สามารถเปิดออเดอร์ Walk-in ใหม่ได้</small></div>
             </div>
           )}
-          {foodCourtOpen && currentStore && (!currentStore.IsOpen || Boolean(currentStore.IsSuspended)) && (
+          {foodCourtOpen && currentStore && (!currentStore.IsOpen || currentStore.IsSuspended) && (
             <div className="store-closed-banner">
               <span>⚠️</span>
               <div><b>{currentStore.IsSuspended ? 'ร้านถูกระงับการขาย' : 'ร้านปิดให้บริการ'}</b><small>ไม่สามารถเปิดออเดอร์ Walk-in ใหม่ได้</small></div>
@@ -793,7 +789,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                             <tr key={o.OrderID}>
                               <td>
                                 <div className="queue-pill bold">{o.QueueNo}</div>
-                                {isWalkInOrder(o) && <span className="walkin-tag">Walk-in</span>}
+                                {o.IsWalkIn === 1 && <span className="walkin-tag">Walk-in</span>}
                               </td>
                               <td>
                                 {o.items?.map((it, idx) => (
@@ -847,13 +843,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                   <button onClick={() => viewCustomerProfile(o)} className="cv-btn-icon" title="ข้อมูลลูกค้า"><Icon name="user" size={16} /></button>
                                   
                                   {/* ของหมด/ยกเลิกใช้ได้เฉพาะคิวที่ยังไม่เสร็จ */}
-                                  {/* walk-in ไม่มีลูกค้าในระบบให้ตอบกลับ จึงยกเลิกได้อย่างเดียว */}
-                                  {!isPendingCancel && !isWalkInOrder(o) && ['Pending', 'Cooking'].includes(o.Status) && (
+                                  {!isPendingCancel && ['Pending', 'Cooking'].includes(o.Status) && (
                                     <button onClick={() => openCancelModal(o, 'window')} className="cv-btn btn-warning-light">
                                       ⚠️ ของหมด
                                     </button>
                                   )}
-                                  {['Pending', 'Cooking', 'Pending_Cancellation'].includes(o.Status) && (
+                                  {['Pending', 'Cooking'].includes(o.Status) && (
                                     <button onClick={() => openCancelModal(o, 'immediate')} className="cv-btn btn-danger-light">
                                       ❌ ยกเลิก
                                     </button>
@@ -914,7 +909,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                         <tr key={o.OrderID}>
                           <td>
                             <span className="queue-pill bold">{o.QueueNo}</span>
-                            {isWalkInOrder(o) && <span className="walkin-tag">Walk-in</span>}
+                            {o.IsWalkIn === 1 && <span className="walkin-tag">Walk-in</span>}
                           </td>
                           <td>{o.CreatedAt ? new Date(o.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                           <td>{o.CustomerName || o.UserName || 'ลูกค้า Walk-in'}</td>
@@ -1182,7 +1177,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
             {/* Action Mode Toggle */}
             <div className="cancel-action-selector">
-              {!isWalkInOrder(cancelModal.order) && cancelModal.order.Status !== 'Pending_Cancellation' && (
               <label className={`action-opt ${cancelActionChoice === 'window' ? 'active' : ''}`}>
                 <input
                   type="radio"
@@ -1195,7 +1189,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
                   <div className="opt-desc">ส่งแจ้งเตือนให้ลูกค้าเลือกเปลี่ยนเมนูหรือกดยกเลิกผ่านแอป</div>
                 </div>
               </label>
-              )}
 
               <label className={`action-opt ${cancelActionChoice === 'immediate' ? 'active' : ''}`}>
                 <input
