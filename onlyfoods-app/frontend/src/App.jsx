@@ -26,7 +26,7 @@ const PALETTE = {
   danger: '#EF4444'
 };
 
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
 
 // 🍜 ภาพประกอบอาหารแบบ flat vector (วาดด้วย SVG ล้วน ไม่ต้องใช้ไฟล์รูป)
 const artProps = (p) => ({ xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': true, focusable: 'false', ...p });
@@ -212,7 +212,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const API_BASE = "http://only-foods.cskmitl.com";
+  const API_BASE = import.meta.env.VITE_API_URL || window.location.origin;
 
   useEffect(() => {
     fetchFoodCourtStatus();
@@ -313,6 +313,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id_token: response.credential, // เซิร์ฟเวอร์ตรวจกับ Google เอง ไม่เชื่อ google_id/email ที่ client ส่ง
           google_id: payload.sub,
           email: payload.email,
           name: payload.name

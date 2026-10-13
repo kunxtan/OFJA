@@ -11,14 +11,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [editName, setEditName] = useState(fullName);
   const [editPhone, setEditPhone] = useState(phone);
 
-  // MULTIPLE CARDS STATE
-  const [cards, setCards] = useState([]); //
-  const [selectedCardId, setSelectedCardId] = useState(null);
-  const [isAddingCard, setIsAddingCard] = useState(false);
-  const [editCardHolderName, setEditCardHolderName] = useState("");
-  const [editCardNumber, setEditCardNumber] = useState("");
-  const [editCardExpiry, setEditCardExpiry] = useState("");
-
   const [profileImage, setProfileImage] = useState(user?.ProfileImg || user?.ProfileImage || user?.avatar || null);
   const [cropImage, setCropImage] = useState(null);
   const [isCropModalOpen, setIsCropModalOpen] = useState(false);
@@ -100,7 +92,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const CartIconPlus = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 5h6"/><path d="M19 2v6"/><path d="m2.05 2.05 1.099-.028a1 1 0 011.008.815l2.69 14.347A1 1 0 007.83 18H18"/><path d="M4.564 5H12"/><path d="M6.25 14h12.712a2 2 0 001.991-1.57l.172-1.041"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>);
   const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="22" height="22" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>);
   const CommentIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg>);
-  const CreditCardIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>);
 
   const NoodleBowlArt = ({ width = 220, height = 170, className = "", style = {}, ...props }) => (
     <svg viewBox="0 0 220 170" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
@@ -180,6 +171,21 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const getNotifKey = (n) => n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
+
+  const getOutOfStockItem = (order) => {
+    const items = order?.items || [];
+    return items.find((it) => it.ItemStatus === "OUT_OF_STOCK") || items[0] || null;
+  };
+
+  // วินาทีที่เหลือจนถึง CancelDeadline ที่ร้านกำหนด (ไม่รีเซ็ตเป็น 30 นาทีทุกครั้งที่เปิดแอป)
+  const secondsUntil = (deadline) => {
+    if (!deadline) return 1800;
+    const iso = String(deadline).trim().replace(" ", "T");
+    // backend ส่งเวลาไทยแบบไม่มี timezone -> อ่านเป็น +07:00 (ไม่ขึ้นกับเขตเวลาของเครื่องลูกค้า)
+    const end = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}+07:00`).getTime();
+    if (Number.isNaN(end)) return 1800;
+    return Math.max(0, Math.floor((end - Date.now()) / 1000));
+  };
 
   const formatTimeLeft = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -359,26 +365,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         setPhone(data.Phone || "");
         setProfileImage(data.ProfileImg || data.ProfileImage || data.avatar || null);
 
-        let loadedCards = [];
-        if (Array.isArray(data.Cards) && data.Cards.length > 0) {
-          loadedCards = data.Cards;
-        } else if (Array.isArray(data.cards) && data.cards.length > 0) {
-          loadedCards = data.cards;
-        } else if (data.CardLast4 && data.CardLast4.trim() !== "") {
-          // Fallback กรณีเดิมมีข้อมูลเฉพาะบัตรใบเดียวในคอลัมน์เดี่ยว
-          loadedCards = [
-            {
-              id: "card_1",
-              cardHolderName: data.CardHolderName || "",
-              cardLast4: data.CardLast4 || "",
-              cardExpiry: data.CardExpiry || "",
-            },
-          ];
-        }
-
-        setCards(loadedCards);
-        setSelectedCardId(loadedCards.length > 0 ? loadedCards[0].id : null);
-
         setEditName(data.FullName || "");
         setEditPhone(data.Phone || "");
       } catch (error) {
@@ -390,7 +376,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   }, [userId, apiBase]);
 
   useEffect(() => {
-    if (selectedStore) fetchProducts();
+    if (!selectedStore) return undefined;
+    fetchProducts();
+    // ร้านกดของหมด/เปิดขาย -> ลูกค้าเห็นภายใน 5 วินาที โดยไม่ต้องกดเข้าร้านใหม่
+    const timer = setInterval(fetchProducts, 5000);
+    return () => clearInterval(timer);
   }, [selectedStore, apiBase]);
 
   useEffect(() => {
@@ -421,7 +411,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     let timer = null;
     if (outOfStockOrder) {
-      setTimeLeft(1800);
+      setTimeLeft(secondsUntil(outOfStockOrder.CancelDeadline));
       timer = setInterval(() => {
         setTimeLeft((prevTime) => {
           if (prevTime <= 1) {
@@ -598,7 +588,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const handleChangeOrderMenu = async () => {
     if (!outOfStockOrder || !newSelectedProduct) return;
-    const originalItem = (outOfStockOrder.items || [])[0];
+    const originalItem = getOutOfStockItem(outOfStockOrder);
 
     try {
       const res = await fetch(`${apiBase}/api/orders/${outOfStockOrder.OrderID}/change-item`, {
@@ -757,101 +747,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // ADD CARD HANDLER
-  const handleAddNewCard = async (e) => {
-    e.preventDefault();
-
-    const cardName = editCardHolderName.trim();
-    const cleanCardNumber = editCardNumber.replace(/\D/g, "");
-    const cardExp = editCardExpiry.trim();
-
-    if (!cardName) return customAlert("กรุณากรอกชื่อและนามสกุลบนบัตร", "", "warning");
-    const nameParts = cardName.split(/\s+/).filter(Boolean);
-    if (nameParts.length < 2) return customAlert("กรุณากรอกทั้งชื่อและนามสกุลบนบัตร", "", "warning");
-
-    if (cleanCardNumber.length !== 16) return customAlert("หมายเลขบัตรต้องมี 16 หลัก", "", "warning");
-
-    const expiryPattern = /^(0[1-9]|1[0-2])\/\d{2}$/;
-    if (!expiryPattern.test(cardExp)) return customAlert("รูปแบบวันหมดอายุไม่ถูกต้อง (MM/YY)", "", "warning");
-
-    const last4 = cleanCardNumber.slice(-4);
-    const newCardObj = {
-      id: `card_${Date.now()}`,
-      cardHolderName: cardName,
-      cardLast4: last4,
-      cardExpiry: cardExp,
-    };
-
-    const updatedCards = [...cards, newCardObj];
-
-      console.log("cards เดิม:", cards);
-      console.log("cards หลังเพิ่ม:", updatedCards);
-      
-    try {
-      const res = await fetch(`${apiBase}/api/users/profile`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          full_name: fullName,
-          phone: phone,
-          cards: updatedCards,
-          card_holder_name: cardName,
-          card_last4: last4,
-          card_expiry: cardExp,
-        }),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => null);
-        throw new Error(errorData?.detail || "บันทึกข้อมูลบัตรไม่สำเร็จ");
-      }
-
-      setCards(updatedCards);
-      setSelectedCardId(newCardObj.id);
-      setEditCardHolderName("");
-      setEditCardNumber("");
-      setEditCardExpiry("");
-      setIsAddingCard(false);
-
-      customAlert("เพิ่มบัตรเครดิต/เดบิต เรียบร้อยแล้ว!");
-    } catch (err) {
-      console.error("Add card error:", err);
-      customAlert("เกิดข้อผิดพลาดในการบันทึกข้อมูลบัตร", err.message, "error");
-    }
-  };
-
-  // DELETE CARD HANDLER
-  const handleDeleteCard = async (cardIdToDelete) => {
-    const updatedCards = cards.filter((c) => c.id !== cardIdToDelete);
-
-    try {
-      const res = await fetch(`${apiBase}/api/users/profile`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          full_name: fullName,
-          phone: phone,
-          profile_img: profileImage,
-          cards: updatedCards,
-        }),
-      });
-
-      if (!res.ok) throw new Error("ไม่สามารถลบบัตรได้");
-
-      setCards(updatedCards);
-      if (selectedCardId === cardIdToDelete) {
-        setSelectedCardId(updatedCards.length > 0 ? updatedCards[0].id : null);
-      }
-      customAlert("สำเร็จ", "ลบบัตรเรียบร้อยแล้ว", "success");
-    } catch (err) {
-      console.error("Delete card error:", err);
-      customAlert("เกิดข้อผิดพลาด", "ไม่สามารถลบบัตรได้", "error");
-    }
-  };
-
-  
   const checkFoodCourtOrderTime = () => {
     if (!foodCourtOpenTime || !foodCourtCloseTime) {
       customAlert(
@@ -891,38 +786,37 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setIsPaymentModalOpen(true);
   };
 
+  // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
+  // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
   const handleSlipChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      if (file.size > MAX_FILE_SIZE) {
-        customAlert("ขนาดไฟล์สลิปต้องไม่เกิน 5MB", "", "warning");
-        e.target.value = "";
-        return;
-      }
-      setSlipFile(file);
-      setSlipPreview(URL.createObjectURL(file));
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) {
+      customAlert("รองรับเฉพาะไฟล์รูป PNG, JPG หรือ WEBP", "", "warning");
+      e.target.value = "";
+      return;
     }
+    if (file.size > MAX_FILE_SIZE) {
+      customAlert("ขนาดไฟล์สลิปต้องไม่เกิน 5MB", "", "warning");
+      e.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSlipFile(file);
+      setSlipPreview(reader.result);
+    };
+    reader.onerror = () => customAlert("อ่านไฟล์สลิปไม่สำเร็จ", "กรุณาเลือกรูปใหม่อีกครั้ง", "error");
+    reader.readAsDataURL(file);
   };
 
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
     if (!checkFoodCourtOrderTime()) return;
 
-    if (paymentMethod === "PromptPay" && !slipFile) {
+    // ทุกวิธีชำระเงินของลูกค้า (PromptPay / TrueMoney) ต้องแนบสลิป
+    if (!slipFile || !slipPreview) {
       return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
-    }
-
-    if (paymentMethod === "TrueMoney" && !slipFile) {
-      return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
-    }
-
-    if (paymentMethod === "CreditCard") {
-      if (cards.length === 0) {
-        return customAlert("ไม่พบข้อมูลบัตร", "กรุณาเพิ่มบัตรเครดิต/เดบิต ก่อนชำระเงิน", "warning");
-      }
-      if (!selectedCardId) {
-        return customAlert("กรุณาเลือกบัตร", "กรุณาเลือกบัตรที่ต้องการใช้ชำระเงิน", "warning");
-      }
     }
 
     const currentOrderTime = getCurrentDateTimeForBackend();
@@ -936,18 +830,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       item_note: item.item_note || "",
     }));
 
-    const selectedCardObj = cards.find((c) => c.id === selectedCardId);
-
     const orderData = {
       store_id: Number(selectedStore),
       user_id: userId,
       items: orderItems,
       payment_method: paymentMethod,
-      slip_url: slipPreview || "slip_placeholder.png",
+      slip_url: slipPreview,
       note: orderNote || "",
       pickup_time: finalPickupTime,
       order_time: currentOrderTime,
-      card_info: paymentMethod === "CreditCard" ? selectedCardObj : null,
     };
 
     setIsSubmittingOrder(true);
@@ -1553,140 +1444,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           </>
         )}
 
-        <div style={{ marginTop: "30px", paddingTop: "20px", borderTop: `2px dashed ${COLORS.border}`, textAlign: "left" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-            <div style={{ fontSize: "15px", fontWeight: "900", color: COLORS.navy }}>
-              บัตรเครดิต / เดบิต ของฉัน ({cards.length})
-            </div>
-            {!isAddingCard && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditCardHolderName("");
-                  setEditCardNumber("");
-                  setEditCardExpiry("");
-                  setIsAddingCard(true);
-                }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: COLORS.orange,
-                  fontWeight: "800",
-                  fontSize: "13px",
-                  cursor: "pointer",
-                  fontFamily: "inherit"
-                }}
-              >
-                ＋ เพิ่มบัตรใหม่
-              </button>
-            )}
-          </div>
-
-          {/* Card List */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "15px" }}>
-            {cards.map((card) => (
-              <div key={card.id} style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: "12px", color: COLORS.gray }}>{card.cardHolderName}</div>
-                  <div style={{ fontWeight: "800", fontSize: "14px", color: COLORS.navy, marginTop: "2px" }}>
-                    •••• •••• •••• {card.cardLast4}
-                  </div>
-                  <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "2px" }}>Exp: {card.cardExpiry}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCard(card.id)}
-                  style={{
-                    background: "#FFF0ED",
-                    border: `1px solid ${COLORS.red}40`,
-                    color: COLORS.red,
-                    borderRadius: "8px",
-                    padding: "6px 10px",
-                    fontSize: "12px",
-                    fontWeight: "800",
-                    cursor: "pointer"
-                  }}
-                >
-                  ลบ
-                </button>
-              </div>
-            ))}
-
-            {cards.length === 0 && !isAddingCard && (
-              <div style={{ color: COLORS.gray, fontSize: "13px", padding: "10px 0" }}>
-                ยังไม่มีบัตรที่บันทึกไว้ กด "＋ เพิ่มบัตรใหม่" เพื่อเพิ่มบัตร
-              </div>
-            )}
-          </div>
-
-          {/* Form Add New Card */}
-          {isAddingCard && (
-            <form onSubmit={handleAddNewCard} style={{ background: "#F8F8FA", border: `1px solid ${COLORS.border}`, borderRadius: "14px", padding: "16px" }}>
-              <div style={{ fontSize: "14px", fontWeight: "800", marginBottom: "12px", color: COLORS.navy }}>กรอกข้อมูลบัตรใหม่</div>
-              <div style={{ marginBottom: "12px" }}>
-                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>ชื่อบนบัตร</label>
-                <input
-                  type="text"
-                  value={editCardHolderName}
-                  onChange={(e) => setEditCardHolderName(e.target.value)}
-                  placeholder="ชื่อ-นามสกุลบนบัตร"
-                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
-                  required
-                />
-              </div>
-
-              <div style={{ marginBottom: "12px" }}>
-                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>หมายเลขบัตร (16 หลัก)</label>
-                <input
-                  type="text"
-                  value={editCardNumber}
-                  onChange={(e) => setEditCardNumber(e.target.value.replace(/\D/g, ""))}
-                  placeholder="กรอกหมายเลขบัตร 16 หลัก"
-                  maxLength="16"
-                  inputMode="numeric"
-                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
-                  required
-                />
-              </div>
-
-              <div style={{ marginBottom: "15px" }}>
-                <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>วันหมดอายุ (MM/YY)</label>
-                <input
-                  type="text"
-                  value={editCardExpiry}
-                  onChange={(e) => {
-                    let value = e.target.value.replace(/\D/g, "");
-                    if (value.length > 4) value = value.slice(0, 4);
-                    if (value.length >= 3) value = value.slice(0, 2) + "/" + value.slice(2);
-                    setEditCardExpiry(value);
-                  }}
-                  placeholder="MM/YY"
-                  maxLength="5"
-                  inputMode="numeric"
-                  style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
-                  required
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button
-                  type="submit"
-                  style={{ flex: 1, padding: "10px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
-                >
-                  บันทึกบัตรนี้
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingCard(false)}
-                  style={{ flex: 1, padding: "10px", background: COLORS.lightGray, color: COLORS.navy, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
-                >
-                  ยกเลิก
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-
         {/* LOGOUT BUTTON */}
         <div style={{ marginTop: "25px" }}>
           <button
@@ -1996,7 +1753,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> วิธีชำระเงิน</label>
                   <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} style={{ width: "100%", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }}>
                     <option value="PromptPay">สแกน QR Code (PromptPay)</option>
-                    <option value="CreditCard">บัตรเครดิต / เดบิต</option>
                     <option value="TrueMoney">TrueMoney Wallet</option>
                   </select>
                 </div>
@@ -2025,11 +1781,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // PAYMENT MODAL WITH MULTIPLE CARDS SELECTION
+  // PAYMENT MODAL (PromptPay / TrueMoney + แนบสลิป)
   const renderPaymentModal = () => {
     if (!isPaymentModalOpen) return null;
-
-    const selectedCard = cards.find((c) => c.id === selectedCardId);
 
     return (
       <div
@@ -2106,112 +1860,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 </div>
               )}
             </>
-          )}
-
-          {paymentMethod === "CreditCard" && (
-            <div style={{ textAlign: "left", marginBottom: "15px" }}>
-              <div style={{ fontWeight: "900", fontSize: "15px", marginBottom: "12px", color: COLORS.navy }}>
-                เลือกบัตรเครดิต/เดบิต
-              </div>
-
-              {cards.length > 0 ? (
-                <>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "15px" }}>
-                    {cards.map((card) => {
-                      const isSelected = card.id === selectedCardId;
-                      return (
-                        <div
-                          key={card.id}
-                          onClick={() => setSelectedCardId(card.id)}
-                          style={{
-                            padding: "12px 15px",
-                            borderRadius: "14px",
-                            border: `2px solid ${isSelected ? COLORS.orange : COLORS.border}`,
-                            background: isSelected ? "#FFF9F5" : COLORS.white,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between"
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                            <div style={{ color: isSelected ? COLORS.orange : COLORS.gray }}>
-                              <CreditCardIcon />
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: "800", fontSize: "14px", color: COLORS.navy }}>
-                                •••• •••• •••• {card.cardLast4}
-                              </div>
-                              <div style={{ fontSize: "12px", color: COLORS.gray }}>
-                                {card.cardHolderName} (Exp: {card.cardExpiry})
-                              </div>
-                            </div>
-                          </div>
-                          <input
-                            type="radio"
-                            name="selected_card"
-                            checked={isSelected}
-                            onChange={() => setSelectedCardId(card.id)}
-                            style={{ accentColor: COLORS.orange, cursor: "pointer" }}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsPaymentModalOpen(false);
-                      setActiveTab("profile");
-                      setIsAddingCard(true);
-                    }}
-                    style={{
-                      background: "none",
-                      border: `1px dashed ${COLORS.orange}`,
-                      color: COLORS.orange,
-                      width: "100%",
-                      padding: "10px",
-                      borderRadius: "12px",
-                      fontWeight: "800",
-                      fontSize: "13px",
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                      marginBottom: "15px"
-                    }}
-                  >
-                    ＋ เพิ่มบัตรใหม่
-                  </button>
-                </>
-              ) : (
-                <div style={{ background: "#F8F8FA", padding: "20px", borderRadius: "16px", textAlign: "center", border: `1px solid ${COLORS.border}` }}>
-                  <div style={{ color: COLORS.gray, fontSize: "14px", marginBottom: "12px" }}>
-                    คุณยังไม่มีบัตรเครดิต/เดบิตที่บันทึกไว้
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsPaymentModalOpen(false);
-                      setActiveTab("profile");
-                      setIsAddingCard(true);
-                    }}
-                    style={{
-                      background: COLORS.orange,
-                      color: COLORS.white,
-                      border: "none",
-                      padding: "10px 20px",
-                      borderRadius: "12px",
-                      fontWeight: "800",
-                      fontSize: "13px",
-                      cursor: "pointer",
-                      fontFamily: "inherit"
-                    }}
-                  >
-                    ＋ เพิ่มบัตรเครดิต/เดบิต
-                  </button>
-                </div>
-              )}
-            </div>
           )}
 
           {paymentMethod === "TrueMoney" && (
@@ -2370,12 +2018,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const renderOutOfStockModal = () => {
     if (!outOfStockOrder) return null;
 
-    const originalProductIds = (outOfStockOrder.items || []).map(item => Number(item.ProductId));
+    const targetItem = getOutOfStockItem(outOfStockOrder);
+    const targetPrice = Number(targetItem?.UnitPrice || 0);
     const availableProducts = products.filter((p) => {
       const isSameStore = Number(p.StoreId || p.store_id) === Number(outOfStockOrder.StoreId || outOfStockOrder.StoreID);
-      const isAvailable = !p.IsOutOfStock && Number(p.IsOutOfStock) !== 1;
-      const isNotOriginal = !originalProductIds.includes(Number(p.ProductId));
-      return isSameStore && isAvailable && isNotOriginal;
+      const isAvailable = !Number(p.IsOutOfStock);
+      const isNotOriginal = Number(p.ProductId) !== Number(targetItem?.ProductId);
+      const notPricier = !targetItem || Number(p.UnitPrice) <= targetPrice;
+      return isSameStore && isAvailable && isNotOriginal && notPricier;
     });
 
     return (
@@ -2387,6 +2037,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           <p style={{ color: COLORS.gray, fontSize: "13px", marginTop: "6px" }}>
             คิว #{outOfStockOrder.QueueNo} • ร้าน {outOfStockOrder.StoreName} แจ้งว่าวัตถุดิบหมดชั่วคราว
           </p>
+          {targetItem && (
+            <div style={{ background: "#F8F8FA", borderRadius: "12px", padding: "10px 14px", marginTop: "10px", fontSize: "13px", textAlign: "left" }}>
+              <div>เมนูที่หมด: <b>{targetItem.ProductName}</b> ({Number(targetItem.UnitPrice || 0).toFixed(2)} ฿)</div>
+              {outOfStockOrder.CancelReason && <div style={{ color: COLORS.gray, marginTop: "4px" }}>เหตุผลจากร้าน: {outOfStockOrder.CancelReason}</div>}
+              <div style={{ color: COLORS.gray, marginTop: "4px" }}>เลือกเมนูใหม่ได้เฉพาะราคาเท่ากันหรือถูกกว่า (ส่วนต่างคืนเงินให้)</div>
+            </div>
+          )}
 
           <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "10px 14px", borderRadius: "12px", margin: "14px 0", fontSize: "14px", fontWeight: "800", border: `1px solid ${COLORS.red}` }}>
             ⏱ กรุณาเลือกภายใน: <span style={{ fontSize: "18px", color: COLORS.red, fontWeight: "900" }}>{formatTimeLeft(timeLeft)}</span> นาที
