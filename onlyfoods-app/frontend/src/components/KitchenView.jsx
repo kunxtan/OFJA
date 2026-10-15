@@ -10,6 +10,8 @@ const PALETTE = {
   lightBg: '#F8FAFC',
   cardLight: '#FFFFFF',
   borderLight: '#E2E8F0',
+  navy: '#2A2C41',
+  yellow: '#FDBF50'
 };
 
 // --- SVG Icons (ไม่ใช้อีโมจิ) ---
@@ -142,6 +144,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [isDark, setIsDark] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filterTab, setFilterTab] = useState('Pending');
+
+  // USER & PROFILE STATE (ดึงโปรไฟล์จากฐานข้อมูล)
+  const userId = user?.UserId || user?.id || user?.user_id;
+  const [fullName, setFullName] = useState(user?.FullName || user?.Username || 'พนักงานครัว');
+  const [profileImage, setProfileImage] = useState(user?.ProfileImg || user?.ProfileImage || user?.avatar || user?.ProfileImageUrl || null);
   
   // State เวลาปัจจุบัน (Live Clock)
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -162,6 +169,23 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(timer);
   }, []);
 
+  // โหลดข้อมูลโปรไฟล์ล่าสุดของผู้ใช้จาก Database
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (!userId) return;
+      try {
+        const res = await fetch(`${apiBase}/api/users/${userId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setFullName(data.FullName || data.Username || fullName);
+        setProfileImage(data.ProfileImg || data.ProfileImage || data.ProfileImageUrl || data.avatar || null);
+      } catch (error) {
+        console.error("Load kitchen user profile error:", error);
+      }
+    };
+    loadUserProfile();
+  }, [userId, apiBase]);
+
   useEffect(() => {
     if (!document.getElementById('kitchen-font-link')) {
       const link = document.createElement('link');
@@ -172,7 +196,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     }
   }, []);
 
-  const displayName = user?.FullName || user?.Username || 'ผู้ใช้งานระบบ';
+  const displayName = fullName || user?.FullName || user?.Username || 'ผู้ใช้งานระบบ';
   const displayRole = getRoleLabel(user?.Role);
 
   const theme = {
@@ -225,24 +249,18 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  //เรียงตามเวลานัดรับก่อน แล้วค่อยตามด้วยลำดับคิว/OrderID
+  // เรียงลำดับออเดอร์: เรียงตามเวลานัดรับก่อน (PickupTime) หากไม่มีเวลานัดรับให้เรียงตาม OrderID/QueueNo
   const sortedOrders = [...allOrders].sort((a, b) => {
     const timeA = parseDate(a.PickupTime);
     const timeB = parseDate(b.PickupTime);
 
-    // 1. ถ้ามีเวลานัดรับทั้งคู่ ให้เอาอันที่ถึงเวลาก่อนขึ้นก่อน
     if (timeA && timeB) {
       const diff = timeA.getTime() - timeB.getTime();
       if (diff !== 0) return diff;
     }
-
-    // 2. ถ้าออเดอร์ A มีเวลานัดรับ แต่ B ไม่มี -> ให้ A อยู่ก่อน (ซ้าย/บนสุด)
     if (timeA && !timeB) return -1;
-
-    // 3. ถ้าออเดอร์ B มีเวลานัดรับ แต่ A ไม่มี -> ให้ B อยู่ก่อน
     if (!timeA && timeB) return 1;
 
-    // 4. ถ้าไม่มีเวลานัดรับทั้งคู่ หรือเวลานัดรับเท่ากัน -> ให้เรียงตามคิว/OrderID ปกติ
     return (a.OrderID || 0) - (b.OrderID || 0);
   });
 
@@ -318,6 +336,22 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       return null;
     }
     return null;
+  };
+
+  // ฟังก์ชันคำนวณช่วงเวลารอสำหรับออเดอร์ "รับทันที" (1 คิว = 5 นาที)
+  const getImmediateWaitTime = (currentOrderId) => {
+    const queueIndex = pendingOrders.findIndex(o => o.OrderID === currentOrderId);
+    const prevQueueCount = queueIndex >= 0 ? queueIndex : 0;
+    
+    // คำนวณเวลารอโดยคิด 1 คิว = 5 นาที
+    const baseMinutes = prevQueueCount * 5;
+    const minWait = Math.max(5, baseMinutes);
+    const maxWait = minWait + 5;
+
+    return {
+      queueAhead: prevQueueCount,
+      rangeLabel: `รอประมาณ ${minWait}-${maxWait} นาที`
+    };
   };
 
   const getElapsedInfo = (timeStr) => {
@@ -411,6 +445,26 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div style={{
+            fontSize: "25px",
+            fontWeight: "900",
+            color: PALETTE.navy,
+            whiteSpace: "nowrap",
+            display: "flex",
+            alignItems: "center",
+            gap: "4px"
+          }}>
+            <span style={{ color: theme.textMain }}>Only</span>
+            <span style={{ color: PALETTE.coral }}>Foods</span>
+          </div>
+
+          <div style={{
+            width: '1px',
+            height: '24px',
+            background: theme.border,
+            margin: '0 4px'
+          }} />
+
+          <div style={{
             width: '42px',
             height: '42px',
             borderRadius: '12px',
@@ -423,8 +477,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           </div>
 
           <div>
-            <div style={{ fontSize: '21px', fontWeight: '800', color: theme.textMain, lineHeight: '1.2', letterSpacing: '-0.3px' }}>
-              Only Foods - ส่วนงานครัว
+            <div style={{ fontSize: '20px', fontWeight: '800', color: theme.textMain, lineHeight: '1.2', letterSpacing: '-0.3px' }}>
+              ส่วนงานครัว
             </div>
             <div style={{ fontSize: '13px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
               <span>สถานะศูนย์อาหาร:</span>
@@ -513,6 +567,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             {isDark ? 'Light' : 'Dark'}
           </button>
 
+          {/* Profile User Component (ดึงรูปและชื่อจาก Database เหมือน CustomerView) */}
           <button
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
             style={{
@@ -520,7 +575,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               color: theme.textMain,
               border: `1px solid ${theme.border}`,
               borderRadius: '99px',
-              padding: '8px 18px',
+              padding: '5px 16px 5px 6px',
               fontSize: '14px',
               fontWeight: '700',
               cursor: 'pointer',
@@ -529,7 +584,23 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               gap: '8px'
             }}
           >
-            <UserIcon />
+            <div style={{
+              width: '34px',
+              height: '34px',
+              borderRadius: '50%',
+              background: PALETTE.yellow,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              flexShrink: 0
+            }}>
+              {profileImage ? (
+                <img src={profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <UserIcon />
+              )}
+            </div>
             <span>{displayName}</span>
           </button>
 
@@ -546,9 +617,27 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.08)',
               zIndex: 1000
             }}>
-              <div style={{ marginBottom: '12px' }}>
-                <div style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>{displayName}</div>
-                <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '2px' }}>{displayRole}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  background: PALETTE.yellow,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden'
+                }}>
+                  {profileImage ? (
+                    <img src={profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <UserIcon />
+                  )}
+                </div>
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>{displayName}</div>
+                  <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '2px' }}>{displayRole}</div>
+                </div>
               </div>
               <hr style={{ border: 'none', borderTop: `1px solid ${theme.border}`, margin: '12px 0' }} />
               <button
@@ -677,6 +766,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               const timeInfo = getElapsedInfo(o.CreatedAt);
               const pickupAlert = getPickupAlert(o.PickupTime);
               const isCompleted = o.Status === 'Completed';
+              const isImmediatePickup = !o.PickupTime || o.PickupTime.includes('รับทันที') || o.PickupTime === formatTime(o.CreatedAt);
+              const waitEstimate = isImmediatePickup ? getImmediateWaitTime(o.OrderID) : null;
 
               return (
                 <div 
@@ -710,7 +801,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         </div>
                       </div>
 
-                      {o.PickupTime && (
+                      {/* แสดงเวลานัดรับ หรือคำนวณเวลารอรับสำหรับคิวรับทันที */}
+                      {!isImmediatePickup ? (
                         <div style={{
                           background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : theme.cardInner,
                           border: `1px solid ${pickupAlert ? '#EF4444' : theme.border}`,
@@ -723,6 +815,24 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         }}>
                           <div>เวลานัดรับ</div>
                           <div style={{ fontSize: '14px', fontWeight: '800' }}>{o.PickupTime}</div>
+                        </div>
+                      ) : (
+                        <div style={{
+                          background: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5',
+                          border: `1px solid ${PALETTE.emerald}`,
+                          color: PALETTE.emerald,
+                          padding: '8px 14px',
+                          borderRadius: '12px',
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          textAlign: 'right'
+                        }}>
+                          <div>รับทันที</div>
+                          {filterTab === 'Pending' && waitEstimate && (
+                            <div style={{ fontSize: '13px', fontWeight: '800', marginTop: '2px' }}>
+                              {waitEstimate.rangeLabel}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -963,10 +1073,15 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                 <strong>{formatTime(selectedOrder.CreatedAt)}</strong>
               </div>
 
-              {selectedOrder.PickupTime && (
+              {selectedOrder.PickupTime ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลานัดรับ:</span>
                   <strong style={{ color: PALETTE.coral }}>{selectedOrder.PickupTime}</strong>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> ประเมินเวลารอ (รับทันที):</span>
+                  <strong style={{ color: PALETTE.emerald }}>{getImmediateWaitTime(selectedOrder.OrderID).rangeLabel}</strong>
                 </div>
               )}
 
