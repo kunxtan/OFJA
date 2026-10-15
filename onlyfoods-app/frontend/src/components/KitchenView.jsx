@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 const PALETTE = {
   coral: '#FF724C',
@@ -47,13 +47,6 @@ const CheckIcon = () => (
   </svg>
 );
 
-const UndoIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 7v6h6"/>
-    <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>
-  </svg>
-);
-
 const LogoutIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
@@ -72,9 +65,10 @@ const CookingIcon = () => (
   </svg>
 );
 
-const DoneCheckIcon = () => (
+const HistoryIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+    <path d="M12 8v4l3 3"/>
+    <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5"/>
   </svg>
 );
 
@@ -95,12 +89,6 @@ const CloseIcon = () => (
 const NoteIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-  </svg>
-);
-
-const LockIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
   </svg>
 );
 
@@ -147,6 +135,16 @@ const parseDate = (timeStr) => {
   return isNaN(parsed.getTime()) ? null : parsed;
 };
 
+// Helper เช็คว่าเป็นออเดอร์ของ "วันนี้" หรือไม่ (สำหรับ Auto Reset)
+const isToday = (timeStr) => {
+  const d = parseDate(timeStr);
+  if (!d) return true; // ถ้าเป็นสตริงเวลาสั้นๆ (เช่น 17:30 น.) ถือว่าเป็นของวันนี้
+  const now = new Date();
+  return d.getDate() === now.getDate() &&
+         d.getMonth() === now.getMonth() &&
+         d.getFullYear() === now.getFullYear();
+};
+
 export default function KitchenView({ user, apiBase, onLogout }) {
   const [allOrders, setAllOrders] = useState([]);
   const [summary, setSummary] = useState([]);
@@ -163,8 +161,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-
-  const pendingUndoRef = useRef(new Set()); // ล็อก ID ฝั่ง Frontend กัน Undo เด้งกระพริบ
 
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [storeOpen, setStoreOpen] = useState(true);
@@ -223,15 +219,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          setAllOrders(prev => {
-            return data.map(newOrder => {
-              if (pendingUndoRef.current.has(newOrder.OrderID)) {
-                const localOrder = prev.find(o => o.OrderID === newOrder.OrderID);
-                return localOrder || newOrder;
-              }
-              return newOrder;
-            });
-          });
+          setAllOrders(data);
         }
       })
       .catch(err => console.error("Error fetching kitchen orders:", err));
@@ -265,7 +253,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // --- Advanced Logic: Chained Queue + Plate-Based + Dynamic Safety Buffer Shift ---
+  // Logic คำนวณเวลาแบบ Chained Queue + Dynamic Buffer
   const getCalculatedTargetDate = (order, orderList) => {
     const created = parseDate(order.CreatedAt) || new Date();
     const pickupStr = order.PickupTime ? String(order.PickupTime).trim() : '';
@@ -283,35 +271,30 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       if (pDate) return { targetDate: pDate, isImmediate: false };
     }
 
-    // 1. กรองเฉพาะออเดอร์รอปรุง (Pending/Cooking) ที่ยังทำไม่เสร็จในขณะนี้
     const pendingOrdersBefore = orderList
       .filter(o => (o.Status === 'Pending' || o.Status === 'Cooking') && o.OrderID <= order.OrderID)
       .sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
 
-    // 2. คำนวณจำนวนจานสะสมในคิวขณะนั้นเพื่อหา Dynamic Safety Buffer Factor
     const totalPendingItemsInKitchen = orderList
       .filter(o => o.Status === 'Pending' || o.Status === 'Cooking')
       .reduce((sum, o) => sum + (o.items?.reduce((iSum, item) => iSum + (Number(item.Qty) || 1), 0) || 1), 0);
 
-    let bufferMultiplier = 1.0; // ปกติไม่บวกเพิ่ม
+    let bufferMultiplier = 1.0;
     if (totalPendingItemsInKitchen > 15) {
-      bufferMultiplier = 1.20; // คิวแน่นมาก (> 15 จาน) บวกเวลาเพิ่ม 20%
+      bufferMultiplier = 1.20;
     } else if (totalPendingItemsInKitchen >= 5) {
-      bufferMultiplier = 1.10; // คิวปานกลาง (5-15 จาน) บวกเวลาเพิ่ม 10%
+      bufferMultiplier = 1.10;
     }
 
-    // 3. วนวนคิดเวลาสะสมคิวต่อคิว (ถ้าคิวก่อนหน้าเสร็จเร็วจากการกด "ปรุงเสร็จแล้ว" คิวถัดไปจะขยับขึ้นทันที)
     let lastAvailableTime = null;
 
     for (const o of pendingOrdersBefore) {
       const oCreated = parseDate(o.CreatedAt) || new Date();
       const oQty = o.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
       
-      // เวลาทำพื้นฐาน (4 นาทีต่อจาน) * Dynamic Buffer Factor
       const baseCookingMinutes = oQty * 4;
       const actualCookingMinutes = baseCookingMinutes * bufferMultiplier;
 
-      // เวลาเริ่มทำ = เวลาที่สั่ง หรือ เวลาที่ออเดอร์ก่อนหน้าในคิวทำเสร็จจริง
       let startTime = oCreated;
       if (lastAvailableTime && lastAvailableTime > oCreated) {
         startTime = lastAvailableTime;
@@ -345,14 +328,15 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return (a.OrderID || 0) - (b.OrderID || 0);
   });
 
+  // กรองคิวรอปรุง
   const pendingOrders = sortedOrders.filter(o => o.Status === 'Pending' || o.Status === 'Cooking');
-  const readyOrders = sortedOrders.filter(o => o.Status === 'Ready' || o.Status === 'Completed');
-  const displayedOrders = sortedOrders.filter(order => {
-    if (filterTab === 'Pending') {
-      return order.Status === 'Pending' || order.Status === 'Cooking';
-    }
-    return order.Status === 'Ready';
-  });
+
+  // กรองประวัติเฉพาะของ "วันนี้" (Auto Reset เที่ยงคืน)
+  const todayHistoryOrders = sortedOrders.filter(o => 
+    (o.Status === 'Ready' || o.Status === 'Completed') && isToday(o.CreatedAt)
+  );
+
+  const displayedOrders = filterTab === 'Pending' ? pendingOrders : todayHistoryOrders;
 
   const isStoreActive = foodCourtOpen && storeOpen && !isSuspended;
 
@@ -363,18 +347,12 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return 'เปิดให้บริการ';
   };
 
+  // กดเสร็จแล้ว จบงาน ย้ายไปประวัติทันที
   const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
     if (e) e.stopPropagation();
 
-    // 1. ล็อก ID ฝั่ง Frontend ป้องกัน fetch ข้อมูลเก่าทับ
-    pendingUndoRef.current.add(id);
-
-    // 2. เปลี่ยน State ทันที (ออเดอร์นี้จะถูกปรับเป็น Ready คิวก่อนหน้าลดลงทันที ทำให้ออเดอร์ที่เหลือคำนวณเวลานัดรับใหม่เลื่อนเร็วขึ้นอัตโนมัติ!)
+    // อัปเดต UI ทันที
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
-
-    if (targetStatus === 'Pending') {
-      setFilterTab('Pending');
-    }
 
     try {
       await fetch(`${apiBase}/api/orders/${id}/status`, {
@@ -386,12 +364,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           cancel_reason: null
         })
       });
+      fetchData();
     } catch (err) {
       console.error("Update status error:", err);
-    } finally {
-      setTimeout(() => {
-        pendingUndoRef.current.delete(id);
-      }, 3500);
     }
   };
 
@@ -606,7 +581,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '2px' }}>{pendingOrders.length}</span>
           </div>
 
-          {/* Dropdown สรุปรายการอาหาร (Clean & Compact) */}
+          {/* Dropdown สรุปรายการอาหาร */}
           {summary.length > 0 && (
             <div style={{ position: 'relative' }}>
               <button
@@ -843,13 +818,13 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           </button>
 
           <button
-            onClick={() => setFilterTab('Ready')}
+            onClick={() => setFilterTab('History')}
             style={{
               padding: '11px 22px',
               borderRadius: '12px',
               border: 'none',
-              background: filterTab === 'Ready' ? theme.cardBg : 'transparent',
-              color: filterTab === 'Ready' ? PALETTE.emerald : theme.textMuted,
+              background: filterTab === 'History' ? theme.cardBg : 'transparent',
+              color: filterTab === 'History' ? PALETTE.emerald : theme.textMuted,
               fontWeight: '800',
               fontSize: '14.5px',
               cursor: 'pointer',
@@ -858,17 +833,17 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               gap: '8px'
             }}
           >
-            <DoneCheckIcon />
-            <span>ปรุงเสร็จแล้ว / ส่งมอบ</span>
+            <HistoryIcon />
+            <span>ประวัติปรุงเสร็จวันนี้</span>
             <span style={{
-              background: filterTab === 'Ready' ? (isDark ? 'rgba(16,185,129,0.2)' : '#ECFDF5') : 'transparent',
-              color: filterTab === 'Ready' ? PALETTE.emerald : theme.textMuted,
+              background: filterTab === 'History' ? (isDark ? 'rgba(16,185,129,0.2)' : '#ECFDF5') : 'transparent',
+              color: filterTab === 'History' ? PALETTE.emerald : theme.textMuted,
               padding: '2px 10px',
               borderRadius: '99px',
               fontSize: '12.5px',
               fontWeight: '800'
             }}>
-              {readyOrders.length}
+              {todayHistoryOrders.length}
             </span>
           </button>
         </div>
@@ -893,14 +868,13 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               border: `1px solid ${theme.border}`
             }}>
               <h3 style={{ margin: 0, color: theme.textMuted, fontSize: '16px', fontWeight: '600' }}>
-                {filterTab === 'Pending' ? 'ไม่มีรายการอาหารค้างปรุงในขณะนี้' : 'ไม่มีรายการออเดอร์ที่ปรุงเสร็จแล้ว'}
+                {filterTab === 'Pending' ? 'ไม่มีรายการอาหารค้างปรุงในขณะนี้' : 'ยังไม่มีประวัติการปรุงเสร็จในวันนี้'}
               </h3>
             </div>
           ) : (
             displayedOrders.map(o => {
               const timeInfo = getElapsedInfo(o.CreatedAt);
-              const pickupAlert = getPickupAlert(o);
-              const isCompleted = o.Status === 'Completed';
+              const pickupAlert = filterTab === 'Pending' ? getPickupAlert(o) : null;
 
               const calculatedInfo = getCalculatedTargetDate(o, allOrders);
               const targetTimeString = formatTime(calculatedInfo.targetDate);
@@ -921,14 +895,15 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                     transition: 'all 0.2s ease',
                     position: 'relative',
                     overflow: 'hidden',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    opacity: filterTab === 'History' ? 0.85 : 1
                   }}
                 >
                   <div>
                     {/* Header: Queue & Time */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
                       <div>
-                        <div style={{ fontSize: '32px', fontWeight: '900', color: PALETTE.coral, lineHeight: '1', letterSpacing: '-0.5px' }}>
+                        <div style={{ fontSize: '32px', fontWeight: '900', color: filterTab === 'Pending' ? PALETTE.coral : theme.textMuted, lineHeight: '1', letterSpacing: '-0.5px' }}>
                           {formatQueueNo(o.QueueNo)}
                         </div>
                         <div style={{ fontSize: '13px', color: theme.textMuted, marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -937,19 +912,21 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         </div>
                       </div>
 
-                      {/* ป้ายแสดงเวลานัดรับบนการ์ด */}
+                      {/* ป้ายแสดงเวลานัดรับ / สถานะ */}
                       <div style={{
-                        background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : (calculatedInfo.isImmediate ? (isDark ? 'rgba(16,185,129,0.12)' : '#ECFDF5') : theme.cardInner),
-                        border: `1px solid ${pickupAlert ? '#EF4444' : (calculatedInfo.isImmediate ? PALETTE.emerald : theme.border)}`,
-                        color: pickupAlert ? '#EF4444' : (calculatedInfo.isImmediate ? PALETTE.emerald : theme.textMain),
+                        background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : (filterTab === 'History' ? (isDark ? 'rgba(16,185,129,0.12)' : '#ECFDF5') : theme.cardInner),
+                        border: `1px solid ${pickupAlert ? '#EF4444' : (filterTab === 'History' ? PALETTE.emerald : theme.border)}`,
+                        color: pickupAlert ? '#EF4444' : (filterTab === 'History' ? PALETTE.emerald : theme.textMain),
                         padding: '8px 14px',
                         borderRadius: '12px',
                         fontSize: '12px',
                         fontWeight: '700',
                         textAlign: 'right'
                       }}>
-                        <div>{calculatedInfo.isImmediate ? 'รับทันที (คำนวณคิว)' : 'เวลานัดรับ'}</div>
-                        <div style={{ fontSize: '14px', fontWeight: '800' }}>{targetTimeString}</div>
+                        <div>{filterTab === 'History' ? 'สถานะ' : (calculatedInfo.isImmediate ? 'รับทันที (คำนวณคิว)' : 'เวลานัดรับ')}</div>
+                        <div style={{ fontSize: '14px', fontWeight: '800' }}>
+                          {filterTab === 'History' ? (o.Status === 'Completed' ? 'ส่งมอบแล้ว' : 'ปรุงเสร็จแล้ว') : targetTimeString}
+                        </div>
                       </div>
                     </div>
 
@@ -1020,7 +997,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                     )}
                   </div>
 
-                  {/* ปุ่มเปลี่ยนสถานะ & Undo */}
+                  {/* ปุ่มกดปรุงเสร็จแล้ว / ป้ายแสดงสถานะในแท็บประวัติ */}
                   <div style={{ marginTop: '12px' }}>
                     {filterTab === 'Pending' ? (
                       <button
@@ -1048,69 +1025,23 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         <span>ปรุงเสร็จแล้ว</span>
                       </button>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {isCompleted ? (
-                          <div style={{
-                            width: '100%',
-                            minHeight: '52px',
-                            padding: '12px',
-                            borderRadius: '14px',
-                            background: isDark ? 'rgba(255,255,255,0.05)' : '#F1F5F9',
-                            color: theme.textMuted,
-                            fontSize: '14px',
-                            fontWeight: '700',
-                            textAlign: 'center',
-                            border: `1px solid ${theme.border}`,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '8px'
-                          }}>
-                            <LockIcon />
-                            <span>ส่งมอบสำเร็จแล้ว (ล็อกการแก้ไข)</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div style={{
-                              width: '100%',
-                              padding: '10px 14px',
-                              borderRadius: '12px',
-                              background: isDark ? 'rgba(16,185,129,0.15)' : '#ECFDF5',
-                              color: PALETTE.emerald,
-                              fontSize: '13.5px',
-                              fontWeight: '700',
-                              textAlign: 'center',
-                              border: `1px solid ${PALETTE.emerald}`
-                            }}>
-                              พร้อมรับอาหาร (รอหน้าร้านส่งมอบ)
-                            </div>
-                            
-                            {/* ปุ่ม Undo */}
-                            <button
-                              onClick={(e) => updateOrderStatus(o.OrderID, 'Pending', e)}
-                              style={{
-                                width: '100%',
-                                minHeight: '48px',
-                                padding: '10px 16px',
-                                borderRadius: '12px',
-                                border: `1.5px solid ${theme.border}`,
-                                background: theme.cardInner,
-                                color: theme.textMain,
-                                fontWeight: '700',
-                                fontSize: '14px',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '8px',
-                                transition: 'all 0.2s'
-                              }}
-                            >
-                              <UndoIcon />
-                              <span>ย้อนกลับไปคิวรอปรุง (Undo)</span>
-                            </button>
-                          </>
-                        )}
+                      <div style={{
+                        width: '100%',
+                        minHeight: '48px',
+                        padding: '12px',
+                        borderRadius: '14px',
+                        background: isDark ? 'rgba(255,255,255,0.04)' : '#F1F5F9',
+                        color: theme.textMuted,
+                        fontSize: '13.5px',
+                        fontWeight: '700',
+                        textAlign: 'center',
+                        border: `1px solid ${theme.border}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px'
+                      }}>
+                        <span>✓ ปรุงเสร็จสิ้นเรียบร้อยแล้ว</span>
                       </div>
                     )}
                   </div>
@@ -1193,7 +1124,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณคิว + Dynamic Buffer):' : 'เวลานัดรับ:'}
+                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ:' : 'เวลานัดรับ:'}
                   </span>
                   <strong style={{ color: PALETTE.coral }}>{formatTime(calculatedInfo.targetDate)}</strong>
                 </div>
