@@ -236,6 +236,13 @@ function Icon({ name, size = 20 }) {
     star: <><path d="M12 17.75l-6.172 3.245l1.179 -6.873l-5 -4.867l6.9 -1l3.086 -6.253l3.086 6.253l6.9 1l-5 4.867l1.179 6.873z" /></>,
     alert: <><path d="M12 9v2m0 4v.01M5.07 19H18.93c1.93 0 2.89-2.34 1.53-3.71L13.53 4.29c-.77-1.34-2.29-1.34-3.06 0L3.54 15.29c-1.36 1.37-.4 3.71 1.53 3.71z"/></>,
     calendar: <><path d="M7 3v4M17 3v4M3 9h18M5 5h14v16H5z" /></>,
+    phone: <><path d="M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5l1.5 -2.5l5 2v4a2 2 0 0 1 -2 2a16 16 0 0 1 -15 -15a2 2 0 0 1 2 -2" /></>,
+    mail: <><path d="M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10z" /><path d="M3 7l9 6l9 -6" /></>,
+    key: <><path d="M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.172a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.172a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0z" /><path d="M15 9h.01" /></>,
+    lock: <><path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6z" /><path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" /><path d="M8 11v-4a4 4 0 1 1 8 0v4" /></>,
+    eye: <><path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /><path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" /></>,
+    eyeOff: <><path d="M10.585 10.587a2 2 0 0 0 2.829 2.828" /><path d="M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87" /><path d="M3 3l18 18" /></>,
+    activity: <><path d="M3 12h4l3 8l4 -16l3 8h4" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
@@ -676,10 +683,11 @@ const CROP_RATIOS = [
 ];
 const CROP_OUTPUT_MAX = 1200; // ความกว้างสูงสุดของรูปที่ส่งขึ้น server (px)
 
-function ImageCropper({ src, onCancel, onConfirm }) {
+// ratios / title / outputMax / round : ใช้ซ้ำกับรูปโปรไฟล์พนักงาน (1:1 วงกลม) ได้
+function ImageCropper({ src, onCancel, onConfirm, ratios = CROP_RATIOS, title = 'ครอปรูปเมนู', outputMax = CROP_OUTPUT_MAX, round = false }) {
   const [natural, setNatural] = useState(null); // { w, h }
   const [loadError, setLoadError] = useState('');
-  const [ratioId, setRatioId] = useState('4:3');
+  const [ratioId, setRatioId] = useState(ratios[0].id);
   const [zoom, setZoom] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const [frameW, setFrameW] = useState(440);
@@ -687,7 +695,7 @@ function ImageCropper({ src, onCancel, onConfirm }) {
   const stageRef = useRef(null);
   const dragRef = useRef(null);
 
-  const ratio = (CROP_RATIOS.find(r => r.id === ratioId) || CROP_RATIOS[0]).value;
+  const ratio = (ratios.find(r => r.id === ratioId) || ratios[0]).value;
   const frameH = Math.round(frameW / ratio);
   const baseScale = natural ? Math.max(frameW / natural.w, frameH / natural.h) : 1;
   const scale = baseScale * zoom;
@@ -769,7 +777,7 @@ function ImageCropper({ src, onCancel, onConfirm }) {
       const sy = -pos.y / scale;
       const sw = frameW / scale;
       const sh = frameH / scale;
-      const outW = Math.max(1, Math.round(Math.min(CROP_OUTPUT_MAX, sw)));
+      const outW = Math.max(1, Math.round(Math.min(outputMax, sw)));
       const outH = Math.max(1, Math.round(outW / ratio));
       const canvas = document.createElement('canvas');
       canvas.width = outW;
@@ -798,19 +806,21 @@ function ImageCropper({ src, onCancel, onConfirm }) {
   // render ไว้ท้าย .berry-root (ได้ตัวแปรสีของธีม) เพื่อให้ลอยเหนือฟอร์มเมนูเสมอ
   return createPortal(
     <div className="crop-overlay" onClick={() => { if (!busy) onCancel(); }}>
-      <div className="crop-modal" role="dialog" aria-modal="true" aria-label="ครอปรูปเมนู" onClick={e => e.stopPropagation()}>
+      <div className="crop-modal" role="dialog" aria-modal="true" aria-label={title} onClick={e => e.stopPropagation()}>
         <div className="crop-head">
           <div>
-            <h3>ครอปรูปเมนู</h3>
+            <h3>{title}</h3>
             <p>ลากรูปเพื่อจัดตำแหน่ง และซูมให้ได้ส่วนที่ต้องการ</p>
           </div>
-          <div className="crop-ratios" role="group" aria-label="สัดส่วนรูป">
-            {CROP_RATIOS.map(r => (
-              <button key={r.id} type="button" className={ratioId === r.id ? 'active' : ''} onClick={() => setRatioId(r.id)} disabled={busy}>
-                {r.label}
-              </button>
-            ))}
-          </div>
+          {ratios.length > 1 && (
+            <div className="crop-ratios" role="group" aria-label="สัดส่วนรูป">
+              {ratios.map(r => (
+                <button key={r.id} type="button" className={ratioId === r.id ? 'active' : ''} onClick={() => setRatioId(r.id)} disabled={busy}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div
@@ -837,6 +847,7 @@ function ImageCropper({ src, onCancel, onConfirm }) {
           <div className="crop-grid" aria-hidden="true">
             <span /><span /><span /><span />
           </div>
+          {round && <div className="crop-round-mask" aria-hidden="true" />}
         </div>
 
         <div className="crop-zoom">
@@ -1100,6 +1111,561 @@ function MenuFormModal({ mode, product, onClose, onSubmit }) {
   );
 }
 
+/* ============================================================
+   จัดการพนักงาน (sf-*)
+   ============================================================ */
+// กติกาต้องตรงกับ backend: utils.validate_username / validate_password / validate_phone / validate_email
+const STAFF_USERNAME_RE = /^[A-Za-z0-9_]{4,20}$/;
+const STAFF_PHONE_RE = /^0\d{8,9}$/;
+const STAFF_EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const STAFF_PASSWORD_MIN = 8;
+const STAFF_PASSWORD_MAX = 72; // ขีดจำกัดของ bcrypt
+
+const STAFF_ROLE_INFO = {
+  'Front Staff': {
+    label: 'พนักงานหน้าร้าน', short: 'หน้าร้าน', tone: 'primary', icon: 'receipt',
+    desc: 'รับออเดอร์ walk-in ตรวจสลิป เรียกคิว และส่งมอบอาหาร',
+  },
+  'Kitchen Staff': {
+    label: 'พนักงานครัว', short: 'ครัว', tone: 'warning', icon: 'flame',
+    desc: 'ดูคิวที่ต้องทำ อัปเดตสถานะการปรุง และปรับเมนูที่ของหมด',
+  },
+};
+const staffRoleInfo = (role) => STAFF_ROLE_INFO[role] || STAFF_ROLE_INFO['Front Staff'];
+
+const AVATAR_CROP = [{ id: '1:1', label: '1:1', value: 1 }];
+const AVATAR_COLORS = ['#FF724C', '#2A2C41', '#17A673', '#E2A430', '#5B6CF0', '#C2185B'];
+
+const phoneDigits = (value) => String(value || '').replace(/[\s-]/g, '');
+
+// 0812345678 -> 081-234-5678 ; 021234567 -> 02-123-4567
+function formatPhone(value) {
+  const d = phoneDigits(value);
+  if (/^0\d{9}$/.test(d)) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+  if (/^0\d{8}$/.test(d)) return `${d.slice(0, 2)}-${d.slice(2, 5)}-${d.slice(5)}`;
+  return value || '';
+}
+
+// อักษรย่อจากชื่อ (ข้ามสระหน้า เ แ โ ใ ไ ของชื่อไทย)
+function staffInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  return parts.slice(0, 2).map(p => (p.replace(/^[เแโใไ]/, '') || p)[0]).join('').toUpperCase();
+}
+
+function thaiDateTime(value, withTime = false) {
+  const d = parseOrderDate(value);
+  if (!d) return '-';
+  const date = d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+  return withTime ? `${date} ${d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.` : date;
+}
+
+function staffStatus(s) {
+  if (!s.IsActive) return { key: 'inactive', label: 'ปิดใช้งาน', tone: 'neutral' };
+  if (s.IsLocked) return { key: 'locked', label: 'ถูกล็อกชั่วคราว', tone: 'warning' };
+  return { key: 'active', label: 'ใช้งานอยู่', tone: 'success' };
+}
+
+function passwordChecks(password, confirm) {
+  return [
+    { id: 'len', ok: password.length >= STAFF_PASSWORD_MIN && password.length <= STAFF_PASSWORD_MAX, label: `${STAFF_PASSWORD_MIN}–${STAFF_PASSWORD_MAX} ตัวอักษร` },
+    { id: 'space', ok: password.length > 0 && !/\s/.test(password), label: 'ไม่มีช่องว่าง' },
+    { id: 'match', ok: password.length > 0 && password === confirm, label: 'ยืนยันรหัสผ่านตรงกัน' },
+  ];
+}
+
+function useEscapeToClose(onClose, disabled) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !disabled) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, disabled]);
+}
+
+function StaffAvatar({ name, src, id, size = 56 }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setBroken(false); }, [src]);
+  const showImage = Boolean(src) && !broken;
+  return (
+    <span
+      className="sf-avatar"
+      style={{
+        width: size, height: size, fontSize: Math.round(size * 0.36),
+        background: showImage ? '#ECEEF5' : AVATAR_COLORS[Number(id || 0) % AVATAR_COLORS.length],
+      }}
+    >
+      {showImage
+        ? <img src={src} alt="" onError={() => setBroken(true)} />
+        : staffInitials(name) || <Icon name="user" size={Math.round(size * 0.46)} />}
+    </span>
+  );
+}
+
+function PasswordInput({ id, value, onChange, show, onToggleShow, invalid, disabled, placeholder, autoComplete = 'new-password' }) {
+  return (
+    <div className="sf-input-wrap with-icon has-eye">
+      <span className="sf-input-icon"><Icon name="lock" size={16} /></span>
+      <input
+        id={id}
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={onChange}
+        maxLength={STAFF_PASSWORD_MAX}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+        className={invalid ? 'invalid' : ''}
+        disabled={disabled}
+      />
+      <button type="button" className="sf-eye" onClick={onToggleShow} aria-label={show ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'} tabIndex={-1}>
+        <Icon name={show ? 'eyeOff' : 'eye'} size={17} />
+      </button>
+    </div>
+  );
+}
+
+function PasswordRules({ password, confirm }) {
+  return (
+    <ul className="sf-pw-rules" aria-live="polite">
+      {passwordChecks(password, confirm).map(c => (
+        <li key={c.id} className={c.ok ? 'ok' : ''}>
+          <span className="mark"><Icon name="check" size={11} /></span>{c.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// รูปโปรไฟล์: เลือกไฟล์ -> ตรวจ -> ครอป 1:1 (วงกลม) -> ส่ง data URL ให้ฟอร์ม
+function AvatarUpload({ image, name, onChange, disabled }) {
+  const [error, setError] = useState('');
+  const [cropSrc, setCropSrc] = useState(null);
+  const inputRef = useRef(null);
+  const pick = () => { if (!disabled) inputRef.current?.click(); };
+
+  const processFile = async (file) => {
+    if (!file || disabled) return;
+    try {
+      const result = await readImageFile(file);
+      setError('');
+      setCropSrc(result.dataUrl);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleCropped = (dataUrl, meta) => {
+    setCropSrc(null);
+    if (meta.size > MAX_IMAGE_BYTES) {
+      setError(`รูปหลังครอปมีขนาด ${formatBytes(meta.size)} เกินกำหนด ${MAX_IMAGE_MB} MB`);
+      return;
+    }
+    setError('');
+    onChange(dataUrl);
+  };
+
+  return (
+    <div className="sf-avatar-upload">
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ALLOWED_IMAGE_TYPES.join(',')}
+        style={{ display: 'none' }}
+        onChange={e => { processFile(e.target.files[0]); e.target.value = ''; }}
+      />
+      <button type="button" className="sf-avatar-btn" onClick={pick} disabled={disabled} aria-label="เลือกรูปโปรไฟล์">
+        <StaffAvatar name={name} src={image} size={88} />
+        <span className="sf-avatar-cam"><Icon name="photo" size={15} /></span>
+      </button>
+      <div className="sf-avatar-meta">
+        <div className="title">รูปโปรไฟล์ <span className="optional">ไม่บังคับ</span></div>
+        <div className="hint">รูปหน้าตรงช่วยให้จำพนักงานได้ง่าย · PNG, JPG, WEBP, GIF ไม่เกิน {MAX_IMAGE_MB} MB</div>
+        <div className="mf-image-actions">
+          <button type="button" className="mf-link-btn" onClick={pick} disabled={disabled}>
+            <Icon name="upload" size={15} /> {image ? 'เปลี่ยนรูป' : 'อัปโหลดรูป'}
+          </button>
+          {image && (
+            <>
+              <button type="button" className="mf-link-btn" onClick={() => setCropSrc(image)} disabled={disabled}>
+                <Icon name="crop" size={15} /> ครอปใหม่
+              </button>
+              <button type="button" className="mf-link-btn danger" onClick={() => { setError(''); onChange(''); }} disabled={disabled}>
+                <Icon name="close" size={15} /> นำรูปออก
+              </button>
+            </>
+          )}
+        </div>
+        {error && <div className="mf-field-error">{error}</div>}
+      </div>
+      {cropSrc && (
+        <ImageCropper
+          src={cropSrc}
+          ratios={AVATAR_CROP}
+          title="ครอปรูปโปรไฟล์"
+          outputMax={512}
+          round
+          onCancel={() => setCropSrc(null)}
+          onConfirm={handleCropped}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- ฟอร์มเพิ่ม/แก้ไขพนักงาน (ฟิลด์ตามตาราง User: ชื่อ, เบอร์, อีเมล, รูป, ตำแหน่ง, ชื่อผู้ใช้, รหัสผ่าน) ---
+function StaffFormModal({ mode, staff, onClose, onSubmit }) {
+  const isEdit = mode === 'edit';
+  const originalImage = isEdit ? (staff?.ProfileImageUrl || '') : '';
+  const [form, setForm] = useState(() => ({
+    fullName: isEdit ? staff.FullName || '' : '',
+    phone: isEdit ? formatPhone(staff.Phone || '') : '',
+    email: isEdit ? staff.Email || '' : '',
+    role: isEdit && STAFF_ROLE_INFO[staff.Role] ? staff.Role : 'Front Staff',
+    username: isEdit ? staff.Username || '' : '',
+    password: '',
+    confirm: '',
+  }));
+  const [image, setImage] = useState(originalImage);
+  const [showPassword, setShowPassword] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  useEscapeToClose(onClose, saving);
+
+  const update = (key, value) => {
+    setForm(prev => ({ ...prev, [key]: value }));
+    // แก้ช่องไหน ล้าง error ของช่องนั้น (รหัสผ่านล้างช่องยืนยันด้วย)
+    setErrors(prev => {
+      const related = key === 'password' ? ['password', 'confirm'] : [key];
+      if (!related.some(k => prev[k]) && !prev.form) return prev;
+      const next = { ...prev, form: undefined };
+      related.forEach(k => { next[k] = undefined; });
+      return next;
+    });
+  };
+  const set = (key) => (e) => update(key, e.target.value);
+
+  const validate = () => {
+    const next = {};
+    const name = form.fullName.trim();
+    if (!name) next.fullName = 'กรุณากรอกชื่อ-นามสกุล';
+    else if (name.length > 100) next.fullName = 'ชื่อ-นามสกุลต้องไม่เกิน 100 ตัวอักษร';
+    const phone = phoneDigits(form.phone);
+    if (!phone) next.phone = 'กรุณากรอกเบอร์โทรศัพท์';
+    else if (!STAFF_PHONE_RE.test(phone)) next.phone = 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก ขึ้นต้นด้วย 0';
+    const email = form.email.trim();
+    if (email && (email.length > 100 || !STAFF_EMAIL_RE.test(email))) next.email = 'รูปแบบอีเมลไม่ถูกต้อง';
+    if (!isEdit) {
+      const username = form.username.trim();
+      if (!username) next.username = 'กรุณากรอกชื่อผู้ใช้';
+      else if (!STAFF_USERNAME_RE.test(username)) next.username = 'ชื่อผู้ใช้ไม่ถูกต้อง: ใช้ได้เฉพาะ a-z, 0-9 และ _ ยาว 4–20 ตัว';
+      if (!form.password) next.password = 'กรุณาตั้งรหัสผ่าน';
+      else if (!passwordChecks(form.password, form.password).slice(0, 2).every(c => c.ok)) {
+        next.password = `รหัสผ่านต้องยาว ${STAFF_PASSWORD_MIN}–${STAFF_PASSWORD_MAX} ตัว และห้ามมีช่องว่าง`;
+      }
+      if (form.password !== form.confirm) next.confirm = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน';
+    }
+    return next;
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const next = validate();
+    setErrors(next);
+    if (Object.keys(next).length) return;
+    const payload = {
+      fullName: form.fullName.trim(),
+      phone: phoneDigits(form.phone),
+      email: form.email.trim(),
+      role: form.role,
+    };
+    if (isEdit) {
+      // null = ไม่เปลี่ยนรูป ; '' = ลบรูป ; data URL = รูปใหม่
+      payload.profile_img = image === originalImage ? null : image;
+    } else {
+      payload.username = form.username.trim();
+      payload.password = form.password;
+      payload.profile_img = image || null;
+    }
+    setSaving(true);
+    try {
+      await onSubmit(payload);
+    } catch (err) {
+      setErrors({ form: err.message || 'บันทึกไม่สำเร็จ' });
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="berry-modal-overlay mf-overlay" onClick={() => { if (!saving) onClose(); }}>
+      <div className="mf-modal sf-modal" role="dialog" aria-modal="true" aria-labelledby="sf-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head">
+          <div className="mf-head-icon"><Icon name={isEdit ? 'edit' : 'users'} size={20} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 id="sf-title">{isEdit ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'}</h3>
+            <p>{isEdit ? `บัญชี @${staff.Username} · สร้างเมื่อ ${thaiDateTime(staff.CreatedAt)}` : 'กรอกข้อมูลพนักงานและตั้งบัญชีสำหรับเข้าสู่ระบบ'}</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} disabled={saving} aria-label="ปิด">
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={submit} noValidate>
+          <div className="mf-body">
+            <section className="sf-section">
+              <AvatarUpload image={image} name={form.fullName} onChange={setImage} disabled={saving} />
+            </section>
+
+            <section className="sf-section">
+              <h4 className="sf-section-title"><Icon name="user" size={16} /> ข้อมูลส่วนตัว</h4>
+              <div className="sf-grid-2">
+                <div className="mf-field full">
+                  <label htmlFor="sf-name">ชื่อ-นามสกุล <span className="req">*</span></label>
+                  <input id="sf-name" type="text" value={form.fullName} onChange={set('fullName')} maxLength={100}
+                    placeholder="เช่น สมหมาย ใจดี" className={errors.fullName ? 'invalid' : ''} disabled={saving} autoFocus />
+                  {errors.fullName && <div className="mf-field-error">{errors.fullName}</div>}
+                </div>
+                <div className="mf-field">
+                  <label htmlFor="sf-phone">เบอร์โทรศัพท์ <span className="req">*</span></label>
+                  <div className="sf-input-wrap with-icon">
+                    <span className="sf-input-icon"><Icon name="phone" size={16} /></span>
+                    <input id="sf-phone" type="tel" inputMode="tel" value={form.phone} onChange={set('phone')}
+                      onBlur={() => setForm(prev => ({ ...prev, phone: formatPhone(prev.phone) }))} maxLength={14}
+                      placeholder="08X-XXX-XXXX" className={errors.phone ? 'invalid' : ''} disabled={saving} autoComplete="off" />
+                  </div>
+                  {errors.phone && <div className="mf-field-error">{errors.phone}</div>}
+                </div>
+                <div className="mf-field">
+                  <label htmlFor="sf-email">อีเมล <span className="optional">ไม่บังคับ</span></label>
+                  <div className="sf-input-wrap with-icon">
+                    <span className="sf-input-icon"><Icon name="mail" size={16} /></span>
+                    <input id="sf-email" type="email" value={form.email} onChange={set('email')} maxLength={100}
+                      placeholder="name@example.com" className={errors.email ? 'invalid' : ''} disabled={saving} autoComplete="off" />
+                  </div>
+                  {errors.email && <div className="mf-field-error">{errors.email}</div>}
+                </div>
+              </div>
+            </section>
+
+            <section className="sf-section">
+              <h4 className="sf-section-title"><Icon name="award" size={16} /> ตำแหน่ง</h4>
+              <div className="sf-roles" role="radiogroup" aria-label="ตำแหน่งพนักงาน">
+                {Object.entries(STAFF_ROLE_INFO).map(([value, info]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={form.role === value}
+                    className={`sf-role tone-${info.tone} ${form.role === value ? 'active' : ''}`}
+                    onClick={() => update('role', value)}
+                    disabled={saving}
+                  >
+                    <span className="sf-role-icon"><Icon name={info.icon} size={18} /></span>
+                    <span className="sf-role-text">
+                      <strong>{info.label}</strong>
+                      <small>{info.desc}</small>
+                    </span>
+                    <span className="sf-role-check"><Icon name="check" size={12} /></span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="sf-section">
+              <h4 className="sf-section-title"><Icon name="key" size={16} /> บัญชีเข้าสู่ระบบ</h4>
+              <div className="mf-field">
+                <label htmlFor="sf-username">ชื่อผู้ใช้ (username) {!isEdit && <span className="req">*</span>}</label>
+                <div className="sf-input-wrap with-icon">
+                  <span className="sf-input-icon"><Icon name="user" size={16} /></span>
+                  <input id="sf-username" type="text" value={form.username}
+                    onChange={e => update('username', e.target.value.replace(/\s/g, ''))}
+                    maxLength={20} placeholder="เช่น front01" className={errors.username ? 'invalid' : ''}
+                    disabled={saving || isEdit} autoComplete="off" />
+                </div>
+                {errors.username
+                  ? <div className="mf-field-error">{errors.username}</div>
+                  : <div className="mf-hint">{isEdit ? 'ชื่อผู้ใช้เปลี่ยนไม่ได้หลังสร้างบัญชี' : 'ใช้ a-z, 0-9 และ _ ความยาว 4–20 ตัว (ใช้ตอนเข้าสู่ระบบ)'}</div>}
+              </div>
+
+              {isEdit ? (
+                <div className="sf-note"><Icon name="lock" size={16} /> ถ้าพนักงานลืมรหัสผ่าน ใช้ปุ่ม "รีเซ็ตรหัสผ่าน" ที่การ์ดของพนักงาน</div>
+              ) : (
+                <>
+                  <div className="sf-grid-2">
+                    <div className="mf-field">
+                      <label htmlFor="sf-password">รหัสผ่าน <span className="req">*</span></label>
+                      <PasswordInput id="sf-password" value={form.password} onChange={set('password')} show={showPassword}
+                        onToggleShow={() => setShowPassword(v => !v)} invalid={errors.password} disabled={saving} placeholder="อย่างน้อย 8 ตัว" />
+                      {errors.password && <div className="mf-field-error">{errors.password}</div>}
+                    </div>
+                    <div className="mf-field">
+                      <label htmlFor="sf-confirm">ยืนยันรหัสผ่าน <span className="req">*</span></label>
+                      <PasswordInput id="sf-confirm" value={form.confirm} onChange={set('confirm')} show={showPassword}
+                        onToggleShow={() => setShowPassword(v => !v)} invalid={errors.confirm} disabled={saving} placeholder="พิมพ์อีกครั้ง" />
+                      {errors.confirm && <div className="mf-field-error">{errors.confirm}</div>}
+                    </div>
+                  </div>
+                  <PasswordRules password={form.password} confirm={form.confirm} />
+                </>
+              )}
+            </section>
+
+            {errors.form && <div className="mf-form-error">{errors.form}</div>}
+          </div>
+
+          <div className="mf-footer">
+            <button type="button" className="mf-btn ghost" onClick={onClose} disabled={saving}>ยกเลิก</button>
+            <button type="submit" className="mf-btn primary" disabled={saving}>
+              {saving ? <span className="berry-spinner" /> : <Icon name="check" size={17} />}
+              {saving ? 'กำลังบันทึก...' : isEdit ? 'บันทึกการแก้ไข' : 'เพิ่มพนักงาน'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// --- เจ้าของร้านตั้งรหัสผ่านใหม่ให้พนักงาน (ปลดล็อกบัญชีด้วย) ---
+function StaffPasswordModal({ staff, onClose, onSubmit }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [show, setShow] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEscapeToClose(onClose, saving);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!passwordChecks(password, confirm).every(c => c.ok)) {
+      setError('กรุณาตั้งรหัสผ่านให้ผ่านทุกเงื่อนไขด้านล่าง');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSubmit(password);
+    } catch (err) {
+      setError(err.message || 'ตั้งรหัสผ่านไม่สำเร็จ');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="berry-modal-overlay mf-overlay" onClick={() => { if (!saving) onClose(); }}>
+      <div className="mf-modal" role="dialog" aria-modal="true" aria-labelledby="sf-pw-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head">
+          <StaffAvatar name={staff.FullName} src={staff.ProfileImageUrl} id={staff.UserId} size={42} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 id="sf-pw-title">รีเซ็ตรหัสผ่าน</h3>
+            <p>{staff.FullName} · @{staff.Username}</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} disabled={saving} aria-label="ปิด">
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+        <form onSubmit={submit} noValidate>
+          <div className="mf-body sf-modal">
+            {staff.IsLocked && (
+              <div className="sf-lock-note"><Icon name="lock" size={16} /> บัญชีนี้ถูกล็อกจากการใส่รหัสผิดหลายครั้ง ตั้งรหัสใหม่แล้วจะปลดล็อกทันที</div>
+            )}
+            <div className="mf-field">
+              <label htmlFor="sf-new-pw">รหัสผ่านใหม่ <span className="req">*</span></label>
+              <PasswordInput id="sf-new-pw" value={password} onChange={e => setPassword(e.target.value)} show={show}
+                onToggleShow={() => setShow(v => !v)} disabled={saving} placeholder="อย่างน้อย 8 ตัว" />
+            </div>
+            <div className="mf-field">
+              <label htmlFor="sf-new-pw2">ยืนยันรหัสผ่านใหม่ <span className="req">*</span></label>
+              <PasswordInput id="sf-new-pw2" value={confirm} onChange={e => setConfirm(e.target.value)} show={show}
+                onToggleShow={() => setShow(v => !v)} disabled={saving} placeholder="พิมพ์อีกครั้ง" />
+            </div>
+            <PasswordRules password={password} confirm={confirm} />
+            <div className="sf-note"><Icon name="alert" size={16} /> แจ้งรหัสผ่านใหม่ให้พนักงานโดยตรง และแนะนำให้เปลี่ยนเองหลังเข้าสู่ระบบ</div>
+            {error && <div className="mf-form-error">{error}</div>}
+          </div>
+          <div className="mf-footer">
+            <button type="button" className="mf-btn ghost" onClick={onClose} disabled={saving}>ยกเลิก</button>
+            <button type="submit" className="mf-btn primary" disabled={saving}>
+              {saving ? <span className="berry-spinner" /> : <Icon name="key" size={17} />}
+              {saving ? 'กำลังบันทึก...' : 'ตั้งรหัสผ่านใหม่'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function StaffCard({ staff, busy, onEdit, onResetPassword, onToggleActive }) {
+  const info = staffRoleInfo(staff.Role);
+  const status = staffStatus(staff);
+  const lockedUntil = parseOrderDate(staff.LockedUntil);
+  return (
+    <article className={`sf-card ${status.key}`}>
+      <div className="sf-card-top">
+        <StaffAvatar name={staff.FullName} src={staff.ProfileImageUrl} id={staff.UserId} size={58} />
+        <div className="sf-card-id">
+          <div className="name" title={staff.FullName}>{staff.FullName}</div>
+          <div className="user">@{staff.Username} · รหัส #{staff.UserId}</div>
+          <div className="sf-badges">
+            <Badge tone={info.tone}><Icon name={info.icon} size={13} /> {info.short}</Badge>
+            <span className={`sf-status tone-${status.tone}`}><span className="dot" />{status.label}</span>
+          </div>
+        </div>
+      </div>
+
+      <dl className="sf-info">
+        <div>
+          <dt title="เบอร์โทร"><Icon name="phone" size={15} /></dt>
+          <dd>{staff.Phone ? <a href={`tel:${staff.Phone}`}>{formatPhone(staff.Phone)}</a> : <span className="missing">ยังไม่มีเบอร์โทร</span>}</dd>
+        </div>
+        <div>
+          <dt title="อีเมล"><Icon name="mail" size={15} /></dt>
+          <dd>{staff.Email ? <a href={`mailto:${staff.Email}`} title={staff.Email}>{staff.Email}</a> : <span className="missing">ไม่ได้ระบุอีเมล</span>}</dd>
+        </div>
+        <div>
+          <dt title="วันที่สร้างบัญชี"><Icon name="calendar" size={15} /></dt>
+          <dd title={`สร้างบัญชี ${thaiDateTime(staff.CreatedAt, true)}${staff.CreatedByName ? ` โดย ${staff.CreatedByName}` : ''}`}>
+            สร้างบัญชี {thaiDateTime(staff.CreatedAt)}
+            {staff.CreatedByName && <span className="by"> · โดย {staff.CreatedByName}</span>}
+          </dd>
+        </div>
+      </dl>
+
+      <div className="sf-activity">
+        <div>
+          <strong>{staff.OrdersToday}</strong>
+          <span>ออเดอร์ที่ดำเนินการวันนี้</span>
+        </div>
+        <div title={staff.LastActiveAt ? thaiDateTime(staff.LastActiveAt, true) : ''}>
+          <strong>{staff.LastActiveAt ? timeAgo(staff.LastActiveAt) : '—'}</strong>
+          <span>อัปเดตออเดอร์ล่าสุด</span>
+        </div>
+      </div>
+
+      {status.key === 'locked' && (
+        <div className="sf-lock-note">
+          <Icon name="lock" size={16} />
+          <span>ใส่รหัสผ่านผิดหลายครั้ง ล็อกถึง {lockedUntil ? lockedUntil.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'} น. · รีเซ็ตรหัสผ่านเพื่อปลดล็อกทันที</span>
+        </div>
+      )}
+
+      <div className="sf-card-actions">
+        {staff.IsActive ? (
+          <>
+            <button type="button" className="sf-act" onClick={onEdit} disabled={busy}><Icon name="edit" size={15} /> แก้ไข</button>
+            <button type="button" className="sf-act" onClick={onResetPassword} disabled={busy}><Icon name="key" size={15} /> รีเซ็ตรหัสผ่าน</button>
+            <button type="button" className="sf-act danger icon-only" onClick={onToggleActive} disabled={busy} title="ปิดใช้งานบัญชี" aria-label={`ปิดใช้งานบัญชี ${staff.FullName}`}>
+              <Icon name="power" size={16} />
+            </button>
+          </>
+        ) : (
+          <button type="button" className="sf-act success" onClick={onToggleActive} disabled={busy}>
+            {busy ? <span className="berry-spinner" /> : <Icon name="power" size={15} />} เปิดใช้งานอีกครั้ง
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
 export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!document.getElementById('berry-font-link')) {
@@ -1122,7 +1688,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [foodCourtHours, setFoodCourtHours] = useState(null); // { open: '08:00', close: '20:00' }
   // โหลดข้อมูลครั้งแรกเสร็จหรือยัง (ใช้แสดง skeleton แทนเลข 0)
-  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false });
+  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false });
   const markLoaded = (key) => setLoaded(prev => (prev[key] ? prev : { ...prev, [key]: true }));
   // หน้าเมนู: การเรียง + โหมดเลือกหลายเมนู
   const [menuSort, setMenuSort] = useState('default');
@@ -1191,8 +1757,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   // menuModal: null | { mode: 'add' } | { mode: 'edit', product }
   const [menuModal, setMenuModal] = useState(null);
 
-  const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
-  const [newStaff, setNewStaff] = useState({ username: '', password: '', fullName: '', role: 'Front Staff' });
+  // staffModal: null | { mode: 'add' } | { mode: 'edit', staff }
+  const [staffModal, setStaffModal] = useState(null);
+  const [passwordStaff, setPasswordStaff] = useState(null);
+  const [staffFilter, setStaffFilter] = useState('all'); // all | front | kitchen | inactive
+  const [staffSearch, setStaffSearch] = useState('');
+  const [staffBusyId, setStaffBusyId] = useState(null);
 
   // --- Filter States ---
   const [reviewFilter, setReviewFilter] = useState('all');
@@ -1244,7 +1814,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
     fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => r.json()).then(d => { setProducts(Array.isArray(d) ? d : []); markLoaded('products'); }).catch(err => console.error(err));
     fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => r.json()).then(d => { setHistory(Array.isArray(d) ? d : []); markLoaded('history'); }).catch(err => console.error(err));
-    fetch(`${apiBase}/api/stores/${storeId}/staff`).then(r => r.json()).then(setStaffList).catch(err => console.error(err));
+    fetch(`${apiBase}/api/stores/${storeId}/staff?include_inactive=true`).then(r => r.json()).then(d => { setStaffList(Array.isArray(d) ? d : []); markLoaded('staff'); }).catch(err => console.error(err));
 
     if (uid) {
       fetch(`${apiBase}/api/notifications/${uid}`)
@@ -1487,16 +2057,24 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       setConfirmDelete(null);
       return;
     }
-    const url = type === 'staff' ? `${apiBase}/api/staff/${id}` : `${apiBase}/api/products/${id}`;
+    if (type === 'staff') {
+      // ปิดใช้งาน (ไม่ลบจริง ข้อมูลและประวัติยังอยู่ เปิดกลับได้)
+      setDeleting(true);
+      await setStaffActive({ UserId: id, FullName: name }, false);
+      setDeleting(false);
+      setConfirmDelete(null);
+      return;
+    }
+    const url = `${apiBase}/api/products/${id}`;
     setDeleting(true);
     try {
       const res = await fetch(url, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || data.message || (type === 'staff' ? 'เกิดข้อผิดพลาดในการลบพนักงาน' : 'เกิดข้อผิดพลาดในการลบเมนู'));
+        throw new Error(data.detail || data.message || 'เกิดข้อผิดพลาดในการลบเมนู');
       }
       setConfirmDelete(null);
-      showSuccess('ลบสำเร็จ', type === 'staff' ? `ลบพนักงาน "${name}" เรียบร้อยแล้ว` : `ลบเมนู "${name}" เรียบร้อยแล้ว`);
+      showSuccess('ลบสำเร็จ', `ลบเมนู "${name}" เรียบร้อยแล้ว`);
       fetchData();
     } catch (err) {
       console.error(err);
@@ -1507,35 +2085,62 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     }
   };
 
-  const handleAddStaff = async (e) => {
-    e.preventDefault();
+  // --- จัดการพนักงาน ---
+  const apiError = async (res, fallback) => {
+    const data = await res.json().catch(() => ({}));
+    return new Error(data.detail || data.message || fallback);
+  };
+
+  // ฟอร์มเรียกใช้: error ถูก throw กลับไปแสดงในฟอร์ม
+  const saveStaff = async (payload) => {
+    const isEdit = staffModal?.mode === 'edit';
+    const res = await fetch(
+      isEdit ? `${apiBase}/api/staff/${staffModal.staff.UserId}` : `${apiBase}/api/stores/${storeId}/staff`,
+      { method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+    );
+    if (!res.ok) throw await apiError(res, isEdit ? 'บันทึกข้อมูลพนักงานไม่สำเร็จ' : 'เพิ่มพนักงานไม่สำเร็จ');
+    setStaffModal(null);
+    showSuccess(isEdit ? 'บันทึกเรียบร้อย' : 'เพิ่มพนักงานแล้ว', payload.fullName);
+    fetchData();
+  };
+
+  const resetStaffPassword = async (newPassword) => {
+    const target = passwordStaff;
+    const res = await fetch(`${apiBase}/api/staff/${target.UserId}/reset-password`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_password: newPassword }),
+    });
+    if (!res.ok) throw await apiError(res, 'ตั้งรหัสผ่านใหม่ไม่สำเร็จ');
+    setPasswordStaff(null);
+    showSuccess('ตั้งรหัสผ่านใหม่แล้ว', `แจ้งรหัสผ่านใหม่ให้ ${target.FullName}`);
+    fetchData();
+  };
+
+  const setStaffActive = async (target, isActive) => {
+    setStaffBusyId(target.UserId);
     try {
-      const res = await fetch(`${apiBase}/api/stores/${storeId}/staff`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newStaff)
+      const res = await fetch(`${apiBase}/api/staff/${target.UserId}/active`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: isActive }),
       });
-      if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.detail || 'Failed to add staff');
-      }
-      showToast('เพิ่มพนักงานสำเร็จ');
-      setNewStaff({ username: '', password: '', fullName: '', role: 'Front Staff' });
-      setIsStaffModalOpen(false);
+      if (!res.ok) throw await apiError(res, isActive ? 'เปิดใช้งานไม่สำเร็จ' : 'ปิดใช้งานไม่สำเร็จ');
+      showSuccess(isActive ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว', target.FullName);
       fetchData();
     } catch (err) {
-      console.error(err);
-      alert(err.message);
+      showToast(err.message);
+    } finally {
+      setStaffBusyId(null);
     }
   };
 
-  const handleDeleteStaff = (userId, name) => {
+  const askDeactivateStaff = (target) => {
     setConfirmDelete({
-      type: 'staff', id: userId, name,
-      title: 'ลบพนักงานคนนี้?',
-      prefix: 'คุณต้องการลบพนักงาน',
-      suffix: 'ออกจากระบบใช่หรือไม่',
-      confirmText: 'ลบพนักงาน',
+      type: 'staff', id: target.UserId, name: target.FullName,
+      icon: 'power',
+      title: 'ปิดใช้งานพนักงานคนนี้?',
+      prefix: 'ต้องการปิดใช้งานบัญชีของ',
+      suffix: 'ใช่หรือไม่',
+      warn: 'พนักงานจะเข้าสู่ระบบไม่ได้ทันที ข้อมูลและประวัติการทำงานยังอยู่ครบ และเปิดใช้งานอีกครั้งได้ทุกเมื่อ',
+      confirmText: 'ปิดใช้งาน',
+      busyText: 'กำลังปิดใช้งาน...',
     });
   };
 
@@ -2388,55 +2993,123 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             );
           })()}
 
-          {page === 'staff' && (
-            <>
-            <PageHeader title="จัดการพนักงาน" subtitle={`บัญชีพนักงานหน้าร้านและคนครัว · ${staffList.length} คน`} icon="users">
-              <button className="berry-btn btn-primary" onClick={() => setIsStaffModalOpen(true)}>
-                <Icon name="plus" size={16} /> เพิ่มพนักงาน
-              </button>
-            </PageHeader>
-            <div className="berry-card">
+          {page === 'staff' && (() => {
+            const activeStaff = staffList.filter(s => s.IsActive);
+            const counts = {
+              all: activeStaff.length,
+              front: activeStaff.filter(s => s.Role === 'Front Staff').length,
+              kitchen: activeStaff.filter(s => s.Role === 'Kitchen Staff').length,
+              inactive: staffList.length - activeStaff.length,
+            };
+            const workingToday = activeStaff.filter(s => s.OrdersToday > 0).length;
+            const lockedCount = activeStaff.filter(s => s.IsLocked).length;
+            const tabs = [
+              { id: 'all', label: 'ทั้งหมด', count: counts.all },
+              { id: 'front', label: 'หน้าร้าน', count: counts.front },
+              { id: 'kitchen', label: 'ครัว', count: counts.kitchen },
+              { id: 'inactive', label: 'ปิดใช้งาน', count: counts.inactive, tone: 'red' },
+            ];
+            const q = staffSearch.trim().toLowerCase();
+            const qDigits = phoneDigits(q);
+            const shown = staffList
+              .filter(s => (staffFilter === 'inactive' ? !s.IsActive : s.IsActive))
+              .filter(s => staffFilter === 'front' ? s.Role === 'Front Staff' : staffFilter === 'kitchen' ? s.Role === 'Kitchen Staff' : true)
+              .filter(s => !q
+                || [s.FullName, s.Username, s.Email].some(v => String(v || '').toLowerCase().includes(q))
+                || (/^\d+$/.test(qDigits) && String(s.Phone || '').includes(qDigits)));
+            const stats = [
+              { tone: 'orange', icon: 'users', value: counts.all, label: 'พนักงานที่ใช้งานอยู่' },
+              { tone: 'blue', icon: 'receipt', value: counts.front, label: 'พนักงานหน้าร้าน' },
+              { tone: 'amber', icon: 'flame', value: counts.kitchen, label: 'พนักงานครัว' },
+              { tone: 'green', icon: 'activity', value: workingToday, label: 'ทำรายการวันนี้', sub: lockedCount ? `บัญชีถูกล็อก ${lockedCount} คน` : null },
+            ];
+            return (
+              <>
+                <PageHeader title="จัดการพนักงาน" subtitle={`พนักงานหน้าร้านและพนักงานครัวของร้าน · ใช้งานอยู่ ${counts.all} คน`} icon="users">
+                  <button className="berry-btn btn-primary" onClick={() => setStaffModal({ mode: 'add' })}>
+                    <Icon name="plus" size={16} /> เพิ่มพนักงาน
+                  </button>
+                </PageHeader>
 
-              <div className="berry-table-container">
-                <table className="berry-table">
-                  <thead>
-                    <tr>
-                      <th>รหัส</th>
-                      <th>ชื่อผู้ใช้</th>
-                      <th>ชื่อ-นามสกุล</th>
-                      <th>ตำแหน่ง</th>
-                      <th>จัดการ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {staffList.length === 0 && <tr><td colSpan="5" className="empty-state">ยังไม่มีบัญชีพนักงาน</td></tr>}
-                    {staffList.map(s => (
-                      <tr key={s.UserId}>
-                        <td className="mono muted" data-label="รหัส">#{s.UserId}</td>
-                        <td className="bold" data-label="ชื่อผู้ใช้">{s.Username}</td>
-                        <td data-label="ชื่อ-นามสกุล">{s.FullName}</td>
-                        <td data-label="ตำแหน่ง">
-                          <Badge tone={s.Role === 'Front Staff' ? 'primary' : 'warning'}>
-                            {s.Role === 'Front Staff' ? 'หน้าร้าน (Front)' : 'คนครัว (Kitchen)'}
-                          </Badge>
-                        </td>
-                        <td data-label="จัดการ" className="op-td-actions">
-                          <button 
-                            className="berry-btn-icon btn-error-light" 
-                            title="ลบพนักงาน"
-                            onClick={() => handleDeleteStaff(s.UserId, s.FullName)}
-                          >
-                            <Icon name="trash" size={16} />
-                          </button>
-                        </td>
-                      </tr>
+                <div className="sf-stats">
+                  {stats.map(st => (
+                    <div key={st.label} className={`sf-stat tone-${st.tone}`}>
+                      <span className="icon"><Icon name={st.icon} size={20} /></span>
+                      <div>
+                        <div className="value">{loaded.staff ? st.value : <Skeleton height={22} width={36} />}</div>
+                        <div className="label">{st.label}</div>
+                        {st.sub && <div className="sub">{st.sub}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mm-toolbar">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองพนักงาน">
+                    {tabs.map(t => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={staffFilter === t.id}
+                        onClick={() => setStaffFilter(t.id)}
+                        className={`mm-tab ${staffFilter === t.id ? 'active' : ''} ${t.tone ? `tone-${t.tone}` : ''}`}
+                      >
+                        {t.tone && <span className="dot" />}
+                        {t.label}
+                        <span className="count">{t.count}</span>
+                      </button>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            </>
-          )}
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={staffSearch} onChange={e => setStaffSearch(e.target.value)} placeholder="ค้นหาชื่อ ชื่อผู้ใช้ เบอร์โทร หรืออีเมล..." aria-label="ค้นหาพนักงาน" />
+                    {staffSearch && (
+                      <button type="button" onClick={() => setStaffSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>
+                    )}
+                  </div>
+                </div>
+
+                {!loaded.staff ? (
+                  <div className="sf-grid">
+                    {[0, 1, 2].map(i => <Skeleton key={i} height={330} radius={16} />)}
+                  </div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name={q ? 'search' : 'users'} size={28} /></span>
+                    <h3>
+                      {q ? 'ไม่พบพนักงานที่ตรงกับการค้นหา'
+                        : staffFilter === 'inactive' ? 'ไม่มีบัญชีที่ปิดใช้งาน'
+                        : staffList.length === 0 ? 'ยังไม่มีพนักงานในร้าน' : 'ไม่มีพนักงานในกลุ่มนี้'}
+                    </h3>
+                    <p>
+                      {q ? 'ลองค้นด้วยชื่อ ชื่อผู้ใช้ หรือเบอร์โทรอื่น'
+                        : staffFilter === 'inactive' ? 'พนักงานที่ถูกปิดใช้งานจะแสดงที่นี่ และเปิดใช้งานกลับได้'
+                        : 'เพิ่มบัญชีให้พนักงานหน้าร้านหรือพนักงานครัว เพื่อให้เข้าระบบรับออเดอร์ได้'}
+                    </p>
+                    {!q && staffFilter !== 'inactive' && (
+                      <button className="berry-btn btn-primary" onClick={() => setStaffModal({ mode: 'add' })}>
+                        <Icon name="plus" size={16} /> เพิ่มพนักงาน
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="sf-grid">
+                    {shown.map(s => (
+                      <StaffCard
+                        key={s.UserId}
+                        staff={s}
+                        busy={staffBusyId === s.UserId}
+                        onEdit={() => setStaffModal({ mode: 'edit', staff: s })}
+                        onResetPassword={() => setPasswordStaff(s)}
+                        onToggleActive={() => (s.IsActive ? askDeactivateStaff(s) : setStaffActive(s, true))}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {page === 'history' && (
             <>
@@ -2643,61 +3316,18 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         </main>
       </div>
 
-      {/* ===== ADD STAFF MODAL ===== */}
-      {isStaffModalOpen && (
-        <div className="berry-modal-overlay">
-          <div className="berry-modal">
-            <h3>Add New Staff</h3>
-            <form onSubmit={handleAddStaff}>
-              <div className="berry-form-group">
-                <label>Username (ชื่อผู้ใช้เข้าสู่ระบบ)</label>
-                <input 
-                  type="text" 
-                  value={newStaff.username} 
-                  onChange={e => setNewStaff({...newStaff, username: e.target.value})} 
-                  placeholder="เช่น front01"
-                  required 
-                />
-              </div>
-              <div className="berry-form-group">
-                <label>Password (รหัสผ่าน)</label>
-                <input 
-                  type="password" 
-                  value={newStaff.password} 
-                  onChange={e => setNewStaff({...newStaff, password: e.target.value})} 
-                  placeholder="รหัสผ่าน"
-                  required 
-                />
-              </div>
-              <div className="berry-form-group">
-                <label>Full Name (ชื่อ-นามสกุล)</label>
-                <input 
-                  type="text" 
-                  value={newStaff.fullName} 
-                  onChange={e => setNewStaff({...newStaff, fullName: e.target.value})} 
-                  placeholder="เช่น สมหมาย หน้าร้าน"
-                  required 
-                />
-              </div>
-              <div className="berry-form-group">
-                <label>Role (ตำแหน่ง)</label>
-                <select 
-                  className="berry-select"
-                  value={newStaff.role} 
-                  onChange={e => setNewStaff({...newStaff, role: e.target.value})}
-                >
-                  <option value="Front Staff">พนักงานหน้าร้าน (Front Staff)</option>
-                  <option value="Kitchen Staff">คนครัว (Kitchen Staff)</option>
-                </select>
-              </div>
-              
-              <div className="berry-modal-actions">
-                <button type="button" className="berry-btn btn-error-light" onClick={() => setIsStaffModalOpen(false)}>Cancel</button>
-                <button type="submit" className="berry-btn btn-primary">Save Staff</button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* ===== เพิ่ม / แก้ไขพนักงาน + รีเซ็ตรหัสผ่าน ===== */}
+      {staffModal && (
+        <StaffFormModal
+          key={staffModal.mode === 'edit' ? `edit-${staffModal.staff.UserId}` : 'add'}
+          mode={staffModal.mode}
+          staff={staffModal.staff}
+          onClose={() => setStaffModal(null)}
+          onSubmit={saveStaff}
+        />
+      )}
+      {passwordStaff && (
+        <StaffPasswordModal staff={passwordStaff} onClose={() => setPasswordStaff(null)} onSubmit={resetStaffPassword} />
       )}
 
       {/* ===== เพิ่ม / แก้ไขเมนู ===== */}
@@ -3915,6 +4545,140 @@ body, html {
 /* ซ่อนลูกศรเลื่อนตัวเลขในช่องราคา */
 .mf-price input::-webkit-outer-spin-button, .mf-price input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .mf-price input[type=number] { -moz-appearance: textfield; }
+
+/* ===== หน้าจัดการพนักงาน (sf-*) ===== */
+.crop-round-mask { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 9999px rgba(15,16,26,0.55); pointer-events: none; }
+
+.sf-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.sf-stat { display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--berry-paper); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.sf-stat .icon { width: 44px; height: 44px; min-width: 44px; display: grid; place-items: center; border-radius: 12px; }
+.sf-stat.tone-orange .icon { background: var(--berry-purple-light); color: var(--berry-purple); }
+.sf-stat.tone-blue .icon { background: var(--berry-blue-light); color: var(--berry-blue); }
+.sf-stat.tone-amber .icon { background: var(--berry-amber-light); color: var(--berry-amber); }
+.sf-stat.tone-green .icon { background: var(--berry-green-light); color: var(--berry-green); }
+.sf-stat .value { font-size: 22px; font-weight: 700; line-height: 1.15; color: var(--berry-text-dark); }
+.sf-stat .label { margin-top: 2px; font-size: 12.5px; color: var(--berry-text-muted); }
+.sf-stat .sub { margin-top: 3px; font-size: 11.5px; font-weight: 600; color: #B7791F; }
+
+.sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.sf-card { display: flex; flex-direction: column; gap: 14px; padding: 18px; background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 16px; box-shadow: var(--shadow-sm); transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease; animation: berryFadeIn 0.25s ease-out; }
+.sf-card:hover { box-shadow: 0 10px 28px rgba(42,44,65,0.09); transform: translateY(-2px); }
+.sf-card.locked { border-color: rgba(226,164,48,0.6); }
+.sf-card.inactive { background: #FAFAFC; }
+.sf-card.inactive .sf-avatar { filter: grayscale(1); opacity: 0.65; }
+.sf-card.inactive .sf-card-id .name { color: var(--berry-text-muted); }
+.sf-card-top { display: flex; gap: 14px; align-items: center; min-width: 0; }
+.sf-card-id { flex: 1; min-width: 0; }
+.sf-card-id .name { font-size: 16px; font-weight: 700; color: var(--berry-text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-card-id .user { margin-top: 2px; font-size: 12.5px; color: var(--berry-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.sf-badges .berry-badge { gap: 5px; }
+.sf-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 16px; font-size: 12px; font-weight: 600; }
+.sf-status .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.sf-status.tone-success { background: var(--berry-green-light); color: var(--berry-green); }
+.sf-status.tone-success .dot { box-shadow: 0 0 0 3px rgba(23,166,115,0.18); }
+.sf-status.tone-warning { background: var(--berry-amber-light); color: #B7791F; }
+.sf-status.tone-neutral { background: var(--berry-blue-light); color: var(--berry-text-muted); }
+
+.sf-avatar { position: relative; display: inline-grid; place-items: center; flex-shrink: 0; border-radius: 50%; overflow: hidden; color: #FFFFFF; font-weight: 700; letter-spacing: 0.5px; box-shadow: 0 0 0 3px var(--berry-paper), 0 0 0 4px var(--berry-border); }
+.sf-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.sf-info { display: grid; gap: 8px; margin: 0; padding: 12px; border-radius: 12px; background: var(--berry-bg); }
+.sf-info > div { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; }
+.sf-info dt { width: 28px; height: 28px; min-width: 28px; display: grid; place-items: center; border-radius: 8px; background: var(--berry-paper); color: var(--berry-text-muted); }
+.sf-info dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--berry-text-dark); }
+.sf-info a { color: var(--berry-text-dark); font-weight: 500; text-decoration: none; }
+.sf-info a:hover { color: var(--berry-purple); }
+.sf-info .missing { color: var(--berry-text-muted); font-style: italic; }
+.sf-info .by { color: var(--berry-text-muted); }
+
+.sf-activity { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sf-activity > div { min-width: 0; padding: 10px 12px; border: 1px dashed var(--berry-border); border-radius: 12px; }
+.sf-activity strong { display: block; font-size: 15px; font-weight: 700; color: var(--berry-text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-activity span { font-size: 11.5px; color: var(--berry-text-muted); }
+.sf-lock-note { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 0; padding: 10px 12px; border-radius: 12px; background: var(--berry-amber-light); color: #8A5A00; font-size: 12.5px; line-height: 1.45; }
+.sf-lock-note svg { flex-shrink: 0; margin-top: 1px; }
+.mf-body .sf-lock-note { margin-bottom: 14px; }
+
+.sf-card-actions { display: flex; gap: 8px; margin-top: auto; }
+.sf-act { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 10px; border: 1px solid var(--berry-border); border-radius: 10px; background: var(--berry-paper); color: var(--berry-text-dark); font-family: inherit; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; transition: all 0.2s ease; }
+.sf-act:hover:not(:disabled) { border-color: var(--berry-purple); color: var(--berry-purple); background: #FFF8F5; }
+.sf-act.icon-only { flex: 0 0 40px; padding: 9px 0; }
+.sf-act.danger:hover:not(:disabled) { border-color: var(--berry-red); color: var(--berry-red); background: var(--berry-red-light); }
+.sf-act.success { border-color: rgba(23,166,115,0.35); color: var(--berry-green); background: var(--berry-green-light); }
+.sf-act.success:hover:not(:disabled) { border-color: var(--berry-green); color: #FFFFFF; background: var(--berry-green); }
+.sf-act:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.sf-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 48px 20px; text-align: center; background: var(--berry-paper); border: 1px dashed var(--berry-border); border-radius: 16px; color: var(--berry-text-muted); }
+.sf-empty .icon { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 50%; background: var(--berry-purple-light); color: var(--berry-purple); }
+.sf-empty h3 { margin: 4px 0 0; font-size: 16px; color: var(--berry-text-dark); }
+.sf-empty p { max-width: 380px; margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
+
+/* ฟอร์มพนักงาน */
+.sf-modal.mf-modal { max-width: 620px; }
+.sf-section { padding: 16px 0 2px; border-top: 1px solid var(--berry-border); }
+.sf-section:first-child { padding-top: 0; border-top: none; }
+.sf-section-title { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13px; font-weight: 700; color: var(--berry-text-muted); }
+.sf-section-title svg { color: var(--berry-purple); }
+.sf-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.sf-grid-2 .full { grid-column: 1 / -1; }
+.sf-modal .mf-field input {
+  width: 100%; box-sizing: border-box; padding: 11px 14px;
+  border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper);
+  font-family: inherit; font-size: 14px; color: var(--berry-text-dark); outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.sf-modal .mf-field input:focus { border-color: var(--berry-purple); box-shadow: 0 0 0 3px var(--berry-purple-light); }
+.sf-modal .mf-field input.invalid { border-color: var(--berry-red); }
+.sf-modal .mf-field input:disabled { background: var(--berry-bg); color: var(--berry-text-muted); cursor: not-allowed; }
+.sf-input-wrap { position: relative; }
+.sf-input-wrap.with-icon input { padding-left: 38px !important; }
+.sf-input-wrap.has-eye input { padding-right: 44px !important; }
+.sf-input-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); display: grid; color: var(--berry-text-muted); pointer-events: none; }
+.sf-eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; display: grid; place-items: center; border: none; border-radius: 8px; background: transparent; color: var(--berry-text-muted); cursor: pointer; }
+.sf-eye:hover { background: var(--berry-bg); color: var(--berry-text-dark); }
+
+.sf-avatar-upload { display: flex; align-items: center; gap: 18px; padding: 14px 16px; border: 1px solid var(--berry-border); border-radius: 14px; background: linear-gradient(135deg, #FFF8F5 0%, var(--berry-bg) 100%); }
+.sf-avatar-btn { position: relative; padding: 0; border: none; border-radius: 50%; background: none; cursor: pointer; }
+.sf-avatar-btn:focus-visible { outline: 3px solid var(--berry-purple-light); outline-offset: 3px; }
+.sf-avatar-btn:disabled { cursor: not-allowed; }
+.sf-avatar-cam { position: absolute; right: -2px; bottom: -2px; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--berry-purple); color: #FFFFFF; box-shadow: 0 0 0 3px var(--berry-paper); transition: transform 0.2s ease; }
+.sf-avatar-btn:hover:not(:disabled) .sf-avatar-cam { transform: scale(1.1); }
+.sf-avatar-meta { min-width: 0; }
+.sf-avatar-meta .title { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; color: var(--berry-text-dark); }
+.sf-avatar-meta .title .optional { padding: 1px 8px; border-radius: 999px; background: var(--berry-blue-light); color: var(--berry-text-muted); font-size: 11px; font-weight: 500; }
+.sf-avatar-meta .hint { margin-top: 3px; font-size: 12px; line-height: 1.45; color: var(--berry-text-muted); }
+
+.sf-roles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.sf-role { position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1.5px solid var(--berry-border); border-radius: 12px; background: var(--berry-paper); text-align: left; font-family: inherit; cursor: pointer; transition: all 0.2s ease; }
+.sf-role:hover:not(:disabled) { border-color: var(--berry-text-muted); }
+.sf-role.active { border-color: var(--berry-purple); background: #FFF8F5; box-shadow: 0 0 0 3px var(--berry-purple-light); }
+.sf-role-icon { width: 36px; height: 36px; min-width: 36px; display: grid; place-items: center; border-radius: 10px; background: var(--berry-blue-light); color: var(--berry-blue); }
+.sf-role.tone-warning .sf-role-icon { background: var(--berry-amber-light); color: var(--berry-amber); }
+.sf-role-text { padding-right: 18px; }
+.sf-role strong { display: block; font-size: 13.5px; color: var(--berry-text-dark); }
+.sf-role small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--berry-text-muted); }
+.sf-role-check { position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: var(--berry-purple); color: #FFFFFF; opacity: 0; transform: scale(0.6); transition: all 0.2s ease; }
+.sf-role.active .sf-role-check { opacity: 1; transform: scale(1); }
+
+.sf-pw-rules { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: -4px 0 14px; padding: 0; list-style: none; }
+.sf-pw-rules li { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--berry-text-muted); transition: color 0.2s ease; }
+.sf-pw-rules .mark { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; background: var(--berry-blue-light); color: transparent; transition: all 0.2s ease; }
+.sf-pw-rules li.ok { color: var(--berry-green); }
+.sf-pw-rules li.ok .mark { background: var(--berry-green); color: #FFFFFF; }
+.sf-note { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 14px; padding: 10px 12px; border-radius: 10px; background: var(--berry-blue-light); color: var(--berry-text-muted); font-size: 12.5px; line-height: 1.45; }
+.sf-note svg { flex-shrink: 0; margin-top: 1px; }
+
+@media (max-width: 1100px) { .sf-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .sf-grid, .sf-grid-2, .sf-roles { grid-template-columns: 1fr; }
+  .sf-stats { gap: 10px; }
+  .sf-stat { padding: 12px; gap: 10px; }
+  .sf-stat .icon { width: 38px; height: 38px; min-width: 38px; }
+  .sf-avatar-upload { flex-direction: column; text-align: center; }
+  .sf-avatar-meta .title, .sf-avatar-upload .mf-image-actions { justify-content: center; }
+  .sf-act { font-size: 12.5px; padding: 9px 8px; }
+}
 
 /* หน้าครอปรูป */
 .crop-overlay { position: fixed; inset: 0; z-index: 10040; display: grid; place-items: center; padding: 16px; background: rgba(15,16,26,0.6); animation: berryFadeIn 0.18s ease-out; }

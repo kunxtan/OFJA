@@ -52,6 +52,32 @@ def validate_password(password: str) -> str:
     return password
 
 
+_PHONE_RE = re.compile(r"^0\d{8,9}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def validate_phone(phone: Optional[str], required: bool = False) -> Optional[str]:
+    """เบอร์ไทย 9–10 หลักขึ้นต้นด้วย 0 (ยอมให้พิมพ์ขีด/ช่องว่างมา) -> เก็บเป็นตัวเลขล้วน ; ว่าง = None"""
+    digits = re.sub(r"[\s-]", "", phone or "")
+    if not digits:
+        if required:
+            raise DomainError(400, "กรุณากรอกเบอร์โทรศัพท์")
+        return None
+    if not _PHONE_RE.match(digits):
+        raise DomainError(400, "เบอร์โทรศัพท์ต้องเป็นตัวเลข 9–10 หลัก ขึ้นต้นด้วย 0")
+    return digits
+
+
+def validate_email(email: Optional[str]) -> Optional[str]:
+    """อีเมลไม่บังคับ ; ว่าง = None ; ยาวไม่เกิน 100 (User.Email VARCHAR(100))"""
+    email = (email or "").strip()
+    if not email:
+        return None
+    if len(email) > 100 or not _EMAIL_RE.match(email):
+        raise DomainError(400, "รูปแบบอีเมลไม่ถูกต้อง")
+    return email
+
+
 def mask_email(email: Optional[str]) -> Optional[str]:
     if email and "@" in email:
         name, domain = email.split("@", 1)

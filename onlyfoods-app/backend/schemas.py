@@ -54,6 +54,22 @@ class StaffCreateSchema(BaseModel):
     password: str
     fullName: str = Field(min_length=1, max_length=100)
     role: str
+    phone: Optional[str] = Field(default=None, max_length=30)
+    email: Optional[str] = Field(default=None, max_length=100)
+    profile_img: Optional[str] = None
+
+
+class StaffUpdateSchema(BaseModel):
+    """None = ไม่แก้ฟิลด์นั้น ; profile_img = "" คือลบรูปออก"""
+    fullName: Optional[str] = Field(default=None, max_length=100)
+    role: Optional[str] = None
+    phone: Optional[str] = Field(default=None, max_length=30)
+    email: Optional[str] = Field(default=None, max_length=100)
+    profile_img: Optional[str] = None
+
+
+class StaffActiveSchema(BaseModel):
+    is_active: bool
 
 
 class AccountCreateSchema(BaseModel):

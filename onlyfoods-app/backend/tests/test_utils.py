@@ -25,6 +25,25 @@ def test_username_rules():
             utils.validate_username(bad)
 
 
+def test_phone_rules():
+    assert utils.validate_phone("081-234-5678") == "0812345678"
+    assert utils.validate_phone(" 02 123 4567 ") == "021234567"
+    assert utils.validate_phone("") is None and utils.validate_phone(None) is None
+    for bad in ("812345678", "08123", "081234567890", "08x2345678", "+66812345678"):
+        with pytest.raises(DomainError):
+            utils.validate_phone(bad)
+    with pytest.raises(DomainError):
+        utils.validate_phone("  ", required=True)
+
+
+def test_email_rules():
+    assert utils.validate_email(" a.b@shop.co.th ") == "a.b@shop.co.th"
+    assert utils.validate_email("") is None and utils.validate_email(None) is None
+    for bad in ("no-at-sign", "a@b", "a b@c.com", "a@@b.com", "x" * 95 + "@a.com"):
+        with pytest.raises(DomainError):
+            utils.validate_email(bad)
+
+
 def test_masking():
     assert utils.mask_email("user1001@example.test") == "u***@example.test"
     assert utils.mask_phone("0812345678") == "081****678"

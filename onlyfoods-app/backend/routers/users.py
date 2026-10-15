@@ -7,11 +7,13 @@ from auth import assert_store_access, get_current_user, hash_password, require_r
 from db import get_db, transaction
 from errors import DomainError
 from schemas import (AccountCreateSchema, AccountUpdateSchema, AdminResetPasswordSchema,
-                     CompleteProfileSchema, StaffCreateSchema, UpdateProfileSchema)
+                     CompleteProfileSchema, StaffActiveSchema, StaffCreateSchema, StaffUpdateSchema,
+                     UpdateProfileSchema)
 from services import is_duplicate_key, log_audit
 from shapes import USER_SELECT, shape_user
 from state import STORE_ROLES, legacy_role, role_code_from_input
-from utils import mask_email, mask_phone, save_image, validate_password, validate_username
+from utils import (bangkok_now, mask_email, mask_phone, save_image, validate_email, validate_password,
+                   validate_phone, validate_username)
 
 router = APIRouter(prefix="/api", tags=["users"])
 
@@ -160,33 +162,79 @@ def executive_reset_password(user_id: int, data: AdminResetPasswordSchema,
 
 
 # ------------------------------------------------------- staff (owner scope)
+_STAFF_SELECT = """
+    SELECT u.UserId, u.Username, u.FullName, u.Phone, u.Email, u.ProfileImageUrl, u.IsActive,
+           u.CreatedAt, u.LockedUntil, r.RoleCode, creator.FullName AS CreatedByName,
+           (SELECT MAX(l.CreatedAt) FROM OrderStatusLog l WHERE l.ChangedBy = u.UserId) AS LastActiveAt,
+           (SELECT COUNT(DISTINCT l.OrderId) FROM OrderStatusLog l
+             WHERE l.ChangedBy = u.UserId AND l.CreatedAt >= CURDATE()) AS OrdersToday
+    FROM `User` u
+    JOIN Role r ON r.RoleId = u.RoleId
+    LEFT JOIN `User` creator ON creator.UserId = u.CreatedBy
+"""
+
+
+def _shape_staff(row: dict, now) -> dict:
+    row["Role"] = legacy_role(row["RoleCode"])
+    row["IsActive"] = bool(row["IsActive"])
+    row["IsLocked"] = bool(row["LockedUntil"] and row["LockedUntil"] > now)
+    row["OrdersToday"] = int(row["OrdersToday"] or 0)
+    return row
+
+
+def _staff_image(value: Optional[str]) -> Optional[str]:
+    """รูปโปรไฟล์: data URL -> เก็บไฟล์ ; ส่งมาแต่ใช้ไม่ได้ = แจ้ง error (ไม่ทิ้งเงียบ ๆ)"""
+    if not value:
+        return None
+    path = save_image(value, "profiles")
+    if not path:
+        raise DomainError(400, "ไฟล์รูปโปรไฟล์ไม่ถูกต้อง")
+    return path
+
+
+def _lock_staff(cur, user: dict, user_id: int) -> dict:
+    """พนักงานหน้าร้าน/ครัวที่ผู้เรียกมีสิทธิ์จัดการ (เจ้าของร้าน = เฉพาะร้านตัวเอง)"""
+    cur.execute(
+        """
+        SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive, r.RoleCode,
+               COALESCE(s.IsDeleted, 0) AS StoreIsDeleted
+        FROM `User` u JOIN Role r ON r.RoleId = u.RoleId LEFT JOIN Store s ON s.StoreId = u.StoreId
+        WHERE u.UserId = %s FOR UPDATE OF u
+        """,
+        (user_id,),
+    )
+    target = cur.fetchone()
+    if not target or target["RoleCode"] not in STAFF_ROLES:
+        raise DomainError(404, "ไม่พบพนักงานนี้")
+    assert_store_access(user, target["StoreId"])
+    return target
+
+
 @router.get("/stores/{store_id}/staff")
-def get_store_staff(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+def get_store_staff(store_id: int, include_inactive: bool = False,
+                    user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """รายชื่อพนักงานร้าน + ข้อมูลติดต่อ, สถานะบัญชี, วันที่สร้าง, งานที่ทำวันนี้ (จาก OrderStatusLog)"""
     assert_store_access(user, store_id)
+    sql = _STAFF_SELECT + " WHERE u.StoreId = %s AND r.RoleCode IN ('FRONT_STAFF', 'KITCHEN_STAFF')"
+    if not include_inactive:
+        sql += " AND u.IsActive = TRUE"
+    sql += " ORDER BY u.IsActive DESC, u.UserId"
     with db.cursor() as cur:
-        cur.execute(
-            """
-            SELECT u.UserId, u.Username, u.FullName, r.RoleCode
-            FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
-            WHERE u.StoreId = %s AND u.IsActive = TRUE AND r.RoleCode IN ('FRONT_STAFF', 'KITCHEN_STAFF')
-            ORDER BY u.UserId
-            """,
-            (store_id,),
-        )
+        cur.execute(sql, (store_id,))
         rows = cur.fetchall()
-    for r in rows:
-        r["Role"] = legacy_role(r["RoleCode"])
-    return rows
+    now = bangkok_now()
+    return [_shape_staff(r, now) for r in rows]
 
 
-def _insert_user(cur, username, password, full_name, role_code, store_id, created_by) -> int:
+def _insert_user(cur, username, password, full_name, role_code, store_id, created_by,
+                 phone=None, email=None, profile_img=None) -> int:
     try:
         cur.execute(
             """
-            INSERT INTO `User` (Username, PasswordHash, FullName, RoleId, StoreId, CreatedBy)
-            VALUES (%s, %s, %s, (SELECT RoleId FROM Role WHERE RoleCode = %s), %s, %s)
+            INSERT INTO `User` (Username, PasswordHash, FullName, Phone, Email, ProfileImageUrl, RoleId, StoreId, CreatedBy)
+            VALUES (%s, %s, %s, %s, %s, %s, (SELECT RoleId FROM Role WHERE RoleCode = %s), %s, %s)
             """,
-            (username, hash_password(password), full_name, role_code, store_id, created_by),
+            (username, hash_password(password), full_name, phone, email, profile_img, role_code, store_id, created_by),
         )
     except Exception as exc:  # noqa: BLE001
         if is_duplicate_key(exc):
@@ -204,15 +252,117 @@ def add_store_staff(store_id: int, data: StaffCreateSchema,
         raise DomainError(400, "เจ้าของร้านเพิ่มได้เฉพาะพนักงานหน้าร้านหรือพนักงานครัว")
     username = validate_username(data.username)
     validate_password(data.password)
+    full_name = data.fullName.strip()
+    if not full_name:
+        raise DomainError(400, "กรุณากรอกชื่อ-นามสกุลพนักงาน")
+    phone = validate_phone(data.phone, required=True)
+    email = validate_email(data.email)
     with transaction(db):
         with db.cursor() as cur:
             cur.execute("SELECT 1 FROM Store WHERE StoreId = %s AND IsDeleted = FALSE", (store_id,))
             if not cur.fetchone():
                 raise DomainError(404, "ไม่พบร้านค้า")
-            uid = _insert_user(cur, username, data.password, data.fullName.strip(), role_code, store_id, user["UserId"])
+            cur.execute("SELECT 1 FROM `User` WHERE Username = %s", (username,))
+            if cur.fetchone():
+                raise DomainError(400, "ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว")
+            # เขียนไฟล์รูปหลังตรวจข้อมูลอื่นผ่านแล้ว (กันไฟล์ค้างเมื่อข้อมูลผิด)
+            img = _staff_image(data.profile_img)
+            uid = _insert_user(cur, username, data.password, full_name, role_code, store_id, user["UserId"],
+                               phone, email, img)
         log_audit(db, user["UserId"], "CREATE_STAFF", "User", uid, None,
                   {"username": username, "role": role_code, "store_id": store_id})
     return {"success": True, "user_id": uid, "message": "เพิ่มพนักงานสำเร็จ"}
+
+
+@router.put("/staff/{user_id}")
+def update_staff(user_id: int, data: StaffUpdateSchema,
+                 user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """แก้ชื่อ/เบอร์/อีเมล/ตำแหน่ง/รูป (ชื่อผู้ใช้แก้ไม่ได้ ; รหัสผ่านใช้ endpoint reset-password)
+    profile_img: None หรือ path /uploads/ เดิม = ไม่เปลี่ยน ; "" = ลบรูป ; data URL = รูปใหม่"""
+    sets, args, changed = [], [], []
+    if data.fullName is not None:
+        name = data.fullName.strip()
+        if not name:
+            raise DomainError(400, "กรุณากรอกชื่อ-นามสกุลพนักงาน")
+        sets.append("FullName = %s")
+        args.append(name)
+        changed.append("full_name")
+    if data.phone is not None:
+        sets.append("Phone = %s")
+        args.append(validate_phone(data.phone, required=True))
+        changed.append("phone")
+    if data.email is not None:
+        sets.append("Email = %s")
+        args.append(validate_email(data.email))
+        changed.append("email")
+    role_code = None
+    if data.role is not None:
+        role_code = role_code_from_input(data.role)
+        if role_code not in STAFF_ROLES:
+            raise DomainError(400, "ตำแหน่งต้องเป็นพนักงานหน้าร้านหรือพนักงานครัว")
+        sets.append("RoleId = (SELECT RoleId FROM Role WHERE RoleCode = %s)")
+        args.append(role_code)
+        changed.append("role")
+    new_image = data.profile_img is not None and not data.profile_img.startswith("/uploads/")
+    if new_image:
+        changed.append("profile_img")
+    if not changed:
+        raise DomainError(400, "ไม่มีข้อมูลที่ต้องการแก้ไข")
+
+    with transaction(db):
+        with db.cursor() as cur:
+            target = _lock_staff(cur, user, user_id)
+            if not target["IsActive"]:
+                raise DomainError(400, "พนักงานคนนี้ถูกปิดใช้งานอยู่ กรุณาเปิดใช้งานก่อนแก้ไข")
+            if new_image:
+                sets.append("ProfileImageUrl = %s")
+                args.append(_staff_image(data.profile_img))
+            args.append(user_id)
+            cur.execute(f"UPDATE `User` SET {', '.join(sets)} WHERE UserId = %s", args)
+        log_audit(db, user["UserId"], "UPDATE_STAFF", "User", user_id,
+                  {"role": target["RoleCode"]} if role_code else None,
+                  {"changed": changed, **({"role": role_code} if role_code else {})})
+    return {"success": True, "message": "บันทึกข้อมูลพนักงานเรียบร้อยแล้ว"}
+
+
+@router.put("/staff/{user_id}/active")
+def set_staff_active(user_id: int, data: StaffActiveSchema,
+                     user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """ปิดใช้งาน (เข้าสู่ระบบไม่ได้ทันที เพราะทุก request อ่าน IsActive จาก DB) / เปิดใช้งานอีกครั้ง"""
+    with transaction(db):
+        with db.cursor() as cur:
+            target = _lock_staff(cur, user, user_id)
+            if bool(target["IsActive"]) == data.is_active:
+                return {"success": True, "is_active": data.is_active}
+            if data.is_active and target["StoreIsDeleted"]:
+                raise DomainError(400, "ร้านค้านี้ถูกลบแล้ว เปิดใช้งานพนักงานไม่ได้")
+            if data.is_active:
+                # เปิดใช้งานใหม่ = เริ่มนับรหัสผิดใหม่ด้วย
+                cur.execute("UPDATE `User` SET IsActive = TRUE, FailedLoginCount = 0, LockedUntil = NULL "
+                            "WHERE UserId = %s", (user_id,))
+            else:
+                cur.execute("UPDATE `User` SET IsActive = FALSE WHERE UserId = %s", (user_id,))
+        log_audit(db, user["UserId"], "ACTIVATE_STAFF" if data.is_active else "DEACTIVATE_STAFF", "User", user_id,
+                  {"is_active": not data.is_active}, {"is_active": data.is_active, "username": target["Username"]})
+    return {"success": True, "is_active": data.is_active}
+
+
+@router.put("/staff/{user_id}/reset-password")
+def reset_staff_password(user_id: int, data: AdminResetPasswordSchema,
+                         user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """พนักงานลืมรหัสผ่าน -> เจ้าของร้านตั้งให้ใหม่ (ปลดล็อกบัญชีด้วย)"""
+    validate_password(data.new_password)
+    with transaction(db):
+        with db.cursor() as cur:
+            target = _lock_staff(cur, user, user_id)
+            if not target["IsActive"]:
+                raise DomainError(400, "พนักงานคนนี้ถูกปิดใช้งานอยู่ กรุณาเปิดใช้งานก่อน")
+            cur.execute(
+                "UPDATE `User` SET PasswordHash = %s, FailedLoginCount = 0, LockedUntil = NULL WHERE UserId = %s",
+                (hash_password(data.new_password), user_id),
+            )
+        log_audit(db, user["UserId"], "RESET_STAFF_PASSWORD", "User", user_id)
+    return {"success": True, "message": f"ตั้งรหัสผ่านใหม่ให้ {target['FullName']} เรียบร้อยแล้ว"}
 
 
 @router.delete("/staff/{user_id}")
@@ -220,17 +370,7 @@ def delete_staff(user_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTI
     """ลบแบบ soft delete (IsActive = FALSE) เพราะ Order/Log อ้างถึง UserId นี้อยู่"""
     with transaction(db):
         with db.cursor() as cur:
-            cur.execute(
-                """
-                SELECT u.UserId, u.Username, u.StoreId, r.RoleCode FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
-                WHERE u.UserId = %s FOR UPDATE
-                """,
-                (user_id,),
-            )
-            target = cur.fetchone()
-            if not target or target["RoleCode"] not in STAFF_ROLES:
-                raise DomainError(404, "ไม่พบพนักงานนี้")
-            assert_store_access(user, target["StoreId"])  # เจ้าของร้านลบได้เฉพาะพนักงานร้านตัวเอง
+            target = _lock_staff(cur, user, user_id)  # เจ้าของร้านลบได้เฉพาะพนักงานร้านตัวเอง
             cur.execute("UPDATE `User` SET IsActive = FALSE WHERE UserId = %s", (user_id,))
         log_audit(db, user["UserId"], "DELETE_STAFF", "User", user_id, {"username": target["Username"]}, None)
     return {"success": True, "message": "ลบพนักงานสำเร็จ"}
