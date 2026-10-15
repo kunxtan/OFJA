@@ -152,7 +152,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [summary, setSummary] = useState([]);
   const [isDark, setIsDark] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [isSummaryOpen, setIsSummaryOpen] = useState(false); // ควบคุม Dropdown สรุปรายการ
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [filterTab, setFilterTab] = useState('Pending');
 
   // USER & PROFILE STATE
@@ -164,7 +164,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const pendingUndoRef = useRef(new Set());
+  const pendingUndoRef = useRef(new Set()); // ล็อก ID ฝั่ง Frontend กัน Undo เด้งกระพริบ
 
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [storeOpen, setStoreOpen] = useState(true);
@@ -265,7 +265,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // คำนวณจานละ 4 นาที จากคิวสะสม
+  // --- Advanced Logic: Chained Queue + Plate-Based + Dynamic Safety Buffer Shift ---
   const getCalculatedTargetDate = (order, orderList) => {
     const created = parseDate(order.CreatedAt) || new Date();
     const pickupStr = order.PickupTime ? String(order.PickupTime).trim() : '';
@@ -283,25 +283,55 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       if (pDate) return { targetDate: pDate, isImmediate: false };
     }
 
-    const pendingBeforeOrders = orderList.filter(o => 
-      (o.Status === 'Pending' || o.Status === 'Cooking') && 
-      (o.OrderID < order.OrderID)
-    );
+    // 1. กรองเฉพาะออเดอร์รอปรุง (Pending/Cooking) ที่ยังทำไม่เสร็จในขณะนี้
+    const pendingOrdersBefore = orderList
+      .filter(o => (o.Status === 'Pending' || o.Status === 'Cooking') && o.OrderID <= order.OrderID)
+      .sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
 
-    const prevTotalItems = pendingBeforeOrders.reduce((sum, o) => {
-      const orderQty = o.items?.reduce((iSum, item) => iSum + (Number(item.Qty) || 1), 0) || 1;
-      return sum + orderQty;
-    }, 0);
+    // 2. คำนวณจำนวนจานสะสมในคิวขณะนั้นเพื่อหา Dynamic Safety Buffer Factor
+    const totalPendingItemsInKitchen = orderList
+      .filter(o => o.Status === 'Pending' || o.Status === 'Cooking')
+      .reduce((sum, o) => sum + (o.items?.reduce((iSum, item) => iSum + (Number(item.Qty) || 1), 0) || 1), 0);
 
-    const currentOrderQty = order.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
+    let bufferMultiplier = 1.0; // ปกติไม่บวกเพิ่ม
+    if (totalPendingItemsInKitchen > 15) {
+      bufferMultiplier = 1.20; // คิวแน่นมาก (> 15 จาน) บวกเวลาเพิ่ม 20%
+    } else if (totalPendingItemsInKitchen >= 5) {
+      bufferMultiplier = 1.10; // คิวปานกลาง (5-15 จาน) บวกเวลาเพิ่ม 10%
+    }
 
-    const minutesToWait = Math.max(4, (prevTotalItems + currentOrderQty) * 4);
-    const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
+    // 3. วนวนคิดเวลาสะสมคิวต่อคิว (ถ้าคิวก่อนหน้าเสร็จเร็วจากการกด "ปรุงเสร็จแล้ว" คิวถัดไปจะขยับขึ้นทันที)
+    let lastAvailableTime = null;
 
+    for (const o of pendingOrdersBefore) {
+      const oCreated = parseDate(o.CreatedAt) || new Date();
+      const oQty = o.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
+      
+      // เวลาทำพื้นฐาน (4 นาทีต่อจาน) * Dynamic Buffer Factor
+      const baseCookingMinutes = oQty * 4;
+      const actualCookingMinutes = baseCookingMinutes * bufferMultiplier;
+
+      // เวลาเริ่มทำ = เวลาที่สั่ง หรือ เวลาที่ออเดอร์ก่อนหน้าในคิวทำเสร็จจริง
+      let startTime = oCreated;
+      if (lastAvailableTime && lastAvailableTime > oCreated) {
+        startTime = lastAvailableTime;
+      }
+
+      const finishTime = new Date(startTime.getTime() + actualCookingMinutes * 60000);
+      lastAvailableTime = finishTime;
+
+      if (o.OrderID === order.OrderID) {
+        return {
+          targetDate: finishTime,
+          isImmediate: true
+        };
+      }
+    }
+
+    const currentQty = order.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
     return {
-      targetDate: estimatedTarget,
-      isImmediate: true,
-      minutesToWait
+      targetDate: new Date(created.getTime() + (currentQty * 4 * bufferMultiplier) * 60000),
+      isImmediate: true
     };
   };
 
@@ -336,7 +366,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
     if (e) e.stopPropagation();
 
+    // 1. ล็อก ID ฝั่ง Frontend ป้องกัน fetch ข้อมูลเก่าทับ
     pendingUndoRef.current.add(id);
+
+    // 2. เปลี่ยน State ทันที (ออเดอร์นี้จะถูกปรับเป็น Ready คิวก่อนหน้าลดลงทันที ทำให้ออเดอร์ที่เหลือคำนวณเวลานัดรับใหม่เลื่อนเร็วขึ้นอัตโนมัติ!)
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
     if (targetStatus === 'Pending') {
@@ -424,7 +457,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return typeof queueNo === 'number' ? `คิว #${String(queueNo).padStart(3, '0')}` : `คิว #${queueNo}`;
   };
 
-  // รวมจำนวนจานทั้งหมดที่รอทำ
   const totalItemsToCook = summary.reduce((sum, item) => sum + (Number(item.TotalQty) || 0), 0);
 
   return (
@@ -471,7 +503,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         }
       `}</style>
 
-      {/* Header Bar ดีไซน์ใหม่ สวย คลีน ไม่พังทุกขนาดจอ */}
+      {/* Header Bar */}
       <header style={{
         background: theme.navBg,
         borderBottom: `1px solid ${theme.border}`,
@@ -574,7 +606,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '2px' }}>{pendingOrders.length}</span>
           </div>
 
-          {/* ปุ่ม Dropdown สรุปรายการอาหาร (Clean & Compact ยุบลงปุ่มเดียว ไม่รกหน้าจอ) */}
+          {/* Dropdown สรุปรายการอาหาร (Clean & Compact) */}
           {summary.length > 0 && (
             <div style={{ position: 'relative' }}>
               <button
@@ -598,7 +630,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                 <ChevronDownIcon />
               </button>
 
-              {/* Popover แสดงรายการอาหารรวมทั้งหมดเมื่อกดเปิด */}
               {isSummaryOpen && (
                 <div style={{
                   position: 'absolute',
@@ -1162,7 +1193,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณจานละ 4 น.):' : 'เวลานัดรับ:'}
+                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณคิว + Dynamic Buffer):' : 'เวลานัดรับ:'}
                   </span>
                   <strong style={{ color: PALETTE.coral }}>{formatTime(calculatedInfo.targetDate)}</strong>
                 </div>
