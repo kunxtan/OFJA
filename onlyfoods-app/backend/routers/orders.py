@@ -15,7 +15,7 @@ from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchem
 from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
                       lock_order, log_audit, log_first_status, pending_top_up, refund_price_diff, send_notif,
                       status_id)
-from shapes import ORDER_SELECT, attach_items, shape_order
+from shapes import ORDER_SELECT, attach_items, order_people, shape_order
 from utils import (bangkok_now, clean_text, contract_active, foodcourt_is_open, parse_pickup_time,
                    parse_queue_no, queue_label, save_image)
 
@@ -212,6 +212,128 @@ def get_kitchen_summary(user=Depends(require_role("KITCHEN_STAFF", "FRONT_STAFF"
             (user["StoreId"],),
         )
         return cur.fetchall()
+
+
+# ------------------------------------------------------------------- detail
+@router.get("/{order_id}/detail")
+def get_order_detail(order_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE", "ACCOUNTANT")),
+                     db=Depends(get_db)):
+    """รายละเอียดเชิงลึกของ 1 ออเดอร์ (หน้าประวัติการขาย): รายการอาหารทุกแถว (รวมที่ถูกเปลี่ยน),
+    การชำระทุกใบ + คนตรวจสลิป, ไทม์ไลน์สถานะ + ใครเปลี่ยน, คืนเงิน, งานพิมพ์, รีวิว, รายงานปัญหา
+    และสรุปว่าใครรับ / ใครทำ / ใครเรียกคิว / ใครส่งมอบ (จาก OrderStatusLog)"""
+    with db.cursor() as cur:
+        cur.execute(ORDER_SELECT + " WHERE o.OrderId = %s", (order_id,))
+        row = cur.fetchone()
+        if not row:
+            raise DomainError(404, "ไม่พบคำสั่งซื้อนี้")
+        if user["RoleCode"] in STORE_SCOPED:
+            assert_store_access(user, row["StoreId"])  # เจ้าของร้านดูได้เฉพาะร้านตัวเอง
+        order = shape_order(row)
+
+        cur.execute(
+            """
+            SELECT u.UserId, u.FullName, r.RoleCode, r.RoleNameTh
+            FROM `User` u JOIN Role r ON r.RoleId = u.RoleId WHERE u.UserId = %s
+            """,
+            (order["CreatedByStaffId"],),
+        )
+        order["CreatedByStaff"] = cur.fetchone() if order["CreatedByStaffId"] else None
+
+        # รายการอาหารทุกแถว (REPLACED = เมนูเดิมที่ลูกค้าเปลี่ยน ; ReplacesItemId ชี้กลับไปหาเมนูเดิม)
+        cur.execute(
+            """
+            SELECT oi.OrderItemId, oi.ProductId, p.ProductName, p.ImageUrl, oi.Qty, oi.UnitPrice,
+                   oi.ItemNote, oi.ItemStatus, oi.ReplacesItemId
+            FROM OrderItem oi JOIN Product p ON p.ProductId = oi.ProductId
+            WHERE oi.OrderId = %s ORDER BY oi.OrderItemId
+            """,
+            (order_id,),
+        )
+        order["items"] = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT p.PaymentId, p.PaymentType, p.Amount, p.PaymentStatus, p.SlipImageUrl AS SlipUrl, p.RejectReason,
+                   p.PaidAt, p.CreatedAt, pm.MethodCode, pm.MethodNameTh,
+                   v.FullName AS VerifiedByName, vr.RoleCode AS VerifiedByRole, vr.RoleNameTh AS VerifiedByRoleTh
+            FROM Payment p
+            JOIN PaymentMethod pm ON pm.MethodId = p.MethodId
+            LEFT JOIN `User` v ON v.UserId = p.VerifiedBy
+            LEFT JOIN Role vr ON vr.RoleId = v.RoleId
+            WHERE p.OrderId = %s ORDER BY p.PaymentId
+            """,
+            (order_id,),
+        )
+        payments = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT l.LogId, l.CreatedAt, l.Reason, l.ChangedBy, l.ChangedByType,
+                   os_old.StatusCode AS OldStatusCode, os_old.StatusNameTh AS OldStatusNameTh,
+                   os_new.StatusCode AS NewStatusCode, os_new.StatusNameTh AS NewStatusNameTh,
+                   u.FullName AS ChangedByName, r.RoleCode AS ChangedByRole, r.RoleNameTh AS ChangedByRoleTh
+            FROM OrderStatusLog l
+            LEFT JOIN OrderStatus os_old ON os_old.StatusId = l.OldStatusId
+            JOIN OrderStatus os_new ON os_new.StatusId = l.NewStatusId
+            LEFT JOIN `User` u ON u.UserId = l.ChangedBy
+            LEFT JOIN Role r ON r.RoleId = u.RoleId
+            WHERE l.OrderId = %s ORDER BY l.CreatedAt, l.LogId
+            """,
+            (order_id,),
+        )
+        timeline = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT rf.RefundId, rf.RefundType, rf.Amount, rf.Reason, rf.RefundStatus, rf.RequestedAt, rf.RefundedAt,
+                   u.FullName AS RefundedByName
+            FROM Refund rf JOIN Payment p ON p.PaymentId = rf.PaymentId
+            LEFT JOIN `User` u ON u.UserId = rf.RefundedBy
+            WHERE p.OrderId = %s ORDER BY rf.RefundId
+            """,
+            (order_id,),
+        )
+        refunds = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT pj.PrintJobId, pj.PrintType, pj.PrintStatus, pj.PrinterName, pj.CreatedAt, pj.PrintedAt,
+                   u.FullName AS PerformedByName
+            FROM PrintJob pj LEFT JOIN `User` u ON u.UserId = pj.PerformedBy
+            WHERE pj.OrderId = %s ORDER BY pj.PrintJobId
+            """,
+            (order_id,),
+        )
+        prints = cur.fetchall()
+
+        cur.execute("SELECT Rating, Comment, ImageUrl, CreatedAt FROM Review WHERE OrderId = %s", (order_id,))
+        review = cur.fetchone()
+
+        cur.execute(
+            """
+            SELECT r.IssueReportId, it.TypeNameTh AS IssueType, r.Description, r.IssueStatus, r.CreatedAt
+            FROM IssueReport r JOIN IssueType it ON it.IssueTypeId = r.IssueTypeId
+            WHERE r.OrderId = %s ORDER BY r.IssueReportId
+            """,
+            (order_id,),
+        )
+        issues = cur.fetchall()
+
+    people = order_people(order, timeline)
+    if order["IsWalkIn"] and "accepted" not in people and order["CreatedByStaff"]:
+        staff = order["CreatedByStaff"]
+        people["accepted"] = {"UserId": staff["UserId"], "Name": staff["FullName"], "RoleCode": staff["RoleCode"],
+                              "At": order["CreatedAt"], "IsSystem": False}
+    return {
+        "order": order,
+        "payments": payments,
+        "timeline": timeline,
+        "people": people,
+        "refunds": refunds,
+        "prints": prints,
+        "review": review,
+        "issues": issues,
+    }
 
 
 # ------------------------------------------------------------------- status

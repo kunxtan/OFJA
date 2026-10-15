@@ -1916,6 +1916,358 @@ function NotifDetailModal({ item, order, issue, product, onClose, onGo }) {
   );
 }
 
+/* ============================================================
+   ประวัติการขาย (sh-*)
+   ============================================================ */
+const ORDER_STATUS_META = {
+  VERIFYING_SLIP: { label: 'รอตรวจสลิป', tone: 'warning' },
+  PENDING: { label: 'รอร้านรับ', tone: 'warning' },
+  COOKING: { label: 'กำลังทำ', tone: 'primary' },
+  COOKED: { label: 'ทำเสร็จแล้ว', tone: 'primary' },
+  READY: { label: 'เรียกคิวแล้ว', tone: 'primary' },
+  COMPLETED: { label: 'สำเร็จ', tone: 'success' },
+  PENDING_CANCELLATION: { label: 'รอยืนยันยกเลิก', tone: 'warning' },
+  AWAITING_TOP_UP: { label: 'รอโอนส่วนต่าง', tone: 'warning' },
+  CANCELLED: { label: 'ยกเลิก', tone: 'danger' },
+  NO_SHOW: { label: 'ไม่มารับ', tone: 'neutral' },
+};
+const orderStatusMeta = (code) => ORDER_STATUS_META[code] || { label: code || '-', tone: 'neutral' };
+const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED', 'NO_SHOW'];
+// ยอดขาย = ออเดอร์ที่จบแบบ COMPLETED / NO_SHOW (เหมือนแดชบอร์ด: ไม่มารับยังนับเป็นรายได้ ยกเลิกไม่นับ)
+const REVENUE_STATUSES = ['COMPLETED', 'NO_SHOW'];
+
+const ROLE_TH = {
+  CUSTOMER: 'ลูกค้า',
+  FRONT_STAFF: 'พนักงานหน้าร้าน',
+  KITCHEN_STAFF: 'พนักงานครัว',
+  STORE_OWNER: 'เจ้าของร้าน',
+  ACCOUNTANT: 'ฝ่ายบัญชี',
+  EXECUTIVE: 'ผู้บริหาร',
+};
+const PAYMENT_STATUS_META = {
+  PENDING: { label: 'รอตรวจ', tone: 'warning' },
+  VERIFIED: { label: 'ยืนยันแล้ว', tone: 'success' },
+  REJECTED: { label: 'ปฏิเสธ', tone: 'danger' },
+};
+const REFUND_TYPE_TH = { FULL_CANCEL: 'คืนเงินทั้งออเดอร์', PRICE_DIFF: 'คืนส่วนต่างราคา', ITEM_CANCEL: 'คืนเงินบางรายการ' };
+const REFUND_STATUS_META = {
+  PENDING: { label: 'รอโอนคืน', tone: 'warning' },
+  DONE: { label: 'โอนคืนแล้ว', tone: 'success' },
+  FAILED: { label: 'ไม่สำเร็จ', tone: 'danger' },
+};
+const PRINT_TYPE_TH = { CUSTOMER: 'ใบรับอาหาร', KITCHEN: 'ใบครัว', REPRINT: 'พิมพ์ซ้ำ' };
+
+function minutesBetween(a, b) {
+  const x = parseOrderDate(a);
+  const y = parseOrderDate(b);
+  if (!x || !y) return null;
+  return Math.max(0, Math.round((y - x) / 60000));
+}
+
+function formatDuration(mins) {
+  if (mins === null || mins === undefined) return '—';
+  if (mins < 1) return 'ไม่ถึง 1 นาที';
+  if (mins < 60) return `${mins} นาที`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} ชม. ${m} นาที` : `${h} ชม.`;
+}
+
+const timeHM = (value) => {
+  const d = parseOrderDate(value);
+  return d ? d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-';
+};
+
+function SalesPersonCard({ label, icon, person, extra, empty = 'ยังไม่ถึงขั้นนี้' }) {
+  return (
+    <div className={`sh-person ${person ? '' : 'empty'}`}>
+      <div className="sh-person-label"><Icon name={icon} size={14} /> {label}</div>
+      {person ? (
+        <div className="sh-person-body">
+          {person.IsSystem
+            ? <span className="sh-system-avatar"><Icon name="settings" size={18} /></span>
+            : <StaffAvatar name={person.Name} id={person.UserId} size={36} />}
+          <div style={{ minWidth: 0 }}>
+            <div className="sh-person-name" title={person.Name}>{person.Name || '-'}</div>
+            <div className="sh-person-sub">{person.IsSystem ? 'อัตโนมัติ' : (ROLE_TH[person.RoleCode] || person.RoleCode || '')}</div>
+            {person.At && <div className="sh-person-time"><Icon name="clock" size={11} /> {timeHM(person.At)} น.</div>}
+            {extra && <div className="sh-person-extra">{extra}</div>}
+          </div>
+        </div>
+      ) : (
+        <div className="sh-person-empty">{empty}</div>
+      )}
+    </div>
+  );
+}
+
+// --- รายละเอียดเชิงลึกของออเดอร์ (ดึงจาก GET /api/orders/{id}/detail) ---
+function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
+  const [detail, setDetail] = useState(null);
+  const [error, setError] = useState('');
+  useEscapeToClose(onClose, false);
+
+  // โหลดใหม่เมื่อสถานะออเดอร์เปลี่ยน (หน้าหลัก polling ทุก 4 วินาที)
+  useEffect(() => {
+    let alive = true;
+    fetch(`${apiBase}/api/orders/${orderId}/detail`)
+      .then(async r => {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.detail || 'โหลดรายละเอียดออเดอร์ไม่สำเร็จ');
+        return data;
+      })
+      .then(d => { if (alive) { setDetail(d); setError(''); } })
+      .catch(err => { if (alive) setError(err.message); });
+    return () => { alive = false; };
+  }, [apiBase, orderId, statusCode]);
+
+  const o = detail?.order;
+  const people = detail?.people || {};
+  const meta = orderStatusMeta(o?.StatusCode || statusCode);
+  const items = detail?.order?.items || [];
+  const replacedBy = Object.fromEntries(items.filter(i => i.ReplacesItemId).map(i => [i.ReplacesItemId, i]));
+  const calledAt = people.called?.At;
+  const stats = o ? [
+    { label: 'สั่ง → เรียกคิว', value: calledAt ? formatDuration(minutesBetween(o.CreatedAt, calledAt)) : '—' },
+    { label: 'เวลาทำอาหาร', value: people.cooking && people.cooked ? formatDuration(minutesBetween(people.cooking.At, people.cooked.At)) : '—' },
+    { label: 'เรียกคิว → ลูกค้ารับ', value: calledAt && people.handed_over ? formatDuration(minutesBetween(calledAt, people.handed_over.At)) : '—' },
+  ] : [];
+
+  return (
+    <div className="berry-modal-overlay mf-overlay" onClick={onClose}>
+      <div className="mf-modal sh-modal" role="dialog" aria-modal="true" aria-labelledby="sh-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head sh-head">
+          <div className="sh-queue-big">{o?.QueueNo || '…'}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sh-head-badges">
+              <Badge tone={meta.tone}>{meta.label}</Badge>
+              {o && <span className={`sh-type ${o.IsWalkIn ? 'walkin' : 'online'}`}>{o.IsWalkIn ? 'Walk-in หน้าร้าน' : 'สั่งออนไลน์'}</span>}
+            </div>
+            <h3 id="sh-title">ออเดอร์ #{orderId}</h3>
+            <p>{o ? `สั่งเมื่อ ${thaiDateTime(o.CreatedAt, true)}` : 'กำลังโหลด...'}{o?.PickupTime ? ` · นัดรับ ${o.PickupTime}` : ''}</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} aria-label="ปิด"><Icon name="close" size={18} /></button>
+        </div>
+
+        <div className="mf-body sh-body">
+          {error && <div className="mf-form-error">{error}</div>}
+          {!detail && !error && (
+            <div className="sh-loading">
+              <Skeleton height={86} radius={14} />
+              <Skeleton height={120} radius={14} />
+              <Skeleton height={160} radius={14} />
+            </div>
+          )}
+
+          {detail && (
+            <>
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="users" size={16} /> ผู้เกี่ยวข้องกับออเดอร์นี้</h4>
+                <div className="sh-people">
+                  <div className="sh-person">
+                    <div className="sh-person-label"><Icon name="user" size={14} /> ลูกค้า</div>
+                    <div className="sh-person-body">
+                      <StaffAvatar name={o.IsWalkIn ? 'Walk in' : o.CustomerName} id={o.CustomerId || 0} size={36} />
+                      <div style={{ minWidth: 0 }}>
+                        <div className="sh-person-name">{o.IsWalkIn ? 'ลูกค้า Walk-in' : (o.CustomerName || '-')}</div>
+                        <div className="sh-person-sub">
+                          {o.CustomerPhone ? <a href={`tel:${o.CustomerPhone}`}>{formatPhone(o.CustomerPhone)}</a> : (o.IsWalkIn ? 'สั่งที่หน้าร้าน' : '-')}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <SalesPersonCard
+                    label={o.IsWalkIn ? 'คีย์ออเดอร์ / รับเงิน' : 'รับออเดอร์ (ยืนยันสลิป)'}
+                    icon="check"
+                    person={people.accepted}
+                    empty={o.StatusCode === 'VERIFYING_SLIP' ? 'รอตรวจสลิป' : 'ยังไม่มีคนรับ'}
+                  />
+                  <SalesPersonCard
+                    label="ทำอาหาร"
+                    icon="flame"
+                    person={people.cooking || people.cooked}
+                    extra={people.cooked && people.cooking && people.cooked.UserId !== people.cooking.UserId
+                      ? `ทำเสร็จโดย ${people.cooked.Name}` : (people.cooked ? `เสร็จ ${timeHM(people.cooked.At)} น.` : null)}
+                  />
+                  <SalesPersonCard label="เรียกคิว" icon="bell" person={people.called} />
+                  {people.cancelled ? (
+                    <SalesPersonCard label="ยกเลิกโดย" icon="soldout" person={people.cancelled} />
+                  ) : people.no_show ? (
+                    <SalesPersonCard label="ตัดเป็นไม่มารับโดย" icon="soldout" person={people.no_show} />
+                  ) : (
+                    <SalesPersonCard label="ส่งมอบอาหาร" icon="award" person={people.handed_over} />
+                  )}
+                </div>
+                <div className="sh-stats">
+                  {stats.map(s => (
+                    <div key={s.label}><strong>{s.value}</strong><span>{s.label}</span></div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="receipt" size={16} /> รายการอาหาร</h4>
+                <div className="nd-card">
+                  <ul className="sh-items">
+                    {items.map(i => {
+                      const replaced = i.ItemStatus === 'REPLACED';
+                      return (
+                        <li key={i.OrderItemId} className={replaced ? 'replaced' : ''}>
+                          <span className="sh-item-img">{i.ImageUrl ? <img src={i.ImageUrl} alt="" /> : <Icon name="photo" size={16} />}</span>
+                          <span className="sh-item-name">
+                            {i.ProductName} <b>× {i.Qty}</b>
+                            {i.ItemStatus === 'OUT_OF_STOCK' && <em className="nd-tag">ของหมด</em>}
+                            {i.ItemStatus === 'CANCELLED' && <em className="nd-tag">ยกเลิก</em>}
+                            {replaced && <small>ลูกค้าเปลี่ยนเป็น “{replacedBy[i.OrderItemId]?.ProductName || 'เมนูอื่น'}”</small>}
+                            {i.ReplacesItemId && <small className="sh-swap">เมนูที่เปลี่ยนมาแทน</small>}
+                            {i.ItemNote && <small>หมายเหตุ: {i.ItemNote}</small>}
+                          </span>
+                          <span className="sh-item-price">฿{fmtMoney(Number(i.UnitPrice) * Number(i.Qty))}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {o.Note && <div className="sh-note"><Icon name="edit" size={14} /> หมายเหตุจากลูกค้า: {o.Note}</div>}
+                  <div className="sh-total"><span>ยอดรวม</span><b>฿{fmtMoney(o.TotalAmount)}</b></div>
+                  {o.CancelReason && <div className="sh-cancel-reason"><Icon name="soldout" size={14} /> เหตุผลที่ยกเลิก: {o.CancelReason}</div>}
+                </div>
+              </section>
+
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="coin" size={16} /> การชำระเงิน</h4>
+                {detail.payments.length === 0 ? (
+                  <div className="sf-note">ไม่มีข้อมูลการชำระเงิน</div>
+                ) : detail.payments.map(p => {
+                  const ps = PAYMENT_STATUS_META[p.PaymentStatus] || { label: p.PaymentStatus, tone: 'neutral' };
+                  return (
+                    <div key={p.PaymentId} className="nd-card sh-pay">
+                      {p.SlipUrl ? (
+                        <a className="sh-slip" href={p.SlipUrl} target="_blank" rel="noopener noreferrer" title="เปิดสลิปขนาดเต็ม">
+                          <img src={p.SlipUrl} alt="สลิปการโอน" />
+                        </a>
+                      ) : (
+                        <span className="sh-slip none"><Icon name={p.MethodCode === 'CASH' ? 'coin' : 'receipt'} size={20} /></span>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="sh-pay-head">
+                          <strong>{p.PaymentType === 'TOP_UP' ? 'ส่วนต่างค่าอาหาร' : 'ค่าอาหาร'} · ฿{fmtMoney(p.Amount)}</strong>
+                          <Badge tone={ps.tone}>{ps.label}</Badge>
+                        </div>
+                        <div className="sh-pay-sub">{p.MethodNameTh}{p.SlipUrl ? '' : (p.MethodCode === 'CASH' ? '' : ' · ไม่มีสลิปแนบ')}</div>
+                        <div className="sh-pay-sub">
+                          {p.VerifiedByName
+                            ? <>{p.PaymentStatus === 'REJECTED' ? 'ปฏิเสธโดย' : 'ตรวจโดย'} <b>{p.VerifiedByName}</b> ({ROLE_TH[p.VerifiedByRole] || p.VerifiedByRoleTh}){p.PaidAt ? ` · ${thaiDateTime(p.PaidAt, true)}` : ''}</>
+                            : 'ยังไม่มีคนตรวจ'}
+                        </div>
+                        {p.RejectReason && <div className="sh-pay-reject">เหตุผลที่ปฏิเสธ: {p.RejectReason}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="history" size={16} /> ไทม์ไลน์</h4>
+                <ol className="sh-timeline">
+                  {detail.timeline.map((t, idx) => {
+                    const tm = orderStatusMeta(t.NewStatusCode);
+                    const prev = detail.timeline[idx - 1];
+                    const gap = prev ? minutesBetween(prev.CreatedAt, t.CreatedAt) : null;
+                    return (
+                      <li key={t.LogId} className={`tone-${tm.tone}`}>
+                        <span className="dot" />
+                        <div className="sh-tl-head">
+                          <strong>{t.OldStatusCode ? t.NewStatusNameTh : `สร้างออเดอร์ · ${t.NewStatusNameTh}`}</strong>
+                          <span>{thaiDateTime(t.CreatedAt, true)}</span>
+                        </div>
+                        <div className="sh-tl-sub">
+                          {t.ChangedByType === 'SYSTEM'
+                            ? 'โดยระบบอัตโนมัติ'
+                            : <>โดย <b>{t.ChangedByName || '-'}</b> ({ROLE_TH[t.ChangedByRole] || t.ChangedByRoleTh || '-'})</>}
+                          {gap !== null && <span className="sh-gap">+{formatDuration(gap)}</span>}
+                        </div>
+                        {t.Reason && <div className="sh-tl-reason">{t.Reason}</div>}
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+
+              {detail.refunds.length > 0 && (
+                <section className="sh-section">
+                  <h4 className="sf-section-title"><Icon name="coin" size={16} /> การคืนเงิน</h4>
+                  {detail.refunds.map(r => {
+                    const rs = REFUND_STATUS_META[r.RefundStatus] || { label: r.RefundStatus, tone: 'neutral' };
+                    return (
+                      <div key={r.RefundId} className="nd-card sh-row-card">
+                        <div style={{ minWidth: 0 }}>
+                          <strong>{REFUND_TYPE_TH[r.RefundType] || r.RefundType} · ฿{fmtMoney(r.Amount)}</strong>
+                          <div className="sh-pay-sub">{r.Reason || '-'}</div>
+                          <div className="sh-pay-sub">
+                            ขอคืน {thaiDateTime(r.RequestedAt, true)}
+                            {r.RefundedAt && ` · โอนแล้ว ${thaiDateTime(r.RefundedAt, true)}${r.RefundedByName ? ` โดย ${r.RefundedByName}` : ''}`}
+                          </div>
+                        </div>
+                        <Badge tone={rs.tone}>{rs.label}</Badge>
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+
+              {(detail.review || detail.issues.length > 0) && (
+                <section className="sh-section">
+                  <h4 className="sf-section-title"><Icon name="star" size={16} /> ความเห็นจากลูกค้า</h4>
+                  {detail.review && (
+                    <div className="nd-card sh-row-card">
+                      <div style={{ minWidth: 0 }}>
+                        <div className="sh-stars" aria-label={`${detail.review.Rating} ดาว`}>
+                          {[1, 2, 3, 4, 5].map(n => <span key={n} className={n <= detail.review.Rating ? 'on' : ''}>★</span>)}
+                        </div>
+                        <div className="sh-pay-sub">{detail.review.Comment || 'ไม่ได้เขียนความเห็น'}</div>
+                      </div>
+                      <span className="nd-muted">{thaiDateTime(detail.review.CreatedAt)}</span>
+                    </div>
+                  )}
+                  {detail.issues.map(is => (
+                    <div key={is.IssueReportId} className="nd-card sh-row-card">
+                      <div style={{ minWidth: 0 }}>
+                        <strong>รายงานปัญหา: {is.IssueType}</strong>
+                        <div className="sh-pay-sub">{is.Description}</div>
+                      </div>
+                      <Badge tone={(ISSUE_STATUS[is.IssueStatus] || {}).tone || 'neutral'}>{(ISSUE_STATUS[is.IssueStatus] || {}).label || is.IssueStatus}</Badge>
+                    </div>
+                  ))}
+                </section>
+              )}
+
+              {detail.prints.length > 0 && (
+                <section className="sh-section">
+                  <h4 className="sf-section-title"><Icon name="receipt" size={16} /> การพิมพ์</h4>
+                  <div className="nd-card">
+                    <ul className="sh-prints">
+                      {detail.prints.map(pj => (
+                        <li key={pj.PrintJobId}>
+                          <span>{PRINT_TYPE_TH[pj.PrintType] || pj.PrintType}{pj.PerformedByName ? ` · โดย ${pj.PerformedByName}` : ''}</span>
+                          <span className="nd-muted">{pj.PrintStatus === 'PRINTED' ? thaiDateTime(pj.PrintedAt, true) : 'รอพิมพ์'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="mf-footer" style={{ gridTemplateColumns: '1fr' }}>
+          <button type="button" className="mf-btn ghost" onClick={onClose}>ปิด</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!document.getElementById('berry-font-link')) {
@@ -2015,6 +2367,14 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [staffBusyId, setStaffBusyId] = useState(null);
   const [eraseStaff, setEraseStaff] = useState(null);
   const [notifDetail, setNotifDetail] = useState(null); // รายการแจ้งเตือนที่เปิดดูรายละเอียด
+  // หน้าประวัติการขาย
+  const [salesRange, setSalesRange] = useState('7'); // today | 7 | 30 | all | custom
+  const [salesFrom, setSalesFrom] = useState(todayISO());
+  const [salesTo, setSalesTo] = useState(todayISO());
+  const [salesStatus, setSalesStatus] = useState('all'); // all | done | active | cancelled | noshow
+  const [salesSearch, setSalesSearch] = useState('');
+  const [salesLimit, setSalesLimit] = useState(60);
+  const [salesDetailId, setSalesDetailId] = useState(null); // ออเดอร์ที่เปิดดูรายละเอียด
 
   // --- Filter States ---
   const [reviewFilter, setReviewFilter] = useState('all');
@@ -3410,52 +3770,205 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             );
           })()}
 
-          {page === 'history' && (
-            <>
-            <PageHeader title="ประวัติการขาย" subtitle="ออเดอร์ทั้งหมดของร้าน เรียงจากล่าสุด" icon="history">
-              <span className="op-count-chip">{fmtMoney(history.length)} ออเดอร์</span>
-            </PageHeader>
-            <div className="berry-card">
-              <div className="berry-table-container">
-                <table className="berry-table">
-                  <thead>
-                    <tr>
-                      <th>วันที่ / เวลา</th>
-                      <th>คิว</th>
-                      <th>รายการอาหาร</th>
-                      <th>ยอดรวม</th>
-                      <th>สถานะ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {history.length === 0 && <tr><td colSpan="5" className="empty-state">{loaded.history ? 'ยังไม่มีประวัติการขาย' : 'กำลังโหลดข้อมูล...'}</td></tr>}
-                    {history.map(h => (
-                      <tr key={h.OrderID}>
-                        <td className="mono muted" data-label="วันที่ / เวลา">
-                          {h.CreatedAt ? new Date(h.CreatedAt).toLocaleString('th-TH') : '-'}
-                        </td>
-                        <td className="mono" data-label="คิว" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{h.QueueNo}</td>
-                        <td data-label="รายการอาหาร" className="op-td-block">
-                          {h.items?.map((item, idx) => (
-                            <div key={idx} style={{ fontSize: '13px', marginBottom: '4px', color: 'var(--berry-text-dark)' }}>
-                              • {item.ProductName} <span style={{ color: 'var(--berry-text-muted)' }}>(x{item.Qty})</span>
-                            </div>
-                          ))}
-                        </td>
-                        <td className="mono bold" data-label="ยอดรวม">฿{fmtMoney(h.TotalAmount)}</td>
-                        <td data-label="สถานะ">
-                          <Badge tone={h.Status === 'Completed' ? 'success' : h.Status === 'Cancelled' ? 'danger' : 'warning'}>
-                            {getStatusLabel(h.Status)}
-                          </Badge>
-                        </td>
-                      </tr>
+          {page === 'history' && (() => {
+            // ---- ช่วงวันที่ ----
+            const today = todayISO();
+            const shiftDays = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return toISODate(d); };
+            const range = salesRange === 'custom'
+              ? { from: salesFrom || today, to: salesTo || today }
+              : salesRange === 'all' ? null
+              : { from: salesRange === 'today' ? today : shiftDays(Number(salesRange) - 1), to: today };
+            const inRange = history.filter(o => {
+              if (!range) return true;
+              const d = parseOrderDate(o.CreatedAt);
+              const iso = d ? toISODate(d) : '';
+              return iso >= range.from && iso <= range.to;
+            });
+
+            // ---- สถานะ + ค้นหา ----
+            const group = (o) => (o.StatusCode === 'COMPLETED' ? 'done'
+              : o.StatusCode === 'CANCELLED' ? 'cancelled'
+              : o.StatusCode === 'NO_SHOW' ? 'noshow' : 'active');
+            const counts = inRange.reduce((acc, o) => { acc[group(o)] += 1; return acc; }, { done: 0, active: 0, cancelled: 0, noshow: 0 });
+            const q = salesSearch.trim().toLowerCase();
+            const shown = inRange
+              .filter(o => salesStatus === 'all' || group(o) === salesStatus)
+              .filter(o => !q
+                || String(o.QueueNo || '').toLowerCase().includes(q)
+                || String(o.OrderID).includes(q)
+                || String(o.CustomerName || '').toLowerCase().includes(q)
+                || (o.items || []).some(i => String(i.ProductName || '').toLowerCase().includes(q)))
+              // เรียงตามเวลาสั่งล่าสุดก่อน (API เรียงตามเลขออเดอร์) : ต้องเรียงก่อนจัดกลุ่มวัน ไม่งั้นวันเดียวกันแตกเป็นหลายกลุ่ม
+              .sort((x, y) => (parseOrderDate(y.CreatedAt)?.getTime() || 0) - (parseOrderDate(x.CreatedAt)?.getTime() || 0)
+                || y.OrderID - x.OrderID);
+
+            // ---- สรุปยอดของช่วงที่เลือก ----
+            const revenueOrders = inRange.filter(o => REVENUE_STATUSES.includes(o.StatusCode));
+            const revenue = revenueOrders.reduce((s, o) => s + Number(o.TotalAmount || 0), 0);
+            const cancelRate = inRange.length ? Math.round((counts.cancelled / inRange.length) * 100) : 0;
+            const kpis = [
+              { tone: 'orange', icon: 'receipt', value: fmtMoney(inRange.length), label: 'ออเดอร์ทั้งหมด', sub: counts.active ? `กำลังดำเนินการ ${counts.active}` : null },
+              { tone: 'green', icon: 'coin', value: `฿${fmtMoney(revenue)}`, label: 'ยอดขาย (สำเร็จ + ไม่มารับ)' },
+              { tone: 'blue', icon: 'trend', value: `฿${fmtMoney(revenueOrders.length ? revenue / revenueOrders.length : 0)}`, label: 'เฉลี่ยต่อออเดอร์' },
+              { tone: 'amber', icon: 'soldout', value: fmtMoney(counts.cancelled), label: 'ยกเลิก', sub: inRange.length ? `${cancelRate}% ของออเดอร์` : null },
+            ];
+            const statusTabs = [
+              { id: 'all', label: 'ทั้งหมด', count: inRange.length },
+              { id: 'done', label: 'สำเร็จ', count: counts.done, tone: 'green' },
+              { id: 'active', label: 'กำลังดำเนินการ', count: counts.active },
+              { id: 'cancelled', label: 'ยกเลิก', count: counts.cancelled, tone: 'red' },
+              { id: 'noshow', label: 'ไม่มารับ', count: counts.noshow },
+            ];
+            const rangeChips = [
+              { id: 'today', label: 'วันนี้' }, { id: '7', label: '7 วัน' }, { id: '30', label: '30 วัน' },
+              { id: 'all', label: 'ทั้งหมด' }, { id: 'custom', label: 'กำหนดเอง' },
+            ];
+
+            // ---- จัดกลุ่มตามวัน (แสดงทีละ salesLimit รายการ) ----
+            const visible = shown.slice(0, salesLimit);
+            const days = [];
+            visible.forEach(o => {
+              const d = parseOrderDate(o.CreatedAt);
+              const key = d ? toISODate(d) : 'unknown';
+              let day = days[days.length - 1];
+              if (!day || day.key !== key) { day = { key, date: d, orders: [] }; days.push(day); }
+              day.orders.push(o);
+            });
+            const daySummary = (key) => {
+              const list = shown.filter(o => { const d = parseOrderDate(o.CreatedAt); return (d ? toISODate(d) : 'unknown') === key; });
+              return { count: list.length, sales: list.filter(o => REVENUE_STATUSES.includes(o.StatusCode)).reduce((s, o) => s + Number(o.TotalAmount || 0), 0) };
+            };
+
+            return (
+              <>
+                <PageHeader title="ประวัติการขาย" subtitle="ออเดอร์ทั้งหมดของร้าน กดที่ออเดอร์เพื่อดูรายละเอียด ใครรับ ใครทำ และไทม์ไลน์" icon="history">
+                  <span className="op-count-chip">{fmtMoney(shown.length)} ออเดอร์</span>
+                </PageHeader>
+
+                <div className="sh-filter-bar">
+                  <div className="sh-range" role="group" aria-label="ช่วงวันที่">
+                    <Icon name="calendar" size={16} />
+                    {rangeChips.map(c => (
+                      <button key={c.id} type="button" className={salesRange === c.id ? 'active' : ''}
+                        onClick={() => { setSalesRange(c.id); setSalesLimit(60); }}>
+                        {c.label}
+                      </button>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            </>
-          )}
+                  </div>
+                  {salesRange === 'custom' && (
+                    <div className="berry-date-range sh-dates">
+                      <label>
+                        ตั้งแต่
+                        <input type="date" value={salesFrom} max={salesTo || today}
+                          onChange={e => { const v = e.target.value || today; setSalesFrom(v); if (v > salesTo) setSalesTo(v); setSalesLimit(60); }} />
+                      </label>
+                      <label>
+                        ถึง
+                        <input type="date" value={salesTo} min={salesFrom} max={today}
+                          onChange={e => { setSalesTo(e.target.value || today); setSalesLimit(60); }} />
+                      </label>
+                    </div>
+                  )}
+                  <span className="sh-range-label">
+                    {range ? (range.from === range.to ? thaiDate(range.from) : `${thaiDate(range.from)} – ${thaiDate(range.to)}`) : 'ทุกช่วงเวลา'}
+                  </span>
+                </div>
+
+                <div className="sf-stats">
+                  {kpis.map(k => (
+                    <div key={k.label} className={`sf-stat tone-${k.tone}`}>
+                      <span className="icon"><Icon name={k.icon} size={20} /></span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="value">{loaded.history ? k.value : <Skeleton height={22} width={60} />}</div>
+                        <div className="label">{k.label}</div>
+                        {k.sub && <div className="sub">{k.sub}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mm-toolbar">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองตามสถานะ">
+                    {statusTabs.map(t => (
+                      <button key={t.id} type="button" role="tab" aria-selected={salesStatus === t.id}
+                        onClick={() => { setSalesStatus(t.id); setSalesLimit(60); }}
+                        className={`mm-tab ${salesStatus === t.id ? 'active' : ''} ${t.tone ? `tone-${t.tone}` : ''}`}>
+                        {t.tone && <span className="dot" />}
+                        {t.label}
+                        <span className="count">{t.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={salesSearch} onChange={e => { setSalesSearch(e.target.value); setSalesLimit(60); }}
+                      placeholder="ค้นหาเลขคิว เลขออเดอร์ ชื่อลูกค้า หรือเมนู..." aria-label="ค้นหาออเดอร์" />
+                    {salesSearch && (
+                      <button type="button" onClick={() => setSalesSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>
+                    )}
+                  </div>
+                </div>
+
+                {!loaded.history ? (
+                  <div className="sh-list">{[0, 1, 2, 3].map(i => <Skeleton key={i} height={72} radius={14} />)}</div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name={q ? 'search' : 'history'} size={28} /></span>
+                    <h3>{q ? 'ไม่พบออเดอร์ที่ตรงกับการค้นหา' : 'ไม่มีออเดอร์ในช่วงนี้'}</h3>
+                    <p>{q ? 'ลองค้นด้วยเลขคิว ชื่อลูกค้า หรือชื่อเมนูอื่น' : 'ลองเลือกช่วงวันที่ที่กว้างขึ้น หรือเปลี่ยนตัวกรองสถานะ'}</p>
+                  </div>
+                ) : (
+                  <div className="sh-list">
+                    {days.map(day => {
+                      const sum = daySummary(day.key);
+                      return (
+                        <section key={day.key} className="sh-day">
+                          <div className="sh-day-head">
+                            <strong>{day.date ? day.date.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'ไม่ทราบวันที่'}</strong>
+                            <span>{sum.count} ออเดอร์ · ยอดขาย ฿{fmtMoney(sum.sales)}</span>
+                          </div>
+                          <div className="sh-day-card">
+                            {day.orders.map(o => {
+                              const sm = orderStatusMeta(o.StatusCode);
+                              const its = o.items || [];
+                              const itemText = its.slice(0, 2).map(i => `${i.ProductName} ×${i.Qty}`).join(', ');
+                              return (
+                                <button key={o.OrderID} type="button" className={`sh-row status-${group(o)}`} onClick={() => setSalesDetailId(o.OrderID)}>
+                                  <span className="sh-time">{timeHM(o.CreatedAt)}</span>
+                                  <span className="sh-queue">{o.QueueNo}</span>
+                                  <span className="sh-main">
+                                    <span className="sh-who">
+                                      {o.IsWalkIn ? <span className="sh-type walkin">Walk-in</span> : (o.CustomerName || 'ลูกค้า')}
+                                      <span className="sh-order-id">#{o.OrderID}</span>
+                                    </span>
+                                    <span className="sh-items-text">
+                                      {itemText || 'ไม่มีรายการอาหาร'}{its.length > 2 ? ` และอีก ${its.length - 2} รายการ` : ''}
+                                    </span>
+                                  </span>
+                                  <span className="sh-pay-method" title={o.PaymentMethod || ''}>
+                                    <Icon name={o.PaymentMethodCode === 'CASH' ? 'coin' : 'receipt'} size={14} />
+                                    {o.PaymentMethodCode === 'CASH' ? 'เงินสด' : 'โอน'}
+                                  </span>
+                                  <span className="sh-amount">฿{fmtMoney(o.TotalAmount)}</span>
+                                  <span className="sh-status"><Badge tone={sm.tone}>{sm.label}</Badge></span>
+                                  <span className="sh-chevron"><Icon name="arrowRight" size={16} /></span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      );
+                    })}
+                    {shown.length > salesLimit && (
+                      <button type="button" className="sh-more" onClick={() => setSalesLimit(n => n + 60)}>
+                        แสดงเพิ่ม ({fmtMoney(shown.length - salesLimit)} ออเดอร์ที่เหลือ)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {page === 'cancel' && (
             <>
@@ -3630,6 +4143,15 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       )}
       {eraseStaff && (
         <StaffEraseModal staff={eraseStaff} onClose={() => setEraseStaff(null)} onSubmit={eraseStaffAccount} />
+      )}
+      {salesDetailId && (
+        <SalesOrderDetailModal
+          key={salesDetailId}
+          orderId={salesDetailId}
+          statusCode={history.find(o => o.OrderID === salesDetailId)?.StatusCode}
+          apiBase={apiBase}
+          onClose={() => setSalesDetailId(null)}
+        />
       )}
       {notifDetail && (
         <NotifDetailModal
@@ -5020,6 +5542,146 @@ body, html {
 .nd-product-img img { width: 100%; height: 100%; object-fit: cover; }
 .nd-product-name { font-size: 15px; font-weight: 700; color: var(--berry-text-dark); }
 @media (max-width: 600px) { .nd-grid { grid-template-columns: 1fr; } }
+/* ===== ประวัติการขาย (sh-*) ===== */
+.sh-filter-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.sh-range { display: inline-flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border-radius: 12px; background: var(--berry-paper); box-shadow: var(--shadow-sm); color: var(--berry-text-muted); }
+.sh-range button { padding: 7px 12px; border: none; border-radius: 9px; background: transparent; color: var(--berry-text-muted); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.15s ease; }
+.sh-range button:hover { color: var(--berry-text-dark); }
+.sh-range button.active { background: var(--berry-purple); color: #FFFFFF; box-shadow: 0 4px 10px rgba(255,114,76,0.3); }
+.sh-dates { margin: 0; }
+.sh-range-label { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--berry-text-muted); }
+
+.sh-list { display: flex; flex-direction: column; gap: 18px; }
+.sh-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 4px 8px; }
+.sh-day-head strong { font-size: 14px; color: var(--berry-text-dark); }
+.sh-day-head span { font-size: 12.5px; font-weight: 600; color: var(--berry-text-muted); }
+.sh-day-card { overflow: hidden; background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 16px; box-shadow: var(--shadow-sm); }
+.sh-row { position: relative; width: 100%; display: grid; grid-template-columns: 52px 64px minmax(0, 1fr) 74px 96px 128px 20px; align-items: center; gap: 12px; padding: 14px 18px; border: none; border-bottom: 1px solid var(--berry-border); background: transparent; font-family: inherit; text-align: left; cursor: pointer; transition: background 0.15s ease; }
+.sh-row:last-child { border-bottom: none; }
+.sh-row:hover { background: #FFF8F5; }
+.sh-row:hover .sh-chevron { color: var(--berry-purple); transform: translateX(2px); }
+.sh-row::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
+.sh-row.status-done::before { background: var(--berry-green); }
+.sh-row.status-cancelled::before { background: var(--berry-red); }
+.sh-row.status-active::before { background: var(--berry-amber); }
+.sh-row.status-noshow::before { background: var(--berry-text-muted); }
+.sh-time { font-size: 13px; font-weight: 600; color: var(--berry-text-muted); font-variant-numeric: tabular-nums; }
+.sh-queue { justify-self: start; padding: 4px 9px; border-radius: 8px; background: var(--berry-purple-light); color: var(--berry-purple); font-size: 13px; font-weight: 700; letter-spacing: 0.3px; }
+.sh-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sh-who { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sh-order-id { font-size: 12px; font-weight: 500; color: var(--berry-text-muted); }
+.sh-items-text { font-size: 12.5px; color: var(--berry-text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sh-type { display: inline-flex; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+.sh-type.walkin { background: var(--berry-blue-light); color: var(--berry-blue); }
+.sh-type.online { background: var(--berry-green-light); color: var(--berry-green); }
+.sh-pay-method { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--berry-text-muted); }
+.sh-amount { justify-self: end; font-size: 15px; font-weight: 700; color: var(--berry-text-dark); font-variant-numeric: tabular-nums; }
+.sh-status { justify-self: end; }
+.sh-chevron { color: #C3C6D4; transition: all 0.15s ease; }
+.sh-more { align-self: center; padding: 10px 18px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-dark); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.sh-more:hover { border-color: var(--berry-purple); color: var(--berry-purple); }
+
+/* หน้าต่างรายละเอียดออเดอร์ */
+.sh-modal.mf-modal { max-width: 880px; }
+.sh-head { align-items: center; }
+.sh-queue-big { min-width: 74px; padding: 10px 12px; border-radius: 14px; background: linear-gradient(135deg, var(--berry-purple), var(--berry-purple-dark)); color: #FFFFFF; font-size: 20px; font-weight: 800; text-align: center; letter-spacing: 0.5px; box-shadow: 0 8px 18px rgba(255,114,76,0.3); }
+.sh-head-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.sh-body { background: #FBFBFD; }
+.sh-loading { display: grid; gap: 12px; }
+.sh-section { margin-bottom: 18px; }
+.sh-section .nd-card + .nd-card { margin-top: 8px; }
+.sh-people { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.sh-person { min-width: 0; padding: 12px; border: 1px solid var(--berry-border); border-radius: 14px; background: var(--berry-paper); }
+.sh-person.empty { background: transparent; border-style: dashed; }
+.sh-person-label { display: flex; align-items: center; gap: 5px; margin-bottom: 8px; font-size: 11.5px; font-weight: 700; color: var(--berry-text-muted); }
+.sh-person-label svg { color: var(--berry-purple); }
+.sh-person-body { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.sh-person-body .sf-avatar { box-shadow: none; }
+.sh-person-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 700; line-height: 1.3; color: var(--berry-text-dark); word-break: break-word; }
+.sh-person-time { display: flex; align-items: center; gap: 3px; margin-top: 1px; font-size: 11px; color: var(--berry-text-muted); }
+.sh-person-sub { font-size: 11.5px; color: var(--berry-text-muted); }
+.sh-person-sub a { color: var(--berry-text-muted); text-decoration: none; }
+.sh-person-sub a:hover { color: var(--berry-purple); }
+.sh-person-extra { margin-top: 2px; font-size: 11px; font-weight: 600; color: var(--berry-green); }
+.sh-person-empty { font-size: 12px; color: var(--berry-text-muted); font-style: italic; }
+.sh-system-avatar { width: 36px; height: 36px; min-width: 36px; display: grid; place-items: center; border-radius: 50%; background: var(--berry-blue-light); color: var(--berry-blue); }
+.sh-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.sh-stats > div { padding: 10px 12px; border-radius: 12px; background: var(--berry-blue-light); }
+.sh-stats strong { display: block; font-size: 15px; color: var(--berry-text-dark); }
+.sh-stats span { font-size: 11.5px; color: var(--berry-text-muted); }
+
+.sh-items { margin: 0; padding: 0; list-style: none; }
+.sh-items li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--berry-border); }
+.sh-items li:last-child { border-bottom: none; }
+.sh-items li.replaced { opacity: 0.6; }
+.sh-items li.replaced .sh-item-name > b, .sh-items li.replaced .sh-item-price { text-decoration: line-through; }
+.sh-item-img { width: 40px; height: 40px; min-width: 40px; display: grid; place-items: center; overflow: hidden; border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); }
+.sh-item-img img { width: 100%; height: 100%; object-fit: cover; }
+.sh-item-name { flex: 1; min-width: 0; font-size: 13.5px; color: var(--berry-text-dark); }
+.sh-item-name b { font-weight: 600; color: var(--berry-text-muted); }
+.sh-item-name small { display: block; font-size: 11.5px; color: var(--berry-text-muted); }
+.sh-item-name small.sh-swap { color: var(--berry-green); font-weight: 600; }
+.sh-item-price { font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sh-note { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: var(--berry-amber-light); color: #8A5A00; font-size: 12.5px; }
+.sh-total { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--berry-border); font-size: 14px; }
+.sh-total b { font-size: 17px; color: var(--berry-text-dark); }
+.sh-cancel-reason { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: var(--berry-red-light); color: var(--berry-red); font-size: 12.5px; font-weight: 600; }
+
+.sh-pay { display: flex; gap: 12px; align-items: flex-start; }
+.sh-slip { width: 64px; height: 84px; min-width: 64px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); }
+.sh-slip img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s ease; }
+.sh-slip:hover img { transform: scale(1.06); }
+.sh-slip.none { height: 64px; }
+.sh-pay-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.sh-pay-head strong { font-size: 14px; color: var(--berry-text-dark); }
+.sh-pay-sub { margin-top: 3px; font-size: 12.5px; color: var(--berry-text-muted); line-height: 1.5; }
+.sh-pay-sub b { color: var(--berry-text-dark); font-weight: 600; }
+.sh-pay-reject { margin-top: 6px; padding: 6px 9px; border-radius: 8px; background: var(--berry-red-light); color: var(--berry-red); font-size: 12px; }
+.sh-row-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sh-row-card strong { font-size: 13.5px; color: var(--berry-text-dark); }
+
+.sh-timeline { position: relative; margin: 0; padding: 4px 0 0 22px; list-style: none; }
+.sh-timeline::before { content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: var(--berry-border); }
+.sh-timeline li { position: relative; padding: 0 0 14px; }
+.sh-timeline li:last-child { padding-bottom: 0; }
+.sh-timeline .dot { position: absolute; left: -22px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--berry-paper); border: 3px solid var(--berry-amber); }
+.sh-timeline li.tone-success .dot { border-color: var(--berry-green); }
+.sh-timeline li.tone-danger .dot { border-color: var(--berry-red); }
+.sh-timeline li.tone-primary .dot { border-color: var(--berry-blue); }
+.sh-timeline li.tone-neutral .dot { border-color: var(--berry-text-muted); }
+.sh-timeline li:last-child .dot { box-shadow: 0 0 0 4px var(--berry-purple-light); }
+.sh-tl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.sh-tl-head strong { font-size: 13.5px; color: var(--berry-text-dark); }
+.sh-tl-head span { font-size: 12px; color: var(--berry-text-muted); }
+.sh-tl-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; font-size: 12.5px; color: var(--berry-text-muted); }
+.sh-tl-sub b { color: var(--berry-text-dark); font-weight: 600; }
+.sh-gap { padding: 1px 7px; border-radius: 999px; background: var(--berry-blue-light); font-size: 11px; font-weight: 600; }
+.sh-tl-reason { margin-top: 4px; padding: 6px 9px; border-radius: 8px; background: var(--berry-bg); font-size: 12px; color: var(--berry-text-dark); }
+.sh-stars span { color: #D7DAE5; font-size: 16px; }
+.sh-stars span.on { color: #F5B301; }
+.sh-prints { margin: 0; padding: 0; list-style: none; }
+.sh-prints li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 13px; border-bottom: 1px dashed var(--berry-border); }
+.sh-prints li:last-child { border-bottom: none; }
+
+@media (max-width: 1100px) {
+  .sh-row { grid-template-columns: 48px 60px minmax(0, 1fr) 90px 120px 18px; }
+  .sh-pay-method { display: none; }
+  .sh-people { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .sh-range { width: 100%; overflow-x: auto; }
+  .sh-range-label { margin-left: 0; }
+  .sh-row { grid-template-columns: 56px minmax(0, 1fr) auto; grid-template-areas: "queue main amount" "time main status"; row-gap: 4px; padding: 12px 14px; }
+  .sh-queue { grid-area: queue; }
+  .sh-time { grid-area: time; font-size: 12px; }
+  .sh-main { grid-area: main; }
+  .sh-amount { grid-area: amount; }
+  .sh-status { grid-area: status; }
+  .sh-chevron { display: none; }
+  .sh-people { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sh-stats { grid-template-columns: 1fr; }
+  .sh-queue-big { min-width: 60px; font-size: 17px; padding: 8px; }
+}
 .mf-btn.danger { background: var(--berry-red); color: #FFFFFF; border: 1px solid var(--berry-red); box-shadow: 0 6px 16px rgba(226,69,47,0.28); }
 .mf-btn.danger:hover:not(:disabled) { background: #C93A26; }
 .mf-btn.danger:disabled { background: #F0A79B; border-color: #F0A79B; box-shadow: none; opacity: 1; }
