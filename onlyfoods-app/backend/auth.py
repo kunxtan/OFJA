@@ -15,20 +15,6 @@ from errors import DomainError
 logger = logging.getLogger("onlyfood")
 _bearer = HTTPBearer(auto_error=False)
 
-
-# หมดสัญญาบัญชีที่ผูกร้าน (เจ้าของ/หน้าร้าน/ครัว) ใช้งานไม่ได้เมื่อเลย 23:59:59 ของวันสิ้นสุดสัญญา
-# ยกเว้น "ช่วงผ่อนผัน" : ถ้ายังมีออเดอร์ค้าง เข้าได้ต่อเพื่อเคลียร์ออเดอร์ ถึง 23:59:59 ของวันถัดไป (สูงสุด 1 วัน)
-
-STORE_CONTRACT_EXPIRED_SQL = """(
-    u.StoreId IS NOT NULL AND c.EndDate IS NOT NULL AND c.EndDate < CURDATE()
-    AND (
-        c.EndDate < DATE_SUB(CURDATE(), INTERVAL 1 DAY)
-        OR NOT EXISTS (SELECT 1 FROM `Order` ox JOIN OrderStatus osx ON osx.StatusId = ox.StatusId
-                       WHERE ox.StoreId = u.StoreId AND osx.IsTerminal = FALSE)
-    )
-)"""
-CONTRACT_EXPIRED_MESSAGE = "สัญญาร้านค้าหมดอายุแล้ว บัญชีของร้านนี้ใช้งานไม่ได้ กรุณาติดต่อผู้บริหารศูนย์อาหาร"
-
 _dummy_hash: Optional[str] = None
 
 
@@ -85,13 +71,11 @@ def get_current_user(
     with db.cursor() as cur:
         cur.execute(
             """
-                        SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive,
-                   r.RoleCode, COALESCE(s.IsDeleted, 0) AS StoreIsDeleted,
-                   """ + STORE_CONTRACT_EXPIRED_SQL + """ AS StoreContractExpired
+            SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive,
+                   r.RoleCode, COALESCE(s.IsDeleted, 0) AS StoreIsDeleted
             FROM `User` u
             JOIN Role r ON r.RoleId = u.RoleId
             LEFT JOIN Store s ON s.StoreId = u.StoreId
-            LEFT JOIN StoreContract c ON c.StoreId = u.StoreId
             WHERE u.UserId = %s
             """,
             (user_id,),
@@ -99,9 +83,6 @@ def get_current_user(
         user = cur.fetchone()
     if not user or not user["IsActive"] or user["StoreIsDeleted"]:
         raise _unauthorized("บัญชีนี้ใช้งานไม่ได้")
-    if user["StoreContractExpired"]:
-        # หมดสัญญา = token ที่ล็อกอินค้างไว้ใช้ไม่ได้ทันทีตั้งแต่ 00:00 ของวันถัดจากวันสิ้นสุด
-        raise _unauthorized(CONTRACT_EXPIRED_MESSAGE)
     return user
 
 

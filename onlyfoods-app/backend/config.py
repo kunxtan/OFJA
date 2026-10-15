@@ -44,10 +44,6 @@ PICKUP_REMINDER_MAX_AGE_HOURS = _int("PICKUP_REMINDER_MAX_AGE_HOURS", 3)
 REMINDER_LOOP_SECONDS = _int("REMINDER_LOOP_SECONDS", 30)
 
 
-# ร้านที่หมดสัญญาแล้วไม่ถูกกด "หมดสัญญา" เพื่อเปิดสัญญารอบใหม่ภายในกี่วัน จะถูกลบ (soft delete) อัตโนมัติ
-CONTRACT_PURGE_AFTER_DAYS = _int("CONTRACT_PURGE_AFTER_DAYS", 90)
-
-
 def require_secrets() -> None:
     """เรียกตอนสตาร์ท: ไม่มี JWT_SECRET ที่แข็งแรงพอ = ไม่ยอมเปิด server"""
     if len(JWT_SECRET) < 32:

@@ -140,40 +140,14 @@ def test_next_transition():
 
 def test_contract_rules():
     today = date(2026, 6, 15)
-    assert not utils.contract_active(None, None, None, today)  # ไม่มีสัญญา = ขาย/เปิดร้านไม่ได้
-    assert utils.contract_active(date(2026, 1, 1), date(2026, 6, 15), None, today)  # วันสุดท้าย (ถึง 23:59:59) ยังใช้ได้
-    assert not utils.contract_active(date(2026, 1, 1), date(2026, 6, 14), None, today)
-    assert not utils.contract_active(date(2026, 6, 16), date(2026, 12, 1), None, today)
-    assert utils.contract_state(None, None, today) == utils.CONTRACT_NONE
-    assert utils.contract_state(date(2026, 6, 16), date(2027, 6, 15), today) == utils.CONTRACT_UPCOMING
-    assert utils.contract_state(date(2026, 6, 15), date(2027, 6, 14), today) == utils.CONTRACT_ACTIVE
-    assert utils.contract_state(date(2025, 6, 15), date(2026, 6, 14), today) == utils.CONTRACT_EXPIRED
+    assert utils.contract_active(None, None, None, today)  # ไม่มีสัญญา = ใช้ได้ (พฤติกรรมเดิม)
+    assert utils.contract_active(date(2026, 1, 1), date(2026, 6, 15), "ACTIVE", today)  # วันสุดท้ายยังใช้ได้
+    assert not utils.contract_active(date(2026, 1, 1), date(2026, 6, 14), "EXPIRED", today)
+    assert not utils.contract_active(date(2026, 6, 16), date(2026, 12, 1), "ACTIVE", today)
+    assert not utils.contract_active(date(2026, 1, 1), date(2026, 12, 1), "TERMINATED", today)
     assert utils.contract_status_for(date(2026, 6, 14), today) == "EXPIRED"
-    assert utils.contract_status_for(date(2026, 7, 15), today) == "EXPIRING"
-    assert utils.contract_status_for(date(2026, 7, 16), today) == "ACTIVE"
-
-
-def test_contract_one_year_and_reason():
-    assert utils.add_years_minus_one_day(date(2026, 10, 15)) == date(2027, 10, 14)
-    assert utils.add_years_minus_one_day(date(2026, 1, 1)) == date(2026, 12, 31)
-    assert utils.add_years_minus_one_day(date(2028, 2, 29)) == date(2029, 2, 28)
-    assert utils.clean_reason("  ชนะประมูล   รอบ 2/2569 ") == "ชนะประมูล รอบ 2/2569"
-    with pytest.raises(DomainError):
-        utils.clean_reason("ok")
-    with pytest.raises(DomainError):
-        utils.clean_reason("x" * 256)
-
-
-def test_shape_store_effective_open():
-    from shapes import shape_store
-    today = date(2026, 6, 15)
-    base = {"IsOpen": 1, "ContractStartDate": date(2026, 1, 1)}
-    live = shape_store({**base, "ContractEndDate": date(2026, 6, 15)}, today)
-    assert live["IsOpen"] is True and live["ContractState"] == "ACTIVE" and live["ContractDaysLeft"] == 0
-    dead = shape_store({**base, "ContractEndDate": date(2026, 6, 14)}, today)
-    assert dead["IsOpen"] is False and dead["IsOpenSetting"] is True and dead["ContractState"] == "EXPIRED"
-    none = shape_store({"IsOpen": 1, "ContractStartDate": None, "ContractEndDate": None}, today)
-    assert none["IsOpen"] is False and none["ContractDaysLeft"] is None
+    assert utils.contract_status_for(date(2026, 6, 22), today) == "EXPIRING"
+    assert utils.contract_status_for(date(2026, 6, 23), today) == "ACTIVE"
 
 
 def test_queue_label_and_date_parse():
