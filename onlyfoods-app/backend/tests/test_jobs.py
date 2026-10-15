@@ -113,9 +113,9 @@ def test_no_reminder_when_customer_already_said_they_are_late():
 
 
 def test_reminder_sql_excludes_orders_with_eta():
-    """ตัว SQL จริงต้องกรอง CustomerEtaAt ทั้งตอนเลือกและตอนจอง (FakeDB จำลองตามนี้)"""
+    """ตัว SQL จริงต้องกรอง LatePickupArrivalTime ทั้งตอนเลือกและตอนจอง (FakeDB จำลองตามนี้)"""
     db = FakeDB([order(1, 20)])
     jobs.send_pickup_reminders(db, NOW)
     select_sql = next(q for q in db.sql if q.startswith("SELECT o.OrderId"))
     claim_sql = next(q for q in db.sql if q.startswith("UPDATE `Order` SET PickupReminderAt"))
-    assert "CustomerEtaAt IS NULL" in select_sql and "CustomerEtaAt IS NULL" in claim_sql
+    assert "LatePickupArrivalTime IS NULL" in select_sql and "LatePickupArrivalTime IS NULL" in claim_sql

@@ -24,6 +24,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [myOrders, setMyOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
   const [isFoodCourtOpen, setIsFoodCourtOpen] = useState(true);
+  const [foodCourtMode, setFoodCourtMode] = useState("AUTO");
+
+  // LATE PICKUP STATE
+  const [latePickupOrder, setLatePickupOrder] = useState({});
+  const [latePickupMinutes, setLatePickupMinutes] = useState({});
 
   // OUT OF STOCK & CHANGE ORDER STATE
   const [outOfStockOrder, setOutOfStockOrder] = useState(null);
@@ -272,17 +277,55 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
+
   const fetchMyOrders = async () => {
     if (!userId) return;
+
     try {
       const res = await fetch(`${apiBase}/api/orders?user_id=${userId}`);
       if (!res.ok) return;
+
       const data = await res.json();
       setMyOrders(data);
+
+      setLatePickupOrder((prev) => {
+        const updated = { ...prev };
+
+        data.forEach((order) => {
+          const orderId = order.OrderID ?? order.OrderId ?? order.order_id;
+          if (!orderId) return;
+
+          const arrival = order.LatePickupArrivalTime;
+          let arrivalTime = "";
+
+          if (arrival) {
+            const date = new Date(arrival);
+
+            if (!Number.isNaN(date.getTime())) {
+              arrivalTime = date.toLocaleTimeString("th-TH", {
+                timeZone: "Asia/Bangkok",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              });
+            }
+          }
+
+          updated[orderId] = {
+            ...updated[orderId],
+            count: Number(order.LatePickupCount || 0),
+            minutes: Number(order.LatePickupMinutes || 0),
+            arrivalTime,
+          };
+        });
+
+        return updated;
+      });
     } catch (error) {
       console.error("Error fetching orders:", error);
     }
   };
+
 
   const fetchNotifs = async () => {
     if (!userId) return;
@@ -300,8 +343,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/food-court/status`);
       if (!res.ok) return;
+
       const data = await res.json();
+
       setIsFoodCourtOpen(Boolean(data?.is_open));
+      setFoodCourtMode(data?.mode || "AUTO");
+
+      if (data?.open_time) {
+        setFoodCourtOpenTime(data.open_time.slice(0, 5));
+      }
+
+      if (data?.close_time) {
+        setFoodCourtCloseTime(data.close_time.slice(0, 5));
+      }
     } catch (error) {
       console.error("Error fetching food court status:", error);
     }
@@ -834,12 +888,24 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return false;
     }
 
+    if (foodCourtMode === "CLOSED" || !isFoodCourtOpen) {
+      customAlert(
+        "ไม่สามารถสั่งอาหารได้",
+        `เวลาสั่งอาหารคือ ${foodCourtOpenTime}–${foodCourtCloseTime} น.`,
+        "error"
+      );
+      return false;
+    }
+
+    if (foodCourtMode === "OPEN") {
+      return true;
+    }
+
     const currentTime = getCurrentDateTimeForBackend()
       .split(" ")[1]
       .slice(0, 5);
 
     if (
-      !isFoodCourtOpen ||
       currentTime < foodCourtOpenTime ||
       currentTime >= foodCourtCloseTime
     ) {
@@ -862,6 +928,85 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setIsCartOpen(false);
     setIsPaymentModalOpen(true);
   };
+
+  // LATE PICKUP HANDLER
+
+  const handleLatePickup = async (order, minutes) => {
+    const orderId = order.OrderID;
+
+    const currentData = latePickupOrder[orderId] || {
+      count: 0,
+      arrivalTime: "",
+    };
+
+    if (currentData.count >= 3) {
+      customAlert(
+        "แจ้งครบจำนวนแล้ว",
+        "คุณแจ้งเวลามารับช้าออเดอร์นี้ครบ 3 ครั้งแล้ว",
+        "warning"
+      );
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `${apiBase}/api/orders/${orderId}/late-pickup`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            minutes: Number(minutes),
+          }),
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        customAlert(
+          "แจ้งเวลามารับไม่สำเร็จ",
+          data.detail || "ไม่สามารถบันทึกเวลามารับได้ กรุณาลองใหม่",
+          "warning"
+        );
+        return;
+      }
+
+      // ใช้เวลาที่ Backend คำนวณและบันทึกลงฐานข้อมูลแล้ว
+      const arrivalDate = new Date(data.arrival_time);
+
+      const arrivalTime = arrivalDate.toLocaleTimeString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+
+      // อัปเดตหน้าจอหลังจากบันทึกฐานข้อมูลสำเร็จเท่านั้น
+      setLatePickupOrder((prev) => ({
+        ...prev,
+        [orderId]: {
+          count: Number(data.count),
+          arrivalTime,
+          minutes: Number(data.minutes),
+        },
+      }));
+
+      customAlert(
+        "แจ้งเวลามารับเรียบร้อย",
+        `คุณแจ้งว่าจะมาถึงเวลา ${arrivalTime} น. (แจ้งแล้ว ${data.count}/3 ครั้ง)`,
+        "success"
+      );
+    } catch (error) {
+      customAlert(
+        "เชื่อมต่อไม่สำเร็จ",
+        "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง",
+        "error"
+      );
+    }
+  };
+
 
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
   // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
@@ -1638,7 +1783,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               ? myIssueReports.find((rep) => Number(rep.order_id || rep.OrderID) === Number(order.OrderID))
               : null;
             const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
-
+           const canNotifyLatePickup = ["ready", "preparing", "pending"].includes(String(order.Status || "").trim().toLowerCase());
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
@@ -1686,6 +1831,102 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <span>ยอดรวม</span>
                   <span style={{ color: COLORS.orange, fontSize: "18px" }}>{Number(order.TotalAmount || 0).toFixed(2)} ฿</span>
                 </div>
+
+ 
+                {/* แจ้งร้านว่าจะมารับช้า */}
+                {canNotifyLatePickup && (
+                  <div
+                    style={{
+                      marginTop: "14px",
+                      padding: "12px",
+                      border: `1px solid ${COLORS.border}`,
+                      borderRadius: "12px",
+                      background: "#FFF9F5",
+                    }}
+                  >
+                    <div style={{ fontWeight: "800", color: COLORS.navy, fontSize: "14px" }}>
+                      แจ้งร้านว่าจะมารับช้า
+                    </div>
+
+                    {(() => {
+                      const orderId = order.OrderID;
+                      const lateInfo = latePickupOrder[orderId] || {
+                        count: 0,
+                        arrivalTime: "",
+                      };
+                      const selectedMinutes = latePickupMinutes[orderId] || "15";
+
+                      return (
+                        <>
+                          <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "5px" }}>
+                            แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์
+                          </div>
+
+                          {lateInfo.arrivalTime && (
+                            <div style={{ marginTop: "8px", fontSize: "13px", color: COLORS.orange, fontWeight: "700" }}>
+                              เวลามาถึงล่าสุด: {lateInfo.arrivalTime} น.
+                            </div>
+                          )}
+
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "10px" }}>
+                            {[
+                              { value: "15", label: "15 นาที" },
+                              { value: "30", label: "30 นาที" },
+                              { value: "60", label: "1 ชั่วโมง" },
+                              { value: "120", label: "2 ชั่วโมง" },
+                            ].map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                disabled={lateInfo.count >= 3}
+                                onClick={() =>
+                                  setLatePickupMinutes((prev) => ({
+                                    ...prev,
+                                    [orderId]: option.value,
+                                  }))
+                                }
+                                style={{
+                                  padding: "7px 10px",
+                                  borderRadius: "8px",
+                                  border: `1px solid ${
+                                    selectedMinutes === option.value
+                                      ? COLORS.orange
+                                      : COLORS.border
+                                  }`,
+                                  background:
+                                    selectedMinutes === option.value
+                                      ? "#FFF0EB"
+                                      : "#FFFFFF",
+                                  color: COLORS.navy,
+                                  fontSize: "12px",
+                                  cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
+                                  opacity: lateInfo.count >= 3 ? 0.5 : 1,
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => handleLatePickup(order, selectedMinutes)}
+                            disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
+                          >
+                            {(latePickupOrder[order.OrderID]?.count || 0) >= 3
+                              ? "แจ้งครบแล้ว (3/3)"
+                              : (latePickupOrder[order.OrderID]?.count || 0) === 0
+                                ? "ยืนยันแจ้งเวลามารับช้า"
+                                : `แจ้งเวลาครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
+                          </button>
+                          <div style={{ fontSize: "11px", color: COLORS.orange, marginTop: "6px" }}>
+                            แจ้งแล้ว {lateInfo.count}/3 ครั้ง
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+
+
 
                 {order.Status === "Completed" && (
                   <div style={{ display: "flex", gap: "10px", marginTop: "15px", width: "100%" }}>
@@ -1812,20 +2053,52 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> เวลารับอาหาร</label>
-                  <input type="time" value={pickupTime} min={foodCourtOpenTime || undefined} max={foodCourtCloseTime || undefined} 
-                      onChange={(e) => {
-                        const selectedTime = e.target.value;
-                          if (foodCourtOpenTime && selectedTime < foodCourtOpenTime) {
-                            customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารตั้งแต่ ${foodCourtOpenTime} น. เป็นต้นไป`, "warning");
-                            return;
-                          }
-                          if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
-                            customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`,"warning");
-                            return;
-                          }
-                          setPickupTime(selectedTime);
-                        }}
+                  <input
+                    type="time"
+                    value={pickupTime}
+                    min={foodCourtOpenTime || undefined}
+                    max={foodCourtCloseTime || undefined}
+                    onChange={(e) => {
+                      const selectedTime = e.target.value;
+                      if (!selectedTime) {
+                        setPickupTime(selectedTime);
+                        return;
+                      }
+                      const now = new Date();
+                      const currentTime =
+                        `${String(now.getHours()).padStart(2, "0")}:` +
+                        `${String(now.getMinutes()).padStart(2, "0")}`;
+                      if (selectedTime < currentTime) {
+                        customAlert(
+                          "เวลาไม่ถูกต้อง",
+                          "กรุณาเลือกเวลารับอาหารตั้งแต่เวลาปัจจุบันเป็นต้นไป",
+                          "warning"
+                        );
+                        return;
+                      }
+
+                      if (foodCourtOpenTime && selectedTime < foodCourtOpenTime) {
+                        customAlert(
+                          "เวลาไม่ถูกต้อง",
+                          `กรุณาเลือกเวลารับอาหารตั้งแต่ ${foodCourtOpenTime} น. เป็นต้นไป`,
+                          "warning"
+                        );
+                        return;
+                      }
+
+                      if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
+                        customAlert(
+                          "เวลาไม่ถูกต้อง",
+                          `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`,
+                          "warning"
+                        );
+                        return;
+                      }
+
+                      setPickupTime(selectedTime);
+                    }}
                   />
+
                   <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
                 </div>
 

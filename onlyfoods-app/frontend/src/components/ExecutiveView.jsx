@@ -1690,22 +1690,33 @@ const storeRows = Array.from(storeMap.values())
         };
     })
     .sort((a, b) => b.sales - a.sales);
-        const ordersByHour = Array.from({ length: 24 }, () => 0);
-        now.settled.forEach(o => { const at = parseOrderDate(o.CreatedAt); if (at) ordersByHour[at.getHours()] += 1; });
-        const peakHour = ordersByHour.indexOf(Math.max(...ordersByHour));
-        const peakOrderCount = ordersByHour[peakHour] || 0;
-        return {
-            now,
-            before,
-            current,
-            hasPreviousData: previous.length > 0,
-            storeRows,
-            buckets: customRange
-                ? buildBucketsForRange(now.settled, customStart, customEnd)
-                : buildBuckets(now.settled, anchor, days),
-            peakOrderCount,
-            activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
-        };
+        
+const ordersByHour = Array.from({ length: 24 }, () => 0);
+
+now.settled.forEach(o => {
+    const at = parseOrderDate(o.CreatedAt);
+    if (at) ordersByHour[at.getHours()] += 1;
+});
+
+const peakOrderCount = Math.max(...ordersByHour);
+const peakHour = peakOrderCount > 0
+    ? ordersByHour.indexOf(peakOrderCount)
+    : null;
+
+return {
+    now,
+    before,
+    current,
+    hasPreviousData: previous.length > 0,
+    storeRows,
+    buckets: customRange
+        ? buildBucketsForRange(now.settled, customStart, customEnd)
+        : buildBuckets(now.settled, anchor, days),
+    peakHour,
+    peakOrderCount,
+    activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
+};
+
     }, [orders, stores, anchor, days ,  customRange, customStart, customEnd]);
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
 const periodLabel = customRange ? effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
@@ -2726,32 +2737,20 @@ function StoreSalesPage({ ctx }) {
         return () => { cancelled = true; };
     }, [ctx.API, storeId]);
 
+        // ใช้สถานะสัญญาจาก backend (ContractState / ContractDaysLeft) ให้ตรงกับหน้า "ติดตามสัญญา"
     const salesContractInfo = (selectedStore) => {
-        if (!selectedStore?.ContractEndDate) {
+        const state = selectedStore?.ContractState;
+        const daysLeft = selectedStore?.ContractDaysLeft;
+        if (!state || state === 'NONE')
             return { label: 'ยังไม่ระบุสัญญา', tone: 'neutral', detail: 'ยังไม่มีวันสิ้นสุดสัญญา' };
-        }
-        const raw = String(selectedStore.ContractEndDate).slice(0, 10);
-        const end = new Date(`${raw}T00:00:00`);
-        if (Number.isNaN(end.getTime())) {
-            return { label: 'ยังไม่ระบุสัญญา', tone: 'neutral', detail: 'ยังไม่มีวันสิ้นสุดสัญญา' };
-        }
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const daysLeft = Math.ceil((end - today) / 86400000);
-
-        if (daysLeft < 0) {
-            return {
-                label: 'สัญญาหมดอายุ',
-                tone: 'danger',
-                detail: `หมดอายุมาแล้ว ${Math.abs(daysLeft)} วัน`
-            };
-        }
-        if (daysLeft === 0) {
-            return { label: 'สัญญาหมดวันนี้', tone: 'danger', detail: 'ควรดำเนินการต่อสัญญา' };
-        }
-        if (daysLeft <= 30) {
-            return { label: `เหลือ ${daysLeft} วัน`, tone: 'warning', detail: 'สัญญาใกล้หมดอายุ' };
-        }
+        if (state === 'UPCOMING')
+            return { label: 'ยังไม่เริ่มสัญญา', tone: 'neutral', detail: 'ร้านเปิดได้เมื่อถึงวันเริ่มสัญญา' };
+        if (state === 'EXPIRED')
+            return { label: 'หมดสัญญา', tone: 'danger', detail: `หมดมาแล้ว ${Math.abs(daysLeft)} วัน` };
+        if (daysLeft === 0)
+            return { label: 'หมดคืนนี้ 23:59 น.', tone: 'danger', detail: 'วันสุดท้ายของสัญญา' };
+        if (daysLeft <= 30)
+            return { label: `เหลือ ${daysLeft} วัน`, tone: 'warn', detail: 'สัญญาใกล้หมด' };
         return { label: `เหลือ ${daysLeft} วัน`, tone: 'ok', detail: 'สัญญายังมีผล' };
     };
     const selectedContract = store ? salesContractInfo(store) : null;
@@ -3280,8 +3279,10 @@ function validateStoreForm(form, mode = 'create') {
         errors.contractDuration = 'กรุณาเลือกระยะเวลาสัญญา';
     if (!form.contractEndDate)
         errors.contractEndDate = 'กรุณาระบุวันที่สิ้นสุดสัญญา';
-    if (form.contractStartDate && form.contractEndDate && form.contractEndDate < form.contractStartDate)
-        errors.contractEndDate = 'วันที่สิ้นสุดสัญญาต้องไม่น้อยกว่าวันที่เริ่มสัญญา';
+    if (form.contractStartDate && form.contractEndDate && form.contractEndDate <= form.contractStartDate)
+        errors.contractEndDate = 'วันที่สิ้นสุดสัญญาต้องหลังวันที่เริ่มสัญญา';
+    else if (form.contractEndDate && form.contractEndDate < todayISO())
+        errors.contractEndDate = 'วันที่สิ้นสุดสัญญาเป็นวันที่ผ่านมาแล้ว ร้านจะหมดสัญญาทันที';
     // ช่องวันที่เป็นปี ค.ศ. : กันพิมพ์ปี พ.ศ. (เช่น 2569)
     if (Number(String(form.contractStartDate || '').slice(0, 4)) > 2400)
         errors.contractStartDate = 'กรุณาระบุปีเป็น ค.ศ. (เช่น 2026 ไม่ใช่ 2569)';
@@ -3405,7 +3406,8 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         const targetMonth = targetMonthIndex % 12;
         const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
         const safeDay = Math.min(day, lastDay);
-        return `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+        // สัญญา 1 ปีที่เริ่ม 2026-10-15 สิ้นสุด 2027-10-14 23:59:59 (ลบ 1 วัน ให้ตรงกับปุ่มเปิดสัญญารอบใหม่)
+        return toISODate(new Date(targetYear, targetMonth, safeDay - 1));
     };
 
     const update = (key) => (e) => {
@@ -4183,6 +4185,10 @@ function StoreManagePage({ ctx }) {
 
     const toggleStore = async (store) => {
         const closing = Boolean(store.IsOpen);
+        if (!closing && store.ContractState && store.ContractState !== 'ACTIVE') {
+            navigateTo('contract-tracking', store.StoreId);
+            return;
+        }
         if (!closing && Boolean(store.IsSuspended)) {
             pushToast(`ร้าน ${store.StoreName} ถูกระงับสิทธิ์ กรุณาปลดระงับก่อนเปิดร้าน`, 'warn');
             return;
@@ -4325,6 +4331,9 @@ function StoreManagePage({ ctx }) {
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         <Badge tone={s.IsOpen ? 'ok' : 'neutral'}>{s.IsOpen ? 'เปิด' : 'ปิด'}</Badge>
+                        {s.ContractState === 'EXPIRED' && <Badge tone="danger">หมดสัญญา</Badge>}
+                        {s.ContractState === 'UPCOMING' && <Badge tone="neutral">ยังไม่เริ่มสัญญา</Badge>}
+                        {s.ContractState === 'NONE' && <Badge tone="warn">ไม่มีสัญญา</Badge>}
                         {Boolean(s.IsSuspended) && <Badge tone="danger">ระงับสิทธิ์</Badge>}
                       </div>
                     </td>
@@ -4333,16 +4342,28 @@ function StoreManagePage({ ctx }) {
                         <Button variant="soft" icon="eye" onClick={() => openView(s)}style={smallBtn} title="ดูข้อมูลร้าน">
                           ดู/แก้ไข
                         </Button>
-                        <Button
-                          variant="soft"
-                          icon="power"
-                          onClick={() => toggleStore(s)}
-                          disabled={!s.IsOpen && Boolean(s.IsSuspended)}
-                          title={!s.IsOpen && Boolean(s.IsSuspended) ? 'กรุณาปลดระงับสิทธิ์ก่อนเปิดร้าน' : undefined}
-                          style={smallBtn}
-                        >
-                          {s.IsOpen ? 'ปิดร้าน' : 'เปิดร้าน'}
-                        </Button>
+                                                {s.ContractState && s.ContractState !== 'ACTIVE' ? (
+                          <Button
+                            variant={s.ContractState === 'EXPIRED' ? 'danger' : 'ghost'}
+                            icon="calendar"
+                            onClick={() => navigateTo('contract-tracking', s.StoreId)}
+                            title="ร้านเปิดได้เฉพาะช่วงสัญญา กดเพื่อไปจัดการสัญญา"
+                            style={smallBtn}
+                          >
+                            {s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.ContractState === 'UPCOMING' ? 'รอเริ่มสัญญา' : 'กำหนดสัญญา'}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="soft"
+                            icon="power"
+                            onClick={() => toggleStore(s)}
+                            disabled={!s.IsOpen && Boolean(s.IsSuspended)}
+                            title={!s.IsOpen && Boolean(s.IsSuspended) ? 'กรุณาปลดระงับสิทธิ์ก่อนเปิดร้าน' : undefined}
+                            style={smallBtn}
+                          >
+                            {s.IsOpen ? 'ปิดร้าน' : 'เปิดร้าน'}
+                          </Button>
+                        )}
                         <Button variant="soft" icon="ban" onClick={() => suspendStore(s)} style={smallBtn}>
                           {s.IsSuspended ? 'ปลดระงับ' : 'ระงับสิทธิ์'}
                         </Button>
@@ -4422,20 +4443,61 @@ function validateAccountForm(form, mode) {
 }
 
 
-// ===== ติดตามสัญญา: ตรวจสอบสถานะและต่ออายุสัญญาร้าน =====
+// ===== ติดตามสัญญา: ดูช่วงสัญญา แก้วันสิ้นสุด และเปิดสัญญารอบใหม่ =====
+// กติกา (ต้องตรงกับ backend/routers/stores.py):
+//  - ระบบเก็บแค่วันเริ่ม/วันสิ้นสุด เอกสารสัญญาจริงอยู่นอกระบบ ไม่มีการระงับสิทธิ์ในหน้านี้
+//  - สัญญามีผลถึง 23:59:59 น. ของวันสิ้นสุด เลยจากนั้น = หมดสัญญา บัญชีร้านทุกบัญชีถูกล็อก
+//  - ยังไม่หมด -> "แก้วันสิ้นสุด" (ต้องมีเหตุผล) ; หมดแล้ว -> กดปุ่ม "หมดสัญญา" เพื่อเปิดรอบใหม่ 1 ปี
+//  - ทุกการแก้ถูกบันทึก (ใคร / เมื่อไหร่ / วันเดิม -> วันใหม่ / เหตุผล) ดูได้จากปุ่ม "ประวัติ"
+const CONTRACT_ACTION_LABEL = {
+    CREATE_STORE: 'กำหนดสัญญาตอนเพิ่มร้าน',
+    RENEW_CONTRACT: 'ต่อสัญญา (ระบบเดิม)',
+    CONTRACT_EXTEND: 'ขยายวันสิ้นสุด',
+    CONTRACT_SHORTEN: 'ลดวันสิ้นสุด',
+    CONTRACT_END_BACKDATED: 'แก้ให้จบย้อนหลัง',
+    CONTRACT_RESTART: 'เปิดสัญญารอบใหม่',
+    AUTO_DELETE_STORE: 'ระบบลบร้านอัตโนมัติ',
+    DELETE_STORE: 'ลบร้าน'
+};
+const CONTRACT_REASON_MIN = 5;
+
+function addYearsMinusOneDayISO(startISO, years = 1) {
+    const [y, m, d] = String(startISO || '').split('-').map(Number);
+    if (!y || !m || !d) return '';
+    const lastDay = new Date(y + years, m, 0).getDate();
+    const target = new Date(y + years, m - 1, Math.min(d, lastDay));
+    target.setDate(target.getDate() - 1);
+    return toISODate(target);
+}
+function minusOneDayISO(iso) {
+    const [y, m, d] = String(iso || '').split('-').map(Number);
+    if (!y || !m || !d) return '';
+    return toISODate(new Date(y, m - 1, d - 1));
+}
+function addMonthsToISO(baseISO, months) {
+    const [y, m, d] = String(baseISO || '').split('-').map(Number);
+    if (!y || !m || !d) return '';
+    const lastDay = new Date(y, m - 1 + months + 1, 0).getDate();
+    return toISODate(new Date(y, m - 1 + months, Math.min(d, lastDay)));
+}
+
 function ContractTrackingPage({ ctx }) {
-    const { API, search, pushToast, ask, focusStoreId, clearFocusStore } = ctx;
+    const { API, search, pushToast, focusStoreId, clearFocusStore, reloadStores } = ctx;
     const [stores, setStores] = useState([]);
     const [loadingContracts, setLoadingContracts] = useState(true);
     const [loadError, setLoadError] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
-    const [renewStore, setRenewStore] = useState(null);
-    const [renewStart, setRenewStart] = useState('');
-    const [renewDuration, setRenewDuration] = useState('1y');
-    const [renewCustomEnd, setRenewCustomEnd] = useState('');
-    const [renewSaving, setRenewSaving] = useState(false);
-    const [renewError, setRenewError] = useState('');
-    const [renewAction, setRenewAction] = useState('renew_unsuspend');
+    // modal แก้/เปิดสัญญา : { mode: 'edit' | 'restart', store }
+    const [dialog, setDialog] = useState(null);
+    const [endDate, setEndDate] = useState('');
+    const [reason, setReason] = useState('');
+    const [ackBackdate, setAckBackdate] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [formError, setFormError] = useState('');
+    // modal ประวัติ
+    const [historyStore, setHistoryStore] = useState(null);
+    const [history, setHistory] = useState([]);
+    const [historyLoading, setHistoryLoading] = useState(false);
 
     const loadContracts = useCallback(async () => {
         setLoadingContracts(true);
@@ -4456,247 +4518,39 @@ function ContractTrackingPage({ ctx }) {
         loadContracts();
     }, [loadContracts]);
 
-    const dateOnly = (value) => {
-        if (!value) return null;
-        const raw = String(value).slice(0, 10);
-        const d = new Date(`${raw}T00:00:00`);
-        return Number.isNaN(d.getTime()) ? null : d;
+    const today = todayISO();
+    const fmt = (value) => (value ? String(value).slice(0, 10) : '—');
+
+    // สถานะคำนวณจาก backend (ContractState / ContractDaysLeft) เพื่อให้ตรงกับที่ระบบล็อกจริง
+    const contractInfo = (store) => {
+        const state = store.ContractState;
+        const days = store.ContractDaysLeft;
+        if (state === 'NONE' || !store.ContractEndDate)
+            return { key: 'missing', label: 'ยังไม่ระบุสัญญา', tone: 'neutral', bg: '#F2F3F7', color: T.muted };
+        if (state === 'UPCOMING')
+            return { key: 'upcoming', label: 'ยังไม่เริ่มสัญญา', tone: 'neutral', bg: T.deepSoft, color: T.deep };
+        if (state === 'EXPIRED')
+            return store.IsClearingOrders
+                ? { key: 'expired', label: 'หมดสัญญา · เคลียร์ออเดอร์', tone: 'danger', bg: T.redSoft, color: T.down }
+                : { key: 'expired', label: 'หมดสัญญา', tone: 'danger', bg: T.redSoft, color: T.down };
+        if (days === 0)
+            return { key: 'soon', label: 'หมดคืนนี้ 23:59 น.', tone: 'warn', bg: T.accentSoft, color: T.accentDark };
+        if (days <= 30)
+            return { key: 'soon', label: 'ใกล้หมดสัญญา', tone: 'warn', bg: T.accentSoft, color: T.accentDark };
+        return { key: 'active', label: 'สัญญาปกติ', tone: 'ok', bg: T.greenSoft, color: T.up };
     };
-    // วันที่สัญญาแสดงเป็นปี ค.ศ. ทั้งหมด ให้ตรงกับช่องเลือกวันที่ (input type="date" ใช้ปี ค.ศ. เสมอ)
-    // เดิม th-TH แสดงเป็น พ.ศ. ขณะที่ช่องกรอกเป็น ค.ศ. จึงเห็นปีสองแบบในหน้าเดียวกัน
-    const formatContractDate = (value) => {
-    const d = dateOnly(value);
-    return d ? toISODate(d) : '—';
-};
-    const addDaysISO = (value, days) => {
-        const d = dateOnly(value);
-        if (!d) return todayISO();
-        d.setDate(d.getDate() + days);
-        return toISODate(d);
-    };
-    const nextDayISO = (value) => addDaysISO(value, 1);
-    const twoDaysAfterISO = (value) => addDaysISO(value, 2);
-    
-    const defaultRenewStart = (store) => {
-    const today = dateOnly(todayISO());
-    const end = dateOnly(store?.ContractEndDate);
 
-    // ไม่มีสัญญาเดิม หรือสัญญาหมดแล้ว เริ่มต้นให้เป็นวันนี้ แต่ Executive เปลี่ยนเป็นวันอนาคตได้
-    if (!end || end < today) {
-        return todayISO();
-    }
-
-    // สัญญายังมีผล ระยะที่ต่อเพิ่มต้องเริ่มวันถัดจากวันสิ้นสุดเดิม
-    return nextDayISO(store.ContractEndDate);
-    // ตย.เดิม 9–10 → ช่องวันที่เริ่มช่วงต่อ = 11 เดิม 4–5 วันนี้ 7 → ช่องเริ่ม = 7 → เปลี่ยนเป็น 8, 9, 10... ได้
-};
-
-const calculateRenewEnd = (startISO, duration) => {
-    const start = dateOnly(startISO);
-
-    if (!start || !duration || duration === 'custom') {
-        return '';
-    }
-
-    const months = {
-        '6m': 6,
-        '1y': 12,
-        '2y': 24,
-        '3y': 36
-    }[duration];
-
-    if (!months) return '';
-
-    const originalDay = start.getDate();
-
-    const target = new Date(
-        start.getFullYear(),
-        start.getMonth() + months,
-        1
-    );
-
-    const lastDay = new Date(
-        target.getFullYear(),
-        target.getMonth() + 1,
-        0
-    ).getDate();
-
-    target.setDate(Math.min(originalDay, lastDay));
-
-    // เช่น 30/09/2026 + 1 ปี
-    // ได้ช่วง 30/09/2026 - 29/09/2027
-    target.setDate(target.getDate() - 1);
-
-    return toISODate(target);
-};
-
-const openRenew = (store) => {
-    const start = defaultRenewStart(store);
-    setRenewStore(store);
-    setRenewStart(start);
-    setRenewDuration('1y');
-    setRenewCustomEnd('');
-    setRenewError('');
-    setRenewAction(
-        store?.IsSuspended ? 'renew_unsuspend' : 'renew_only'
-    );
-};
-
-const closeRenew = () => {
-    if (!renewSaving) {
-        setRenewStore(null);
-        setRenewStart('');
-        setRenewDuration('1y');
-        setRenewCustomEnd('');
-        setRenewError('');
-        setRenewAction('renew_unsuspend');
-    }
-};
-
-const renewNewEnd = renewStore
-    ? (
-        renewDuration === 'custom'
-            ? renewCustomEnd
-            : calculateRenewEnd(renewStart, renewDuration)
-    )
-    : '';
-
-const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate) 
->= dateOnly(todayISO()) ? (renewStore.CurrentContractStartDate || renewStore.ContractStartDate || renewStart) : renewStart) : '';
-    
-
-    const suspendExpiredStore = async (store) => {
-        if (!store || store.IsSuspended) return;
-        const ok = await ask({
-            title: 'ไม่ต่อสัญญาและระงับสิทธิ์',
-            message: `สัญญาร้าน "${store.StoreName}" หมดอายุแล้ว ต้องการยุติการให้บริการและระงับสิทธิ์ร้านนี้หรือไม่?`,
-            warning: 'ร้านจะไม่สามารถให้บริการได้จนกว่าผู้บริหารจะปลดระงับสิทธิ์',
-            confirmText: 'ระงับสิทธิ์',
-            danger: true
-        });
-        if (!ok) return;
-
-        try {
-            await callApi(`${API}/api/stores/${store.StoreId}/suspend?performed_by=Executive`, {
-                method: 'PUT'
-            });
-            pushToast(`ระงับสิทธิ์ร้าน ${store.StoreName} แล้ว`);
-            await loadContracts();
-        } catch (err) {
-            pushToast(err.message, 'error');
+    const remainingText = (store) => {
+        const days = store.ContractDaysLeft;
+        if (store.ContractState === 'UPCOMING') {
+            const start = new Date(`${fmt(store.ContractStartDate)}T00:00:00`);
+            const now = new Date(`${today}T00:00:00`);
+            return `เริ่มใน ${Math.round((start - now) / 86400000)} วัน`;
         }
-    };
-
-    const submitRenew = async () => {
-        if (!renewStore || !renewStart || !renewNewEnd) {
-            setRenewError('กรุณากรอกช่วงสัญญาใหม่ให้ครบถ้วน');
-            return;
-        }
-
-        const newStart = dateOnly(renewStart);
-        const newEnd = dateOnly(renewNewEnd);
-        const today = dateOnly(todayISO());
-
-        if (!newStart) {
-        setRenewError('รูปแบบวันที่เริ่มสัญญาไม่ถูกต้อง');
-        return;}
-
-        if (!newEnd) {
-            setRenewError('รูปแบบวันสิ้นสุดสัญญาไม่ถูกต้อง');
-            return;}
-
-        // ช่องวันที่เป็นปี ค.ศ. : ถ้าพิมพ์ปี พ.ศ. (เช่น 2569) สัญญาจะยาวไปอีก 543 ปี
-        if (newStart.getFullYear() > 2400 || newEnd.getFullYear() > 2400) {
-            setRenewError('กรุณาระบุปีเป็น ค.ศ. (เช่น 2026 ไม่ใช่ 2569)');
-            return;}
-
-        if (newStart < today) {
-            setRenewError('วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว');
-            return;}
-
-            const currentEnd = dateOnly(renewStore.ContractEndDate);
-            if (currentEnd && currentEnd >= today) {
-                const requiredStart = dateOnly(nextDayISO(renewStore.ContractEndDate));
-                if (newStart.getTime() !== requiredStart.getTime()) {
-                    setRenewError(`สัญญาเดิมยังมีผล ช่วงที่ต่อเพิ่มต้องเริ่มวันที่ ${formatContractDate(nextDayISO(renewStore.ContractEndDate))}`);
-                    return;
-                }
-            }
-
-        
-
-        if (newEnd < newStart) {
-            setRenewError('วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา');
-            return;}
-
-        setRenewSaving(true);
-        setRenewError('');
-
-        try {
-            const data = await callApi(`${API}/api/stores/${renewStore.StoreId}/renew-contract`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contract_start_date: renewStart,
-                    contract_end_date: renewNewEnd,
-                    performed_by: 'Executive'
-                })
-            });
-
-            if (renewStore.IsSuspended && renewAction === 'renew_unsuspend') {
-                await callApi(
-                    `${API}/api/stores/${renewStore.StoreId}/suspend?performed_by=Executive`,
-                    { method: 'PUT' }
-                );
-            }
-
-            pushToast(
-                renewStore.IsSuspended && renewAction === 'renew_unsuspend'
-                    ? `ต่อสัญญาและปลดระงับสิทธิ์ร้าน ${renewStore.StoreName} เรียบร้อยแล้ว`
-                    : (data?.message || `ต่อสัญญาร้าน ${renewStore.StoreName} เรียบร้อยแล้ว`)
-            );
-
-            setRenewStore(null);
-            setRenewStart('')
-            setRenewDuration('1y');
-            setRenewCustomEnd('');
-            setRenewAction('renew_unsuspend');
-            await loadContracts();
-        } catch (err) {
-            setRenewError(err.message);
-            pushToast(err.message, 'error');
-        } finally {
-            setRenewSaving(false);
-        }
-    };
-    const contractInfo = store => {
-    const start = dateOnly(store.CurrentContractStartDate || store.ContractStartDate), end = dateOnly(store.ContractEndDate);
-    if (!end) return { key: 'missing', label: 'ยังไม่ระบุสัญญา', days: null, bg: '#F2F3F7', color: T.muted };
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    if (start && start > today) {
-        const daysUntilStart = Math.ceil((start - today) / 86400000);
-        return { key: 'upcoming', label: 'ยังไม่เริ่มสัญญา', days: null, daysUntilStart, bg: T.deepSoft, color: T.deep };
-    }
-
-    const days = Math.ceil((end - today) / 86400000);
-
-        if (days < 0) return {
-            key: 'expired',
-            label: 'หมดอายุแล้ว',
-            days,
-            bg: T.redSoft,
-            color: T.down
-        };
-
-        if (days === 0) return {
-            key: 'soon', label: 'หมดอายุวันนี้',days,
-            bg: T.accentSoft,color: T.accentDark
-        };
-        if (days <= 30) return { key: 'soon', label: 'ใกล้หมดอายุ', days, bg: T.accentSoft, color: T.accentDark };
-        return { key: 'active', label: 'ปกติ', days, bg: T.greenSoft, color: T.up };
+        if (days === null || days === undefined) return '—';
+        if (days < 0) return `หมดมาแล้ว ${Math.abs(days)} วัน`;
+        if (days === 0) return 'วันสุดท้าย';
+        return `${money(days)} วัน`;
     };
 
     const enriched = stores.map((s) => ({ ...s, contract: contractInfo(s) }));
@@ -4705,44 +4559,147 @@ const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate)
         .filter((s) => statusFilter === 'all' || s.contract.key === statusFilter)
         .filter((s) => String(s.StoreName || '').toLowerCase().includes(search))
         .sort((a, b) => {
-            const ae = dateOnly(a.ContractEndDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-            const be = dateOnly(b.ContractEndDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-            return ae - be;
+            const ae = a.ContractEndDate ? String(a.ContractEndDate).slice(0, 10) : '9999-12-31';
+            const be = b.ContractEndDate ? String(b.ContractEndDate).slice(0, 10) : '9999-12-31';
+            return ae.localeCompare(be);
         });
-
-    const active = enriched.filter((s) => s.contract.key === 'active').length;
-    const soon = enriched.filter((s) => s.contract.key === 'soon').length;
-    const expired = enriched.filter((s) => s.contract.key === 'expired').length;
-    const missing = enriched.filter((s) => s.contract.key === 'missing').length;
-
+    const countOf = (key) => enriched.filter((s) => s.contract.key === key).length;
     const filters = [
         ['all', 'ทั้งหมด'],
-        ['active', 'ปกติ'],
-        ['soon', 'ใกล้หมดอายุ'],
+        ['active', 'สัญญาปกติ'],
+        ['soon', 'ใกล้หมดสัญญา'],
         ['upcoming', 'ยังไม่เริ่ม'],
-        ['expired', 'หมดอายุแล้ว'],
+        ['expired', 'หมดสัญญา'],
         ['missing', 'ยังไม่ระบุ']
-        
     ];
-
     const focusedStore = focusStoreId ? enriched.find((s) => String(s.StoreId) === String(focusStoreId)) : null;
+
+    // ---------- เปิด/ปิด modal ----------
+    const openEdit = (store) => {
+        setDialog({ mode: 'edit', store });
+        setEndDate(fmt(store.ContractEndDate));
+        setReason('');
+        setAckBackdate(false);
+        setFormError('');
+    };
+    const openRestart = (store) => {
+        setDialog({ mode: 'restart', store });
+        setEndDate(addYearsMinusOneDayISO(today, 1));
+        setReason('');
+        setAckBackdate(false);
+        setFormError('');
+    };
+    const closeDialog = () => {
+        if (!saving) setDialog(null);
+    };
+
+    const dStore = dialog?.store;
+    const isEdit = dialog?.mode === 'edit';
+    const oldEnd = dStore ? fmt(dStore.ContractEndDate) : '';
+    const dStart = isEdit ? fmt(dStore?.ContractStartDate) : today;
+    const isBackdate = isEdit && endDate && endDate < today;
+    const reasonOk = reason.trim().length >= CONTRACT_REASON_MIN;
+
+    const validate = () => {
+        if (!endDate) return 'กรุณาเลือกวันสิ้นสุดสัญญา';
+        if (Number(endDate.slice(0, 4)) > 2400) return 'กรุณาระบุปีเป็น ค.ศ. (เช่น 2026 ไม่ใช่ 2569)';
+        if (endDate <= dStart) return `วันสิ้นสุดต้องหลังวันเริ่มสัญญา (${dStart})`;
+        if (isEdit && endDate === oldEnd) return 'วันสิ้นสุดใหม่ยังเป็นวันเดิม';
+        if (!reasonOk) return `กรุณาระบุเหตุผลอย่างน้อย ${CONTRACT_REASON_MIN} ตัวอักษร`;
+        if (isBackdate && Number(dStore?.OpenOrderCount || 0) > 0)
+            return `ร้านนี้ยังมีออเดอร์ค้าง ${dStore.OpenOrderCount} รายการ ตัดสัญญาย้อนหลังไม่ได้จนกว่าออเดอร์จะจบ`;
+        if (isBackdate && !ackBackdate) return 'กรุณาติ๊กยืนยันว่าเข้าใจผลของการแก้วันย้อนหลัง';
+        return '';
+    };
+
+    const submit = async () => {
+        const problem = validate();
+        if (problem) {
+            setFormError(problem);
+            return;
+        }
+        setSaving(true);
+        setFormError('');
+        try {
+            const data = isEdit
+                ? await callApi(`${API}/api/stores/${dStore.StoreId}/contract`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ contract_end_date: endDate, reason: reason.trim() })
+                })
+                : await callApi(`${API}/api/stores/${dStore.StoreId}/contract/restart`, {
+                    method: 'POST',
+                    body: JSON.stringify({ contract_end_date: endDate, reason: reason.trim() })
+                });
+            pushToast(data?.message || 'บันทึกสัญญาเรียบร้อยแล้ว');
+            setDialog(null);
+            await loadContracts();
+            if (reloadStores) await reloadStores();
+        }
+        catch (err) {
+            setFormError(err.message);
+        }
+        finally {
+            setSaving(false);
+        }
+    };
+
+    const openHistory = async (store) => {
+        setHistoryStore(store);
+        setHistory([]);
+        setHistoryLoading(true);
+        try {
+            const data = await callApi(`${API}/api/stores/${store.StoreId}/contract-history`);
+            setHistory(Array.isArray(data) ? data : []);
+        }
+        catch (err) {
+            pushToast(err.message, 'error');
+        }
+        finally {
+            setHistoryLoading(false);
+        }
+    };
+
+    // ---------- ส่วนแสดงผล ----------
+    const pill = (info) => (
+      <span style={{ display: 'inline-flex', padding: '6px 10px', borderRadius: '999px', background: info.bg, color: info.color, fontSize: '11.5px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+        {info.label}
+      </span>
+    );
+    const quickChip = (label, value) => (
+      <button key={label} type="button" onClick={() => { setEndDate(value); setFormError(''); }} style={{
+            border: `1px solid ${endDate === value ? T.primary : T.line}`,
+            background: endDate === value ? T.primarySoft : T.surface,
+            color: endDate === value ? T.primaryDark : T.text,
+            borderRadius: '999px', padding: '7px 12px', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', fontFamily: FONT_STACK
+        }}>{label}</button>
+    );
+    const rangeBox = (label, start, end, tone) => (
+      <div style={{ flex: 1, minWidth: '200px', padding: '13px 15px', borderRadius: T.radiusMd, border: `1px solid ${tone === 'danger' ? T.down : tone === 'new' ? T.primary : T.line}`, background: tone === 'danger' ? T.redSoft : tone === 'new' ? T.primarySoft : '#FAFBFD' }}>
+        <div style={{ fontSize: '12px', color: T.muted, marginBottom: '5px' }}>{label}</div>
+        <div style={{ fontSize: '15.5px', fontWeight: 700, color: T.ink }}>
+          {start} <span style={{ color: T.muted, padding: '0 6px' }}>→</span> {end || '—'}
+        </div>
+        <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '4px' }}>มีผลถึง 23:59:59 น. ของวันสิ้นสุด</div>
+      </div>
+    );
 
     return (<>
       {focusedStore && (
         <div style={{ marginBottom: '16px', padding: '12px 14px', border: `1px solid ${T.primary}`, borderRadius: T.radiusMd, background: T.primarySoft, display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <div>
             <strong style={{ color: T.primaryDark }}>กำลังดูสัญญาร้าน {focusedStore.StoreName}</strong>
-            <div style={{ ...captionStyle, marginTop: '3px' }}>เปิดมาจากหน้ารายละเอียดยอดขายของร้านนี้</div>
+            <div style={{ ...captionStyle, marginTop: '3px' }}>เปิดมาจากหน้าอื่นของระบบ</div>
           </div>
-          <Button tone="secondary" onClick={clearFocusStore}>ดูสัญญาทุกร้าน</Button>
+          <Button variant="ghost" onClick={clearFocusStore}>ดูสัญญาทุกร้าน</Button>
         </div>
       )}
-      <div style={{display: 'grid',gridTemplateColumns: 'repeat(auto-fit, minmax(min(190px, 100%), 1fr))',gap: '16px',marginBottom: '16px'}}>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(190px, 100%), 1fr))', gap: '16px', marginBottom: '16px' }}>
         {[
-            ['สัญญาปกติ', active, T.greenSoft, T.up],
-            ['ใกล้หมดอายุ ≤ 30 วัน', soon, T.accentSoft, T.accentDark],
-            ['หมดอายุแล้ว', expired, T.redSoft, T.down],
-            ['ยังไม่ระบุสัญญา', missing, '#F2F3F7', T.muted]
+            ['สัญญาปกติ', countOf('active'), T.greenSoft, T.up],
+            ['ใกล้หมด ≤ 30 วัน', countOf('soon'), T.accentSoft, T.accentDark],
+            ['หมดสัญญา', countOf('expired'), T.redSoft, T.down],
+            ['ยังไม่เริ่ม / ไม่ระบุ', countOf('upcoming') + countOf('missing'), '#F2F3F7', T.muted]
         ].map(([label, value, bg, color]) => (
           <Card key={label} style={{ padding: '18px 20px' }}>
             <div style={{ fontSize: '12.5px', color: T.muted, fontWeight: 600 }}>{label}</div>
@@ -4759,9 +4716,9 @@ const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate)
         <div style={{ ...toolbarStyle, gap: '12px', alignItems: 'center' }}>
           <div>
             <h3 style={h3Style}>สัญญาร้านค้า</h3>
-            <p style={captionStyle}>ระบบจะจัดสถานะใกล้หมดอายุเมื่อเหลือเวลาไม่เกิน 30 วัน</p>
+            <p style={captionStyle}>สัญญามีผลถึง 23:59:59 น. ของวันสิ้นสุด · หมดแล้วบัญชีร้านทุกบัญชีถูกล็อกอัตโนมัติ · เอกสารสัญญาจัดการนอกระบบ</p>
           </div>
-          <Button icon="refresh" tone="secondary" onClick={loadContracts} disabled={loadingContracts}>
+          <Button icon="refresh" variant="ghost" onClick={loadContracts} disabled={loadingContracts}>
             {loadingContracts ? 'กำลังโหลด...' : 'รีเฟรช'}
           </Button>
         </div>
@@ -4771,11 +4728,7 @@ const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate)
                 border: `1px solid ${statusFilter === id ? T.primary : T.line}`,
                 background: statusFilter === id ? T.primarySoft : T.surface,
                 color: statusFilter === id ? T.primaryDark : T.text,
-                borderRadius: '999px',
-                padding: '9px 13px',
-                fontSize: '12.5px',
-                fontWeight: 600,
-                cursor: 'pointer'
+                borderRadius: '999px', padding: '9px 13px', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', fontFamily: FONT_STACK
             }}>{label}</button>
           ))}
         </div>
@@ -4784,217 +4737,174 @@ const renewNewStart = renewStore ? (dateOnly(renewStore.ContractEndDate)
       <Card>
         {loadError ? (
           <div style={{ padding: '24px', color: T.down, background: T.redSoft, borderRadius: T.radiusMd }}>{loadError}</div>
-        ) : loadingContracts ? (
-          <div style={{ padding: '48px 20px', textAlign: 'center', color: T.muted }}>กำลังโหลดข้อมูลสัญญา...</div>
+        ) : loadingContracts && !stores.length ? (
+          <EmptyState text="กำลังโหลดข้อมูลสัญญา..."/>
         ) : filtered.length === 0 ? (
-          <div style={{ padding: '48px 20px', textAlign: 'center', color: T.muted }}>ไม่พบข้อมูลสัญญาตามเงื่อนไขที่เลือก</div>
+          <EmptyState text="ไม่พบข้อมูลสัญญาตามเงื่อนไขที่เลือก"/>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableStyle, minWidth: '850px' }}>
+            <table style={{ ...tableStyle, minWidth: '880px' }}>
               <thead>
                 <tr>
                   <th style={thStyle}>ร้านค้า</th>
-                  <th style={{ ...thStyle, width: '245px' }}>ช่วงสัญญาปัจจุบัน</th>
-                  <th style={{ ...thStyle, width: '150px' }}>ระยะเวลาคงเหลือ</th>
-                  <th style={{ ...thStyle, width: '145px' }}>สถานะสัญญา</th>
-                  <th style={{ ...thStyle, width: '245px', textAlign: 'right' }}>จัดการ</th>
+                  <th style={{ ...thStyle, width: '230px' }}>ช่วงสัญญา</th>
+                  <th style={{ ...thStyle, width: '150px' }}>คงเหลือ</th>
+                  <th style={{ ...thStyle, width: '170px' }}>สถานะสัญญา</th>
+                  <th style={{ ...thStyle, width: '250px', textAlign: 'right' }}>จัดการ</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((store) => (
+                {filtered.map((store) => {
+                    const key = store.contract.key;
+                    return (
                   <tr key={store.StoreId} style={trStyle}>
                     <td style={tdStyle}>
                       <div style={{ fontWeight: 700, color: T.ink }}>{store.StoreName}</div>
-                      <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>Store ID #{store.StoreId}</div>
+                      <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>รหัสร้าน #{store.StoreId}</div>
                     </td>
-                   
                     <td style={tdStyle}>
-                      <div style={{ display:'flex', alignItems:'center', gap:'7px', flexWrap:'wrap' }}>
-                        <span style={{ fontWeight:700, color:T.ink }}>
-                          {formatContractDate(store.CurrentContractStartDate || store.ContractStartDate)}
-                        </span>
-                        <span style={{ color:T.muted }}>-</span>
-                        <span style={{ fontWeight:700, color:T.ink }}>
-                          {formatContractDate(store.ContractEndDate)}
-                        </span>
-
+                      <div style={{ fontWeight: 700, color: T.ink, whiteSpace: 'nowrap' }}>
+                        {fmt(store.ContractStartDate)} <span style={{ color: T.muted, padding: '0 4px' }}>→</span> {fmt(store.ContractEndDate)}
                       </div>
+                      {store.ContractEndDate && <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>สิ้นสุด 23:59:59 น.</div>}
                     </td>
                     <td style={tdStyle}>
-                     {store.contract.key === 'upcoming'
-                        ? `เริ่มใน ${store.contract.daysUntilStart} วัน`
-                        : store.contract.days === null
-                            ? '—'
-                            : store.contract.days < 0
-                                ? `เกินมา ${Math.abs(store.contract.days)} วัน`
-                                : store.contract.days === 0
-                                    ? 'หมดอายุวันนี้'
-                                    : `${store.contract.days} วัน`}
+                      <div style={{ color: key === 'expired' ? T.down : T.text, fontWeight: key === 'expired' ? 700 : 500 }}>{remainingText(store)}</div>
+                      {key === 'expired' && store.AutoDeleteInDays !== null && store.AutoDeleteInDays !== undefined && (
+                        <div style={{ fontSize: '11.5px', color: T.muted, marginTop: '3px' }}>ลบอัตโนมัติใน {Math.max(0, store.AutoDeleteInDays)} วัน</div>
+                      )}
                     </td>
                     <td style={tdStyle}>
-                      <span style={{display: 'inline-flex',padding: '6px 10px',borderRadius: '999px',background:store.contract.bg,color:store.contract.color,fontSize: '11.5px',fontWeight:700,whiteSpace: 'nowrap'}}>{store.contract.label}</span>
+                      {pill(store.contract)}
+                      {Number(store.OpenOrderCount || 0) > 0 && key === 'expired' && (
+                        <div style={{ fontSize: '11.5px', color: T.accentDark, marginTop: '5px', fontWeight: 600 }}>ออเดอร์ค้าง {store.OpenOrderCount} รายการ</div>
+                      )}
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
-                        <Button tone="secondary" onClick={() => openRenew(store)}>ต่อสัญญา</Button>
-                        {store.contract.key === 'expired' && (
-                          store.IsSuspended ? (
-                            <Badge tone="danger">ระงับสิทธิ์แล้ว</Badge>
-                          ) : (
-                            <Button tone="danger" icon="ban" onClick={() => suspendExpiredStore(store)}>
-                              ไม่ต่อ / ระงับสิทธิ์
-                            </Button>
-                          )
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
+                        {key === 'expired' ? (
+                          <Button variant="danger" icon="ban" onClick={() => openRestart(store)} style={smallBtn} title="ร้านนี้ต่อสัญญาภายนอกแล้ว? กดเพื่อเปิดสัญญารอบใหม่">
+                            หมดสัญญา
+                          </Button>
+                        ) : key === 'missing' ? (
+                          <Button variant="soft" icon="plus" onClick={() => openRestart(store)} style={smallBtn}>
+                            กำหนดสัญญา
+                          </Button>
+                        ) : (
+                          <Button variant="soft" icon="edit" onClick={() => openEdit(store)} style={smallBtn}>
+                            แก้วันสิ้นสุด
+                          </Button>
                         )}
+                        <Button variant="ghost" icon="history" onClick={() => openHistory(store)} style={smallBtn}>
+                          ประวัติ
+                        </Button>
                       </div>
                     </td>
-                  </tr>
-                ))}
+                  </tr>);
+                })}
               </tbody>
             </table>
           </div>
         )}
       </Card>
 
-      <Modal open={!!renewStore} title="ต่อสัญญาร้านค้า"
-        subtitle={renewStore ? `ร้าน ${renewStore.StoreName}` : ''}
-        onClose={closeRenew} width="620px">
-        {renewStore && (<div>
-          <div style={{ padding:'14px 16px', border:`1px solid ${T.line}`, borderRadius:T.radiusMd, background:'#FAFBFD', marginBottom:'18px' }}>
-            <div style={{ fontSize:'12px', color:T.muted, marginBottom:'5px' }}>สัญญาปัจจุบันสิ้นสุด (ปี ค.ศ.)</div>
-            <div style={{ fontSize:'18px', fontWeight:700, color:T.ink }}>{formatContractDate(renewStore.ContractEndDate)}</div>
+      {/* ---------- modal แก้วันสิ้นสุด / เปิดสัญญารอบใหม่ ---------- */}
+      <Modal open={Boolean(dialog)} width={620} onClose={closeDialog}
+        title={isEdit ? 'แก้วันสิ้นสุดสัญญา' : (dStore?.ContractState === 'NONE' ? 'กำหนดสัญญาร้าน' : 'เปิดสัญญารอบใหม่')}
+        subtitle={dStore ? `ร้าน ${dStore.StoreName}` : ''}
+        footer={<>
+          <Button variant="ghost" onClick={closeDialog} disabled={saving}>ยกเลิก</Button>
+          <Button icon="check" variant={isBackdate ? 'danger' : 'primary'} onClick={submit} disabled={saving || !endDate || !reasonOk}>
+            {saving ? 'กำลังบันทึก...' : isEdit ? (isBackdate ? 'ยืนยันตัดสัญญาย้อนหลัง' : 'บันทึกวันสิ้นสุดใหม่') : 'เปิดสัญญารอบใหม่'}
+          </Button>
+        </>}>
+        {dStore && (<div>
+          {!isEdit && dStore.ContractState === 'EXPIRED' && (
+            <div style={{ padding: '12px 14px', borderRadius: T.radiusMd, background: T.redSoft, color: T.down, fontSize: '12.5px', lineHeight: 1.6, marginBottom: '14px' }}>
+              สัญญาเดิมหมดเมื่อ {oldEnd} 23:59:59 น. บัญชีร้านถูกล็อกอยู่ — ใช้ปุ่มนี้เมื่อร้านต่อสัญญากับศูนย์อาหารภายนอกแล้วเท่านั้น
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '16px' }}>
+            {dStore.ContractEndDate && rangeBox(isEdit ? 'สัญญาปัจจุบัน' : 'สัญญาเดิม', fmt(dStore.ContractStartDate), oldEnd, 'old')}
+            {rangeBox(isEdit ? 'หลังแก้ไข' : 'สัญญารอบใหม่', dStart, endDate, isBackdate ? 'danger' : 'new')}
           </div>
 
-          <Field
-    label="วันที่เริ่มสัญญาใหม่ (ปี ค.ศ.)"
-    required
-    hint={renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO())
-    ? 'สัญญาเดิมยังมีผล ระยะที่ต่อเพิ่มจะเริ่มวันถัดจากวันสิ้นสุดสัญญาเดิมอัตโนมัติ'
-    : 'สัญญาเดิมหมดอายุแล้ว สามารถเลือกเริ่มสัญญาใหม่ตั้งแต่วันนี้หรือกำหนดวันล่วงหน้าได้'}
->
-    <input
-        type="date"
-        value={renewStart}
-       min={renewStore ? defaultRenewStart(renewStore) : todayISO()}
-       disabled={
-        renewStore &&
-        dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO())
-    }
-        onChange={(e) => {
-            setRenewStart(e.target.value);
-            setRenewCustomEnd('');
-            setRenewError('');
-        }}
-        style={{ ...formDateInputStyle, background: renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO()) ? '#F6F7FB' : '#FFFFFF',
-             cursor: renewStore && dateOnly(renewStore.ContractEndDate) >= dateOnly(todayISO()) ? 'not-allowed' : 'pointer' }}
-    />
-</Field>
+          <Field label="วันสิ้นสุดสัญญาใหม่ (ปี ค.ศ.)" required
+            hint={isEdit ? 'วันเริ่มสัญญาคงเดิม แก้ได้เฉพาะวันสิ้นสุด' : `เริ่มวันนี้ (${today}) ค่าเริ่มต้น 1 ปี ปรับวันสิ้นสุดตามเอกสารจริงได้`}>
+            <input type="date" value={endDate} min={isEdit ? undefined : today}
+              onChange={(e) => { setEndDate(e.target.value); setFormError(''); setAckBackdate(false); }}
+              style={formDateInputStyle}/>
+          </Field>
+          <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', margin: '-4px 0 16px' }}>
+            {isEdit
+                ? [quickChip('+6 เดือน', addMonthsToISO(oldEnd, 6)), quickChip('+1 ปี', addMonthsToISO(oldEnd, 12)), quickChip('คืนค่าเดิม', oldEnd)]
+                : [quickChip('6 เดือน', minusOneDayISO(addMonthsToISO(today, 6))), quickChip('1 ปี', addYearsMinusOneDayISO(today, 1)), quickChip('2 ปี', addYearsMinusOneDayISO(today, 2))]}
+          </div>
 
-<div style={{ height: '14px' }} />
-          <Field label="ระยะเวลาที่ต้องการต่อ" required>
-            <select value={renewDuration} onChange={(e) => { setRenewDuration(e.target.value); setRenewCustomEnd(''); setRenewError(''); }} style={inputStyle}>
-              <option value="6m">6 เดือน</option>
-              <option value="1y">1 ปี</option>
-              <option value="2y">2 ปี</option>
-              <option value="3y">3 ปี</option>
-              <option value="custom">กำหนดวันสิ้นสุดเอง</option>
-            </select>
+          <Field label="เหตุผล / อ้างอิงเอกสาร" required
+            hint={`บันทึกเป็นหลักฐานพร้อมชื่อผู้แก้และเวลา แก้ภายหลังไม่ได้ (${reason.trim().length}/255)`}>
+            <textarea value={reason} rows={3} maxLength={255}
+              onChange={(e) => { setReason(e.target.value); setFormError(''); }}
+              placeholder={isEdit ? 'เช่น ต่อสัญญาตามหนังสือเลขที่ 12/2569 ลงวันที่ 1 ต.ค. 2569' : 'เช่น ชนะประมูลรอบปี 2570 ตามประกาศเลขที่ 3/2569'}
+              style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_STACK }}/>
           </Field>
 
-          <div style={{ marginTop:'14px' }}>
-    <Field
-        label="วันที่สิ้นสุดสัญญาใหม่ (ปี ค.ศ.)"
-        required
-        hint={
-            renewDuration === 'custom'
-                ? 'เลือกวันสิ้นสุดสัญญาได้เอง'
-                : 'คำนวณอัตโนมัติตามวันที่เริ่มและระยะเวลาที่เลือก'
-        }
-    >
-        <input
-            type="date"
-            value={renewNewEnd}
-            min={renewStart || todayISO()}
-            disabled={renewDuration !== 'custom'}
-            onChange={(e) => {
-                setRenewCustomEnd(e.target.value);
-                setRenewError('');
-            }}
-            style={{
-                ...formDateInputStyle,
-                background:
-                    renewDuration !== 'custom'
-                        ? '#F6F7FB'
-                        : '#FFFFFF',
-                cursor:
-                    renewDuration !== 'custom'
-                        ? 'not-allowed'
-                        : 'pointer'
-            }}
-        />
-    </Field>
-</div>
-
-          {renewNewEnd && (
-            <div style={{ marginTop:'16px', padding:'15px 16px', borderRadius:T.radiusMd, background:T.accentSoft, border:`1px solid ${T.accentBorder || '#FFD6C9'}` }}>
-              <div style={{ fontSize:'12px', color:T.muted, marginBottom:'6px' }}>ช่วงสัญญาใหม่</div>
-              <div style={{ fontSize:'17px', fontWeight:800, color:T.ink }}>
-                {formatContractDate(renewNewStart)} <span style={{ color:T.muted, padding:'0 7px' }}>-</span> {formatContractDate(renewNewEnd)}
+          {isBackdate && (
+            <div style={{ padding: '13px 15px', borderRadius: T.radiusMd, background: T.redSoft, border: `1px solid ${T.down}33`, marginBottom: '6px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 800, color: T.down, marginBottom: '4px' }}>วันสิ้นสุดอยู่ก่อนวันนี้ = ร้านหมดสัญญาทันที</div>
+              <div style={{ fontSize: '12px', color: T.text, lineHeight: 1.6 }}>
+                ร้านจะถูกปิดและบัญชีร้านทุกบัญชีเข้าสู่ระบบไม่ได้ทันทีหลังบันทึก ออเดอร์และยอดขายเดิมยังอยู่ครบ
+                {Number(dStore.OpenOrderCount || 0) > 0 && <b> · ตอนนี้ยังมีออเดอร์ค้าง {dStore.OpenOrderCount} รายการ ระบบจะไม่ให้บันทึก</b>}
               </div>
-              <div style={{ fontSize:'12px', color:T.muted, marginTop:'6px' }}>
-                ตรวจสอบวันที่เริ่มและสิ้นสุดสัญญาให้ถูกต้องก่อนยืนยัน
-              </div>
-            </div>
-          )}
-
-          {Boolean ( renewStore.IsSuspended) && (
-            <div style={{ marginTop:'16px', padding:'15px 16px', border:`1px solid ${T.line}`, borderRadius:T.radiusMd, background:'#FFF' }}>
-              <div style={{ fontSize:'13px', fontWeight:800, color:T.ink, marginBottom:'5px' }}>ร้านนี้ถูกระงับสิทธิ์อยู่</div>
-              <div style={{ fontSize:'12px', color:T.muted, marginBottom:'12px' }}>เลือกสถานะร้านหลังจากต่อสัญญาสำเร็จ</div>
-
-              <label style={{ display:'flex', gap:'10px', alignItems:'flex-start', padding:'11px 12px', border:`1px solid ${renewAction === 'renew_unsuspend' ? T.accent : T.line}`, borderRadius:T.radiusMd, cursor:'pointer', marginBottom:'8px', background:renewAction === 'renew_unsuspend' ? T.accentSoft : '#FFF' }}>
-                <input
-                  type="radio"
-                  name="renewAction"
-                  checked={renewAction === 'renew_unsuspend'}
-                  onChange={() => setRenewAction('renew_unsuspend')}
-                  style={{ marginTop:'3px' }}
-                />
-                <span>
-                  <span style={{ display:'block', fontSize:'13px', fontWeight:700, color:T.ink }}>ต่อสัญญาและปลดระงับสิทธิ์</span>
-                  <span style={{ display:'block', fontSize:'11.5px', color:T.muted, marginTop:'2px' }}>ร้านจะกลับมาเป็นสิทธิ์ปกติหลังต่อสัญญา</span>
-                </span>
-              </label>
-
-              <label style={{ display:'flex', gap:'10px', alignItems:'flex-start', padding:'11px 12px', border:`1px solid ${renewAction === 'renew_only' ? T.accent : T.line}`, borderRadius:T.radiusMd, cursor:'pointer', background:renewAction === 'renew_only' ? T.accentSoft : '#FFF' }}>
-                <input
-                  type="radio"
-                  name="renewAction"
-                  checked={renewAction === 'renew_only'}
-                  onChange={() => setRenewAction('renew_only')}
-                  style={{ marginTop:'3px' }}
-                />
-                <span>
-                  <span style={{ display:'block', fontSize:'13px', fontWeight:700, color:T.ink }}>ต่อสัญญาอย่างเดียว</span>
-                  <span style={{ display:'block', fontSize:'11.5px', color:T.muted, marginTop:'2px' }}>ร้านจะยังคงถูกระงับสิทธิ์จนกว่าจะปลดระงับภายหลัง</span>
-                </span>
+              <label style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px', fontSize: '12.5px', fontWeight: 600, color: T.ink, cursor: 'pointer' }}>
+                <input type="checkbox" checked={ackBackdate} onChange={(e) => { setAckBackdate(e.target.checked); setFormError(''); }}/>
+                เข้าใจแล้ว ต้องการตัดสัญญาย้อนหลัง
               </label>
             </div>
           )}
 
-          {renewError && (
-            <div style={{ marginTop:'12px', padding:'10px 12px', borderRadius:T.radiusMd, background:T.redSoft, color:T.down, fontSize:'12.5px' }}>
-              {renewError}
+          {formError && (
+            <div style={{ marginTop: '10px', padding: '10px 12px', borderRadius: T.radiusMd, background: T.redSoft, color: T.down, fontSize: '12.5px', fontWeight: 600 }}>
+              {formError}
             </div>
           )}
-
-          <div style={{ display:'flex', justifyContent:'flex-end', gap:'9px', marginTop:'22px', paddingTop:'16px', borderTop:`1px solid ${T.line}` }}>
-            <Button tone="secondary" onClick={closeRenew} disabled={renewSaving}>ยกเลิก</Button>
-            <Button onClick={submitRenew} disabled={renewSaving || !renewNewEnd}>
-              {renewSaving ? 'กำลังต่อสัญญา...' : 'ยืนยันต่อสัญญา'}
-            </Button>
-          </div>
         </div>)}
+      </Modal>
+
+      {/* ---------- modal ประวัติสัญญา ---------- */}
+      <Modal open={Boolean(historyStore)} width={680} onClose={() => setHistoryStore(null)}
+        title="ประวัติสัญญา" subtitle={historyStore ? `ร้าน ${historyStore.StoreName} · บันทึกทุกครั้งที่มีการกำหนดหรือแก้วันสัญญา` : ''}>
+        {historyLoading ? (
+          <EmptyState text="กำลังโหลดประวัติ..." minHeight="140px"/>
+        ) : history.length === 0 ? (
+          <EmptyState text="ยังไม่มีประวัติการแก้สัญญา" minHeight="140px"/>
+        ) : (
+          <div style={{ display: 'grid', gap: '10px' }}>
+            {history.map((h) => {
+                const oldV = h.OldValue || {};
+                const newV = h.NewValue || {};
+                const danger = ['CONTRACT_END_BACKDATED', 'AUTO_DELETE_STORE', 'DELETE_STORE'].includes(h.ActionCode);
+                return (
+              <div key={h.AuditLogId} style={{ padding: '13px 15px', border: `1px solid ${T.line}`, borderLeft: `4px solid ${danger ? T.down : T.primary}`, borderRadius: T.radiusMd, background: T.surface }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <Badge tone={danger ? 'danger' : 'ok'}>{CONTRACT_ACTION_LABEL[h.ActionCode] || h.ActionCode}</Badge>
+                  <span style={{ fontSize: '12px', color: T.muted }}>{thaiDateTime(h.CreatedAt)}</span>
+                </div>
+                {(oldV.end || newV.end) && (
+                  <div style={{ marginTop: '9px', fontSize: '13.5px', color: T.ink, fontWeight: 600 }}>
+                    {oldV.end ? `${fmt(oldV.start)} → ${fmt(oldV.end)}` : '—'}
+                    {newV.end && <><span style={{ color: T.muted, padding: '0 8px' }}>เป็น</span>{fmt(newV.start)} → {fmt(newV.end)}</>}
+                  </div>
+                )}
+                {newV.reason && <div style={{ marginTop: '6px', fontSize: '12.5px', color: T.text }}>เหตุผล: {newV.reason}</div>}
+                <div style={{ marginTop: '6px', fontSize: '12px', color: T.muted }}>
+                  โดย {h.PerformedByName ? `${h.PerformedByName} (${h.PerformedByUsername})` : 'ระบบอัตโนมัติ'}
+                </div>
+              </div>);
+            })}
+          </div>
+        )}
       </Modal>
     </>);
 }
@@ -5055,6 +4965,11 @@ function AuditHistoryPage({ ctx }) {
             SUSPEND_STORE: 'SUSPEND STORE',
             UNSUSPEND_STORE: 'UNSUSPEND STORE',
             RENEW_CONTRACT: 'RENEW CONTRACT',
+            CONTRACT_EXTEND: 'EXTEND CONTRACT END DATE',
+            CONTRACT_SHORTEN: 'SHORTEN CONTRACT END DATE',
+            CONTRACT_END_BACKDATED: 'END CONTRACT (BACKDATED)',
+            CONTRACT_RESTART: 'START NEW CONTRACT',
+            AUTO_DELETE_STORE: 'AUTO DELETE EXPIRED STORE',
             OPEN_FOOD_COURT: 'OPEN FOOD COURT',
             UPDATE_FOOD_COURT_SCHEDULE: 'UPDATE FOOD COURT SCHEDULE',
             FOOD_COURT_AUTO_MODE: 'RESTORE AUTOMATIC MODE',

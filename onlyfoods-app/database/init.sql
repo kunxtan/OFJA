@@ -163,6 +163,10 @@ CREATE TABLE `User` (
 
 -- 1 : 1 with Store (UNIQUE on StoreId) - a store holds at most one contract row.
 -- Renewing = UPDATE this row (keep the old values in AuditLog.OldValue).
+-- Valid from StartDate 00:00:00 to EndDate 23:59:59 (Asia/Bangkok). State is DERIVED from
+-- the dates in code (NONE/UPCOMING/ACTIVE/EXPIRED); ContractStatus is informational only.
+-- Every date change writes AuditLog (CONTRACT_EXTEND / CONTRACT_SHORTEN /
+-- CONTRACT_END_BACKDATED / CONTRACT_RESTART) with old/new dates + reason.
 CREATE TABLE StoreContract (
   ContractId     INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   StoreId        INT UNSIGNED  NOT NULL,
@@ -221,7 +225,7 @@ CREATE TABLE Product (
 --   PENDING              -> COOKING | PENDING_CANCELLATION
 --   COOKING              -> COOKED  | PENDING_CANCELLATION
 --   COOKED               -> READY
---   READY                -> COMPLETED | NO_SHOW   (NO_SHOW >= 30 min after ReadyAt and after CustomerEtaAt,
+--   READY                -> COMPLETED | NO_SHOW   (NO_SHOW >= 30 min after ReadyAt and after LatePickupArrivalTime,
 --                                                  staff press it by hand)
 --   PENDING_CANCELLATION -> PENDING | AWAITING_TOP_UP | CANCELLED
 --   AWAITING_TOP_UP      -> PENDING | CANCELLED   (swapped to a pricier item: the
@@ -240,8 +244,9 @@ CREATE TABLE `Order` (
   PickupTime        DATETIME          NULL COMMENT 'customer-requested pickup time',
   ReadyAt           DATETIME          NULL COMMENT 'set when status becomes READY; no-show clock starts here',
   PickupReminderAt  DATETIME          NULL COMMENT 'when the customer was auto-reminded to pick up (15 min after ReadyAt); NULL = not yet',
-  CustomerEtaAt     DATETIME          NULL COMMENT 'customer said they will pick up by this time (latest wins); no auto reminder, no-show locked until then',
-  EtaUpdateCount    TINYINT UNSIGNED  NOT NULL DEFAULT 0 COMMENT 'how many times the customer set CustomerEtaAt (max 3, enforced in code)',
+  LatePickupArrivalTime DATETIME      NULL COMMENT 'customer told the store they will arrive by this time (latest wins); no auto reminder, no-show locked until then',
+  LatePickupMinutes SMALLINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'minutes chosen in the latest late-pickup notice',
+  LatePickupCount   TINYINT UNSIGNED  NOT NULL DEFAULT 0 COMMENT 'how many times the customer sent a late-pickup notice (max 3, enforced in code)',
   CancelReason      VARCHAR(255)      NULL,
   CancelDeadline    DATETIME          NULL COMMENT 'after this, customer self-cancel is refused',
   CreatedAt         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -352,7 +357,7 @@ CREATE TABLE PrintJob (
   PrintJobId    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   OrderId       BIGINT UNSIGNED NOT NULL,
   PrintType     ENUM('KITCHEN','CUSTOMER','REPRINT') NOT NULL DEFAULT 'CUSTOMER',
-  PrintStatus   ENUM('QUEUED','PRINTED','FAILED')    NOT NULL DEFAULT 'QUEUED',
+  PrintStatus   ENUM('QUEUED','PRINTED','FAILED','SKIPPED') NOT NULL DEFAULT 'QUEUED',
   PrinterName   VARCHAR(100)    NULL,
   PrinterStatus ENUM('READY','OFFLINE')              NULL,
   ItemsSnapshot JSON            NULL,
@@ -638,8 +643,8 @@ SELECT
   DATEDIFF(sc.EndDate, CURDATE()) AS DaysLeft
 FROM StoreContract sc
 JOIN Store s ON s.StoreId = sc.StoreId
-WHERE sc.ContractStatus IN ('ACTIVE', 'EXPIRING')
-  AND sc.EndDate <= DATE_ADD(CURDATE(), INTERVAL 30 DAY);
+WHERE s.IsDeleted = FALSE
+  AND sc.EndDate BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY);
 
 -- =====================================================================
 --  End of schema. 22 tables + 4 views.

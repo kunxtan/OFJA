@@ -1,9 +1,9 @@
 """SQL ที่ใช้ร่วมกัน + แปลงแถวจาก DB เป็นรูปแบบเดียวกับ API เดิม (frontend ยังอ่านชื่อฟิลด์เดิมได้)"""
 from typing import Dict, Iterable, List
 
+import config
 from state import legacy_role, legacy_status
-from config import MAX_PICKUP_ETA_UPDATES
-from utils import queue_label
+from utils import CONTRACT_ACTIVE, CONTRACT_EXPIRED, bangkok_now, contract_state, queue_label
 
 USER_SELECT = """
 SELECT u.UserId, u.Username, u.FullName, u.Phone, u.Email,
@@ -26,16 +26,46 @@ SELECT s.StoreId, s.StoreName, sc.CategoryName AS Category, s.StoreCategoryId, s
        s.ContactName, s.ContactPhone, s.ContactLine, s.ContactEmail,
        s.IsDeleted, s.DeletedAt, s.CreatedAt,
        c.StartDate AS ContractStartDate, c.StartDate AS CurrentContractStartDate,
-       c.EndDate AS ContractEndDate, c.ContractStatus
+              c.EndDate AS ContractEndDate, c.ContractStatus,
+       (SELECT COUNT(*) FROM `Order` oo JOIN OrderStatus oos ON oos.StatusId = oo.StatusId
+        WHERE oo.StoreId = s.StoreId AND oos.IsTerminal = FALSE) AS OpenOrderCount
 FROM Store s
 JOIN StoreCategory sc ON sc.StoreCategoryId = s.StoreCategoryId
 LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
 """
 
+
+def shape_store(row: dict, today=None) -> dict:
+    """เติมสถานะสัญญาที่คำนวณจากวันที่ + IsOpen ที่ "ใช้ได้จริง"
+
+    - ContractState : NONE / UPCOMING / ACTIVE / EXPIRED
+    - ContractDaysLeft : วันที่เหลือถึงวันสิ้นสุด (0 = หมดคืนนี้ 23:59:59, ติดลบ = หมดมาแล้ว)
+    - IsOpenSetting : ค่าที่ร้านกดเปิด/ปิดไว้จริงใน DB
+    - IsOpen : เปิดจริงก็ต่อเมื่อร้านกดเปิด และสัญญายังมีผล (frontend ทุกบทบาทอ่านค่านี้ได้เลย)
+    """
+    row = dict(row)
+    today = today or bangkok_now().date()
+    state = contract_state(row.get("ContractStartDate"), row.get("ContractEndDate"), today)
+    end = row.get("ContractEndDate")
+    row["ContractState"] = state
+    row["ContractDaysLeft"] = (end - today).days if end else None
+    row["IsContractActive"] = state == CONTRACT_ACTIVE
+    row["OpenOrderCount"] = int(row.get("OpenOrderCount") or 0)
+    # หมดสัญญาเมื่อวาน + ยังมีออเดอร์ค้าง = บัญชีร้านยังเข้าได้เพื่อเคลียร์ออเดอร์ถึง 23:59:59 วันนี้ (ดู auth.py)
+    row["IsClearingOrders"] = (state == CONTRACT_EXPIRED and row["ContractDaysLeft"] == -1
+                               and row["OpenOrderCount"] > 0)
+    # อีกกี่วันร้านที่หมดสัญญาจะถูกลบอัตโนมัติ (services.purge_expired_stores)
+    row["AutoDeleteInDays"] = (config.CONTRACT_PURGE_AFTER_DAYS + row["ContractDaysLeft"] + 1
+                               if state == CONTRACT_EXPIRED else None)
+    row["IsOpenSetting"] = bool(row.get("IsOpen"))
+    row["IsOpen"] = bool(row.get("IsOpen")) and state == CONTRACT_ACTIVE
+    return row
+
 ORDER_SELECT = """
 SELECT o.OrderId AS OrderID, o.OrderId, o.StoreId, o.CustomerId AS UserId, o.CustomerId,
        o.CreatedByStaffId, o.QueueNo, o.TotalAmount, os.StatusCode, os.StatusNameTh,
-       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CustomerEtaAt, o.EtaUpdateCount, o.CancelReason, o.CancelDeadline,
+       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CancelReason, o.CancelDeadline,
+       o.LatePickupCount, o.LatePickupMinutes, o.LatePickupArrivalTime,
        s.StoreName, s.QueueCode, u.FullName AS CustomerName, u.Username AS UserName,
        u.Phone AS CustomerPhone, u.Email AS CustomerEmail,
        pm.MethodCode AS PaymentMethodCode, pm.MethodNameTh AS PaymentMethod,
@@ -60,14 +90,19 @@ def shape_order(row: dict) -> dict:
     row = dict(row)
     row["QueueNo"] = queue_label(row["QueueNo"], row.get("QueueCode"))
     row["Status"] = legacy_status(row["StatusCode"])
-    if "EtaUpdateCount" in row:  # ลูกค้าแจ้งมารับช้าได้อีกกี่ครั้ง (ใช้ในหน้าลูกค้า)
-        row["EtaUpdatesLeft"] = max(0, MAX_PICKUP_ETA_UPDATES - int(row["EtaUpdateCount"] or 0))
     row["TopUpAmount"] = float(row["TopUpAmount"]) if row.get("TopUpAmount") is not None else None
     created = row.get("CreatedAt")
     row["OrderTime"] = created.strftime("%Y-%m-%d %H:%M:%S") if created else None
     pickup = row.get("PickupTime")
     row["PickupTime"] = f"{pickup.strftime('%H:%M')} น." if pickup else None
     row["IsReviewed"] = bool(row.get("IsReviewed"))
+    late_arrival = row.get("LatePickupArrivalTime")
+    row["LatePickupArrivalTime"] = (
+        late_arrival.strftime("%Y-%m-%d %H:%M:%S")
+        if late_arrival else None
+    )
+    row["LatePickupCount"] = int(row.get("LatePickupCount") or 0)
+    row["LatePickupMinutes"] = int(row.get("LatePickupMinutes") or 0)
     return row
 
 

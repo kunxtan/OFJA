@@ -113,9 +113,16 @@ class StoreFullSchema(BaseModel):
     owner_password: Optional[str] = None
 
 
-class RenewContractSchema(BaseModel):
-    contract_start_date: str
+class ContractEndUpdateSchema(BaseModel):
+    """แก้วันสิ้นสุดสัญญา (เฉพาะร้านที่สัญญายังไม่หมด) ต้องมีเหตุผลทุกครั้ง"""
     contract_end_date: str
+    reason: str = Field(min_length=1, max_length=255)
+
+
+class ContractRestartSchema(BaseModel):
+    """ร้านหมดสัญญา/ยังไม่มีสัญญา -> เปิดสัญญารอบใหม่ เริ่มวันนี้ ไม่ส่งวันสิ้นสุด = 1 ปี"""
+    contract_end_date: Optional[str] = None
+    reason: str = Field(min_length=1, max_length=255)
 
 
 class ProductCreateSchema(BaseModel):
@@ -186,13 +193,13 @@ class CustomerChangeItemSchema(BaseModel):
     new_product_id: int
 
 
+class PrintSkipSchema(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=200)
+
+
 class PrintRequestSchema(BaseModel):
     print_type: str = "FIRST_PRINT"
     printer: str = Field(default="MOCK_PRINTER_01", max_length=100)
-
-
-class PickupEtaSchema(BaseModel):
-    minutes: int  # ต้องเป็นค่าใน config.PICKUP_ETA_CHOICES (ตรวจใน endpoint)
 
 
 class RecallRequestSchema(BaseModel):
@@ -221,3 +228,7 @@ class CreateIssueReportSchema(BaseModel):
 class FoodCourtScheduleSchema(BaseModel):
     open_time: str
     close_time: str
+
+
+class LatePickupSchema(BaseModel):
+    minutes: int  # ต้องเป็นค่าใน config.LATE_PICKUP_CHOICES (ตรวจใน endpoint)

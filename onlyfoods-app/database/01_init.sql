@@ -561,5 +561,5 @@ SELECT
   DATEDIFF(sc.EndDate, CURDATE()) AS DaysLeft
 FROM StoreContract sc
 JOIN Store s ON s.StoreId = sc.StoreId
-WHERE sc.ContractStatus IN ('ACTIVE', 'EXPIRING')
-  AND sc.EndDate <= DATE_ADD(CURDATE(), INTERVAL 30 DAY);
+WHERE s.IsDeleted = FALSE
+  AND sc.EndDate BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY);

@@ -2,7 +2,7 @@
 
 อาหารพร้อมรับ (READY) แล้วลูกค้ายังไม่มาเกิน PICKUP_REMINDER_MINUTES -> ส่งแจ้งเตือนให้ 1 ครั้ง
 (ปุ่ม "ลูกค้าไม่มารับ" ปลดล็อกทีหลังที่ NO_SHOW_AFTER_MINUTES และพนักงานกดเองเสมอ ;
- ลูกค้าที่แจ้งร้านแล้วว่าจะมาช้า (CustomerEtaAt) ไม่ถูกเตือน)
+ ลูกค้าที่แจ้งร้านแล้วว่าจะมาช้า (LatePickupArrivalTime) ไม่ถูกเตือน)
 
 ปลอดภัยเมื่อรันหลาย worker / รีสตาร์ท: ใช้ UPDATE ... WHERE PickupReminderAt IS NULL เป็นตัวจอง
 ใครจองได้ (rowcount = 1) คนนั้นเท่านั้นที่ส่งแจ้งเตือน
@@ -39,7 +39,7 @@ def send_pickup_reminders(db, now: Optional[datetime] = None) -> int:
             JOIN OrderStatus os ON os.StatusId = o.StatusId
             JOIN Store s ON s.StoreId = o.StoreId
             WHERE os.StatusCode = 'READY' AND o.CustomerId IS NOT NULL AND o.PickupReminderAt IS NULL
-              AND o.CustomerEtaAt IS NULL  -- ลูกค้าแจ้งแล้วว่าจะมาช้า: ไม่ต้องเตือน
+              AND o.LatePickupArrivalTime IS NULL  -- ลูกค้าแจ้งแล้วว่าจะมาช้า: ไม่ต้องเตือน
               AND o.ReadyAt <= %s AND o.ReadyAt >= %s
             ORDER BY o.ReadyAt
             LIMIT 200
@@ -57,7 +57,7 @@ def send_pickup_reminders(db, now: Optional[datetime] = None) -> int:
                 cur.execute(
                     """
                     UPDATE `Order` SET PickupReminderAt = %s
-                    WHERE OrderId = %s AND PickupReminderAt IS NULL AND CustomerEtaAt IS NULL
+                    WHERE OrderId = %s AND PickupReminderAt IS NULL AND LatePickupArrivalTime IS NULL
                       AND StatusId = (SELECT StatusId FROM OrderStatus WHERE StatusCode = 'READY')
                     """,
                     (now, o["OrderId"]),

@@ -42,10 +42,14 @@ NO_SHOW_AFTER_MINUTES = _int("NO_SHOW_AFTER_MINUTES", 30)
 # ไม่เตือนออเดอร์ READY ที่ค้างนานกว่านี้ (กันส่งรัวตอน deploy) / ความถี่ในการเช็ค
 PICKUP_REMINDER_MAX_AGE_HOURS = _int("PICKUP_REMINDER_MAX_AGE_HOURS", 3)
 REMINDER_LOOP_SECONDS = _int("REMINDER_LOOP_SECONDS", 30)
-# ลูกค้าแจ้งร้านว่าจะมารับช้า: เลือกได้เฉพาะค่าเหล่านี้ (นาที) และแจ้งได้ไม่เกิน MAX_PICKUP_ETA_UPDATES ครั้ง
+# ลูกค้าแจ้งร้านว่าจะมารับช้า: เลือกได้เฉพาะค่าเหล่านี้ (นาที) และแจ้งได้ไม่เกิน MAX_LATE_PICKUP_UPDATES ครั้ง
 # (ยึดครั้งล่าสุด) ; ระหว่างนั้นปุ่ม "ลูกค้าไม่มารับ" กดไม่ได้จนเลยเวลาที่ลูกค้าแจ้ง และระบบไม่ส่งเตือน 15 นาที
-PICKUP_ETA_CHOICES = (15, 30, 60, 120)
-MAX_PICKUP_ETA_UPDATES = 3
+LATE_PICKUP_CHOICES = (15, 30, 60, 120)
+MAX_LATE_PICKUP_UPDATES = 3
+
+
+# ร้านที่หมดสัญญาแล้วไม่ถูกกด "หมดสัญญา" เพื่อเปิดสัญญารอบใหม่ภายในกี่วัน จะถูกลบ (soft delete) อัตโนมัติ
+CONTRACT_PURGE_AFTER_DAYS = _int("CONTRACT_PURGE_AFTER_DAYS", 90)
 
 
 def require_secrets() -> None:
