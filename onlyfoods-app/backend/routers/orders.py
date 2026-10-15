@@ -573,8 +573,7 @@ def report_late_pickup(order_id: int, payload: LatePickupSchema,
             used = int(order["LatePickupCount"] or 0)
             if used >= config.MAX_LATE_PICKUP_UPDATES:
                 raise DomainError(400, f"คุณแจ้งเวลามารับช้าออเดอร์นี้ครบ {config.MAX_LATE_PICKUP_UPDATES} ครั้งแล้ว กรุณาติดต่อร้าน")
-            base = max(now, order["PickupTime"]) if order.get("PickupTime") else now
-            arrival = (base + timedelta(minutes=payload.minutes)).replace(microsecond=0)
+            arrival = state.late_pickup_arrival(now, order.get("PickupTime"), payload.minutes)
             cur.execute(
                 "UPDATE `Order` SET LatePickupMinutes = %s, LatePickupArrivalTime = %s, "
                 "LatePickupCount = COALESCE(LatePickupCount, 0) + 1 WHERE OrderId = %s",

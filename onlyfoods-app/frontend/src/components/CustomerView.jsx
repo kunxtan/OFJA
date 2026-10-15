@@ -953,6 +953,21 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // LATE PICKUP HANDLER
 
+  // เวลามาถึงที่จะได้ถ้ากดยืนยัน (ตรงกับ backend): นับจากเวลานัดรับ หรือเวลาตอนนี้ถ้าเลยเวลานัดแล้ว + N นาที
+  // แจ้งใหม่ = แทนเวลาเดิม ไม่บวกต่อ (นัด 12:00 กด 15 -> 12:15 ; กด 30 อีกครั้ง -> 12:30)
+  const previewLateArrival = (order, minutes) => {
+    const now = new Date();
+    let base = now;
+    const m = String(order.PickupTime || order.pickup_time || "").match(/(\d{1,2}):(\d{2})/);
+    if (m) {
+      const pickup = new Date(now);
+      pickup.setHours(Number(m[1]), Number(m[2]), 0, 0);
+      if (pickup > now) base = pickup;
+    }
+    const arrival = new Date(base.getTime() + Number(minutes) * 60000);
+    return `${String(arrival.getHours()).padStart(2, "0")}:${String(arrival.getMinutes()).padStart(2, "0")}`;
+  };
+
   const handleLatePickup = async (order, minutes) => {
     const orderId = order.OrderID;
 
@@ -1805,7 +1820,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               ? myIssueReports.find((rep) => Number(rep.order_id || rep.OrderID) === Number(order.OrderID))
               : null;
             const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
-           const canNotifyLatePickup = ["ready", "preparing", "pending"].includes(String(order.Status || "").trim().toLowerCase());
+           const canNotifyLatePickup = ["pending", "cooking", "ready"].includes(String(order.Status || "").trim().toLowerCase());
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
@@ -1881,7 +1896,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       return (
                         <>
                           <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "5px" }}>
-                            แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์
+                            แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์ · แจ้งใหม่จะใช้แทนเวลาเดิม (นับจากเวลานัดรับ)
                           </div>
 
                           {lateInfo.arrivalTime && (
@@ -1929,6 +1944,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               </button>
                             ))}
                           </div>
+                          {lateInfo.count < 3 && (
+                            <div style={{ marginTop: "8px", fontSize: "13px", color: COLORS.navy, fontWeight: "700" }}>
+                              ถ้ายืนยัน: จะมาถึงประมาณ {previewLateArrival(order, selectedMinutes)} น.
+                            </div>
+                          )}
                           <button
                             onClick={() => handleLatePickup(order, selectedMinutes)}
                             disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}

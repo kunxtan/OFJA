@@ -127,6 +127,13 @@ def assert_no_show_allowed(ready_at: Optional[datetime], now: datetime, minutes:
         raise DomainError(400, f"ลูกค้าแจ้งว่าจะมารับภายใน {customer_eta.strftime('%H:%M')} น. ยังตัดคิวไม่ได้")
 
 
+def late_pickup_arrival(now: datetime, pickup_time: Optional[datetime], minutes: int) -> datetime:
+    """ลูกค้าแจ้งมารับช้า N นาที: นับจากเวลานัดรับ (หรือเวลาตอนกด ถ้าเลยเวลานัดแล้ว/ไม่ได้นัด)
+    แจ้งใหม่ = แทนเวลาเดิม ไม่บวกต่อ : นัด 12:00 กด 15 -> 12:15 ; กด 30 อีกครั้ง -> 12:30"""
+    base = max(now, pickup_time) if pickup_time else now
+    return (base + timedelta(minutes=minutes)).replace(microsecond=0)
+
+
 # ---- แปลงคำขอเปลี่ยนสถานะ -> ลำดับขั้นที่ต้องเดินจริง ----
 _READY_CHAIN_ROLES = {"KITCHEN_STAFF", "FRONT_STAFF", "STORE_OWNER"}
 _FORCE_CANCEL_ROLES = {"FRONT_STAFF", "STORE_OWNER"}

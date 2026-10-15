@@ -167,3 +167,18 @@ def test_role_names():
     assert state.role_code_from_input("KITCHEN_STAFF") == "KITCHEN_STAFF"
     with pytest.raises(DomainError):
         state.role_code_from_input("Admin")
+
+
+def test_late_pickup_latest_notice_replaces_previous():
+    """นัด 12:00: กด 15 -> 12:15 แล้วกด 30 -> 12:30 (แทนเวลาเดิม ไม่ใช่ 12:45)"""
+    pickup = datetime(2026, 1, 1, 12, 0)
+    now = datetime(2026, 1, 1, 11, 30)
+    assert state.late_pickup_arrival(now, pickup, 15) == datetime(2026, 1, 1, 12, 15)
+    assert state.late_pickup_arrival(now + timedelta(minutes=5), pickup, 30) == datetime(2026, 1, 1, 12, 30)
+
+
+def test_late_pickup_after_pickup_time_counts_from_now():
+    pickup = datetime(2026, 1, 1, 12, 0)
+    now = datetime(2026, 1, 1, 12, 20, 0, 500)
+    assert state.late_pickup_arrival(now, pickup, 15) == datetime(2026, 1, 1, 12, 35)
+    assert state.late_pickup_arrival(now, None, 30) == datetime(2026, 1, 1, 12, 50)  # รับทันที (ไม่ได้นัดเวลา)
