@@ -34,7 +34,7 @@ LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
 ORDER_SELECT = """
 SELECT o.OrderId AS OrderID, o.OrderId, o.StoreId, o.CustomerId AS UserId, o.CustomerId,
        o.CreatedByStaffId, o.QueueNo, o.TotalAmount, os.StatusCode, os.StatusNameTh,
-       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CancelReason, o.CancelDeadline,
+       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CancelReason, o.CancelDeadline, o.LatePickupCount, o.LatePickupMinutes, o.LatePickupArrivalTime,
        s.StoreName, s.QueueCode, u.FullName AS CustomerName, u.Username AS UserName,
        u.Phone AS CustomerPhone, u.Email AS CustomerEmail,
        pm.MethodCode AS PaymentMethodCode, pm.MethodNameTh AS PaymentMethod,
@@ -65,6 +65,13 @@ def shape_order(row: dict) -> dict:
     pickup = row.get("PickupTime")
     row["PickupTime"] = f"{pickup.strftime('%H:%M')} น." if pickup else None
     row["IsReviewed"] = bool(row.get("IsReviewed"))
+    late_arrival = row.get("LatePickupArrivalTime")
+    row["LatePickupArrivalTime"] = (
+        late_arrival.strftime("%Y-%m-%d %H:%M:%S")
+        if late_arrival else None
+    )
+    row["LatePickupCount"] = int(row.get("LatePickupCount") or 0)
+    row["LatePickupMinutes"] = int(row.get("LatePickupMinutes") or 0)
     return row
 
 

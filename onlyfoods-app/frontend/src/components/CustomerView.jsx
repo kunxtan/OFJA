@@ -277,17 +277,55 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
+
   const fetchMyOrders = async () => {
     if (!userId) return;
+
     try {
       const res = await fetch(`${apiBase}/api/orders?user_id=${userId}`);
       if (!res.ok) return;
+
       const data = await res.json();
       setMyOrders(data);
+
+      setLatePickupOrder((prev) => {
+        const updated = { ...prev };
+
+        data.forEach((order) => {
+          const orderId = order.OrderID ?? order.OrderId ?? order.order_id;
+          if (!orderId) return;
+
+          const arrival = order.LatePickupArrivalTime;
+          let arrivalTime = "";
+
+          if (arrival) {
+            const date = new Date(arrival);
+
+            if (!Number.isNaN(date.getTime())) {
+              arrivalTime = date.toLocaleTimeString("th-TH", {
+                timeZone: "Asia/Bangkok",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              });
+            }
+          }
+
+          updated[orderId] = {
+            ...updated[orderId],
+            count: Number(order.LatePickupCount || 0),
+            minutes: Number(order.LatePickupMinutes || 0),
+            arrivalTime,
+          };
+        });
+
+        return updated;
+      });
     } catch (error) {
       console.error("Error fetching orders:", error);
     }
   };
+
 
   const fetchNotifs = async () => {
     if (!userId) return;
@@ -1873,13 +1911,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                             onClick={() => handleLatePickup(order, selectedMinutes)}
                             disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
                           >
-                            {(latePickupOrder[order.OrderID]?.count || 0) === 0
-                              ? "แจ้งมารับช้า"
-                              : (latePickupOrder[order.OrderID]?.count || 0) >= 3
-                                ? "แจ้งครบแล้ว (3/3)"
-                                : `ยืนยันครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
+                            {(latePickupOrder[order.OrderID]?.count || 0) >= 3
+                              ? "แจ้งครบแล้ว (3/3)"
+                              : (latePickupOrder[order.OrderID]?.count || 0) === 0
+                                ? "ยืนยันแจ้งเวลามารับช้า"
+                                : `แจ้งเวลาครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
                           </button>
-
                           <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "6px" }}>
                             แจ้งแล้ว {lateInfo.count}/3 ครั้ง
                           </div>
