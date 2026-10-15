@@ -2034,7 +2034,7 @@ function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
   ] : [];
 
   return (
-    <div className="berry-modal-overlay mf-overlay" onClick={onClose}>
+    <div className="berry-modal-overlay mf-overlay sh-overlay" onClick={onClose}>
       <div className="mf-modal sh-modal" role="dialog" aria-modal="true" aria-labelledby="sh-title" onClick={e => e.stopPropagation()}>
         <div className="mf-head sh-head">
           <div className="sh-queue-big">{o?.QueueNo || '…'}</div>
@@ -3711,7 +3711,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   ))}
                 </div>
 
-                <div className="mm-toolbar">
+                <div className="mm-toolbar mm-wrap-tabs">
                   <div className="mm-tabs" role="tablist" aria-label="กรองพนักงาน">
                     {tabs.map(t => (
                       <button
@@ -3896,7 +3896,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   ))}
                 </div>
 
-                <div className="mm-toolbar">
+                <div className="mm-toolbar mm-wrap-tabs">
                   <div className="mm-tabs" role="tablist" aria-label="กรองตามสถานะ">
                     {statusTabs.map(t => (
                       <button key={t.id} type="button" role="tab" aria-selected={salesStatus === t.id}
@@ -5648,8 +5648,17 @@ body, html {
   .sh-people { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
-  .sh-range { width: 100%; overflow-x: auto; }
-  .sh-range-label { margin-left: 0; }
+  .sh-filter-bar { gap: 8px; }
+  .sh-range { width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px; }
+  .sh-range > svg { display: none; }
+  .sh-range button { padding: 8px 2px; font-size: 12.5px; }
+  .sh-dates { width: 100%; }
+  .sh-range-label { margin-left: 4px; }
+  /* แท็บหลายอัน (ประวัติการขาย / พนักงาน) ตัดบรรทัดได้ ไม่ดันหน้าให้กว้างเกินจอ */
+  .mm-wrap-tabs { padding: 10px; }
+  .mm-wrap-tabs .mm-tabs { flex-wrap: wrap; }
+  .mm-wrap-tabs .mm-tab { flex: 1 1 auto; padding: 7px 8px; }
+  .mm-wrap-tabs .mm-search { flex-basis: 100%; }
   .sh-row { grid-template-columns: 56px minmax(0, 1fr) auto; grid-template-areas: "queue main amount" "time main status"; row-gap: 4px; padding: 12px 14px; }
   .sh-queue { grid-area: queue; }
   .sh-time { grid-area: time; font-size: 12px; }
@@ -5658,8 +5667,27 @@ body, html {
   .sh-status { grid-area: status; }
   .sh-chevron { display: none; }
   .sh-people { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .sh-stats { grid-template-columns: 1fr; }
+  .sh-stats { gap: 6px; }
+  .sh-stats > div { padding: 8px 10px; }
+  .sh-stats strong { font-size: 13px; }
+  .sh-stats span { font-size: 10.5px; }
   .sh-queue-big { min-width: 60px; font-size: 17px; padding: 8px; }
+}
+@media (max-width: 600px) {
+  .sh-overlay { padding: 0; }
+  .sh-modal.mf-modal { width: 100%; max-width: 100%; height: 100%; max-height: 100dvh; border-radius: 0; }
+  .sh-modal .mf-head { padding: 14px 16px 12px; gap: 10px; }
+  .sh-modal .mf-head h3 { font-size: 17px; }
+  .sh-modal .mf-body { padding: 14px 14px 8px; }
+  .sh-modal .mf-footer { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); }
+  .sh-section { margin-bottom: 16px; }
+  .sh-people { gap: 6px; }
+  .sh-person { padding: 10px; }
+  .sh-tl-head { flex-direction: column; gap: 1px; }
+  .sh-tl-head span { font-size: 11.5px; }
+  .sh-pay { gap: 10px; }
+  .sh-slip { width: 54px; height: 70px; min-width: 54px; }
+  .sh-items li { gap: 8px; }
 }
 .mf-btn.danger { background: var(--berry-red); color: #FFFFFF; border: 1px solid var(--berry-red); box-shadow: 0 6px 16px rgba(226,69,47,0.28); }
 .mf-btn.danger:hover:not(:disabled) { background: #C93A26; }
