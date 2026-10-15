@@ -2359,6 +2359,195 @@ function ReviewCard({ review, onPhoto }) {
   );
 }
 
+/* ============================================================
+   รายงานปัญหาจากลูกค้า (is-*)
+   ============================================================ */
+const ISSUE_TYPE_ICON = {
+  WRONG_ORDER: 'receipt', MISSING_ITEM: 'box', FOOD_QUALITY: 'flame', SLOW_SERVICE: 'clock',
+  PAYMENT_ISSUE: 'coin', STAFF_BEHAVIOR: 'users', OTHER: 'alert',
+};
+const ISSUE_STATUS_UI = {
+  OPEN: { label: 'รอดำเนินการ', tone: 'red', badge: 'danger' },
+  IN_PROGRESS: { label: 'กำลังดำเนินการ', tone: 'amber', badge: 'warning' },
+  RESOLVED: { label: 'แก้ไขแล้ว', tone: 'green', badge: 'success' },
+  REJECTED: { label: 'ไม่รับเรื่อง', tone: 'neutral', badge: 'neutral' },
+};
+const ISSUE_OPEN_STATES = ['OPEN', 'IN_PROGRESS'];
+const ISSUE_STALE_HOURS = 24; // ค้างเกินนี้ขึ้นป้ายเตือน
+
+// ข้อความตอบกลับสำเร็จรูป (กดแล้วเติมลงช่อง แก้ต่อได้)
+const ISSUE_QUICK_REPLIES = {
+  IN_PROGRESS: ['ร้านรับเรื่องแล้ว กำลังตรวจสอบให้นะคะ', 'ขออภัยในความไม่สะดวก ร้านกำลังแก้ไขให้ค่ะ'],
+  RESOLVED: ['ร้านแก้ไขเรียบร้อยแล้ว ขอบคุณที่แจ้งให้ทราบค่ะ', 'ร้านได้ปรับปรุงขั้นตอนแล้ว ขออภัยอีกครั้งค่ะ', 'ร้านติดต่อคืนเงินให้เรียบร้อยแล้วค่ะ'],
+  REJECTED: ['ตรวจสอบแล้วไม่พบปัญหาตามที่แจ้งค่ะ', 'เรื่องนี้ไม่เกี่ยวข้องกับทางร้าน รบกวนติดต่อศูนย์อาหารค่ะ'],
+  OPEN: [],
+};
+
+function hoursSince(value) {
+  const d = parseOrderDate(value);
+  return d ? (Date.now() - d.getTime()) / 3600000 : 0;
+}
+
+function formatHours(h) {
+  if (h === null || h === undefined) return '—';
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} นาที`;
+  if (h < 48) return `${Math.round(h * 10) / 10} ชม.`;
+  return `${Math.round(h / 24)} วัน`;
+}
+
+// --- อัปเดตสถานะ + ข้อความตอบกลับลูกค้า ---
+function IssueRespondModal({ issue, target, onClose, onSubmit }) {
+  const st = ISSUE_STATUS_UI[target];
+  const [note, setNote] = useState(issue.AdminNote || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEscapeToClose(onClose, saving);
+  const needNote = target === 'REJECTED';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (needNote && !note.trim()) { setError('กรุณาระบุเหตุผลที่ไม่รับเรื่อง ลูกค้าจะเห็นข้อความนี้'); return; }
+    setSaving(true);
+    try {
+      await onSubmit(target, note.trim());
+    } catch (err) {
+      setError(err.message || 'บันทึกไม่สำเร็จ');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="berry-modal-overlay mf-overlay" onClick={() => { if (!saving) onClose(); }}>
+      <div className="mf-modal" role="dialog" aria-modal="true" aria-labelledby="is-respond-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head">
+          <div className={`is-type-icon tone-${st.tone}`}><Icon name={ISSUE_TYPE_ICON[issue.TypeCode] || 'alert'} size={20} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 id="is-respond-title">เปลี่ยนเป็น “{st.label}”</h3>
+            <p>{issue.IssueType}{issue.QueueNo ? ` · คิว ${issue.QueueNo}` : ''} · ผู้แจ้ง {issue.ReporterName}</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} disabled={saving} aria-label="ปิด"><Icon name="close" size={18} /></button>
+        </div>
+        <form onSubmit={submit} noValidate>
+          <div className="mf-body">
+            <div className="is-quote small">{issue.Description}</div>
+            <div className="mf-field">
+              <label htmlFor="is-note">
+                ข้อความตอบกลับลูกค้า {needNote ? <span className="req">*</span> : <span className="optional">ไม่บังคับ</span>}
+                <span className="mf-counter">{note.length}/500</span>
+              </label>
+              <textarea id="is-note" rows={4} maxLength={500} value={note} disabled={saving}
+                onChange={e => { setNote(e.target.value); setError(''); }}
+                placeholder={needNote ? 'เช่น ตรวจสอบแล้วไม่พบปัญหาตามที่แจ้ง' : 'เช่น ร้านแก้ไขเรียบร้อยแล้ว ขอบคุณที่แจ้งค่ะ'} autoFocus />
+              {(ISSUE_QUICK_REPLIES[target] || []).length > 0 && (
+                <div className="is-quick">
+                  {ISSUE_QUICK_REPLIES[target].map(t => (
+                    <button key={t} type="button" className="is-quick-btn" onClick={() => { setNote(t); setError(''); }} disabled={saving}>{t}</button>
+                  ))}
+                </div>
+              )}
+              <div className="mf-hint">ลูกค้าจะได้รับการแจ้งเตือน และเห็นข้อความนี้ในหน้าประวัติการแจ้งปัญหา</div>
+            </div>
+            {error && <div className="mf-form-error">{error}</div>}
+          </div>
+          <div className="mf-footer">
+            <button type="button" className="mf-btn ghost" onClick={onClose} disabled={saving}>ยกเลิก</button>
+            <button type="submit" className={`mf-btn ${target === 'REJECTED' ? 'danger' : 'primary'}`} disabled={saving}>
+              {saving ? <span className="berry-spinner" /> : <Icon name="check" size={17} />}
+              {saving ? 'กำลังบันทึก...' : 'บันทึกและแจ้งลูกค้า'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function IssueCard({ issue, busy, onAction }) {
+  const i = issue;
+  const st = ISSUE_STATUS_UI[i.IssueStatus] || ISSUE_STATUS_UI.OPEN;
+  const keyNum = parseInt(String(i.ReporterKey || '0').slice(0, 6), 16) || 0;
+  const isOpen = ISSUE_OPEN_STATES.includes(i.IssueStatus);
+  const age = hoursSince(i.CreatedAt);
+  const stale = isOpen && age >= ISSUE_STALE_HOURS;
+  return (
+    <article className={`is-card tone-${st.tone} ${stale ? 'stale' : ''}`}>
+      <header className="is-card-head">
+        <span className={`is-type-icon tone-${st.tone}`}><Icon name={ISSUE_TYPE_ICON[i.TypeCode] || 'alert'} size={18} /></span>
+        <div className="is-title">
+          <strong>{i.IssueType}</strong>
+          <span title={thaiDateTime(i.CreatedAt, true)}>แจ้งเมื่อ {timeAgo(i.CreatedAt)} · #{i.IssueReportId}</span>
+        </div>
+        <div className="is-head-right">
+          <Badge tone={st.badge}>{st.label}</Badge>
+          {stale && <span className="is-stale"><Icon name="clock" size={12} /> ค้าง {formatHours(age)}</span>}
+        </div>
+      </header>
+
+      <div className="is-reporter">
+        <StaffAvatar name={i.ReporterName} id={keyNum} size={32} />
+        <div style={{ minWidth: 0 }}>
+          <div className="is-reporter-name">{i.ReporterName}{i.Visits >= 3 && <span className="rv-regular"><Icon name="award" size={11} /> ลูกค้าประจำ</span>}</div>
+          <div className="is-reporter-sub">สั่งร้านนี้ {fmtMoney(i.Visits)} ครั้ง · แจ้งปัญหา {fmtMoney(i.ReporterIssueCount)} ครั้ง</div>
+        </div>
+      </div>
+
+      <p className="is-quote">{i.Description}</p>
+
+      {i.OrderID ? (
+        <div className="is-order">
+          <div className="is-order-meta">
+            <span className="rv-queue">คิว {i.QueueNo}</span>
+            <span>สั่ง {thaiDateTime(i.OrderedAt, true)}</span>
+            {i.TotalAmount !== null && <span>฿{fmtMoney(i.TotalAmount)}</span>}
+            {i.OrderStatusNameTh && <span className="is-order-status">{i.OrderStatusNameTh}</span>}
+            {i.ReadyMinutes !== null && (
+              <span className={`is-ready ${i.TypeCode === 'SLOW_SERVICE' ? 'hl' : ''}`}><Icon name="clock" size={12} /> สั่ง → เรียกคิว {formatDuration(i.ReadyMinutes)}</span>
+            )}
+          </div>
+          {i.items?.length > 0 && (
+            <div className="rv-items">
+              {i.items.map((it, idx) => (
+                <span key={`${it.ProductId}-${idx}`} className="rv-item">
+                  <span className="rv-item-img">{it.ImageUrl ? <img src={it.ImageUrl} alt="" /> : <Icon name="photo" size={11} />}</span>
+                  {it.ProductName} ×{it.Qty}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="is-order none"><Icon name="receipt" size={14} /> ไม่ได้ระบุออเดอร์ (ปัญหาทั่วไปของร้าน)</div>
+      )}
+
+      {(i.AdminNote || i.HandledByName) && (
+        <div className={`is-reply tone-${st.tone}`}>
+          <div className="is-reply-head">
+            <Icon name={i.AdminNote ? 'check' : 'user'} size={13} />
+            {i.AdminNote ? 'ตอบกลับลูกค้า' : 'รับเรื่องโดย'}{i.HandledByName ? ` ${i.AdminNote ? '· โดย ' : ''}${i.HandledByName}` : ''}
+          </div>
+          {i.AdminNote && <div>{i.AdminNote}</div>}
+          {i.ResolvedAt && <div className="is-reply-time">ปิดเรื่องเมื่อ {thaiDateTime(i.ResolvedAt, true)}</div>}
+        </div>
+      )}
+
+      <footer className="is-actions">
+        {i.IssueStatus === 'OPEN' && (
+          <button type="button" className="sf-act" onClick={() => onAction(i, 'IN_PROGRESS')} disabled={busy}><Icon name="clock" size={15} /> รับเรื่อง</button>
+        )}
+        {isOpen && (
+          <>
+            <button type="button" className="sf-act success" onClick={() => onAction(i, 'RESOLVED')} disabled={busy}><Icon name="check" size={15} /> แก้ไขแล้ว</button>
+            <button type="button" className="sf-act danger" onClick={() => onAction(i, 'REJECTED')} disabled={busy}><Icon name="close" size={15} /> ไม่รับเรื่อง</button>
+          </>
+        )}
+        {!isOpen && (
+          <button type="button" className="sf-act" onClick={() => onAction(i, 'IN_PROGRESS')} disabled={busy}><Icon name="history" size={15} /> เปิดเรื่องอีกครั้ง</button>
+        )}
+      </footer>
+    </article>
+  );
+}
+
 export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!document.getElementById('berry-font-link')) {
@@ -2381,7 +2570,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [foodCourtHours, setFoodCourtHours] = useState(null); // { open: '08:00', close: '20:00' }
   // โหลดข้อมูลครั้งแรกเสร็จหรือยัง (ใช้แสดง skeleton แทนเลข 0)
-  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false, reviews: false });
+  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false, reviews: false, issues: false });
   const markLoaded = (key) => setLoaded(prev => (prev[key] ? prev : { ...prev, [key]: true }));
   // หน้าเมนู: การเรียง + โหมดเลือกหลายเมนู
   const [menuSort, setMenuSort] = useState('default');
@@ -2482,7 +2671,14 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [reviewSort, setReviewSort] = useState('new'); // new | low | high
   const [reviewSearch, setReviewSearch] = useState('');
   const [reviewPhoto, setReviewPhoto] = useState(null); // รูปที่เปิดดูขนาดเต็ม
-  const [issueFilter, setIssueFilter] = useState('all');
+  const [issueFilter, setIssueFilter] = useState('all'); // 'all' | TypeCode
+  const [issueStatusFilter, setIssueStatusFilter] = useState('all'); // all | pending | IN_PROGRESS | RESOLVED | REJECTED
+  const [issueRange, setIssueRange] = useState('all'); // 7 | 30 | all
+  const [issueSort, setIssueSort] = useState('new'); // new | old
+  const [issueSearch, setIssueSearch] = useState('');
+  const [issueRespond, setIssueRespond] = useState(null); // { issue, target }
+  const [issueBusyId, setIssueBusyId] = useState(null);
+  const [issuesSummary, setIssuesSummary] = useState(null);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -2516,7 +2712,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       })
       .catch(err => console.error(err));
     fetch(`${apiBase}/api/stores/${storeId}/reviews/detail`).then(r => r.json()).then(d => { if (d && Array.isArray(d.reviews)) { setReviewsData(d); markLoaded('reviews'); } }).catch(err => console.error(err));
-    fetch(`${apiBase}/api/reports/issue/store/${storeId}`).then(r => r.json()).then(d => setIssues(Array.isArray(d) ? d : [])).catch(err => console.error(err));
+    // รายงานปัญหาแบบละเอียด (ชื่อผู้แจ้งแบบย่อ ไม่มีข้อมูลติดต่อ)
+    fetch(`${apiBase}/api/stores/${storeId}/issues/detail`).then(r => r.json()).then(d => {
+      if (d && Array.isArray(d.issues)) { setIssues(d.issues); setIssuesSummary(d.summary); markLoaded('issues'); }
+    }).catch(err => console.error(err));
     
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
       .then(r => r.json())
@@ -2891,6 +3090,24 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     fetchData();
   };
 
+  // เปลี่ยนสถานะรายงานปัญหา (+ ข้อความตอบกลับ) ; fromModal = ให้ error กลับไปแสดงในหน้าต่าง
+  const updateIssueStatus = async (issue, status, note, fromModal = false) => {
+    setIssueBusyId(issue.IssueReportId);
+    try {
+      const res = await fetch(`${apiBase}/api/issues/${issue.IssueReportId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, note }),
+      });
+      if (!res.ok) throw await apiError(res, 'อัปเดตรายงานปัญหาไม่สำเร็จ');
+      showSuccess(`${ISSUE_STATUS_UI[status].label}`, 'แจ้งลูกค้าเรียบร้อยแล้ว');
+      fetchData();
+    } catch (err) {
+      if (fromModal) throw err;
+      showToast(err.message);
+    } finally {
+      setIssueBusyId(null);
+    }
+  };
+
   const askDeactivateStaff = (target) => {
     setConfirmDelete({
       type: 'staff', id: target.UserId, name: target.FullName,
@@ -2959,9 +3176,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   };
 
   
-  const issueTypes = [...new Set(issues.map(i => i.IssueType))].filter(Boolean);
-  const getIssueCount = (type) => issues.filter(i => i.IssueType === type).length;
-  const filteredIssues = issueFilter === 'all' ? issues : issues.filter(i => i.IssueType === issueFilter);
 
   return (
     <div className="berry-root">
@@ -4214,68 +4428,142 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             );
           })()}
 
-          {page === 'issues' && (
-            <>
-            <PageHeader title="รายงานปัญหาจากลูกค้า" subtitle="ปัญหาที่ลูกค้าแจ้งเข้ามาเกี่ยวกับร้านของคุณ" icon="alert">
-              <span className="op-count-chip">{fmtMoney(issues.length)} รายการ</span>
-            </PageHeader>
-            <div className="berry-card">
-              {/* ปุ่มกรองประเภทปัญหา */}
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '0 0 16px', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginRight: '4px' }}>ประเภทปัญหา:</span>
-                <button 
-                  onClick={() => setIssueFilter('all')} 
-                  className={`berry-period-btn ${issueFilter === 'all' ? 'active' : ''}`} 
-                  style={{ border: issueFilter === 'all' ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                >
-                  ทั้งหมด ({issues.length})
-                </button>
-                {issueTypes.map(type => (
-                  <button 
-                    key={type} 
-                    onClick={() => setIssueFilter(type)} 
-                    className={`berry-period-btn ${issueFilter === type ? 'active' : ''}`} 
-                    style={{ border: issueFilter === type ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                  >
-                    {type} ({getIssueCount(type)})
-                  </button>
-                ))}
-              </div>
+          {page === 'issues' && (() => {
+            const sm = issuesSummary || {};
+            const byStatus = sm.by_status || {};
+            const pending = (byStatus.OPEN || 0) + (byStatus.IN_PROGRESS || 0);
+            const days = issueRange === 'all' ? null : Number(issueRange);
+            const q = issueSearch.trim().toLowerCase();
+            const inRange = issues.filter(i => days === null || hoursSince(i.CreatedAt) <= days * 24);
+            const shown = inRange
+              .filter(i => issueStatusFilter === 'all'
+                || (issueStatusFilter === 'pending' ? ISSUE_OPEN_STATES.includes(i.IssueStatus) : i.IssueStatus === issueStatusFilter))
+              .filter(i => issueFilter === 'all' || i.TypeCode === issueFilter)
+              .filter(i => !q || String(i.Description || '').toLowerCase().includes(q)
+                || String(i.QueueNo || '').toLowerCase().includes(q)
+                || (i.items || []).some(it => String(it.ProductName || '').toLowerCase().includes(q)))
+              .sort((a, b) => {
+                const ta = parseOrderDate(a.CreatedAt)?.getTime() || 0;
+                const tb = parseOrderDate(b.CreatedAt)?.getTime() || 0;
+                return issueSort === 'old' ? ta - tb : tb - ta;
+              });
+            const statusCount = (id) => inRange.filter(i => id === 'all' ? true
+              : id === 'pending' ? ISSUE_OPEN_STATES.includes(i.IssueStatus) : i.IssueStatus === id).length;
+            const statusTabs = [
+              { id: 'all', label: 'ทั้งหมด' },
+              { id: 'pending', label: 'ต้องจัดการ', tone: 'red' },
+              { id: 'IN_PROGRESS', label: 'กำลังดำเนินการ' },
+              { id: 'RESOLVED', label: 'แก้ไขแล้ว', tone: 'green' },
+              { id: 'REJECTED', label: 'ไม่รับเรื่อง' },
+            ];
+            const trend = (sm.last30 || 0) - (sm.prev30 || 0);
+            const kpis = [
+              { tone: 'red', icon: 'alert', value: fmtMoney(pending), label: 'เรื่องที่ต้องจัดการ', sub: byStatus.OPEN ? `ยังไม่รับเรื่อง ${byStatus.OPEN}` : null },
+              { tone: 'green', icon: 'check', value: fmtMoney(byStatus.RESOLVED || 0), label: 'แก้ไขแล้ว' },
+              { tone: 'blue', icon: 'clock', value: formatHours(sm.avg_resolve_hours), label: 'เวลาปิดเรื่องเฉลี่ย' },
+              { tone: 'amber', icon: 'trend', value: fmtMoney(sm.last30 || 0), label: 'เรื่องใหม่ 30 วันล่าสุด',
+                sub: sm.prev30 || sm.last30 ? `${trend > 0 ? '▲' : trend < 0 ? '▼' : '='} ${Math.abs(trend)} จาก 30 วันก่อน` : null },
+            ];
+            const maxType = Math.max(1, ...(sm.by_type || []).map(t => t.count));
+            return (
+              <>
+                <PageHeader title="รายงานปัญหาจากลูกค้า" subtitle="ติดตาม ตอบกลับ และปิดเรื่องที่ลูกค้าแจ้งเข้ามา" icon="alert">
+                  <span className={`op-count-chip ${pending ? 'danger' : ''}`}>{pending ? `ต้องจัดการ ${fmtMoney(pending)} เรื่อง` : `${fmtMoney(issues.length)} รายการ`}</span>
+                </PageHeader>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {filteredIssues.length === 0 ? (
-                  <div className="empty-state">ไม่มีรายงานปัญหาในหมวดหมู่นี้</div>
-                ) : (
-                  filteredIssues.map(issue => (
-                    <div key={issue.ReportID} style={{ border: '1px solid var(--berry-border)', borderRadius: '12px', padding: '16px', background: '#fff' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                            <span style={{ fontWeight: '600', color: 'var(--berry-text-dark)', fontSize: '15px' }}>{issue.IssueType}</span>
-                            {issue.QueueNo ? (
-                              <span style={{ background: 'var(--berry-blue-light)', color: 'var(--berry-text-muted)', padding: '2px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: '500' }}>คิว {issue.QueueNo}</span>
-                            ) : issue.OrderID ? (
-                              <span style={{ background: 'var(--berry-blue-light)', color: 'var(--berry-text-muted)', padding: '2px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: '500' }}>คิว OF-{issue.OrderID}</span>
-                            ) : null}
-                          </div>
-                          <div style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginBottom: '12px' }}>
-                            ผู้แจ้ง: {issue.CustomerName || "P'1"} · ออเดอร์ #{issue.OrderID}
-                          </div>
-                        </div>
-                        <div style={{ color: 'var(--berry-text-muted)', fontSize: '13px' }}>
-                          {new Date(issue.CreatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} · {new Date(issue.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: '14px', color: 'var(--berry-text-dark)', lineHeight: '1.5' }}>
-                        {issue.Description || "-"}
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อผู้แจ้งแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมล ตอบกลับลูกค้าได้ผ่านปุ่มในแต่ละเรื่อง</div>
+
+                <div className="sf-stats">
+                  {kpis.map(k => (
+                    <div key={k.label} className={`sf-stat tone-${k.tone === 'red' ? 'orange' : k.tone}`}>
+                      <span className="icon"><Icon name={k.icon} size={20} /></span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="value">{loaded.issues ? k.value : <Skeleton height={22} width={40} />}</div>
+                        <div className="label">{k.label}</div>
+                        {k.sub && <div className="sub">{k.sub}</div>}
                       </div>
                     </div>
-                  ))
+                  ))}
+                </div>
+
+                {(sm.by_type || []).length > 0 && (
+                  <section className="rv-menu-card">
+                    <h4 className="sf-section-title"><Icon name="pie" size={16} /> ประเภทปัญหาที่พบ <span className="rv-hint">กดเพื่อกรองเฉพาะประเภทนั้น</span></h4>
+                    <div className="is-types">
+                      {sm.by_type.map(t => {
+                        const active = issueFilter === t.TypeCode;
+                        return (
+                          <button key={t.TypeCode} type="button" className={`is-type-row ${active ? 'active' : ''}`}
+                            onClick={() => setIssueFilter(active ? 'all' : t.TypeCode)}>
+                            <span className="is-type-name"><Icon name={ISSUE_TYPE_ICON[t.TypeCode] || 'alert'} size={14} /> {t.IssueType}</span>
+                            <span className="rv-bar-track"><span className="rv-bar-fill tone-amber" style={{ width: `${(t.count / maxType) * 100}%` }} /></span>
+                            <span className="is-type-count">{t.count}{t.open > 0 && <em> · ค้าง {t.open}</em>}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
                 )}
-              </div>
-            </div>
-            </>
-          )}
+
+                <div className="mm-toolbar mm-wrap-tabs">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองตามสถานะ">
+                    {statusTabs.map(t => (
+                      <button key={t.id} type="button" role="tab" aria-selected={issueStatusFilter === t.id}
+                        className={`mm-tab ${issueStatusFilter === t.id ? 'active' : ''} ${t.tone ? `tone-${t.tone}` : ''}`}
+                        onClick={() => setIssueStatusFilter(t.id)}>
+                        {t.tone && <span className="dot" />}{t.label}<span className="count">{statusCount(t.id)}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rv-chips">
+                    <select className="mm-select" value={issueFilter} onChange={e => setIssueFilter(e.target.value)} aria-label="ประเภทปัญหา">
+                      <option value="all">ทุกประเภท</option>
+                      {(sm.by_type || []).map(t => <option key={t.TypeCode} value={t.TypeCode}>{t.IssueType}</option>)}
+                    </select>
+                    <select className="mm-select" value={issueRange} onChange={e => setIssueRange(e.target.value)} aria-label="ช่วงเวลา">
+                      <option value="7">7 วันล่าสุด</option>
+                      <option value="30">30 วันล่าสุด</option>
+                      <option value="all">ทุกช่วงเวลา</option>
+                    </select>
+                    <select className="mm-select" value={issueSort} onChange={e => setIssueSort(e.target.value)} aria-label="เรียงลำดับ">
+                      <option value="new">ใหม่ก่อน</option>
+                      <option value="old">ค้างนานก่อน</option>
+                    </select>
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={issueSearch} onChange={e => setIssueSearch(e.target.value)} placeholder="ค้นหาในรายละเอียด เลขคิว หรือชื่อเมนู..." aria-label="ค้นหารายงานปัญหา" />
+                    {issueSearch && <button type="button" onClick={() => setIssueSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>}
+                  </div>
+                </div>
+
+                {!loaded.issues ? (
+                  <div className="rv-grid">{[0, 1, 2].map(k => <Skeleton key={k} height={260} radius={16} />)}</div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name={issues.length ? 'search' : 'check'} size={28} /></span>
+                    <h3>{issues.length === 0 ? 'ยังไม่มีลูกค้าแจ้งปัญหา' : issueStatusFilter === 'pending' ? 'ไม่มีเรื่องค้าง เยี่ยมมาก!' : 'ไม่มีรายงานที่ตรงกับตัวกรอง'}</h3>
+                    <p>{issues.length === 0 ? 'เมื่อลูกค้าแจ้งปัญหาเกี่ยวกับร้าน จะแสดงที่นี่ พร้อมปุ่มตอบกลับ' : 'ลองเปลี่ยนช่วงเวลา สถานะ หรือประเภทปัญหา'}</p>
+                  </div>
+                ) : (
+                  <div className="rv-grid">
+                    {shown.map(i => (
+                      <IssueCard key={i.IssueReportId} issue={i} busy={issueBusyId === i.IssueReportId}
+                        onAction={(issue, target) => (target === 'IN_PROGRESS' && issue.IssueStatus === 'OPEN'
+                          ? updateIssueStatus(issue, 'IN_PROGRESS', issue.AdminNote || '')
+                          : setIssueRespond({ issue, target }))} />
+                    ))}
+                  </div>
+                )}
+                {issueRespond && (
+                  <IssueRespondModal issue={issueRespond.issue} target={issueRespond.target}
+                    onClose={() => setIssueRespond(null)}
+                    onSubmit={async (target, note) => { await updateIssueStatus(issueRespond.issue, target, note, true); setIssueRespond(null); }} />
+                )}
+              </>
+            );
+          })()}
+
 
         </main>
       </div>
@@ -5970,6 +6258,60 @@ body, html {
   .rv-chips { width: 100%; }
   .rv-chips .mm-select { margin-left: auto; }
   .rv-time { margin-left: 0; }
+}
+/* ===== รายงานปัญหา (is-*) ===== */
+.is-type-icon { width: 38px; height: 38px; min-width: 38px; display: grid; place-items: center; border-radius: 11px; }
+.is-type-icon.tone-red { background: var(--berry-red-light); color: var(--berry-red); }
+.is-type-icon.tone-amber { background: var(--berry-amber-light); color: var(--berry-amber); }
+.is-type-icon.tone-green { background: var(--berry-green-light); color: var(--berry-green); }
+.is-type-icon.tone-neutral { background: var(--berry-blue-light); color: var(--berry-text-muted); }
+.is-types { display: grid; gap: 4px; }
+.is-type-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 110px; align-items: center; gap: 12px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
+.is-type-row:hover, .is-type-row.active { background: var(--berry-bg); }
+.is-type-row.active .is-type-name { color: var(--berry-purple); }
+.is-type-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.is-type-name svg { color: var(--berry-text-muted); flex-shrink: 0; }
+.is-type-count { font-size: 12.5px; font-weight: 700; color: var(--berry-text-dark); text-align: right; }
+.is-type-count em { font-style: normal; font-weight: 600; color: var(--berry-red); }
+
+.is-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 18px; background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 16px; box-shadow: var(--shadow-sm); overflow: hidden; animation: berryFadeIn 0.25s ease-out; }
+.is-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.is-card.tone-red::before { background: var(--berry-red); }
+.is-card.tone-amber::before { background: var(--berry-amber); }
+.is-card.tone-green::before { background: var(--berry-green); }
+.is-card.tone-neutral::before { background: #C3C6D4; }
+.is-card.stale { border-color: rgba(226,69,47,0.4); }
+.is-card-head { display: flex; align-items: flex-start; gap: 12px; }
+.is-title { flex: 1; min-width: 0; }
+.is-title strong { display: block; font-size: 15px; color: var(--berry-text-dark); }
+.is-title span { font-size: 12px; color: var(--berry-text-muted); }
+.is-head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.is-stale { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; color: var(--berry-red); }
+.is-reporter { display: flex; align-items: center; gap: 10px; }
+.is-reporter .sf-avatar { box-shadow: none; }
+.is-reporter-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13.5px; font-weight: 700; color: var(--berry-text-dark); }
+.is-reporter-sub { font-size: 11.5px; color: var(--berry-text-muted); }
+.is-quote { margin: 0; padding: 12px 14px; border-left: 3px solid var(--berry-red); border-radius: 0 12px 12px 0; background: #FFF7F5; font-size: 14px; line-height: 1.6; color: var(--berry-text-dark); white-space: pre-wrap; word-break: break-word; }
+.is-quote.small { margin-bottom: 14px; font-size: 13px; }
+.is-order { padding: 10px 12px; border: 1px dashed var(--berry-border); border-radius: 12px; }
+.is-order.none { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--berry-text-muted); }
+.is-order-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--berry-text-muted); }
+.is-order-status { padding: 0 8px; border-radius: 999px; background: var(--berry-blue-light); font-weight: 600; }
+.is-ready { display: inline-flex; align-items: center; gap: 3px; }
+.is-ready.hl { color: var(--berry-red); font-weight: 700; }
+.is-reply { padding: 10px 12px; border-radius: 12px; background: var(--berry-bg); font-size: 13px; line-height: 1.5; color: var(--berry-text-dark); }
+.is-reply.tone-green { background: var(--berry-green-light); }
+.is-reply-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 3px; font-size: 11.5px; font-weight: 700; color: var(--berry-text-muted); }
+.is-reply-time { margin-top: 4px; font-size: 11.5px; color: var(--berry-text-muted); }
+.is-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
+.is-actions .sf-act { flex: 1 1 auto; }
+.is-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.is-quick-btn { padding: 5px 10px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-dark); font-family: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.is-quick-btn:hover:not(:disabled) { border-color: var(--berry-purple); color: var(--berry-purple); }
+@media (max-width: 700px) {
+  .is-type-row { grid-template-columns: minmax(0, 1fr) 70px; }
+  .is-type-row .rv-bar-track { display: none; }
+  .is-card { padding: 14px; }
 }
 .mf-btn.danger { background: var(--berry-red); color: #FFFFFF; border: 1px solid var(--berry-red); box-shadow: 0 6px 16px rgba(226,69,47,0.28); }
 .mf-btn.danger:hover:not(:disabled) { background: #C93A26; }

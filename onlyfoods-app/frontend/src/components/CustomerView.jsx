@@ -2491,10 +2491,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       padding: "3px 8px",
                       borderRadius: "10px",
                       fontWeight: "bold",
-                      background: report.Status === "Resolved" ? "#dcfce7" : report.Status === "In_Progress" ? "#fef3c7" : "#fee2e2",
-                      color: report.Status === "Resolved" ? "#166534" : report.Status === "In_Progress" ? "#92400e" : "#991b1b"
+                      background: report.Status === "Resolved" ? "#dcfce7" : report.Status === "In_Progress" ? "#fef3c7" : report.Status === "Rejected" ? "#e2e8f0" : "#fee2e2",
+                      color: report.Status === "Resolved" ? "#166534" : report.Status === "In_Progress" ? "#92400e" : report.Status === "Rejected" ? "#475569" : "#991b1b"
                     }}>
-                      {report.Status === "Resolved" ? "แก้ไขแล้ว" : report.Status === "In_Progress" ? "กำลังตรวจสอบ" : "รอดำเนินการ"}
+                      {report.Status === "Resolved" ? "แก้ไขแล้ว" : report.Status === "In_Progress" ? "กำลังตรวจสอบ" : report.Status === "Rejected" ? "ไม่รับเรื่อง" : "รอดำเนินการ"}
                     </span>
                   </div>
 
@@ -2504,7 +2504,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                   {report.AdminNote && (
                     <div style={{ marginTop: "8px", padding: "8px 10px", background: "#e0f2fe", borderRadius: "8px", fontSize: "12px", color: "#0369a1" }}>
-                      <b>การตอบกลับจากแอดมิน:</b> {report.AdminNote}
+                      <b>การตอบกลับจากร้าน:</b> {report.AdminNote}
                     </div>
                   )}
 

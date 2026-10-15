@@ -9,7 +9,7 @@ import state
 from auth import STORE_SCOPED, assert_store_access, get_current_user, require_role
 from db import get_db, transaction
 from errors import DomainError
-from schemas import CreateIssueReportSchema, ReviewCreateSchema
+from schemas import CreateIssueReportSchema, IssueUpdateSchema, ReviewCreateSchema
 from services import is_duplicate_key, log_audit, send_notif
 from shapes import in_clause
 from utils import bangkok_now, clean_text, mask_person_name, queue_label, save_image
@@ -213,10 +213,17 @@ _ISSUE_SELECT = """
 """
 
 
-def _shape_issues(rows):
+_LEGACY_ISSUE_STATUS = {"OPEN": "Open", "IN_PROGRESS": "In_Progress", "RESOLVED": "Resolved", "REJECTED": "Rejected"}
+
+
+def _shape_issues(rows, mask_reporter: bool = False):
     for r in rows:
         code = r.pop("QueueCode", "")
         r["QueueNo"] = queue_label(r["QueueNo"], code) if r.get("QueueNo") is not None else None
+        r["Status"] = _LEGACY_ISSUE_STATUS.get(r["IssueStatus"], r["IssueStatus"])  # หน้าลูกค้าอ่านฟิลด์นี้
+        if mask_reporter:  # ฝั่งร้าน: ชื่อผู้แจ้งแบบย่อ ไม่ส่งรหัสลูกค้า
+            r["CustomerName"] = mask_person_name(r["CustomerName"])
+            r.pop("UserId", None)
     return rows
 
 
@@ -269,7 +276,7 @@ def get_store_issue_reports(store_id: int, user=Depends(require_role("STORE_OWNE
         assert_store_access(user, store_id)
     with db.cursor() as cur:
         cur.execute(_ISSUE_SELECT + " WHERE r.StoreId = %s ORDER BY r.CreatedAt DESC, r.IssueReportId DESC", (store_id,))
-        return _shape_issues(cur.fetchall())
+        return _shape_issues(cur.fetchall(), mask_reporter=user["RoleCode"] in STORE_SCOPED)
 
 
 @router.get("/reports/issue/user/{user_id}")
@@ -286,3 +293,136 @@ def get_customer_issues(user_id: int, user=Depends(require_role("EXECUTIVE")), d
     with db.cursor() as cur:
         cur.execute(_ISSUE_SELECT + " WHERE r.ReportedBy = %s ORDER BY r.CreatedAt DESC, r.IssueReportId DESC", (user_id,))
         return _shape_issues(cur.fetchall())
+
+
+# ----------------------------------------------- issues: เจ้าของร้านจัดการเรื่อง
+ISSUE_STATUS_TH = {"OPEN": "รอดำเนินการ", "IN_PROGRESS": "กำลังดำเนินการ", "RESOLVED": "แก้ไขแล้ว", "REJECTED": "ไม่รับเรื่อง"}
+_CLOSED = ("RESOLVED", "REJECTED")
+
+
+@router.get("/stores/{store_id}/issues/detail")
+def get_store_issues_detail(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """รายงานปัญหาแบบละเอียดสำหรับเจ้าของร้าน: ออเดอร์ที่เกี่ยวข้อง + เมนู + เวลาทำอาหาร, ใครรับเรื่อง, สรุปตัวเลข
+
+    ความเป็นส่วนตัวของผู้แจ้ง: ชื่อแบบย่อ + รหัสนิรนามเท่านั้น (ไม่มีเบอร์/อีเมล/UserId)
+    """
+    if user["RoleCode"] in STORE_SCOPED:
+        assert_store_access(user, store_id)
+    with db.cursor() as cur:
+        cur.execute("SELECT QueueCode FROM Store WHERE StoreId = %s", (store_id,))
+        store = cur.fetchone()
+        if not store:
+            raise DomainError(404, "ไม่พบร้านค้านี้")
+        cur.execute(
+            """
+            SELECT r.IssueReportId, r.ReportedBy, r.OrderId, r.Description, r.IssueStatus, r.AdminNote,
+                   r.CreatedAt, r.ResolvedAt, it.TypeCode, it.TypeNameTh AS IssueType,
+                   u.FullName AS ReporterFullName, h.FullName AS HandledByName, hr.RoleCode AS HandledByRole,
+                   o.QueueNo, o.TotalAmount, o.CreatedAt AS OrderedAt, o.ReadyAt, os.StatusCode AS OrderStatusCode,
+                   os.StatusNameTh AS OrderStatusNameTh,
+                   (SELECT COUNT(*) FROM `Order` o2 JOIN OrderStatus os2 ON os2.StatusId = o2.StatusId
+                     WHERE o2.StoreId = r.StoreId AND o2.CustomerId = r.ReportedBy
+                       AND os2.StatusCode IN ('COMPLETED', 'NO_SHOW')) AS Visits
+            FROM IssueReport r
+            JOIN IssueType it ON it.IssueTypeId = r.IssueTypeId
+            JOIN `User` u ON u.UserId = r.ReportedBy
+            LEFT JOIN `User` h ON h.UserId = r.HandledBy
+            LEFT JOIN Role hr ON hr.RoleId = h.RoleId
+            LEFT JOIN `Order` o ON o.OrderId = r.OrderId
+            LEFT JOIN OrderStatus os ON os.StatusId = o.StatusId
+            WHERE r.StoreId = %s ORDER BY r.CreatedAt DESC, r.IssueReportId DESC
+            """,
+            (store_id,),
+        )
+        rows = cur.fetchall()
+        items_by_order = {}
+        ids = [r["OrderId"] for r in rows if r["OrderId"]]
+        if ids:
+            cur.execute(
+                f"""
+                SELECT oi.OrderId, oi.ProductId, p.ProductName, p.ImageUrl, oi.Qty, oi.ItemStatus
+                FROM OrderItem oi JOIN Product p ON p.ProductId = oi.ProductId
+                WHERE oi.OrderId IN ({in_clause(ids)}) AND oi.ItemStatus <> 'REPLACED' ORDER BY oi.OrderItemId
+                """,
+                ids,
+            )
+            for it in cur.fetchall():
+                items_by_order.setdefault(it.pop("OrderId"), []).append(it)
+
+    per_reporter: dict = {}
+    issues = []
+    for r in rows:
+        key = _reviewer_key(store_id, r["ReportedBy"])
+        per_reporter[key] = per_reporter.get(key, 0) + 1
+        ready_min = None
+        if r["OrderedAt"] and r["ReadyAt"]:
+            ready_min = max(0, int((r["ReadyAt"] - r["OrderedAt"]).total_seconds() // 60))
+        masked = mask_person_name(r["ReporterFullName"])
+        issues.append({
+            "IssueReportId": r["IssueReportId"], "ReportID": r["IssueReportId"], "TypeCode": r["TypeCode"],
+            "IssueType": r["IssueType"], "Description": r["Description"], "IssueStatus": r["IssueStatus"],
+            "Status": _LEGACY_ISSUE_STATUS.get(r["IssueStatus"], r["IssueStatus"]),
+            "AdminNote": r["AdminNote"], "CreatedAt": r["CreatedAt"], "ResolvedAt": r["ResolvedAt"],
+            "HandledByName": r["HandledByName"], "HandledByRole": r["HandledByRole"],
+            "ReporterName": masked, "CustomerName": masked, "ReporterKey": key, "Visits": int(r["Visits"] or 0),
+            "OrderID": r["OrderId"],
+            "QueueNo": queue_label(r["QueueNo"], store["QueueCode"]) if r["QueueNo"] is not None else None,
+            "OrderStatusCode": r["OrderStatusCode"], "OrderStatusNameTh": r["OrderStatusNameTh"],
+            "OrderedAt": r["OrderedAt"], "TotalAmount": float(r["TotalAmount"]) if r["TotalAmount"] is not None else None,
+            "ReadyMinutes": ready_min, "items": items_by_order.get(r["OrderId"], []),
+        })
+    for i in issues:
+        i["ReporterIssueCount"] = per_reporter[i["ReporterKey"]]
+
+    closed = [i for i in issues if i["IssueStatus"] in _CLOSED and i["ResolvedAt"]]
+    hours = [(i["ResolvedAt"] - i["CreatedAt"]).total_seconds() / 3600 for i in closed]
+    now = bangkok_now()
+    by_type: dict = {}
+    for i in issues:
+        t = by_type.setdefault(i["TypeCode"], {"TypeCode": i["TypeCode"], "IssueType": i["IssueType"], "count": 0, "open": 0})
+        t["count"] += 1
+        t["open"] += i["IssueStatus"] not in _CLOSED
+    summary = {
+        "total": len(issues),
+        "by_status": {s: sum(1 for i in issues if i["IssueStatus"] == s) for s in ISSUE_STATUS_TH},
+        "last30": sum(1 for i in issues if i["CreatedAt"] >= now - timedelta(days=30)),
+        "prev30": sum(1 for i in issues if now - timedelta(days=60) <= i["CreatedAt"] < now - timedelta(days=30)),
+        "avg_resolve_hours": round(sum(hours) / len(hours), 1) if hours else None,
+        "by_type": sorted(by_type.values(), key=lambda t: -t["count"]),
+    }
+    return {"issues": issues, "summary": summary}
+
+
+@router.put("/issues/{issue_id}")
+def update_issue(issue_id: int, data: IssueUpdateSchema, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")),
+                 db=Depends(get_db)):
+    """เปลี่ยนสถานะรายงานปัญหา + ข้อความตอบกลับลูกค้า (บันทึกผู้รับเรื่องและเวลาปิดเรื่องให้เอง แจ้งเตือนลูกค้า)"""
+    note = clean_text(data.note)
+    if data.status == "REJECTED" and not note:
+        raise DomainError(400, "กรุณาระบุเหตุผลที่ไม่รับเรื่อง เพื่อแจ้งให้ลูกค้าทราบ")
+    now = bangkok_now()
+    with transaction(db):
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT IssueReportId, StoreId, ReportedBy, OrderId, IssueStatus, AdminNote FROM IssueReport "
+                "WHERE IssueReportId = %s FOR UPDATE",
+                (issue_id,),
+            )
+            issue = cur.fetchone()
+            if not issue:
+                raise DomainError(404, "ไม่พบรายงานปัญหานี้")
+            if user["RoleCode"] in STORE_SCOPED:
+                assert_store_access(user, issue["StoreId"])
+            if issue["IssueStatus"] == data.status and (issue["AdminNote"] or None) == note:
+                return {"success": True, "changed": False}
+            cur.execute(
+                "UPDATE IssueReport SET IssueStatus = %s, AdminNote = %s, HandledBy = %s, ResolvedAt = %s "
+                "WHERE IssueReportId = %s",
+                (data.status, note, user["UserId"], now if data.status in _CLOSED else None, issue_id),
+            )
+        label = ISSUE_STATUS_TH[data.status]
+        send_notif(db, issue["ReportedBy"], "ISSUE", f"รายงานปัญหาของคุณ: {label}",
+                   f"ร้านอัปเดตรายงานปัญหาของคุณเป็น “{label}”" + (f" : {note}" if note else ""), issue["OrderId"])
+        log_audit(db, user["UserId"], "UPDATE_ISSUE", "IssueReport", issue_id,
+                  {"status": issue["IssueStatus"]}, {"status": data.status, "note": note})
+    return {"success": True, "changed": True, "status": data.status}
