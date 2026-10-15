@@ -1692,7 +1692,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               ? myIssueReports.find((rep) => Number(rep.order_id || rep.OrderID) === Number(order.OrderID))
               : null;
             const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
-
+            const canNotifyLatePickup = ["ready", "preparing"].includes(
+              String(order.Status || "").trim().toLowerCase()
+            );
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
@@ -1741,9 +1743,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <span style={{ color: COLORS.orange, fontSize: "18px" }}>{Number(order.TotalAmount || 0).toFixed(2)} ฿</span>
                 </div>
 
-              
+ 
                 {/* แจ้งร้านว่าจะมารับช้า */}
-                {["Ready", "Preparing", "Pending"].includes(order.Status) && (
+                {canNotifyLatePickup && (
                   <div
                     style={{
                       marginTop: "14px",
