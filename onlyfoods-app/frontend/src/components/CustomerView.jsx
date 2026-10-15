@@ -24,6 +24,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [myOrders, setMyOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
   const [isFoodCourtOpen, setIsFoodCourtOpen] = useState(true);
+  const [foodCourtMode, setFoodCourtMode] = useState("AUTO");
 
   // LATE PICKUP STATE
   const [latePickupOrder, setLatePickupOrder] = useState({});
@@ -304,8 +305,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/food-court/status`);
       if (!res.ok) return;
+
       const data = await res.json();
+
       setIsFoodCourtOpen(Boolean(data?.is_open));
+      setFoodCourtMode(data?.mode || "AUTO");
+
+      if (data?.open_time) {
+        setFoodCourtOpenTime(data.open_time.slice(0, 5));
+      }
+
+      if (data?.close_time) {
+        setFoodCourtCloseTime(data.close_time.slice(0, 5));
+      }
     } catch (error) {
       console.error("Error fetching food court status:", error);
     }
@@ -838,12 +850,24 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return false;
     }
 
+    if (foodCourtMode === "CLOSED" || !isFoodCourtOpen) {
+      customAlert(
+        "ไม่สามารถสั่งอาหารได้",
+        `เวลาสั่งอาหารคือ ${foodCourtOpenTime}–${foodCourtCloseTime} น.`,
+        "error"
+      );
+      return false;
+    }
+
+    if (foodCourtMode === "OPEN") {
+      return true;
+    }
+
     const currentTime = getCurrentDateTimeForBackend()
       .split(" ")[1]
       .slice(0, 5);
 
     if (
-      !isFoodCourtOpen ||
       currentTime < foodCourtOpenTime ||
       currentTime >= foodCourtCloseTime
     ) {
@@ -868,13 +892,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // LATE PICKUP HANDLER
-  const handleLatePickup = (orderId, minutes) => {
+  const handleLatePickup = (order, minutes) => {
+    const orderId = order.OrderID;
+
     const currentData = latePickupOrder[orderId] || {
       count: 0,
       arrivalTime: "",
     };
 
-    // แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์
     if (currentData.count >= 3) {
       customAlert(
         "แจ้งครบจำนวนแล้ว",
@@ -884,27 +909,42 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return;
     }
 
-    // คำนวณเวลาที่จะมารับช้า
-    const pickupTime = orderPickupTimes[orderId];
-    const arrivalDate = pickupTime
-      ? new Date(pickupTime)
-      : new Date();
+    // ใช้เวลานัดรับอาหาร ไม่ใช่เวลาที่สั่งหรือเวลาปัจจุบัน
+    const rawPickupTime = String(
+      order.PickupTime || order.pickup_time || ""
+    ).trim();
 
-    arrivalDate.setMinutes(
-      arrivalDate.getMinutes() + Number(minutes)
+    const timeMatch = rawPickupTime.match(/(\d{1,2}):(\d{2})/);
+
+    if (!timeMatch) {
+      customAlert(
+        "ไม่พบเวลานัดรับ",
+        "ไม่สามารถอ่านเวลานัดรับอาหารของออเดอร์นี้ได้",
+        "warning"
+      );
+      return;
+    }
+
+    const pickupDate = new Date();
+    pickupDate.setHours(
+      Number(timeMatch[1]),
+      Number(timeMatch[2]),
+      0,
+      0
     );
 
-    const arrivalTime = arrivalDate.toLocaleTimeString(
-      "th-TH",
-      {
-        timeZone: "Asia/Bangkok",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }
+    // เพิ่มระยะเวลาจากเวลานัดรับอาหาร
+    pickupDate.setMinutes(
+      pickupDate.getMinutes() + Number(minutes)
     );
 
-    // บันทึกข้อมูลล่าสุดของออเดอร์นี้
+    const arrivalTime = pickupDate.toLocaleTimeString("th-TH", {
+      timeZone: "Asia/Bangkok",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
     setLatePickupOrder((prev) => ({
       ...prev,
       [orderId]: {
@@ -920,6 +960,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       "success"
     );
   };
+
 
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
   // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
