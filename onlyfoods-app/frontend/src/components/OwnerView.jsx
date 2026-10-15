@@ -99,6 +99,18 @@ function hoursFromSchedule(openTime, closeTime) {
   return { from: Math.floor(o / 60), to: Math.max(Math.floor(o / 60), Math.ceil(c / 60) - 1) };
 }
 
+// "เมื่อสักครู่" / "5 นาทีที่แล้ว" / "3 ชั่วโมงที่แล้ว" / "2 วันที่แล้ว" / วันที่
+function timeAgo(value) {
+  const d = parseOrderDate(value);
+  if (!d) return '-';
+  const diff = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (diff < 60) return 'เมื่อสักครู่';
+  if (diff < 3600) return `${Math.floor(diff / 60)} นาทีที่แล้ว`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} ชั่วโมงที่แล้ว`;
+  if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} วันที่แล้ว`;
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
+}
+
 function thaiDate(iso) {
   const d = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
@@ -1164,6 +1176,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const profileRef = useRef(null);
 
   const [notifOpen, setNotifOpen] = useState(false);
+  const [notifTab, setNotifTab] = useState('all'); // all | unread
+  const [burgerSpin, setBurgerSpin] = useState(0);  // องศาที่ไอคอน ☰ หมุนสะสม
   const notifRef = useRef(null);
 
   const [notifications, setNotifications] = useState([]);
@@ -1309,6 +1323,24 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       setKnownCancelsCount(cancels.length);
     }
   }, [page, cancels.length]);
+
+  const markAllRead = async () => {
+    setUnreadCancels(0);
+    setKnownCancelsCount(cancels.length);
+    if (uid && unreadNotifs > 0) {
+      setNotifications(prev => prev.map(n => ({ ...n, IsRead: true })));
+      setUnreadNotifs(0);
+      try { await fetch(`${apiBase}/api/notifications/${uid}/read-all`, { method: 'PUT' }); } catch (err) { console.error(err); }
+      fetchData();
+    }
+  };
+
+  useEffect(() => {
+    if (!notifOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setNotifOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [notifOpen]);
 
   const markNotifRead = (notifId) => {
     fetch(`${apiBase}/api/notifications/${notifId}/read`, { method: 'PUT' }).then(() => fetchData());
@@ -1575,8 +1607,15 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       {/* ===== TOPBAR (HEADER) ===== */}
       <header className="berry-topbar">
         <div className="berry-topbar-left">
-          <button className="berry-icon-btn purple-light" onClick={() => setSidebarOpen(!sidebarOpen)} aria-label={sidebarOpen ? 'ซ่อนแถบเมนู' : 'แสดงแถบเมนู'}>
-            <Icon name="menu" size={19} />
+          <button
+            className={`berry-icon-btn purple-light op-burger ${sidebarOpen ? 'is-open' : ''}`}
+            onClick={() => { setBurgerSpin(d => d + 180); setSidebarOpen(!sidebarOpen); }}
+            aria-label={sidebarOpen ? 'ซ่อนแถบเมนู' : 'แสดงแถบเมนู'}
+            aria-expanded={sidebarOpen}
+          >
+            <span className="lines" style={{ transform: `rotate(${burgerSpin}deg)` }} aria-hidden="true">
+              <span /><span /><span />
+            </span>
           </button>
 
           {/* โลโก้ + สถานะศูนย์อาหาร (แบบเดียวกับหน้าลูกค้า) */}
@@ -1616,95 +1655,121 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         <div className="berry-topbar-right">
           
           <div className="berry-notif-container" ref={notifRef} style={{ position: 'relative' }}>
-            <button 
-              className="berry-icon-btn amber-light" 
+            <button
+              className={`berry-icon-btn amber-light op-bell ${notifOpen ? 'active' : ''} ${totalBadgeUnread > 0 ? 'has-unread' : ''}`}
               onClick={() => setNotifOpen(!notifOpen)}
               style={{ position: 'relative' }}
+              aria-label={totalBadgeUnread > 0 ? `การแจ้งเตือน ${totalBadgeUnread} รายการใหม่` : 'การแจ้งเตือน'}
+              aria-expanded={notifOpen}
             >
-              <Icon name="bell" size={20} />
+              <span className="bell-icon" key={totalBadgeUnread}><Icon name="bell" size={20} /></span>
               {totalBadgeUnread > 0 && (
-                <span className="notif-badge-top">
-                  {totalBadgeUnread}
-                </span>
+                <span className="notif-badge-top">{totalBadgeUnread > 99 ? '99+' : totalBadgeUnread}</span>
               )}
             </button>
 
-            {notifOpen && (
-              <div className="berry-profile-dropdown" style={{ right: '0', width: '320px', padding: '0', zIndex: 1000 }}>
-                <div className="dropdown-header" style={{ padding: '16px', borderBottom: '1px solid var(--berry-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    การแจ้งเตือน
-                    {totalBadgeUnread > 0 && <Badge tone="danger">{totalBadgeUnread} ใหม่</Badge>}
-                  </h4>
-                </div>
-                
-                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                  {notifications.length > 0 || cancels.length > 0 || isSuspended ? (
-                    <>
+            {notifOpen && (() => {
+              const NOTIF_STYLE = {
+                ORDER_STATUS: { icon: 'receipt', tone: 'orange' },
+                QUEUE_CALLED: { icon: 'bell', tone: 'green' },
+                PAYMENT: { icon: 'coin', tone: 'green' },
+                CONTRACT: { icon: 'calendar', tone: 'amber' },
+                ISSUE: { icon: 'alert', tone: 'red' },
+                SYSTEM: { icon: 'bell', tone: 'blue' },
+              };
+              const items = [
+                ...notifications.map(n => ({
+                  key: `n-${n.NotifId}`,
+                  ...(NOTIF_STYLE[n.NotificationType] || NOTIF_STYLE.SYSTEM),
+                  title: n.Title || 'การแจ้งเตือน',
+                  message: n.Message,
+                  at: n.CreatedAt,
+                  unread: !n.IsRead,
+                  onClick: () => { if (!n.IsRead) markNotifRead(n.NotifId); },
+                })),
+                ...cancels.slice(0, 5).map((c, i) => ({
+                  key: `c-${c.OrderID}`,
+                  icon: 'soldout',
+                  tone: 'red',
+                  title: `ออเดอร์ถูกยกเลิก · คิว ${c.QueueNo || '-'}`,
+                  message: c.CancelReason ? `เหตุผล: ${c.CancelReason}` : 'ไม่ได้ระบุเหตุผล',
+                  at: c.CreatedAt,
+                  unread: i < unreadCancels,
+                  amount: c.TotalAmount,
+                  onClick: () => { setPage('cancel'); setNotifOpen(false); },
+                })),
+              ].sort((a, b) => (parseOrderDate(b.at)?.getTime() || 0) - (parseOrderDate(a.at)?.getTime() || 0));
+              const shown = notifTab === 'unread' ? items.filter(it => it.unread) : items;
+              return (
+                <>
+                  <div className="op-notif-backdrop" onClick={() => setNotifOpen(false)} aria-hidden="true" />
+                  <div className="op-notif-panel" role="dialog" aria-label="การแจ้งเตือน">
+                    <div className="op-notif-head">
+                      <div className="title">
+                        <h4>การแจ้งเตือน</h4>
+                        {totalBadgeUnread > 0 && <span className="count">{totalBadgeUnread} ใหม่</span>}
+                      </div>
+                      <div className="head-actions">
+                        {(unreadCancels > 0 || unreadNotifs > 0) && (
+                          <button type="button" className="op-notif-link" onClick={markAllRead}>
+                            <Icon name="check" size={14} /> อ่านทั้งหมด
+                          </button>
+                        )}
+                        <button type="button" className="op-notif-close" onClick={() => setNotifOpen(false)} aria-label="ปิด">
+                          <Icon name="close" size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="op-notif-tabs" role="tablist">
+                      <button type="button" role="tab" aria-selected={notifTab === 'all'} className={notifTab === 'all' ? 'active' : ''} onClick={() => setNotifTab('all')}>
+                        ทั้งหมด <span>{items.length}</span>
+                      </button>
+                      <button type="button" role="tab" aria-selected={notifTab === 'unread'} className={notifTab === 'unread' ? 'active' : ''} onClick={() => setNotifTab('unread')}>
+                        ยังไม่อ่าน <span>{items.filter(it => it.unread).length}</span>
+                      </button>
+                    </div>
+
+                    <div className="op-notif-list">
                       {isSuspended && (
-                        <div 
-                          key="notif-suspended" 
-                          style={{ padding: '12px 16px', borderBottom: '1px solid var(--berry-border)', cursor: 'default', background: 'var(--berry-red-light)' }} 
-                        >
-                          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--berry-red)' }}>
-                            ⚠️ ร้านค้าของคุณถูกระงับสิทธิ์
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--berry-text-dark)', marginTop: '4px' }}>
-                            คุณไม่สามารถเปิดรับออเดอร์ใหม่ได้ กรุณาติดต่อผู้ดูแลระบบ (Executive)
+                        <div className="op-notif-alert">
+                          <span className="icon"><Icon name="alert" size={18} /></span>
+                          <div>
+                            <div className="t">ร้านของคุณถูกระงับสิทธิ์</div>
+                            <div className="m">เปิดรับออเดอร์ใหม่ไม่ได้ชั่วคราว กรุณาติดต่อผู้บริหารศูนย์อาหาร</div>
                           </div>
                         </div>
                       )}
 
-                      {notifications.map(n => (
-                        <div 
-                          key={`notif-${n.NotifId}`} 
-                          style={{ padding: '12px 16px', borderBottom: '1px solid var(--berry-border)', cursor: 'pointer', background: n.IsRead ? 'transparent' : 'var(--berry-purple-light)' }} 
-                          className="notif-item-hover"
-                          onClick={() => markNotifRead(n.NotifId)}
-                        >
-                          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>
-                            {n.Message}
-                          </div>
-                          <div style={{ fontSize: '11px', color: 'var(--berry-text-muted)', marginTop: '6px' }}>
-                            {n.CreatedAt ? new Date(n.CreatedAt).toLocaleString('th-TH') : '-'}
-                          </div>
+                      {shown.length === 0 && !isSuspended ? (
+                        <div className="op-notif-empty">
+                          <div className="icon"><Icon name="bell" size={26} /></div>
+                          <div className="t">{notifTab === 'unread' ? 'อ่านครบทุกรายการแล้ว' : 'ยังไม่มีการแจ้งเตือน'}</div>
+                          <div className="m">{notifTab === 'unread' ? 'ไม่มีการแจ้งเตือนที่ยังไม่ได้อ่าน' : 'เมื่อมีออเดอร์ถูกยกเลิกหรือข่าวจากระบบ จะแสดงที่นี่'}</div>
                         </div>
+                      ) : shown.map(it => (
+                        <button key={it.key} type="button" className={`op-notif-item ${it.unread ? 'unread' : ''}`} onClick={it.onClick}>
+                          <span className={`icon tone-${it.tone}`}><Icon name={it.icon} size={17} /></span>
+                          <span className="body">
+                            <span className="t">{it.title}</span>
+                            {it.message && <span className="m">{it.message}</span>}
+                            <span className="meta">
+                              <Icon name="clock" size={12} /> {timeAgo(it.at)}
+                              {it.amount !== undefined && <> · ฿{fmtMoney(it.amount)}</>}
+                            </span>
+                          </span>
+                          {it.unread && <span className="unread-dot" aria-label="ยังไม่อ่าน" />}
+                        </button>
                       ))}
-
-                      {cancels.slice(0, 5).map(c => (
-                        <div 
-                          key={`cancel-${c.OrderID}`} 
-                          style={{ padding: '12px 16px', borderBottom: '1px solid var(--berry-border)', cursor: 'pointer' }} 
-                          className="notif-item-hover"
-                          onClick={() => { setPage('cancel'); setNotifOpen(false); }}
-                        >
-                          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>
-                            ออเดอร์ถูกยกเลิก (คิว: {c.QueueNo})
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--berry-text-muted)', marginTop: '4px' }}>
-                            เหตุผล: {c.CancelReason || '-'}
-                          </div>
-                          <div style={{ fontSize: '11px', color: 'var(--berry-text-muted)', marginTop: '6px' }}>
-                            {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
-                          </div>
-                        </div>
-                      ))}
-                    </>
-                  ) : (
-                    <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--berry-text-muted)', fontSize: '13px' }}>
-                      ไม่มีการแจ้งเตือนใหม่
                     </div>
-                  )}
-                </div>
-                
-                <div 
-                  style={{ padding: '12px', textAlign: 'center', fontSize: '13px', color: 'var(--berry-purple)', cursor: 'pointer', fontWeight: '600', borderTop: '1px solid var(--berry-border)' }} 
-                  onClick={() => { setPage('cancel'); setNotifOpen(false); }}
-                >
-                  ดูประวัติยกเลิกทั้งหมด
-                </div>
-              </div>
-            )}
+
+                    <button type="button" className="op-notif-foot" onClick={() => { setPage('cancel'); setNotifOpen(false); }}>
+                      ดูประวัติการยกเลิกทั้งหมด <Icon name="arrowRight" size={15} />
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
 
           <div className="berry-profile-container" ref={profileRef}>
@@ -4125,5 +4190,94 @@ body, html {
   .berry-bulk-bar { padding: 10px 12px; }
   .berry-bulk-bar .actions { width: 100%; }
   .berry-bulk-bar .actions .mm-stock-btn { flex: 1; }
+}
+
+/* ================================================================
+   ปุ่ม ☰ (หมุนเมื่อกด / กลายเป็น X ตอนเปิดเมนูบนมือถือ)
+   ================================================================ */
+.op-burger .lines { position: relative; display: block; width: 18px; height: 14px; transition: transform 0.5s cubic-bezier(0.68, -0.4, 0.27, 1.4); }
+.op-burger .lines span { position: absolute; left: 0; width: 100%; height: 2px; border-radius: 2px; background: currentColor; transition: top 0.3s ease 0.1s, transform 0.3s ease, opacity 0.2s ease, width 0.3s ease; }
+.op-burger .lines span:nth-child(1) { top: 0; }
+.op-burger .lines span:nth-child(2) { top: 6px; width: 72%; }
+.op-burger .lines span:nth-child(3) { top: 12px; }
+.op-burger:hover .lines span:nth-child(2) { width: 100%; }
+.op-burger:active { transform: scale(0.92); }
+@media (max-width: 768px) {
+  .op-burger.is-open { background: var(--berry-purple) !important; color: #FFFFFF !important; }
+  .op-burger.is-open .lines span { transition: top 0.3s ease, transform 0.3s ease 0.15s, opacity 0.2s ease; }
+  .op-burger.is-open .lines span:nth-child(1) { top: 6px; transform: rotate(45deg); }
+  .op-burger.is-open .lines span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+  .op-burger.is-open .lines span:nth-child(3) { top: 6px; transform: rotate(-45deg); }
+}
+@media (prefers-reduced-motion: reduce) { .op-burger .lines, .op-burger .lines span { transition: none !important; } }
+
+/* ================================================================
+   การแจ้งเตือน
+   ================================================================ */
+.op-bell .bell-icon { display: grid; place-items: center; }
+.op-bell.has-unread .bell-icon { animation: opBellRing 1s ease-in-out; transform-origin: 50% 10%; }
+.op-bell.active { background: var(--berry-amber) !important; color: #FFFFFF !important; }
+@keyframes opBellRing {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(14deg); } 30% { transform: rotate(-12deg); }
+  45% { transform: rotate(9deg); } 60% { transform: rotate(-6deg); } 75% { transform: rotate(3deg); }
+}
+.op-notif-backdrop { display: none; }
+.op-notif-panel {
+  position: absolute; top: calc(100% + 12px); right: -8px; z-index: 1000;
+  width: 380px; max-height: min(560px, calc(100vh - 110px));
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 18px;
+  box-shadow: 0 20px 50px rgba(29,31,47,0.18);
+  transform-origin: top right;
+  animation: opNotifIn 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes opNotifIn { from { opacity: 0; transform: translateY(-8px) scale(0.96); } to { opacity: 1; transform: none; } }
+.op-notif-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 16px 10px; }
+.op-notif-head .title { display: flex; align-items: center; gap: 8px; }
+.op-notif-head h4 { margin: 0; font-size: 16px; font-weight: 700; color: var(--berry-text-dark); }
+.op-notif-head .count { padding: 2px 8px; border-radius: 999px; background: var(--berry-red); color: #FFFFFF; font-size: 11px; font-weight: 700; }
+.op-notif-head .head-actions { display: flex; align-items: center; gap: 4px; }
+.op-notif-link { display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; color: var(--berry-purple); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.op-notif-link:hover { background: var(--berry-purple-light); }
+.op-notif-close { width: 30px; height: 30px; display: grid; place-items: center; border: none; border-radius: 8px; background: transparent; color: var(--berry-text-muted); cursor: pointer; }
+.op-notif-close:hover { background: var(--berry-bg); color: var(--berry-text-dark); }
+.op-notif-tabs { display: flex; gap: 6px; padding: 0 16px 10px; border-bottom: 1px solid var(--berry-border); }
+.op-notif-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-muted); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.op-notif-tabs button span { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--berry-bg); font-size: 11px; line-height: 18px; text-align: center; }
+.op-notif-tabs button.active { background: var(--berry-blue); border-color: var(--berry-blue); color: #FFFFFF; }
+.op-notif-tabs button.active span { background: rgba(255,255,255,0.2); }
+.op-notif-list { flex: 1; overflow-y: auto; padding: 6px; overscroll-behavior: contain; }
+.op-notif-alert { display: flex; gap: 10px; margin: 4px 4px 8px; padding: 12px; border-radius: 12px; background: var(--berry-red-light); }
+.op-notif-alert .icon { width: 34px; height: 34px; min-width: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--berry-red); color: #FFFFFF; }
+.op-notif-alert .t { font-size: 13.5px; font-weight: 700; color: var(--berry-red); }
+.op-notif-alert .m { margin-top: 2px; font-size: 12px; color: var(--berry-text-dark); line-height: 1.5; }
+.op-notif-item { position: relative; width: 100%; display: flex; align-items: flex-start; gap: 12px; padding: 12px 30px 12px 12px; border: none; border-radius: 12px; background: transparent; font-family: inherit; text-align: left; cursor: pointer; transition: background 0.15s ease; }
+.op-notif-item + .op-notif-item { margin-top: 2px; }
+.op-notif-item:hover { background: var(--berry-bg); }
+.op-notif-item.unread { background: #FFF8F5; }
+.op-notif-item.unread:hover { background: var(--berry-purple-light); }
+.op-notif-item .icon { width: 38px; height: 38px; min-width: 38px; display: grid; place-items: center; border-radius: 12px; }
+.op-notif-item .icon.tone-red { background: var(--berry-red-light); color: var(--berry-red); }
+.op-notif-item .icon.tone-orange { background: var(--berry-purple-light); color: var(--berry-purple); }
+.op-notif-item .icon.tone-green { background: var(--berry-green-light); color: var(--berry-green); }
+.op-notif-item .icon.tone-amber { background: var(--berry-amber-light); color: var(--berry-amber); }
+.op-notif-item .icon.tone-blue { background: var(--berry-blue-light); color: var(--berry-blue); }
+.op-notif-item .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.op-notif-item .t { font-size: 13.5px; font-weight: 600; color: var(--berry-text-dark); line-height: 1.4; }
+.op-notif-item.unread .t { font-weight: 700; }
+.op-notif-item .m { font-size: 12.5px; color: var(--berry-text-muted); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.op-notif-item .meta { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 11.5px; color: #A3A7BA; }
+.op-notif-item .unread-dot { position: absolute; top: 18px; right: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--berry-purple); box-shadow: 0 0 0 3px var(--berry-purple-light); }
+.op-notif-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 36px 20px; text-align: center; }
+.op-notif-empty .icon { width: 60px; height: 60px; display: grid; place-items: center; margin-bottom: 8px; border-radius: 50%; background: var(--berry-amber-light); color: var(--berry-amber); }
+.op-notif-empty .t { font-size: 14.5px; font-weight: 600; color: var(--berry-text-dark); }
+.op-notif-empty .m { font-size: 12.5px; color: var(--berry-text-muted); line-height: 1.5; max-width: 240px; }
+.op-notif-foot { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 13px; border: none; border-top: 1px solid var(--berry-border); background: var(--berry-paper); color: var(--berry-purple); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.op-notif-foot:hover { background: var(--berry-purple-light); }
+
+@media (max-width: 600px) {
+  .op-notif-backdrop { display: block; position: fixed; inset: 64px 0 0 0; z-index: 999; background: rgba(29,31,47,0.35); animation: berryFadeIn 0.2s ease-out; }
+  .op-notif-panel { position: fixed; top: 72px; left: 10px; right: 10px; width: auto; max-height: calc(100vh - 92px); border-radius: 18px; transform-origin: top center; }
 }
 `;
