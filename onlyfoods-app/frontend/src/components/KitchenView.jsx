@@ -104,6 +104,18 @@ const LockIcon = () => (
   </svg>
 );
 
+const ListIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+  </svg>
+);
+
+const ChevronDownIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="6 9 12 15 18 9"/>
+  </svg>
+);
+
 const getRoleLabel = (role) => {
   const roleMap = {
     'Kitchen Staff': 'พนักงานครัว',
@@ -116,7 +128,6 @@ const getRoleLabel = (role) => {
   return roleMap[role] || role || 'ผู้ใช้งาน';
 };
 
-// --- Helper แปลงเวลาแบบปลอดภัย ---
 const parseDate = (timeStr) => {
   if (!timeStr) return null;
   if (timeStr instanceof Date) return isNaN(timeStr.getTime()) ? null : timeStr;
@@ -141,6 +152,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [summary, setSummary] = useState([]);
   const [isDark, setIsDark] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false); // ควบคุม Dropdown สรุปรายการ
   const [filterTab, setFilterTab] = useState('Pending');
 
   // USER & PROFILE STATE
@@ -152,7 +164,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const pendingUndoRef = useRef(new Set()); // ล็อก ID ฝั่ง Frontend ป้องกันอาการเด้งกระพริบ
+  const pendingUndoRef = useRef(new Set());
 
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [storeOpen, setStoreOpen] = useState(true);
@@ -253,7 +265,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // --- Logic คำนวณเวลานัดรับจาก "จำนวนจานรวม" (คิดจานละ 4 นาที) ---
+  // คำนวณจานละ 4 นาที จากคิวสะสม
   const getCalculatedTargetDate = (order, orderList) => {
     const created = parseDate(order.CreatedAt) || new Date();
     const pickupStr = order.PickupTime ? String(order.PickupTime).trim() : '';
@@ -261,7 +273,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     const createdFormatted = created.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
     const createdShort = created.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-    // เช็คว่าถ้า PickupTime เท่ากับเวลาสั่ง หรือระบุรับทันที ให้ถือว่าเป็น "ออเดอร์รับทันที"
     const isImmediate = !pickupStr || 
                         pickupStr.includes('รับทันที') || 
                         pickupStr === createdFormatted || 
@@ -272,22 +283,18 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       if (pDate) return { targetDate: pDate, isImmediate: false };
     }
 
-    // 1. หาออเดอร์ค้างปรุงก่อนหน้านี้ทั้งหมด
     const pendingBeforeOrders = orderList.filter(o => 
       (o.Status === 'Pending' || o.Status === 'Cooking') && 
       (o.OrderID < order.OrderID)
     );
 
-    // 2. คำนวณจำนวนจานรวมก่อนหน้า
     const prevTotalItems = pendingBeforeOrders.reduce((sum, o) => {
       const orderQty = o.items?.reduce((iSum, item) => iSum + (Number(item.Qty) || 1), 0) || 1;
       return sum + orderQty;
     }, 0);
 
-    // 3. คำนวณจำนวนจานของออเดอร์ปัจจุบัน
     const currentOrderQty = order.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
 
-    // 4. คิดอัตรา 1 จาน = 4 นาที (อย่างน้อยขั้นต่ำ 4 นาที)
     const minutesToWait = Math.max(4, (prevTotalItems + currentOrderQty) * 4);
     const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
 
@@ -298,7 +305,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     };
   };
 
-  // Sort Orders: เรียงตาม Target Time
   const sortedOrders = [...allOrders].sort((a, b) => {
     const targetA = getCalculatedTargetDate(a, allOrders).targetDate;
     const targetB = getCalculatedTargetDate(b, allOrders).targetDate;
@@ -330,10 +336,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
     if (e) e.stopPropagation();
 
-    // 1. ล็อก ID ไว้เพื่อไม่ให้ fetchData ดึงข้อมูลเก่ามาทับ
     pendingUndoRef.current.add(id);
-
-    // 2. อัปเดต State ทันที
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
     if (targetStatus === 'Pending') {
@@ -353,14 +356,12 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     } catch (err) {
       console.error("Update status error:", err);
     } finally {
-      // 3. ปลดล็อกหลังจากผ่านไป 3.5 วินาที
       setTimeout(() => {
         pendingUndoRef.current.delete(id);
       }, 3500);
     }
   };
 
-  // ตรวจสอบการแจ้งเตือนด่วน
   const getPickupAlert = (order) => {
     try {
       const { targetDate, isImmediate } = getCalculatedTargetDate(order, allOrders);
@@ -423,6 +424,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return typeof queueNo === 'number' ? `คิว #${String(queueNo).padStart(3, '0')}` : `คิว #${queueNo}`;
   };
 
+  // รวมจำนวนจานทั้งหมดที่รอทำ
+  const totalItemsToCook = summary.reduce((sum, item) => sum + (Number(item.TotalQty) || 0), 0);
+
   return (
     <div style={{
       position: 'fixed',
@@ -455,9 +459,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         button:active {
           transform: scale(0.98);
         }
-        .summary-scroll-container::-webkit-scrollbar {
-          display: none;
-        }
         @keyframes urgentFlash {
           0% { background-color: rgba(239, 68, 68, 0.12); border-color: #EF4444; }
           50% { background-color: rgba(239, 68, 68, 0.3); border-color: #DC2626; }
@@ -470,7 +471,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         }
       `}</style>
 
-      {/* Header Bar */}
+      {/* Header Bar ดีไซน์ใหม่ สวย คลีน ไม่พังทุกขนาดจอ */}
       <header style={{
         background: theme.navBg,
         borderBottom: `1px solid ${theme.border}`,
@@ -485,7 +486,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         zIndex: 100,
         gap: '16px'
       }}>
-        {/* โลโก้ และ สถานะร้าน */}
+        {/* โลโก้ และ สถานะครัว */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
           <div style={{
             fontSize: "24px",
@@ -540,17 +541,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           </div>
         </div>
 
-        {/* ส่วนแสดงเวลารวม สรุปคิว และสรุปรายการเมนูที่ดีไซน์ใหม่ */}
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '10px', 
-          flex: 1, 
-          justifyContent: 'flex-end', 
-          minWidth: 0,
-          overflow: 'hidden'
-        }}>
-          {/* เวลา Real-time */}
+        {/* ส่วนขวา: เวลา + Dropdown สรุปรายการ + ปุ่มตั้งค่า */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+          
+          {/* นาฬิกา Realtime */}
           <div style={{
             background: theme.cardInner,
             border: `1px solid ${theme.border}`,
@@ -561,8 +555,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
-            color: theme.textMain,
-            flexShrink: 0
+            color: theme.textMain
           }}>
             <ClockIcon />
             <span>{currentTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} น.</span>
@@ -576,63 +569,86 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             borderRadius: '99px',
             fontSize: '13.5px',
             fontWeight: '600',
-            flexShrink: 0,
             whiteSpace: 'nowrap'
           }}>
-            คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '4px' }}>{pendingOrders.length}</span>
+            คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '2px' }}>{pendingOrders.length}</span>
           </div>
 
-          {/* แถบสรุปรายการอาหารดีไซน์ใหม่ (Pill shape คลีน สวยงาม เลื่อนซ้าย-ขวาได้) */}
+          {/* ปุ่ม Dropdown สรุปรายการอาหาร (Clean & Compact ยุบลงปุ่มเดียว ไม่รกหน้าจอ) */}
           {summary.length > 0 && (
-            <div 
-              className="summary-scroll-container"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                overflowX: 'auto',
-                maxWidth: '420px',
-                padding: '2px 0',
-                msOverflowStyle: 'none',
-                scrollbarWidth: 'none'
-              }}
-            >
-              {summary.map((s, i) => (
-                <div key={i} style={{
-                  background: isDark ? 'rgba(255, 114, 76, 0.12)' : '#FFF0ED',
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setIsSummaryOpen(!isSummaryOpen)}
+                style={{
+                  background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED',
+                  color: PALETTE.coral,
                   border: `1px solid ${isDark ? 'rgba(255, 114, 76, 0.3)' : '#FFDCD3'}`,
-                  padding: '5px 12px',
                   borderRadius: '99px',
-                  fontSize: '12.5px',
+                  padding: '7px 14px',
+                  fontSize: '13px',
+                  fontWeight: '800',
+                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0
+                  gap: '8px'
+                }}
+              >
+                <ListIcon />
+                <span>สรุปรายการ ({totalItemsToCook} จาน)</span>
+                <ChevronDownIcon />
+              </button>
+
+              {/* Popover แสดงรายการอาหารรวมทั้งหมดเมื่อกดเปิด */}
+              {isSummaryOpen && (
+                <div style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 10px)',
+                  right: 0,
+                  background: theme.cardBg,
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: '16px',
+                  width: '280px',
+                  maxHeight: '360px',
+                  overflowY: 'auto',
+                  padding: '16px',
+                  boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.12)',
+                  zIndex: 1000
                 }}>
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
-                    background: PALETTE.coral 
-                  }} />
-                  <span style={{ fontWeight: '600', color: theme.textMain }}>{s.ProductName}</span>
-                  <span style={{ 
-                    background: PALETTE.coral, 
-                    color: '#FFF', 
-                    borderRadius: '99px', 
-                    padding: '1px 7px', 
-                    fontSize: '11.5px', 
-                    fontWeight: '800' 
-                  }}>
-                    {s.TotalQty}
-                  </span>
+                  <div style={{ fontSize: '13px', fontWeight: '800', color: theme.textMuted, marginBottom: '10px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>รายการอาหารค้างปรุง</span>
+                    <span style={{ color: PALETTE.coral }}>{totalItemsToCook} จานรวม</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {summary.map((s, i) => (
+                      <div key={i} style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        background: theme.cardInner,
+                        padding: '8px 12px',
+                        borderRadius: '10px',
+                        fontSize: '13.5px'
+                      }}>
+                        <span style={{ fontWeight: '600', color: theme.textMain }}>{s.ProductName}</span>
+                        <span style={{
+                          background: PALETTE.coral,
+                          color: '#FFF',
+                          borderRadius: '99px',
+                          padding: '2px 8px',
+                          fontSize: '12px',
+                          fontWeight: '800'
+                        }}>
+                          x{s.TotalQty}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
+              )}
             </div>
           )}
 
-          {/* ปุ่มสลับ Theme */}
+          {/* ปุ่ม Theme */}
           <button
             onClick={() => setIsDark(!isDark)}
             style={{
@@ -646,113 +662,113 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              flexShrink: 0
+              gap: '6px'
             }}
           >
             {isDark ? <SunIcon /> : <MoonIcon />}
             {isDark ? 'Light' : 'Dark'}
           </button>
 
-          {/* ปุ่ม Profile User */}
-          <button
-            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            style={{
-              background: theme.cardInner,
-              color: theme.textMain,
-              border: `1px solid ${theme.border}`,
-              borderRadius: '99px',
-              padding: '4px 14px 4px 5px',
-              fontSize: '13.5px',
-              fontWeight: '700',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              flexShrink: 0
-            }}
-          >
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '50%',
-              background: PALETTE.yellow,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'hidden',
-              flexShrink: 0
-            }}>
-              {profileImage ? (
-                <img src={profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              ) : (
-                <UserIcon />
-              )}
-            </div>
-            <span style={{ whiteSpace: 'nowrap' }}>{displayName}</span>
-          </button>
-
-          {isDropdownOpen && (
-            <div style={{
-              position: 'absolute',
-              top: 'calc(100% + 10px)',
-              right: 24,
-              background: theme.cardBg,
-              border: `1px solid ${theme.border}`,
-              borderRadius: '16px',
-              width: '240px',
-              padding: '16px',
-              boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.08)',
-              zIndex: 1000
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                <div style={{
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: '50%',
-                  background: PALETTE.yellow,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  overflow: 'hidden'
-                }}>
-                  {profileImage ? (
-                    <img src={profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <UserIcon />
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>{displayName}</div>
-                  <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '2px' }}>{displayRole}</div>
-                </div>
+          {/* ปุ่ม Profile */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              style={{
+                background: theme.cardInner,
+                color: theme.textMain,
+                border: `1px solid ${theme.border}`,
+                borderRadius: '99px',
+                padding: '4px 14px 4px 5px',
+                fontSize: '13.5px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                background: PALETTE.yellow,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                flexShrink: 0
+              }}>
+                {profileImage ? (
+                  <img src={profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <UserIcon />
+                )}
               </div>
-              <hr style={{ border: 'none', borderTop: `1px solid ${theme.border}`, margin: '12px 0' }} />
-              <button
-                onClick={() => {
-                  setIsDropdownOpen(false);
-                  setShowLogoutModal(true);
-                }}
-                style={{
-                  width: '100%',
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#EF4444',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  fontSize: '13.5px',
-                  fontWeight: '700',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px'
-                }}
-              >
-                <LogoutIcon />
-                ออกจากระบบ
-              </button>
-            </div>
-          )}
+              <span style={{ whiteSpace: 'nowrap' }}>{displayName}</span>
+            </button>
+
+            {isDropdownOpen && (
+              <div style={{
+                position: 'absolute',
+                top: 'calc(100% + 10px)',
+                right: 0,
+                background: theme.cardBg,
+                border: `1px solid ${theme.border}`,
+                borderRadius: '16px',
+                width: '240px',
+                padding: '16px',
+                boxShadow: isDark ? '0 10px 30px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.08)',
+                zIndex: 1000
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    background: PALETTE.yellow,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    overflow: 'hidden'
+                  }}>
+                    {profileImage ? (
+                      <img src={profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <UserIcon />
+                    )}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: '800', color: theme.textMain }}>{displayName}</div>
+                    <div style={{ fontSize: '12px', color: theme.textMuted, marginTop: '2px' }}>{displayRole}</div>
+                  </div>
+                </div>
+                <hr style={{ border: 'none', borderTop: `1px solid ${theme.border}`, margin: '12px 0' }} />
+                <button
+                  onClick={() => {
+                    setIsDropdownOpen(false);
+                    setShowLogoutModal(true);
+                  }}
+                  style={{
+                    width: '100%',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#EF4444',
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    fontSize: '13.5px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  <LogoutIcon />
+                  ออกจากระบบ
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1038,7 +1054,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                               พร้อมรับอาหาร (รอหน้าร้านส่งมอบ)
                             </div>
                             
-                            {/* ปุ่ม Undo ย้อนกลับไปคิวรอปรุง */}
+                            {/* ปุ่ม Undo */}
                             <button
                               onClick={(e) => updateOrderStatus(o.OrderID, 'Pending', e)}
                               style={{
