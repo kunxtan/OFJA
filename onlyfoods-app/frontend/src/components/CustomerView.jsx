@@ -56,29 +56,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [orderNote, setOrderNote] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("PromptPay");
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-  const now = new Date();
-  const currentTime =
-    `${String(now.getHours()).padStart(2, "0")}:` +
-    `${String(now.getMinutes()).padStart(2, "0")}`;
-
-  const pickupTimeOptions = Array.from({ length: 1440 }, (_, i) => {
-    const hour = String(Math.floor(i / 60)).padStart(2, "0");
-    const minute = String(i % 60).padStart(2, "0");
-    return `${hour}:${minute}`;
-  }).filter((time) => {
-    if (time < currentTime) return false;
-
-    if (foodCourtOpenTime && time < foodCourtOpenTime) {
-      return false;
-    }
-
-    if (foodCourtCloseTime && time > foodCourtCloseTime) {
-      return false;
-    }
-
-    return true;
-  });
-
+ 
   // PAYMENT MODAL & SLIP
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [slipFile, setSlipFile] = useState(null);
@@ -2897,6 +2875,22 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       </div>
     );
   };
+  
+  const now = new Date();
+  const currentTime =
+    `${String(now.getHours()).padStart(2, "0")}:` +
+    `${String(now.getMinutes()).padStart(2, "0")}`;
+
+  const pickupTimeOptions = Array.from({ length: 1440 }, (_, i) => {
+    const hour = String(Math.floor(i / 60)).padStart(2, "0");
+    const minute = String(i % 60).padStart(2, "0");
+    return `${hour}:${minute}`;
+  }).filter((time) => {
+    if (time < currentTime) return false;
+    if (foodCourtOpenTime && time < foodCourtOpenTime) return false;
+    if (foodCourtCloseTime && time > foodCourtCloseTime) return false;
+    return true;
+  });
 
   return (
     <div className="customer-view" style={pageStyle}>
