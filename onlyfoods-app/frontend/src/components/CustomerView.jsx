@@ -1917,7 +1917,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                                 ? "ยืนยันแจ้งเวลามารับช้า"
                                 : `แจ้งเวลาครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
                           </button>
-                          <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "6px" }}>
+                          <div style={{ fontSize: "11px", color: COLORS.orange, marginTop: "6px" }}>
                             แจ้งแล้ว {lateInfo.count}/3 ครั้ง
                           </div>
                         </>
@@ -2053,20 +2053,54 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> เวลารับอาหาร</label>
-                  <input type="time" value={pickupTime} min={foodCourtOpenTime || undefined} max={foodCourtCloseTime || undefined} 
-                      onChange={(e) => {
-                        const selectedTime = e.target.value;
-                          if (foodCourtOpenTime && selectedTime < foodCourtOpenTime) {
-                            customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารตั้งแต่ ${foodCourtOpenTime} น. เป็นต้นไป`, "warning");
-                            return;
-                          }
-                          if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
-                            customAlert("เวลาไม่ถูกต้อง", `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`,"warning");
-                            return;
-                          }
-                          setPickupTime(selectedTime);
-                        }}
+                  <input
+                    type="time"
+                    value={pickupTime}
+                    min={foodCourtOpenTime || undefined}
+                    max={foodCourtCloseTime || undefined}
+                    onChange={(e) => {
+                      const selectedTime = e.target.value;
+                      if (!selectedTime) {
+                        setPickupTime(selectedTime);
+                        return;
+                      }
+
+                      const now = new Date();
+                      const currentTime =
+                        `${String(now.getHours()).padStart(2, "0")}:` +
+                        `${String(now.getMinutes()).padStart(2, "0")}`;
+
+                      if (selectedTime < currentTime) {
+                        customAlert(
+                          "เวลาไม่ถูกต้อง",
+                          "กรุณาเลือกเวลารับอาหารตั้งแต่เวลาปัจจุบันเป็นต้นไป",
+                          "warning"
+                        );
+                        return;
+                      }
+
+                      if (foodCourtOpenTime && selectedTime < foodCourtOpenTime) {
+                        customAlert(
+                          "เวลาไม่ถูกต้อง",
+                          `กรุณาเลือกเวลารับอาหารตั้งแต่ ${foodCourtOpenTime} น. เป็นต้นไป`,
+                          "warning"
+                        );
+                        return;
+                      }
+
+                      if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
+                        customAlert(
+                          "เวลาไม่ถูกต้อง",
+                          `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`,
+                          "warning"
+                        );
+                        return;
+                      }
+
+                      setPickupTime(selectedTime);
+                    }}
                   />
+
                   <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
                 </div>
 
