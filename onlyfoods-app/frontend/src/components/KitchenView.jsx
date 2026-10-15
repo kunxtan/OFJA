@@ -290,7 +290,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     const currentOrderQty = order.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
 
     // 4. คิดอัตรา 1 จาน = 3 นาที (และมีเวลาทำอย่างน้อย 3 นาที)
-    const minutesToWait = Math.max(3, (prevTotalItems + currentOrderQty) * 3);
+    const minutesToWait = Math.max(5, (prevTotalItems + currentOrderQty) * 4);
     const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
 
     return {
