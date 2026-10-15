@@ -40,6 +40,25 @@ jobs:
           test -f .env || { echo "ไม่พบ onlyfoods-app/.env บน server (คัดลอกจาก .env.example แล้วแก้ค่า)"; exit 1; }
           sudo mkdir -p /var/www/certbot /etc/letsencrypt
 
+      - name: Pull images (retry on network errors)
+        run: |
+          cd "$APP_DIR/onlyfoods-app"
+          # Docker Hub ตอบ 502/timeout เป็นครั้งคราว: โหลด image ล่วงหน้าแบบลองซ้ำ ก่อนถึงขั้นที่ต้องใช้จริง
+          retry() {
+            for i in 1 2 3 4 5; do
+              "$@" && return 0
+              echo "ดาวน์โหลดไม่สำเร็จ ลองใหม่ใน 20 วินาที ($i/5)"
+              sleep 20
+            done
+            return 1
+          }
+          # image ที่ compose ใช้ตรง ๆ
+          retry sudo docker compose -f "$COMPOSE_FILE_NAME" pull db proxy certbot || exit 1
+          # base image ที่ Dockerfile ของ backend/frontend ใช้ตอน build
+          for img in python:3.12-slim node:20-alpine nginx:alpine; do
+            retry sudo docker pull "$img" || exit 1
+          done
+
       - name: Get HTTPS certificate (first time only)
         run: |
           set -e
