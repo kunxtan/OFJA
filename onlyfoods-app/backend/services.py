@@ -73,7 +73,11 @@ def is_duplicate_key(exc: BaseException) -> bool:
 
 
 def next_queue_no(cur, store_id: int) -> int:
-    """เลขคิวถัดไปของร้านในวันนี้ = MAX+1 (ไม่ใช่ COUNT+1 เพราะ COUNT ซ้ำได้เมื่อมีออเดอร์ถูกลบ/พร้อมกัน)"""
+    """เลขคิวถัดไปของร้านในวันนี้ = MAX+1 (ไม่ใช่ COUNT+1 เพราะ COUNT ซ้ำได้เมื่อมีออเดอร์ถูกลบ/พร้อมกัน)
+
+    ล็อกแถว Store ไว้จน transaction จบ : ออเดอร์ของร้านเดียวกันขอเลขคิวทีละคน
+    (ไม่ล็อก = 20 คนสั่งพร้อมกันได้ MAX เดียวกัน ชนกันจน retry หมดแล้วได้ 503) ; ร้านอื่นไม่ต้องรอ"""
+    cur.execute("SELECT StoreId FROM Store WHERE StoreId = %s FOR UPDATE", (store_id,))
     cur.execute(
         "SELECT COALESCE(MAX(QueueNo), 0) + 1 AS n FROM `Order` WHERE StoreId = %s AND OrderDate = CURDATE()",
         (store_id,),

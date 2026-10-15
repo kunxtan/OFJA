@@ -19,6 +19,8 @@
 -- =====================================================================
 
 USE onlyfood;
+-- ต้องมี : ไม่งั้น client ส่งภาษาไทยเป็น latin1 แล้วชื่อหมวด/ร้านเทียบกันไม่ตรง (StoreCategoryId cannot be null)
+SET NAMES utf8mb4;
 
 SET @FC_NAME = 'ศูนย์อาหารกลาง KMITL';
 
