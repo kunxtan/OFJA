@@ -1751,6 +1751,171 @@ function StaffCard({ staff, busy, onEdit, onResetPassword, onToggleActive, onEra
   );
 }
 
+/* ============================================================
+   รายละเอียดการแจ้งเตือน (nd-*)
+   ============================================================ */
+const NOTIF_KIND_LABEL = {
+  cancel: 'ออเดอร์ถูกยกเลิก',
+  issue: 'รายงานปัญหาจากลูกค้า',
+  stock: 'สินค้าหมด',
+  system: 'ประกาศจากระบบ',
+};
+const NOTIF_GO = {
+  cancel: { page: 'cancel', label: 'ดูประวัติการยกเลิก' },
+  issue: { page: 'issues', label: 'ไปที่รายงานปัญหา' },
+  stock: { page: 'menu', label: 'ไปที่จัดการเมนู' },
+};
+const ISSUE_STATUS = {
+  OPEN: { label: 'รอดำเนินการ', tone: 'warning' },
+  IN_PROGRESS: { label: 'กำลังดำเนินการ', tone: 'primary' },
+  RESOLVED: { label: 'แก้ไขแล้ว', tone: 'success' },
+  REJECTED: { label: 'ปฏิเสธ', tone: 'neutral' },
+};
+const ORDER_STATUS_TONE = { COMPLETED: 'success', CANCELLED: 'danger', NO_SHOW: 'neutral' };
+
+function NotifOrderBlock({ order }) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  return (
+    <section className="nd-section">
+      <h4 className="sf-section-title"><Icon name="receipt" size={16} /> รายละเอียดออเดอร์</h4>
+      <div className="nd-card">
+        <div className="nd-order-head">
+          <div>
+            <span className="nd-queue">คิว {order.QueueNo || '-'}</span>
+            <span className="nd-muted">ออเดอร์ #{order.OrderID}</span>
+          </div>
+          <Badge tone={ORDER_STATUS_TONE[order.StatusCode] || 'warning'}>{order.StatusNameTh || order.Status || '-'}</Badge>
+        </div>
+        <dl className="nd-grid">
+          <div>
+            <dt>ลูกค้า</dt>
+            <dd>{order.IsWalkIn ? 'ลูกค้า Walk-in' : (order.CustomerName || '-')}</dd>
+          </div>
+          <div>
+            <dt>เบอร์โทร</dt>
+            <dd>{order.CustomerPhone ? <a href={`tel:${order.CustomerPhone}`}>{formatPhone(order.CustomerPhone)}</a> : '-'}</dd>
+          </div>
+          <div>
+            <dt>เวลาสั่ง</dt>
+            <dd>{thaiDateTime(order.CreatedAt, true)}</dd>
+          </div>
+          <div>
+            <dt>ชำระเงิน</dt>
+            <dd>{order.PaymentMethod || (order.IsWalkIn ? 'เงินสด' : '-')}</dd>
+          </div>
+          {order.CancelReason && (
+            <div className="full">
+              <dt>เหตุผลที่ยกเลิก</dt>
+              <dd className="nd-danger-text">{order.CancelReason}</dd>
+            </div>
+          )}
+          {order.Note && (
+            <div className="full">
+              <dt>หมายเหตุจากลูกค้า</dt>
+              <dd>{order.Note}</dd>
+            </div>
+          )}
+        </dl>
+        {items.length > 0 && (
+          <ul className="nd-items">
+            {items.map(i => (
+              <li key={i.OrderItemId || `${i.ProductId}-${i.Qty}`}>
+                <span>
+                  {i.ProductName} <b>× {i.Qty}</b>
+                  {i.ItemStatus === 'OUT_OF_STOCK' && <em className="nd-tag">ของหมด</em>}
+                  {i.ItemNote && <small>{i.ItemNote}</small>}
+                </span>
+                <span>฿{fmtMoney(Number(i.UnitPrice || 0) * Number(i.Qty || 0))}</span>
+              </li>
+            ))}
+            <li className="total"><span>รวมทั้งหมด</span><span>฿{fmtMoney(order.TotalAmount)}</span></li>
+          </ul>
+        )}
+        {items.length === 0 && (
+          <div className="nd-total-only"><span>ยอดรวม</span><b>฿{fmtMoney(order.TotalAmount)}</b></div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function NotifDetailModal({ item, order, issue, product, onClose, onGo }) {
+  useEscapeToClose(onClose, false);
+  const go = NOTIF_GO[item.kind];
+  const issueStatus = issue ? (ISSUE_STATUS[issue.IssueStatus] || { label: issue.IssueStatus, tone: 'neutral' }) : null;
+  return (
+    <div className="berry-modal-overlay mf-overlay" onClick={onClose}>
+      <div className="mf-modal nd-modal" role="dialog" aria-modal="true" aria-labelledby="nd-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head">
+          <div className={`nd-icon tone-${item.tone}`}><Icon name={item.icon} size={20} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <span className={`nd-kind tone-${item.tone}`}>{NOTIF_KIND_LABEL[item.kind] || 'การแจ้งเตือน'}</span>
+            <h3 id="nd-title">{item.title}</h3>
+            <p><Icon name="clock" size={12} /> {thaiDateTime(item.at, true)} · {timeAgo(item.at)}</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} aria-label="ปิด">
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+
+        <div className="mf-body">
+          {item.message && <div className="nd-message">{item.message}</div>}
+
+          {item.kind === 'issue' && (issue ? (
+            <section className="nd-section">
+              <h4 className="sf-section-title"><Icon name="alert" size={16} /> รายงานปัญหา</h4>
+              <div className="nd-card">
+                <div className="nd-order-head">
+                  <div><span className="nd-queue">{issue.IssueType || 'ไม่ระบุประเภท'}</span></div>
+                  <Badge tone={issueStatus.tone}>{issueStatus.label}</Badge>
+                </div>
+                <dl className="nd-grid">
+                  <div><dt>ผู้แจ้ง</dt><dd>{issue.CustomerName || '-'}</dd></div>
+                  <div><dt>แจ้งเมื่อ</dt><dd>{thaiDateTime(issue.CreatedAt, true)}</dd></div>
+                  <div className="full"><dt>รายละเอียดจากลูกค้า</dt><dd className="nd-quote">{issue.Description || '-'}</dd></div>
+                  {issue.AdminNote && <div className="full"><dt>หมายเหตุจากผู้ดูแล</dt><dd>{issue.AdminNote}</dd></div>}
+                </dl>
+              </div>
+            </section>
+          ) : (
+            <div className="sf-note"><Icon name="alert" size={16} /> ไม่พบรายละเอียดของรายงานนี้แล้ว ดูรายงานทั้งหมดได้ที่หน้ารายงานปัญหา</div>
+          ))}
+
+          {order && <NotifOrderBlock order={order} />}
+          {item.kind === 'cancel' && !order && (
+            <div className="sf-note"><Icon name="receipt" size={16} /> ไม่พบรายละเอียดออเดอร์นี้ในประวัติที่โหลดไว้</div>
+          )}
+
+          {item.kind === 'stock' && (product ? (
+            <section className="nd-section">
+              <h4 className="sf-section-title"><Icon name="box" size={16} /> เมนูที่เกี่ยวข้อง</h4>
+              <div className="nd-card nd-product">
+                <span className="nd-product-img">{product.img ? <img src={product.img} alt="" /> : <Icon name="photo" size={22} />}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="nd-product-name">{product.ProductName}</div>
+                  <div className="nd-muted">฿{fmtMoney(product.UnitPrice)}</div>
+                </div>
+                <Badge tone={product.IsOutOfStock ? 'danger' : 'success'}>{product.IsOutOfStock ? 'ยังหมดอยู่' : 'กลับมาขายแล้ว'}</Badge>
+              </div>
+            </section>
+          ) : (
+            <div className="sf-note"><Icon name="box" size={16} /> เมนูนี้อาจถูกลบหรือเปลี่ยนชื่อไปแล้ว</div>
+          ))}
+        </div>
+
+        <div className="mf-footer" style={go ? undefined : { gridTemplateColumns: '1fr' }}>
+          <button type="button" className="mf-btn ghost" onClick={onClose}>ปิด</button>
+          {go && (
+            <button type="button" className="mf-btn primary" onClick={() => onGo(go.page)}>
+              {go.label} <Icon name="arrowRight" size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!document.getElementById('berry-font-link')) {
@@ -1849,6 +2014,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [staffSearch, setStaffSearch] = useState('');
   const [staffBusyId, setStaffBusyId] = useState(null);
   const [eraseStaff, setEraseStaff] = useState(null);
+  const [notifDetail, setNotifDetail] = useState(null); // รายการแจ้งเตือนที่เปิดดูรายละเอียด
 
   // --- Filter States ---
   const [reviewFilter, setReviewFilter] = useState('all');
@@ -2000,6 +2166,39 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const markNotifRead = (notifId) => {
     fetch(`${apiBase}/api/notifications/${notifId}/read`, { method: 'PUT' }).then(() => fetchData());
+  };
+
+  // กดรายการแจ้งเตือน -> ปิดกล่อง เปิดหน้ารายละเอียด และนับว่าอ่านแล้ว
+  const openNotifDetail = (item) => {
+    setNotifOpen(false);
+    setNotifDetail(item);
+    if (item.notif && !item.notif.IsRead) markNotifRead(item.notif.NotifId);
+  };
+
+  // หาข้อมูลประกอบจากที่โหลดไว้แล้ว (ออเดอร์ + รายการอาหาร, รายงานปัญหา, เมนู) ไม่ต้องเรียก API เพิ่ม
+  const resolveNotifContext = (item) => {
+    const orderId = item.orderId || item.notif?.OrderId || null;
+    let issue = null;
+    if (item.kind === 'issue') {
+      // ตาราง Notification ไม่ได้เก็บ IssueReportId : จับคู่จากออเดอร์ หรือรายงานที่เวลาใกล้ที่สุด (ภายใน 2 นาที)
+      const at = parseOrderDate(item.at)?.getTime() || 0;
+      const nearest = (list) => list
+        .map(r => ({ r, d: Math.abs((parseOrderDate(r.CreatedAt)?.getTime() || 0) - at) }))
+        .sort((a, b) => a.d - b.d)[0];
+      const byOrder = orderId ? issues.filter(r => String(r.OrderID) === String(orderId)) : [];
+      const hit = nearest(byOrder.length ? byOrder : issues);
+      issue = hit && (byOrder.length || hit.d <= 120000) ? hit.r : null;
+    }
+    const issueOrderId = issue?.OrderID || orderId;
+    const order = issueOrderId
+      ? history.find(o => String(o.OrderID) === String(issueOrderId)) || cancels.find(o => String(o.OrderID) === String(issueOrderId)) || null
+      : null;
+    let product = null;
+    if (item.kind === 'stock') {
+      const name = (String(item.message || '').match(/'([^']+)'/) || [])[1];
+      product = name ? products.find(p => p.ProductName === name) || null : null;
+    }
+    return { order, issue, product };
   };
 
   const showToast = (msg) => {
@@ -2383,11 +2582,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 ...notifications.map(n => ({
                   key: `n-${n.NotifId}`,
                   ...(NOTIF_STYLE[n.NotificationType] || NOTIF_STYLE.SYSTEM),
+                  kind: n.NotificationType === 'ISSUE' ? 'issue' : n.Title === 'สินค้าหมด' ? 'stock' : 'system',
+                  notif: n,
                   title: n.Title || 'การแจ้งเตือน',
                   message: n.Message,
                   at: n.CreatedAt,
                   unread: !n.IsRead,
-                  onClick: () => { if (!n.IsRead) markNotifRead(n.NotifId); },
                 })),
                 ...cancels.slice(0, 5).map((c, i) => ({
                   key: `c-${c.OrderID}`,
@@ -2398,7 +2598,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   at: c.CreatedAt,
                   unread: i < unreadCancels,
                   amount: c.TotalAmount,
-                  onClick: () => { setPage('cancel'); setNotifOpen(false); },
+                  kind: 'cancel',
+                  orderId: c.OrderID,
                 })),
               ].sort((a, b) => (parseOrderDate(b.at)?.getTime() || 0) - (parseOrderDate(a.at)?.getTime() || 0));
               const shown = notifTab === 'unread' ? items.filter(it => it.unread) : items;
@@ -2450,7 +2651,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                           <div className="m">{notifTab === 'unread' ? 'ไม่มีการแจ้งเตือนที่ยังไม่ได้อ่าน' : 'เมื่อมีออเดอร์ถูกยกเลิกหรือข่าวจากระบบ จะแสดงที่นี่'}</div>
                         </div>
                       ) : shown.map(it => (
-                        <button key={it.key} type="button" className={`op-notif-item ${it.unread ? 'unread' : ''}`} onClick={it.onClick}>
+                        <button key={it.key} type="button" className={`op-notif-item ${it.unread ? 'unread' : ''}`} onClick={() => openNotifDetail(it)}>
                           <span className={`icon tone-${it.tone}`}><Icon name={it.icon} size={17} /></span>
                           <span className="body">
                             <span className="t">{it.title}</span>
@@ -3429,6 +3630,14 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       )}
       {eraseStaff && (
         <StaffEraseModal staff={eraseStaff} onClose={() => setEraseStaff(null)} onSubmit={eraseStaffAccount} />
+      )}
+      {notifDetail && (
+        <NotifDetailModal
+          item={notifDetail}
+          {...resolveNotifContext(notifDetail)}
+          onClose={() => setNotifDetail(null)}
+          onGo={(target) => { setNotifDetail(null); setPage(target); }}
+        />
       )}
 
       {/* ===== เพิ่ม / แก้ไขเมนู ===== */}
@@ -4769,6 +4978,48 @@ body, html {
 .sf-pw-rules li.ok .mark { background: var(--berry-green); color: #FFFFFF; }
 .sf-note { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 14px; padding: 10px 12px; border-radius: 10px; background: var(--berry-blue-light); color: var(--berry-text-muted); font-size: 12.5px; line-height: 1.45; }
 .sf-note svg { flex-shrink: 0; margin-top: 1px; }
+/* ===== รายละเอียดการแจ้งเตือน (nd-*) ===== */
+.op-notif-item .body { min-width: 0; }
+.nd-modal.mf-modal { max-width: 560px; }
+.nd-icon { width: 42px; height: 42px; min-width: 42px; display: grid; place-items: center; border-radius: 12px; }
+.nd-icon.tone-red { background: var(--berry-red-light); color: var(--berry-red); }
+.nd-icon.tone-orange { background: var(--berry-purple-light); color: var(--berry-purple); }
+.nd-icon.tone-green { background: var(--berry-green-light); color: var(--berry-green); }
+.nd-icon.tone-amber { background: var(--berry-amber-light); color: var(--berry-amber); }
+.nd-icon.tone-blue { background: var(--berry-blue-light); color: var(--berry-blue); }
+.nd-kind { display: inline-block; margin-bottom: 4px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--berry-blue-light); color: var(--berry-text-muted); }
+.nd-kind.tone-red { background: var(--berry-red-light); color: var(--berry-red); }
+.nd-kind.tone-orange { background: var(--berry-purple-light); color: var(--berry-purple); }
+.nd-kind.tone-amber { background: var(--berry-amber-light); color: #B7791F; }
+.nd-modal .mf-head p { display: flex; align-items: center; gap: 5px; }
+.nd-message { margin-bottom: 16px; padding: 12px 14px; border-left: 3px solid var(--berry-purple); border-radius: 0 10px 10px 0; background: var(--berry-bg); font-size: 14px; line-height: 1.55; color: var(--berry-text-dark); white-space: pre-wrap; word-break: break-word; }
+.nd-section { margin-bottom: 14px; }
+.nd-card { padding: 14px; border: 1px solid var(--berry-border); border-radius: 14px; background: var(--berry-paper); }
+.nd-order-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.nd-queue { margin-right: 8px; font-size: 16px; font-weight: 700; color: var(--berry-text-dark); }
+.nd-muted { font-size: 12.5px; color: var(--berry-text-muted); }
+.nd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin: 0; }
+.nd-grid > div { min-width: 0; }
+.nd-grid .full { grid-column: 1 / -1; }
+.nd-grid dt { font-size: 11.5px; color: var(--berry-text-muted); }
+.nd-grid dd { margin: 2px 0 0; font-size: 13.5px; font-weight: 500; color: var(--berry-text-dark); word-break: break-word; }
+.nd-grid dd a { color: var(--berry-text-dark); text-decoration: none; }
+.nd-grid dd a:hover { color: var(--berry-purple); }
+.nd-danger-text { color: var(--berry-red) !important; }
+.nd-quote { padding: 10px 12px; border-radius: 10px; background: var(--berry-bg); font-weight: 400 !important; line-height: 1.55; white-space: pre-wrap; }
+.nd-items { margin: 12px 0 0; padding: 10px 0 0; list-style: none; border-top: 1px dashed var(--berry-border); }
+.nd-items li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 13.5px; color: var(--berry-text-dark); }
+.nd-items li > span:first-child { min-width: 0; }
+.nd-items li b { font-weight: 600; color: var(--berry-text-muted); }
+.nd-items li small { display: block; font-size: 11.5px; color: var(--berry-text-muted); }
+.nd-items li.total { margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--berry-border); font-weight: 700; }
+.nd-tag { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--berry-red-light); color: var(--berry-red); font-size: 11px; font-style: normal; font-weight: 600; }
+.nd-total-only { display: flex; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--berry-border); font-size: 13.5px; }
+.nd-product { display: flex; align-items: center; gap: 12px; }
+.nd-product-img { width: 56px; height: 56px; min-width: 56px; display: grid; place-items: center; overflow: hidden; border-radius: 12px; background: var(--berry-bg); color: var(--berry-text-muted); }
+.nd-product-img img { width: 100%; height: 100%; object-fit: cover; }
+.nd-product-name { font-size: 15px; font-weight: 700; color: var(--berry-text-dark); }
+@media (max-width: 600px) { .nd-grid { grid-template-columns: 1fr; } }
 .mf-btn.danger { background: var(--berry-red); color: #FFFFFF; border: 1px solid var(--berry-red); box-shadow: 0 6px 16px rgba(226,69,47,0.28); }
 .mf-btn.danger:hover:not(:disabled) { background: #C93A26; }
 .mf-btn.danger:disabled { background: #F0A79B; border-color: #F0A79B; box-shadow: none; opacity: 1; }
