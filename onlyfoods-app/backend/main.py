@@ -1,6 +1,8 @@
 """Only Foods API - entrypoint  (uvicorn main:app)"""
+import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -10,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from errors import DomainError
+import jobs
 from routers import (auth as auth_routes, feedback, foodcourt, notifications, orders, payments, printing,
                      products, reports, stores, users)
 from services import request_ip
@@ -19,7 +22,22 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
 
 config.require_secrets()  # ไม่มี JWT_SECRET ที่แข็งแรง = ไม่ยอมสตาร์ท
 
-app = FastAPI(title="Only Foods API", docs_url=None if os.getenv("DISABLE_DOCS") == "1" else "/api/docs",
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """งานเบื้องหลัง: เตือนลูกค้าที่ยังไม่มารับอาหาร (ปิดได้ด้วย DISABLE_BACKGROUND_JOBS=1)"""
+    task = None
+    if os.getenv("DISABLE_BACKGROUND_JOBS") != "1":
+        task = asyncio.create_task(jobs.reminder_loop())
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+
+
+app = FastAPI(title="Only Foods API", lifespan=lifespan, docs_url=None if os.getenv("DISABLE_DOCS") == "1" else "/api/docs",
               redoc_url=None, openapi_url=None if os.getenv("DISABLE_DOCS") == "1" else "/api/openapi.json")
 
 # ใน production หน้าเว็บกับ API อยู่ origin เดียวกันผ่าน nginx จึงไม่ต้องเปิด CORS ;
