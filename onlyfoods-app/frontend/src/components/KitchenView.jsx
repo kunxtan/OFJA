@@ -241,22 +241,28 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // --- Helper คำนวณ Target Time อัจฉริยะสำหรับออเดอร์รับทันที ---
+  // --- Helper คำนวณ Target Time และเช็คว่าคือออเดอร์รับทันทีหรือไม่ ---
   const getCalculatedTargetDate = (order, orderList) => {
-    // 1. ถ้ามี PickupTime ล่วงหน้าระบุมา ชัดเจน ให้ใช้เวลานั้น
-    if (order.PickupTime && !order.PickupTime.includes('รับทันที')) {
-      const pDate = parseDate(order.PickupTime);
+    const created = parseDate(order.CreatedAt) || new Date();
+    const pickupStr = order.PickupTime ? String(order.PickupTime).trim() : '';
+
+    // เช็คว่าผู้ใช้ไม่ได้ระบุเวลานัดรับ / ระบุรับทันที / เวลาเดียวกับที่สั่ง
+    const createdFormatted = created.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
+    const isImmediate = !pickupStr || pickupStr.includes('รับทันที') || pickupStr === createdFormatted;
+
+    if (!isImmediate) {
+      const pDate = parseDate(pickupStr);
       if (pDate) return { targetDate: pDate, isImmediate: false };
     }
 
-    // 2. ถ้าไม่มีเวลา / ระบุรับทันที ให้คำนวณจาก CreatedAt + (คิวก่อนหน้า * 5 นาที) + 5 นาทีทำ
-    const created = parseDate(order.CreatedAt) || new Date();
+    // คำนวณเฉพาะออเดอร์ค้างปรุง (Pending / Cooking) ที่มาก่อนหน้านี้
     const pendingBefore = orderList.filter(o => 
       (o.Status === 'Pending' || o.Status === 'Cooking') && 
       (o.OrderID < order.OrderID)
     );
 
-    const minutesToWait = (pendingBefore.length * 5) + 5; // 1 คิว = 5 นาที + 5 นาทีทำ
+    // สูตร: เวลาที่สั่ง + (จำนวนคิวก่อนหน้า * 5 นาที) + 5 นาทีทำ
+    const minutesToWait = (pendingBefore.length * 5) + 5;
     const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
 
     return {
@@ -266,7 +272,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     };
   };
 
-  // Sort Orders: เรียงตาม Target Time (เวลานัดรับจริง หรือ เวลานัดรับคำนวณ) จากใกล้นัดรับไปไกลสุด
+  // Sort Orders: เรียงจากซ้ายไปขวา บนลงล่าง ตามเวลา Target Time (ใกล้นัดรับ/ใกล้กำหนดเสร็จขึ้นก่อน)
   const sortedOrders = [...allOrders].sort((a, b) => {
     const targetA = getCalculatedTargetDate(a, allOrders).targetDate;
     const targetB = getCalculatedTargetDate(b, allOrders).targetDate;
@@ -299,8 +305,10 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     if (e) e.stopPropagation();
     isUpdatingRef.current = true;
 
+    // อัปเดต Local State ทันที
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
+    // เมื่อกด Undo บังคับย้ายแท็บไปที่ 'Pending' (คิวรอปรุง) ทันทีเพื่อไม่ให้การ์ดหลุดหาย
     if (targetStatus === 'Pending') {
       setFilterTab('Pending');
     }
@@ -325,7 +333,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     }
   };
 
-  // ตรวจสอบการแจ้งเตือนด่วน (เหลือเวลา <= 5 นาที หรือเลยเวลาคำนวณแล้ว)
+  // ตรวจสอบการแจ้งเตือนด่วน (Urgent Alert Logic)
   const getPickupAlert = (order) => {
     try {
       const { targetDate, isImmediate } = getCalculatedTargetDate(order, allOrders);
@@ -334,14 +342,25 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       const now = new Date();
       const diffMins = Math.floor((targetDate - now) / 60000);
 
-      if (diffMins <= 5 && diffMins >= -60) {
-        return {
-          isAlert: true,
-          diffMins,
-          label: diffMins <= 0 
-            ? (isImmediate ? 'เลยกำหนดเวลาทำตามคิวแล้ว!' : 'ถึงเวลานัดรับแล้ว!') 
-            : (isImmediate ? `ออเดอร์รับทันที! ควรเสร็จในอีก ${diffMins} นาที` : `ออเดอร์ด่วน! เหลือเวลานัดรับอีก ${diffMins} นาที`)
-        };
+      // แจ้งเตือนเมื่อเหลือเวลา <= 5 นาที หรือเวลาเลยเวลานัดรับไปแล้ว
+      if (diffMins <= 5 && diffMins >= -120) {
+        if (isImmediate) {
+          return {
+            isAlert: true,
+            diffMins,
+            label: diffMins <= 0 
+              ? 'ออเดอร์รับทันที! เลยกำหนดเวลาทำตามคิวแล้ว' 
+              : `ออเดอร์รับทันที! ควรเสร็จในอีก ${diffMins} นาที`
+          };
+        } else {
+          return {
+            isAlert: true,
+            diffMins,
+            label: diffMins <= 0 
+              ? 'ถึงเวลานัดรับแล้ว!' 
+              : `ออเดอร์ด่วน! เหลือเวลานัดรับอีก ${diffMins} นาที`
+          };
+        }
       }
     } catch (e) {
       return null;
@@ -788,7 +807,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         </div>
                       </div>
 
-                      {/* ป้ายเวลานัดรับ / คำนวณเวลารับทันที */}
+                      {/* แสดงป้ายเวลาบนการ์ด */}
                       <div style={{
                         background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : (calculatedInfo.isImmediate ? (isDark ? 'rgba(16,185,129,0.12)' : '#ECFDF5') : theme.cardInner),
                         border: `1px solid ${pickupAlert ? '#EF4444' : (calculatedInfo.isImmediate ? PALETTE.emerald : theme.border)}`,
@@ -804,7 +823,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                       </div>
                     </div>
 
-                    {/* แจ้งเตือนด่วน (เหลือเวลา <= 5 นาที หรือเลยเวลานัดรับ/คำนวณคิวแล้ว) */}
+                    {/* แจ้งเตือนด่วน (Urgent Alert) */}
                     {pickupAlert && (
                       <div style={{
                         animation: 'urgentFlash 1.5s infinite',
@@ -871,7 +890,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                     )}
                   </div>
 
-                  {/* ปุ่มเปลี่ยนสถานะ */}
+                  {/* ปุ่มเปลี่ยนสถานะ & ปุ่ม Undo */}
                   <div style={{ marginTop: '12px' }}>
                     {filterTab === 'Pending' ? (
                       <button
@@ -936,6 +955,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                               พร้อมรับอาหาร (รอหน้าร้านส่งมอบ)
                             </div>
                             
+                            {/* ปุ่ม Undo ย้อนกลับไปคิวรอปรุง */}
                             <button
                               onClick={(e) => updateOrderStatus(o.OrderID, 'Pending', e)}
                               style={{
@@ -1064,7 +1084,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         <div>
                           <div style={{ fontSize: '16px', fontWeight: '700' }}>{item.ProductName}</div>
                           {item.ItemNote && (
-                            <div style={{ fontSize: '13px', color: PALETTE.coral, marginTop: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ fontSize: '13px', color : PALETTE.coral, marginTop: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <NoteIcon />
                               <span>Note: {item.ItemNote}</span>
                             </div>
