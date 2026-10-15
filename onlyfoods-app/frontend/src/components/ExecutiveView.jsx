@@ -153,19 +153,27 @@ function changePct(current, previous) {
 }
 function summarize(orders) {
     const completed = orders.filter((o) => statusIs(o, 'Completed'));
+    const noShow = orders.filter((o) => statusIs(o, 'NoShow'));
+    const settled = [...completed, ...noShow];
     const cancelled = orders.filter((o) => statusIs(o, 'Cancelled'));
-    const sales = sumAmount(completed);
-    const grossSales = sumAmount([...completed, ...cancelled]);
+    const sales = sumAmount(settled);
+    const grossSales = sumAmount([...settled, ...cancelled]);
+    const totalRecorded = settled.length + cancelled.length;
+
     return {
         sales,
         grossSales,
-        completedCount: completed.length,
+        completedCount: settled.length,
         cancelledCount: cancelled.length,
-        // อัตราการยกเลิก = ยกเลิก / (สำเร็จ + ยกเลิก) : นับเฉพาะออเดอร์ที่จบแล้ว ให้ตรงกับคอลัมน์ในตาราง
-        // และตรงกับหน้าเจ้าของร้าน (เดิมหารด้วยออเดอร์ทั้งหมดรวมที่ยังทำอยู่ ทำให้ตัวเลขต่ำกว่าความจริง)
-        cancelRate: (completed.length + cancelled.length) ? (cancelled.length / (completed.length + cancelled.length)) * 100 : null,
-        avgOrder: completed.length ? sales / completed.length : 0,
+        cancelRate: totalRecorded > 0
+            ? (cancelled.length / totalRecorded) * 100
+            : null,
+        avgOrder: settled.length
+            ? sales / settled.length
+            : 0,
         completed,
+        noShow,
+        settled,
         cancelled
     };
 }
@@ -1676,14 +1684,14 @@ const storeRows = Array.from(storeMap.values())
             delta: changePct(storeNow.sales, storeBefore.sales),
             completedCount: storeNow.completedCount,
             cancelledCount: storeNow.cancelledCount,
-            orderCount: storeCurrent.length,
+            orderCount: storeNow.completedCount + storeNow.cancelledCount,
             cancelRate: storeNow.cancelRate,
             avg: storeNow.avgOrder
         };
     })
     .sort((a, b) => b.sales - a.sales);
         const ordersByHour = Array.from({ length: 24 }, () => 0);
-        now.completed.forEach(o => { const at = parseOrderDate(o.CreatedAt); if (at) ordersByHour[at.getHours()] += 1; });
+        now.settled.forEach(o => { const at = parseOrderDate(o.CreatedAt); if (at) ordersByHour[at.getHours()] += 1; });
         const peakHour = ordersByHour.indexOf(Math.max(...ordersByHour));
         const peakOrderCount = ordersByHour[peakHour] || 0;
         return {
@@ -1693,9 +1701,8 @@ const storeRows = Array.from(storeMap.values())
             hasPreviousData: previous.length > 0,
             storeRows,
             buckets: customRange
-              ? buildBucketsForRange(now.completed, customStart, customEnd)
-              : buildBuckets(now.completed, anchor, days ),
-            peakHour: peakOrderCount > 0 ? peakHour : null,
+                ? buildBucketsForRange(now.settled, customStart, customEnd)
+                : buildBuckets(now.settled, anchor, days),
             peakOrderCount,
             activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
         };
@@ -2761,12 +2768,14 @@ function StoreSalesPage({ ctx }) {
         const previous = orders.filter((o) => inRange(o, prevBounds, storeId));
         const now = summarize(current);
         const before = summarize(previous);
-        const menus = summarizeMenus(now.completed);
+        const menus = summarizeMenus(now.settled);
         return {
             now,
             before, current,
             hasPreviousData: previous.length > 0,
-            buckets: customRange ? buildBucketsForRange(now.completed, customStart, customEnd) : buildBuckets(now.completed, anchor, days),
+            buckets: customRange
+                ? buildBucketsForRange(now.settled, customStart, customEnd)
+                : buildBuckets(now.settled, anchor, days),
             bestMenus: menus.slice(0, 2),
             // เมนูขายได้น้อยต้องไม่ซ้ำกับรายการขายดี
             // ถ้ามีข้อมูลไม่พอสำหรับเปรียบเทียบ จะได้เป็น [] และ UI เดิมจะแสดง empty state
@@ -2860,7 +2869,7 @@ function StoreSalesPage({ ctx }) {
 
     const menuRows = [
         ['เมนู', 'จำนวนที่ขายได้', 'ยอดขาย (บาท)', 'สัดส่วนของยอดร้าน (%)'],
-        ...summarizeMenus(report.now.completed).map((m) => [
+        ...summarizeMenus(report.now.settled).map((m) => [
             m.name,
             m.qty,
             Math.round(m.amount),
