@@ -24,6 +24,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [myOrders, setMyOrders] = useState([]);
   const [notifs, setNotifs] = useState([]);
   const [isFoodCourtOpen, setIsFoodCourtOpen] = useState(true);
+  const [foodCourtMode, setFoodCourtMode] = useState("AUTO");
 
   // LATE PICKUP STATE
   const [latePickupOrder, setLatePickupOrder] = useState({});
@@ -304,8 +305,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/food-court/status`);
       if (!res.ok) return;
+
       const data = await res.json();
+
       setIsFoodCourtOpen(Boolean(data?.is_open));
+      setFoodCourtMode(data?.mode || "AUTO");
+
+      if (data?.open_time) {
+        setFoodCourtOpenTime(data.open_time.slice(0, 5));
+      }
+
+      if (data?.close_time) {
+        setFoodCourtCloseTime(data.close_time.slice(0, 5));
+      }
     } catch (error) {
       console.error("Error fetching food court status:", error);
     }
@@ -838,12 +850,24 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return false;
     }
 
+    if (foodCourtMode === "CLOSED" || !isFoodCourtOpen) {
+      customAlert(
+        "ไม่สามารถสั่งอาหารได้",
+        `เวลาสั่งอาหารคือ ${foodCourtOpenTime}–${foodCourtCloseTime} น.`,
+        "error"
+      );
+      return false;
+    }
+
+    if (foodCourtMode === "OPEN") {
+      return true;
+    }
+
     const currentTime = getCurrentDateTimeForBackend()
       .split(" ")[1]
       .slice(0, 5);
 
     if (
-      !isFoodCourtOpen ||
       currentTime < foodCourtOpenTime ||
       currentTime >= foodCourtCloseTime
     ) {
@@ -868,13 +892,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // LATE PICKUP HANDLER
-  const handleLatePickup = (orderId, minutes) => {
+
+  const handleLatePickup = async (order, minutes) => {
+    const orderId = order.OrderID;
+
     const currentData = latePickupOrder[orderId] || {
       count: 0,
       arrivalTime: "",
     };
 
-    // แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์
     if (currentData.count >= 3) {
       customAlert(
         "แจ้งครบจำนวนแล้ว",
@@ -884,38 +910,65 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return;
     }
 
-    // คำนวณเวลาที่คาดว่าจะมาถึง
-    const arrivalDate = new Date();
-    arrivalDate.setMinutes(
-      arrivalDate.getMinutes() + Number(minutes)
-    );
+    try {
+      const res = await fetch(
+        `${apiBase}/api/orders/${orderId}/late-pickup`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            minutes: Number(minutes),
+          }),
+        }
+      );
 
-    const arrivalTime = arrivalDate.toLocaleTimeString(
-      "th-TH",
-      {
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        customAlert(
+          "แจ้งเวลามารับไม่สำเร็จ",
+          data.detail || "ไม่สามารถบันทึกเวลามารับได้ กรุณาลองใหม่",
+          "warning"
+        );
+        return;
+      }
+
+      // ใช้เวลาที่ Backend คำนวณและบันทึกลงฐานข้อมูลแล้ว
+      const arrivalDate = new Date(data.arrival_time);
+
+      const arrivalTime = arrivalDate.toLocaleTimeString("th-TH", {
         timeZone: "Asia/Bangkok",
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
-      }
-    );
+      });
 
-    // บันทึกข้อมูลล่าสุดของออเดอร์นี้
-    setLatePickupOrder((prev) => ({
-      ...prev,
-      [orderId]: {
-        count: currentData.count + 1,
-        arrivalTime,
-        minutes: Number(minutes),
-      },
-    }));
+      // อัปเดตหน้าจอหลังจากบันทึกฐานข้อมูลสำเร็จเท่านั้น
+      setLatePickupOrder((prev) => ({
+        ...prev,
+        [orderId]: {
+          count: Number(data.count),
+          arrivalTime,
+          minutes: Number(data.minutes),
+        },
+      }));
 
-    customAlert(
-      "แจ้งเวลามารับเรียบร้อย",
-      `คุณแจ้งว่าจะมาถึงเวลา ${arrivalTime} น.`,
-      "success"
-    );
+      customAlert(
+        "แจ้งเวลามารับเรียบร้อย",
+        `คุณแจ้งว่าจะมาถึงเวลา ${arrivalTime} น. (แจ้งแล้ว ${data.count}/3 ครั้ง)`,
+        "success"
+      );
+    } catch (error) {
+      customAlert(
+        "เชื่อมต่อไม่สำเร็จ",
+        "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง",
+        "error"
+      );
+    }
   };
+
 
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
   // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
@@ -1692,7 +1745,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               ? myIssueReports.find((rep) => Number(rep.order_id || rep.OrderID) === Number(order.OrderID))
               : null;
             const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
-
+           const canNotifyLatePickup = ["ready", "preparing", "pending"].includes(String(order.Status || "").trim().toLowerCase());
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
@@ -1741,9 +1794,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <span style={{ color: COLORS.orange, fontSize: "18px" }}>{Number(order.TotalAmount || 0).toFixed(2)} ฿</span>
                 </div>
 
-              
+ 
                 {/* แจ้งร้านว่าจะมารับช้า */}
-                {["Ready", "Preparing", "Pending"].includes(order.Status) && (
+                {canNotifyLatePickup && (
                   <div
                     style={{
                       marginTop: "14px",
@@ -1816,27 +1869,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               </button>
                             ))}
                           </div>
-
                           <button
-                            type="button"
-                            disabled={lateInfo.count >= 3}
-                            onClick={() => handleLatePickup(orderId, selectedMinutes)}
-                            style={{
-                              width: "100%",
-                              marginTop: "10px",
-                              padding: "10px",
-                              border: "none",
-                              borderRadius: "9px",
-                              background: lateInfo.count >= 3 ? "#CBD5E1" : COLORS.orange,
-                              color: "#FFFFFF",
-                              fontWeight: "800",
-                              fontSize: "13px",
-                              cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
-                            }}
+                            onClick={() => handleLatePickup(order, selectedMinutes)}
+                            disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
                           >
-                            {lateInfo.count >= 3
-                              ? "แจ้งครบ 3 ครั้งแล้ว"
-                              : "ยืนยันแจ้งเวลามารับช้า"}
+                            {(latePickupOrder[order.OrderID]?.count || 0) === 0
+                              ? "แจ้งมารับช้า"
+                              : (latePickupOrder[order.OrderID]?.count || 0) >= 3
+                                ? "แจ้งครบแล้ว (3/3)"
+                                : `ยืนยันครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
                           </button>
 
                           <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "6px" }}>

@@ -228,3 +228,7 @@ class CreateIssueReportSchema(BaseModel):
 class FoodCourtScheduleSchema(BaseModel):
     open_time: str
     close_time: str
+
+
+class LatePickupSchema(BaseModel):
+    minutes: int = Field(ge=1, le=180)
