@@ -163,6 +163,10 @@ CREATE TABLE `User` (
 
 -- 1 : 1 with Store (UNIQUE on StoreId) - a store holds at most one contract row.
 -- Renewing = UPDATE this row (keep the old values in AuditLog.OldValue).
+-- Valid from StartDate 00:00:00 to EndDate 23:59:59 (Asia/Bangkok). State is DERIVED from
+-- the dates in code (NONE/UPCOMING/ACTIVE/EXPIRED); ContractStatus is informational only.
+-- Every date change writes AuditLog (CONTRACT_EXTEND / CONTRACT_SHORTEN /
+-- CONTRACT_END_BACKDATED / CONTRACT_RESTART) with old/new dates + reason.
 CREATE TABLE StoreContract (
   ContractId     INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   StoreId        INT UNSIGNED  NOT NULL,
@@ -635,8 +639,8 @@ SELECT
   DATEDIFF(sc.EndDate, CURDATE()) AS DaysLeft
 FROM StoreContract sc
 JOIN Store s ON s.StoreId = sc.StoreId
-WHERE sc.ContractStatus IN ('ACTIVE', 'EXPIRING')
-  AND sc.EndDate <= DATE_ADD(CURDATE(), INTERVAL 30 DAY);
+WHERE s.IsDeleted = FALSE
+  AND sc.EndDate BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY);
 
 -- =====================================================================
 --  End of schema. 22 tables + 4 views.
