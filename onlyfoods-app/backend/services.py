@@ -3,7 +3,7 @@ import json
 import logging
 from contextvars import ContextVar
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import state
 from errors import DomainError
@@ -54,6 +54,22 @@ def send_notif(db, user_id: Optional[int], ntype: str, title: str, message: str,
         )
 
 
+def notify_store_owners(db, store_id: int, ntype: str, title: str, message: str,
+                        order_id: Optional[int] = None) -> None:
+    """แจ้งเจ้าของร้าน (ทุกบัญชี STORE_OWNER ที่ยังใช้งานของร้านนี้)"""
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.UserId FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
+            WHERE u.StoreId = %s AND r.RoleCode = 'STORE_OWNER' AND u.IsActive = TRUE
+            """,
+            (store_id,),
+        )
+        owners = [r["UserId"] for r in cur.fetchall()]
+    for uid in owners:
+        send_notif(db, uid, ntype, title, message, order_id)
+
+
 # -------------------------------------------------------------------- lookups
 _status_ids: Dict[str, int] = {}
 
@@ -101,7 +117,7 @@ def insert_with_queue_retry(cur, store_id: int, insert_fn, attempts: int = 3):
 # ----------------------------------------------------------- order transitions
 _ORDER_LOCK_SQL = """
 SELECT o.OrderId, o.StoreId, o.CustomerId, o.QueueNo, o.TotalAmount, o.ReadyAt, o.IsWalkIn,
-       o.CancelReason, o.CancelDeadline, os.StatusCode, s.StoreName
+       o.CancelReason, o.CancelDeadline, os.StatusCode, s.StoreName, s.QueueCode
 FROM `Order` o
 JOIN OrderStatus os ON os.StatusId = o.StatusId
 JOIN Store s ON s.StoreId = o.StoreId
@@ -173,13 +189,14 @@ def queue_print_job(cur, order_id: int) -> None:
 
 
 # --------------------------------------------------------------------- refunds
-def verified_payment(cur, order_id: int, lock: bool = False) -> Optional[dict]:
+def verified_payments(cur, order_id: int, lock: bool = False) -> List[dict]:
+    """ทุกการชำระที่ยืนยันแล้วของออเดอร์ (ค่าอาหาร ORDER ก่อน แล้วตามด้วยส่วนต่าง TOP_UP)"""
     cur.execute(
-        "SELECT PaymentId, Amount FROM Payment WHERE OrderId = %s AND PaymentStatus = 'VERIFIED' LIMIT 1"
-        + (" FOR UPDATE" if lock else ""),
+        "SELECT PaymentId, PaymentType, Amount FROM Payment WHERE OrderId = %s AND PaymentStatus = 'VERIFIED' "
+        "ORDER BY PaymentType = 'ORDER' DESC, PaymentId" + (" FOR UPDATE" if lock else ""),
         (order_id,),
     )
-    return cur.fetchone()
+    return cur.fetchall()
 
 
 def refunded_total(cur, payment_id: int) -> Decimal:
@@ -215,16 +232,79 @@ def create_refund(cur, payment_id: int, refund_type: str, amount: Decimal, reaso
     return cur.lastrowid
 
 
+def refund_price_diff(cur, order_id: int, amount: Decimal, reason: str, order_item_id: int) -> bool:
+    """เปลี่ยนเป็นเมนูที่ถูกกว่า -> คืนส่วนต่างจากการชำระที่ยังเหลือยอดพอ (ค่าอาหารก่อน) ; ยังไม่จ่าย = ไม่ต้องคืน"""
+    for pay in verified_payments(cur, order_id, lock=True):
+        if Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"]) >= amount:
+            create_refund(cur, pay["PaymentId"], "PRICE_DIFF", amount, reason, order_item_id)
+            return True
+    return False
+
+
 def refund_full_cancel(cur, order_id: int, reason: str) -> Decimal:
-    """ยกเลิกทั้งออเดอร์ที่จ่ายเงินแล้ว -> สร้างรายการคืนเงินส่วนที่เหลือ (ถ้ามี)"""
-    pay = verified_payment(cur, order_id, lock=True)
-    if not pay:
-        return Decimal(0)
-    remaining = Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"])
-    if remaining <= 0:
-        return Decimal(0)
-    create_refund(cur, pay["PaymentId"], "FULL_CANCEL", remaining, reason)
-    return remaining
+    """ยกเลิกทั้งออเดอร์ -> คืนยอดที่เหลือของทุกการชำระที่ยืนยันแล้ว (ค่าอาหาร + ส่วนต่างที่โอนเพิ่ม)"""
+    total = Decimal(0)
+    for pay in verified_payments(cur, order_id, lock=True):
+        remaining = Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"])
+        if remaining > 0:
+            create_refund(cur, pay["PaymentId"], "FULL_CANCEL", remaining, reason)
+            total += remaining
+    return total
+
+
+# ------------------------------------------------------------- top-up (ส่วนต่าง)
+def pending_top_up(cur, order_id: int) -> Optional[dict]:
+    """รายการโอนส่วนต่างที่ยังรออยู่ (มีได้ทีละ 1 รายการ) ; ล็อกแถวไว้"""
+    cur.execute(
+        """
+        SELECT PaymentId, Amount, SlipImageUrl FROM Payment
+        WHERE OrderId = %s AND PaymentType = 'TOP_UP' AND PaymentStatus = 'PENDING'
+        ORDER BY PaymentId DESC LIMIT 1 FOR UPDATE
+        """,
+        (order_id,),
+    )
+    return cur.fetchone()
+
+
+def add_top_up(cur, order_id: int, amount: Decimal) -> Decimal:
+    """เพิ่มยอดที่ลูกค้าต้องโอนเพิ่ม (รวมเข้ารายการที่ยังรออยู่ถ้ามี) คืนยอดรวมที่ต้องโอน"""
+    pending = pending_top_up(cur, order_id)
+    if pending:
+        if pending["SlipImageUrl"]:
+            raise DomainError(400, "ลูกค้าแนบสลิปส่วนต่างแล้ว กรุณารอร้านตรวจสอบก่อน")
+        new_amount = Decimal(pending["Amount"]) + amount
+        cur.execute("UPDATE Payment SET Amount = %s WHERE PaymentId = %s", (new_amount, pending["PaymentId"]))
+        return new_amount
+    cur.execute(
+        "SELECT MethodId FROM Payment WHERE OrderId = %s AND PaymentType = 'ORDER' ORDER BY PaymentId DESC LIMIT 1",
+        (order_id,),
+    )
+    method = cur.fetchone()
+    if not method:
+        raise DomainError(400, "ไม่พบรายการชำระเงินของออเดอร์นี้")
+    cur.execute(
+        "INSERT INTO Payment (OrderId, PaymentType, MethodId, Amount, PaymentStatus) VALUES (%s, 'TOP_UP', %s, %s, 'PENDING')",
+        (order_id, method["MethodId"], amount),
+    )
+    return amount
+
+
+def close_pending_top_ups(cur, order_id: int, reason: str) -> None:
+    """ก่อนยกเลิกออเดอร์: ส่วนต่างที่ยังไม่โอน -> ปิดทิ้ง (REJECTED) ;
+    ถ้าลูกค้าแนบสลิปแล้วแต่ร้านยังไม่ตรวจ -> ห้ามยกเลิก (เงินอาจโอนมาแล้ว ต้องตรวจก่อนจะได้คืนถูกยอด)"""
+    cur.execute(
+        "SELECT PaymentId, SlipImageUrl FROM Payment "
+        "WHERE OrderId = %s AND PaymentType = 'TOP_UP' AND PaymentStatus = 'PENDING' FOR UPDATE",
+        (order_id,),
+    )
+    rows = cur.fetchall()
+    if any(r["SlipImageUrl"] for r in rows):
+        raise DomainError(400, "มีสลิปส่วนต่างที่ยังไม่ได้ตรวจ กรุณาให้ร้านตรวจสลิปก่อนยกเลิก")
+    for r in rows:
+        cur.execute(
+            "UPDATE Payment SET PaymentStatus = 'REJECTED', RejectReason = %s WHERE PaymentId = %s",
+            (reason[:255], r["PaymentId"]),
+        )
 
 
 # ------------------------------------------------------------ status messages
@@ -242,10 +322,11 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
                          reason: Optional[str]) -> None:
     """ผลข้างเคียงหลังเปลี่ยนสถานะ: งานพิมพ์, คืนเงิน, แจ้งเตือนลูกค้า, audit"""
     oid = order["OrderId"]
-    q = queue_label(order["QueueNo"])
+    q = queue_label(order["QueueNo"], order.get("QueueCode"))
     if final_code == state.READY:
         queue_print_job(cur, oid)
     if final_code == state.CANCELLED:
+        close_pending_top_ups(cur, oid, "ออเดอร์ถูกยกเลิกก่อนโอนส่วนต่าง")
         refunded = refund_full_cancel(cur, oid, reason or "ยกเลิกออเดอร์")
         if refunded > 0:
             logger.info("refund created order=%s amount=%s", oid, refunded)

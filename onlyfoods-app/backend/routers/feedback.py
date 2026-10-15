@@ -106,7 +106,7 @@ def get_customer_reviews(user_id: int, user=Depends(require_role("EXECUTIVE")), 
 _ISSUE_SELECT = """
     SELECT r.IssueReportId AS ReportID, r.IssueReportId, r.ReportedBy AS UserId, r.OrderId AS OrderID,
            r.StoreId, it.TypeNameTh AS IssueType, it.TypeCode, r.Description, r.IssueStatus, r.AdminNote,
-           r.CreatedAt, u.FullName AS CustomerName, s.StoreName, o.QueueNo
+           r.CreatedAt, u.FullName AS CustomerName, s.StoreName, s.QueueCode, o.QueueNo
     FROM IssueReport r
     JOIN IssueType it ON it.IssueTypeId = r.IssueTypeId
     JOIN `User` u ON u.UserId = r.ReportedBy
@@ -117,7 +117,8 @@ _ISSUE_SELECT = """
 
 def _shape_issues(rows):
     for r in rows:
-        r["QueueNo"] = queue_label(r["QueueNo"]) if r.get("QueueNo") is not None else None
+        code = r.pop("QueueCode", "")
+        r["QueueNo"] = queue_label(r["QueueNo"], code) if r.get("QueueNo") is not None else None
     return rows
 
 

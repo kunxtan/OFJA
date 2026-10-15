@@ -27,12 +27,14 @@ def _scope_store(user: dict, store_id: Optional[int]) -> Optional[int]:
 
 @router.get("/reports/dashboard")
 def get_dashboard(store_id: Optional[int] = None, user=Depends(require_role(*_REPORT_ROLES)), db=Depends(get_db)):
-    """ยอดขายสุทธิ = ยอดที่ชำระ - ยอดคืนเงินที่คืนแล้ว (v_order_net) เฉพาะออเดอร์ที่จบแบบ COMPLETED / NO_SHOW"""
+    """เฉพาะออเดอร์ที่จบแบบ COMPLETED / NO_SHOW (v_order_net)
+    gross_sales = เงินที่รับจริง (ค่าอาหาร + ส่วนต่างที่โอนเพิ่ม) ; net_sales = gross - เงินที่ฝ่ายบัญชีคืนแล้ว
+    (ใช้ยอดรับจริง ไม่ใช่ TotalAmount เพราะหลังเปลี่ยนเมนูถูกลง TotalAmount ลดก่อนคืนเงินจริง ทำให้ net > gross)"""
     sid = _scope_store(user, store_id)
     sql = """
         SELECT s.StoreId, s.StoreName, s.IsOpen, s.IsSuspended,
                COUNT(o.OrderId) AS total_orders,
-               COALESCE(SUM(o.TotalAmount), 0) AS gross_sales,
+               COALESCE(SUM(COALESCE(n.PaidAmount, o.TotalAmount)), 0) AS gross_sales,
                COALESCE(SUM(COALESCE(n.NetAmount, o.TotalAmount)), 0) AS net_sales
         FROM Store s
         LEFT JOIN `Order` o ON o.StoreId = s.StoreId

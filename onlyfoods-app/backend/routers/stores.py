@@ -1,4 +1,4 @@
-"""ร้านค้า + สัญญาเช่า (StoreContract 1:1 กับ Store)"""
+"""ร้านค้า + สัญญาร้าน (StoreContract 1:1 กับ Store)"""
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -10,11 +10,12 @@ from schemas import RenewContractSchema, StoreFullSchema, StoreNameSchema
 from services import get_foodcourt, is_duplicate_key, log_audit
 from shapes import STORE_SELECT
 from utils import (bangkok_now, clean_text, contract_active, contract_status_for, foodcourt_is_open,
-                   parse_date, save_image, validate_password, validate_username)
+                   next_free_queue_code, parse_date, save_image, validate_password, validate_queue_code,
+                   validate_username)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 
-_ADMIN_STORE_SELECT = STORE_SELECT.replace("c.ContractStatus", "c.ContractStatus, c.MonthlyRent")
+_ADMIN_STORE_SELECT = STORE_SELECT
 
 
 def _category_id(cur, name: Optional[str]) -> int:
@@ -27,19 +28,41 @@ def _category_id(cur, name: Optional[str]) -> int:
     return row["StoreCategoryId"]
 
 
-def _upsert_contract(cur, store_id: int, start, end, rent, user_id: int) -> None:
+def _upsert_contract(cur, store_id: int, start, end, user_id: int) -> None:
     if end <= start:
         raise DomainError(400, "วันสิ้นสุดสัญญาต้องหลังวันเริ่มสัญญา")
     status = contract_status_for(end)
     cur.execute(
         """
-        INSERT INTO StoreContract (StoreId, StartDate, EndDate, MonthlyRent, ContractStatus, CreatedBy)
-        VALUES (%s, %s, %s, COALESCE(%s, 0), %s, %s)
+        INSERT INTO StoreContract (StoreId, StartDate, EndDate, ContractStatus, CreatedBy)
+        VALUES (%s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE StartDate = VALUES(StartDate), EndDate = VALUES(EndDate),
-            MonthlyRent = COALESCE(%s, MonthlyRent), ContractStatus = VALUES(ContractStatus)
+            ContractStatus = VALUES(ContractStatus)
         """,
-        (store_id, start, end, rent, status, user_id, rent),
+        (store_id, start, end, status, user_id),
     )
+
+
+def _queue_code(cur, requested: Optional[str], except_id: Optional[int] = None) -> str:
+    """ตัวอักษรคิวของร้าน: ระบุเอง (ต้องไม่ซ้ำร้านอื่น) หรือไม่ระบุ = ระบบเลือกตัวที่ว่างตัวแรกให้"""
+    cur.execute("SELECT QueueCode FROM Store WHERE StoreId <> %s", (except_id or 0,))
+    used = {r["QueueCode"] for r in cur.fetchall()}
+    if not requested or not requested.strip():
+        return next_free_queue_code(used)
+    code = validate_queue_code(requested)
+    if code in used:
+        raise DomainError(400, f"ตัวอักษรคิว {code} ถูกใช้กับร้านอื่นแล้ว")
+    return code
+
+
+def _insert_store(cur, sql: str, args: tuple) -> int:
+    try:
+        cur.execute(sql, args)
+    except Exception as exc:  # noqa: BLE001 - สร้างร้านพร้อมกันแล้วได้ตัวอักษรคิวเดียวกัน
+        if is_duplicate_key(exc) and "uk_store_queuecode" in str(exc):
+            raise DomainError(409, "ตัวอักษรคิวถูกใช้ไปพร้อมกัน กรุณากดบันทึกอีกครั้ง")
+        raise
+    return cur.lastrowid
 
 
 def _name_taken(cur, name: str, except_id: Optional[int] = None) -> bool:
@@ -49,7 +72,7 @@ def _name_taken(cur, name: str, except_id: Optional[int] = None) -> bool:
 
 @router.get("")
 def get_stores(db=Depends(get_db)):
-    """รายการร้านสำหรับลูกค้า (เปิดสาธารณะ ไม่รวมร้านที่ถูกลบ และไม่รวมค่าเช่า)"""
+    """รายการร้านสำหรับลูกค้า (เปิดสาธารณะ ไม่รวมร้านที่ถูกลบ)"""
     with db.cursor() as cur:
         cur.execute(STORE_SELECT + " WHERE s.IsDeleted = FALSE ORDER BY s.StoreId")
         return cur.fetchall()
@@ -75,12 +98,14 @@ def create_store(data: StoreNameSchema, user=Depends(require_role("EXECUTIVE")),
             cat = cur.fetchone()
             if not cat:
                 raise DomainError(500, "ไม่พบประเภทร้านเริ่มต้น (อื่น ๆ)")
-            cur.execute(
-                "INSERT INTO Store (StoreName, StoreCategoryId, FoodCourtId, IsOpen, IsSuspended) VALUES (%s, %s, %s, TRUE, FALSE)",
-                (name, cat["StoreCategoryId"], fc["FoodCourtId"]),
+            code = _queue_code(cur, data.queue_code)
+            store_id = _insert_store(
+                cur,
+                "INSERT INTO Store (StoreName, StoreCategoryId, FoodCourtId, QueueCode, IsOpen, IsSuspended) "
+                "VALUES (%s, %s, %s, %s, TRUE, FALSE)",
+                (name, cat["StoreCategoryId"], fc["FoodCourtId"], code),
             )
-            store_id = cur.lastrowid
-        log_audit(db, user["UserId"], "CREATE_STORE", "Store", store_id, None, {"name": name})
+        log_audit(db, user["UserId"], "CREATE_STORE", "Store", store_id, None, {"name": name, "queue_code": code})
     return {"success": True, "store_id": store_id, "message": "เพิ่มร้านค้าเรียบร้อยแล้ว"}
 
 
@@ -105,17 +130,18 @@ def create_store_full(data: StoreFullSchema, user=Depends(require_role("EXECUTIV
             if cur.fetchone():
                 raise DomainError(400, "ชื่อผู้ใช้นี้ถูกใช้ไปแล้ว")
             fc = get_foodcourt(cur)
-            cur.execute(
+            code = _queue_code(cur, data.queue_code)
+            store_id = _insert_store(
+                cur,
                 """
-                INSERT INTO Store (StoreName, StoreCategoryId, FoodCourtId, Description, ImageUrl, IsOpen, IsSuspended,
-                                   ContactName, ContactPhone, ContactLine, ContactEmail)
-                VALUES (%s, %s, %s, %s, %s, TRUE, FALSE, %s, %s, %s, %s)
+                INSERT INTO Store (StoreName, StoreCategoryId, FoodCourtId, QueueCode, Description, ImageUrl,
+                                   IsOpen, IsSuspended, ContactName, ContactPhone, ContactLine, ContactEmail)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE, FALSE, %s, %s, %s, %s)
                 """,
-                (name, category_id, fc["FoodCourtId"], clean_text(data.description), image,
+                (name, category_id, fc["FoodCourtId"], code, clean_text(data.description), image,
                  clean_text(data.contact_name), clean_text(data.contact_phone),
                  clean_text(data.contact_line), clean_text(data.contact_email)),
             )
-            store_id = cur.lastrowid
             try:
                 cur.execute(
                     """
@@ -130,8 +156,8 @@ def create_store_full(data: StoreFullSchema, user=Depends(require_role("EXECUTIV
                 raise
             owner_id = cur.lastrowid
             if start and end:
-                _upsert_contract(cur, store_id, start, end, data.monthly_rent, user["UserId"])
-        log_audit(db, user["UserId"], "CREATE_STORE", "Store", store_id, None, {"name": name})
+                _upsert_contract(cur, store_id, start, end, user["UserId"])
+        log_audit(db, user["UserId"], "CREATE_STORE", "Store", store_id, None, {"name": name, "queue_code": code})
         log_audit(db, user["UserId"], "CREATE_STORE_ACCOUNT", "User", owner_id, None,
                   {"username": owner_username, "role": "STORE_OWNER", "store_id": store_id})
     return {"success": True, "store_id": store_id, "user_id": owner_id,
@@ -143,14 +169,16 @@ def update_store(store_id: int, data: StoreNameSchema, user=Depends(require_role
     name = data.store_name.strip()
     with transaction(db):
         with db.cursor() as cur:
-            cur.execute("SELECT StoreName FROM Store WHERE StoreId = %s FOR UPDATE", (store_id,))
+            cur.execute("SELECT StoreName, QueueCode FROM Store WHERE StoreId = %s FOR UPDATE", (store_id,))
             old = cur.fetchone()
             if not old:
                 raise DomainError(404, "ไม่พบร้านค้า")
             if _name_taken(cur, name, store_id):
                 raise DomainError(400, "มีชื่อร้านค้านี้อยู่แล้ว")
-            cur.execute("UPDATE Store SET StoreName = %s WHERE StoreId = %s", (name, store_id))
-        log_audit(db, user["UserId"], "UPDATE_STORE", "Store", store_id, {"name": old["StoreName"]}, {"name": name})
+            code = _queue_code(cur, data.queue_code, store_id) if data.queue_code else old["QueueCode"]
+            cur.execute("UPDATE Store SET StoreName = %s, QueueCode = %s WHERE StoreId = %s", (name, code, store_id))
+        log_audit(db, user["UserId"], "UPDATE_STORE", "Store", store_id,
+                  {"name": old["StoreName"], "queue_code": old["QueueCode"]}, {"name": name, "queue_code": code})
     return {"success": True, "message": "แก้ไขชื่อร้านเรียบร้อยแล้ว"}
 
 
@@ -161,26 +189,29 @@ def update_store_full(store_id: int, data: StoreFullSchema, user=Depends(require
     image = save_image(data.image_url, "stores") if data.image_url else None
     with transaction(db):
         with db.cursor() as cur:
-            cur.execute("SELECT StoreName FROM Store WHERE StoreId = %s FOR UPDATE", (store_id,))
+            cur.execute("SELECT StoreName, QueueCode FROM Store WHERE StoreId = %s FOR UPDATE", (store_id,))
             old = cur.fetchone()
             if not old:
                 raise DomainError(404, "ไม่พบร้านค้า")
             if _name_taken(cur, name, store_id):
                 raise DomainError(400, "มีชื่อร้านค้านี้อยู่แล้ว")
             category_id = _category_id(cur, data.category)
+            # ไม่ส่ง queue_code มา = คงตัวเดิม
+            code = _queue_code(cur, data.queue_code, store_id) if data.queue_code else old["QueueCode"]
             cur.execute(
                 """
-                UPDATE Store SET StoreName = %s, StoreCategoryId = %s, ContactName = %s, ContactPhone = %s,
-                       ContactLine = %s, ContactEmail = %s, Description = %s, ImageUrl = %s
+                UPDATE Store SET StoreName = %s, StoreCategoryId = %s, QueueCode = %s, ContactName = %s,
+                       ContactPhone = %s, ContactLine = %s, ContactEmail = %s, Description = %s, ImageUrl = %s
                 WHERE StoreId = %s
                 """,
-                (name, category_id, clean_text(data.contact_name), clean_text(data.contact_phone),
+                (name, category_id, code, clean_text(data.contact_name), clean_text(data.contact_phone),
                  clean_text(data.contact_line), clean_text(data.contact_email), clean_text(data.description),
                  image, store_id),
             )
             if start and end:
-                _upsert_contract(cur, store_id, start, end, data.monthly_rent, user["UserId"])
-        log_audit(db, user["UserId"], "UPDATE_STORE", "Store", store_id, {"name": old["StoreName"]}, {"name": name})
+                _upsert_contract(cur, store_id, start, end, user["UserId"])
+        log_audit(db, user["UserId"], "UPDATE_STORE", "Store", store_id,
+                  {"name": old["StoreName"], "queue_code": old["QueueCode"]}, {"name": name, "queue_code": code})
     return {"success": True, "message": "บันทึกข้อมูลร้านค้าเรียบร้อยแล้ว"}
 
 
@@ -287,7 +318,7 @@ def renew_store_contract(store_id: int, data: RenewContractSchema, user=Depends(
                     raise DomainError(400, "วันที่เริ่มสัญญาใหม่ต้องไม่เป็นวันที่ผ่านมาแล้ว")
                 if new_end <= start:
                     raise DomainError(400, "วันสิ้นสุดสัญญาใหม่ต้องหลังวันที่เริ่มสัญญา")
-            _upsert_contract(cur, store_id, start, new_end, data.monthly_rent, user["UserId"])
+            _upsert_contract(cur, store_id, start, new_end, user["UserId"])
         log_audit(db, user["UserId"], "RENEW_CONTRACT", "Store", store_id,
                   {"end": old["EndDate"] if old else None},
                   {"start": start, "end": new_end, "name": store["StoreName"]})

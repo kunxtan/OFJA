@@ -26,8 +26,8 @@ def get_pending_print_jobs(user=Depends(require_role(*_PRINT_ROLES)), store_id: 
         cur.execute(
             """
             SELECT pj.PrintJobId AS PrintJobID, pj.OrderId AS OrderID, 'PENDING' AS Status,
-                   'FIRST_PRINT' AS PrintType, pj.CreatedAt, o.QueueNo, o.TotalAmount
-            FROM PrintJob pj JOIN `Order` o ON o.OrderId = pj.OrderId
+                   'FIRST_PRINT' AS PrintType, pj.CreatedAt, o.QueueNo, s.QueueCode, o.TotalAmount
+            FROM PrintJob pj JOIN `Order` o ON o.OrderId = pj.OrderId JOIN Store s ON s.StoreId = o.StoreId
             WHERE o.StoreId = %s AND pj.PrintStatus = 'QUEUED' AND pj.PrintType = 'CUSTOMER'
             ORDER BY pj.CreatedAt
             """,
@@ -35,7 +35,7 @@ def get_pending_print_jobs(user=Depends(require_role(*_PRINT_ROLES)), store_id: 
         )
         rows = cur.fetchall()
     for r in rows:
-        r["QueueNo"] = queue_label(r["QueueNo"])
+        r["QueueNo"] = queue_label(r["QueueNo"], r.pop("QueueCode"))
     return rows
 
 
@@ -125,7 +125,7 @@ def print_order(order_id: int, payload: PrintRequestSchema, user=Depends(require
                     (order_id, printer, snapshot_json, user["UserId"], now),
                 )
                 job_id = cur.lastrowid
-        q = queue_label(order["QueueNo"])
+        q = queue_label(order["QueueNo"], order["QueueCode"])
         log_audit(db, user["UserId"], "PRINT_ORDER" if print_type == "CUSTOMER" else "REPRINT_ORDER", "Order",
                   order_id, None, {"queue": q, "print_job_id": job_id, "printer": printer})
     return {

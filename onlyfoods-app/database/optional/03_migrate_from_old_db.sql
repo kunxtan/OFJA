@@ -20,6 +20,7 @@
 --    Users.Password, Cards, CardHolderName, CardLast4, CardExpiry
 --                        - card data must not live in this database.
 --    Users.Points        - points were cut from the ER.
+--    StoreContract.MonthlyRent - no rent in the system any more.
 --    Printer             - gone as a table; PrinterName / PrinterStatus
 --                          survive on each PrintJob row.
 --    ProductPriceHistory, SecurityLog, ExportLog, SystemAlert
@@ -190,7 +191,7 @@ WHERE NOT EXISTS (SELECT 1 FROM FoodCourt WHERE FoodCourtId = 1);
 
 -- 3.2 Store
 INSERT INTO Store (StoreId, StoreName, StoreCategoryId, FoodCourtId, Description, ImageUrl,
-                   IsOpen, IsSuspended, AvgPrepMinutes,
+                   IsOpen, IsSuspended, AvgPrepMinutes, QueueCode,
                    ContactName, ContactPhone, ContactLine, ContactEmail,
                    IsDeleted, DeletedAt, CreatedAt)
 SELECT s.StoreId,
@@ -202,6 +203,10 @@ SELECT s.StoreId,
        COALESCE(s.IsOpen, FALSE),
        COALESCE(s.IsSuspended, FALSE),
        LEAST(GREATEST(COALESCE(s.AvgPrepMinutes, 15), 1), 65535),
+       -- ตัวอักษรคิวเรียงตาม StoreId: A..Z แล้วต่อด้วย AA, AB, ...
+       (SELECT IF(x.n <= 26, CHAR(64 + x.n), CONCAT(CHAR(64 + FLOOR((x.n - 27) / 26) + 1), CHAR(65 + MOD(x.n - 27, 26))))
+        FROM (SELECT StoreId, ROW_NUMBER() OVER (ORDER BY StoreId) AS n FROM onlyfoods_db.Store) x
+        WHERE x.StoreId = s.StoreId),
        s.ContactName, s.ContactPhone, s.ContactLine, s.ContactEmail,
        COALESCE(s.IsDeleted, FALSE), s.DeletedAt, COALESCE(s.CreatedAt, NOW())
 FROM onlyfoods_db.Store s
@@ -257,12 +262,11 @@ SET @EXEC_ID = COALESCE(@EXEC_ID, (SELECT MIN(UserId) FROM `User`));
 
 
 -- 3.4 StoreContract   (new schema is 1 : 1 -> keep the latest contract only)
-INSERT INTO StoreContract (ContractId, StoreId, StartDate, EndDate, MonthlyRent, ContractStatus, CreatedBy, CreatedAt)
+INSERT INTO StoreContract (ContractId, StoreId, StartDate, EndDate, ContractStatus, CreatedBy, CreatedAt)
 SELECT sc.ContractId,
        sc.StoreId,
        sc.StartDate,
        sc.EndDate,
-       GREATEST(COALESCE(sc.MonthlyRent, 0), 0),
        CASE UPPER(TRIM(COALESCE(sc.Status, 'ACTIVE')))
          WHEN 'EXPIRED'    THEN 'EXPIRED'
          WHEN 'EXPIRING'   THEN 'EXPIRING'

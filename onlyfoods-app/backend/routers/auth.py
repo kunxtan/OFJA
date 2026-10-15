@@ -76,6 +76,7 @@ def login(data: LoginSchema, db=Depends(get_db)):
         if row["FailedLoginCount"] or row["LockedUntil"]:
             with db.cursor() as cur:
                 cur.execute("UPDATE `User` SET FailedLoginCount = 0, LockedUntil = NULL WHERE UserId = %s", (row["UserId"],))
+        log_audit(db, row["UserId"], "LOGIN", "AUTH", row["UserId"], None, {"method": "password"})
     with db.cursor() as cur:
         user = _load_user(cur, row["UserId"])
     user["access_token"] = create_token(row["UserId"])
@@ -211,6 +212,7 @@ def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
                 if not row["IsActive"]:
                     raise DomainError(403, "บัญชีนี้ถูกปิดใช้งาน")
                 user_id = row["UserId"]
+        log_audit(db, user_id, "LOGIN", "AUTH", user_id, None, {"method": "google"})
     with db.cursor() as cur:
         user = _load_user(cur, user_id)
     return {

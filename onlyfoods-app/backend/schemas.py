@@ -93,6 +93,7 @@ class AccountUpdateSchema(BaseModel):
 
 class StoreNameSchema(BaseModel):
     store_name: str = Field(min_length=1, max_length=100)
+    queue_code: Optional[str] = Field(default=None, max_length=2)  # ไม่ส่ง = ระบบเลือกตัวอักษรที่ว่างให้
 
 
 class StoreFullSchema(BaseModel):
@@ -106,7 +107,7 @@ class StoreFullSchema(BaseModel):
     image_url: Optional[str] = None
     contract_start_date: Optional[str] = None
     contract_end_date: Optional[str] = None
-    monthly_rent: Optional[float] = Field(default=None, ge=0)
+    queue_code: Optional[str] = Field(default=None, max_length=2)
     owner_full_name: Optional[str] = None
     owner_username: Optional[str] = None
     owner_password: Optional[str] = None
@@ -115,7 +116,6 @@ class StoreFullSchema(BaseModel):
 class RenewContractSchema(BaseModel):
     contract_start_date: str
     contract_end_date: str
-    monthly_rent: Optional[float] = Field(default=None, ge=0)
 
 
 class ProductCreateSchema(BaseModel):
@@ -155,6 +155,10 @@ class CreateOrderSchema(BaseModel):
     slip_url: Optional[str] = None
     payment_method: Optional[str] = None
     pickup_time: Optional[str] = None
+
+
+class TopUpSlipSchema(BaseModel):
+    slip_url: str = Field(min_length=1)
 
 
 class VerifySlipSchema(BaseModel):

@@ -37,19 +37,19 @@ ON DUPLICATE KEY UPDATE FoodCourtName = VALUES(FoodCourtName), Location = VALUES
 -- ---------------------------------------------------------------------
 -- 2) Store   (old seed: 3 stores, StoreId kept the same)
 -- ---------------------------------------------------------------------
-INSERT INTO Store (StoreId, StoreName, StoreCategoryId, FoodCourtId, Description, ImageUrl, IsOpen, IsSuspended, AvgPrepMinutes) VALUES
+INSERT INTO Store (StoreId, StoreName, StoreCategoryId, FoodCourtId, Description, ImageUrl, IsOpen, IsSuspended, AvgPrepMinutes, QueueCode) VALUES
 (1, 'ร้านข้าวแกงวิศวะเดือด',
     (SELECT StoreCategoryId FROM StoreCategory WHERE CategoryName = 'อาหารจานเดียว'), 1,
     'ข้าวแกงรสเด็ด เมนูหลากหลาย ทำสดใหม่ทุกวัน',
-    'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600', TRUE, FALSE, 10),
+    'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=600', TRUE, FALSE, 10, 'A'),
 (2, 'ชาไทยสถาบัน KMITL',
     (SELECT StoreCategoryId FROM StoreCategory WHERE CategoryName = 'เครื่องดื่ม'), 1,
     'ชาไทย ชาเขียว เครื่องดื่มเย็นชื่นใจ',
-    'https://images.unsplash.com/photo-1558857563-b371033873b8?w=600', TRUE, FALSE, 5),
+    'https://images.unsplash.com/photo-1558857563-b371033873b8?w=600', TRUE, FALSE, 5, 'B'),
 (3, 'ก๋วยเตี๋ยวเรือตึกพระเทพ',
     (SELECT StoreCategoryId FROM StoreCategory WHERE CategoryName = 'ก๋วยเตี๋ยว / เส้น'), 1,
     'ก๋วยเตี๋ยวเรือรสเข้มข้น น้ำตกแท้ ๆ',
-    'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=600', TRUE, FALSE, 8);
+    'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=600', TRUE, FALSE, 8, 'C');
 
 
 -- ---------------------------------------------------------------------
@@ -132,10 +132,10 @@ INSERT INTO Product (StoreId, CategoryId, ProductName, Description, UnitPrice, I
 -- ---------------------------------------------------------------------
 -- 5) StoreContract   (1 : 1 with Store)
 -- ---------------------------------------------------------------------
-INSERT INTO StoreContract (StoreId, StartDate, EndDate, MonthlyRent, ContractStatus, CreatedBy) VALUES
-(1, '2026-01-01', '2026-12-31', 8000.00,  'ACTIVE',   10),
-(2, '2026-01-01', '2026-10-31', 5000.00,  'EXPIRING', 10),  -- ใกล้หมด -> โผล่ใน v_contract_expiring
-(3, '2026-03-01', '2027-02-28', 7500.00,  'ACTIVE',   10);
+INSERT INTO StoreContract (StoreId, StartDate, EndDate, ContractStatus, CreatedBy) VALUES
+(1, '2026-01-01', '2026-12-31', 'ACTIVE',   10),
+(2, '2026-01-01', '2026-10-31', 'EXPIRING', 10),  -- ใกล้หมด -> โผล่ใน v_contract_expiring
+(3, '2026-03-01', '2027-02-28', 'ACTIVE',   10);
 
 
 -- ---------------------------------------------------------------------
