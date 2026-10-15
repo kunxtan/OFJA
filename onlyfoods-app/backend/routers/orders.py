@@ -11,7 +11,7 @@ from auth import STORE_SCOPED, assert_store_access, get_current_user, require_ro
 from db import get_db, transaction
 from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
-                     RecallRequestSchema, StatusUpdateSchema, TopUpSlipSchema)
+                     PickupEtaSchema, RecallRequestSchema, StatusUpdateSchema, TopUpSlipSchema)
 from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
                       lock_order, log_audit, log_first_status, pending_top_up, refund_price_diff, send_notif,
                       status_id)
@@ -350,7 +350,8 @@ def update_status(order_id: int, payload: StatusUpdateSchema,
             if not steps:
                 return {"success": True}
             if state.NO_SHOW in steps:
-                state.assert_no_show_allowed(order["ReadyAt"], now, config.NO_SHOW_AFTER_MINUTES)
+                state.assert_no_show_allowed(order["ReadyAt"], now, config.NO_SHOW_AFTER_MINUTES,
+                                             order.get("CustomerEtaAt"))
             if state.CANCELLED in steps and not reason:
                 reason = "ยกเลิกโดยร้านค้า"
             for step in steps:
@@ -547,6 +548,36 @@ def customer_cancel_order(order_id: int, payload: CustomerCancelSchema,
 def customer_cancel_order_alias(order_id: int, payload: CustomerCancelSchema,
                                 user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
     return _customer_cancel(order_id, payload, user, db)
+
+
+# สถานะที่ลูกค้าแจ้งร้านว่าจะมาช้าได้: ร้านรับออเดอร์แล้วจนถึงอาหารพร้อมรับ
+_ETA_STATUSES = (state.PENDING, state.COOKING, state.COOKED, state.READY)
+
+
+@router.put("/{order_id}/pickup-eta")
+def set_pickup_eta(order_id: int, payload: PickupEtaSchema,
+                   user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
+    """ลูกค้าแจ้งร้านว่าจะมารับภายใน N นาที (นับจากตอนกด) ; แจ้งซ้ำได้ ยึดครั้งล่าสุด ไม่เกิน MAX_PICKUP_ETA_UPDATES ครั้ง
+    ผล: หน้าร้านเห็นเวลา, ระบบไม่ส่งเตือน 15 นาที, ปุ่ม "ลูกค้าไม่มารับ" กดไม่ได้จนเลยเวลานี้"""
+    if payload.minutes not in config.PICKUP_ETA_CHOICES:
+        raise DomainError(400, "เลือกเวลาได้เฉพาะ " + " / ".join(f"{m} นาที" for m in config.PICKUP_ETA_CHOICES))
+    now = bangkok_now()
+    with transaction(db):
+        with db.cursor() as cur:
+            order = lock_order(cur, order_id)
+            if order["CustomerId"] is None or int(order["CustomerId"]) != int(user["UserId"]):
+                raise DomainError(403, "คุณไม่มีสิทธิ์ดำเนินการกับคำสั่งซื้อนี้")
+            if order["StatusCode"] not in _ETA_STATUSES:
+                raise DomainError(400, "แจ้งเวลามารับได้หลังร้านรับออเดอร์แล้ว และก่อนรับอาหาร")
+            used = int(order["EtaUpdateCount"] or 0)
+            if used >= config.MAX_PICKUP_ETA_UPDATES:
+                raise DomainError(400, f"แจ้งเวลามารับครบ {config.MAX_PICKUP_ETA_UPDATES} ครั้งแล้ว กรุณาติดต่อร้าน")
+            eta = (now + timedelta(minutes=payload.minutes)).replace(microsecond=0)
+            cur.execute("UPDATE `Order` SET CustomerEtaAt = %s, EtaUpdateCount = EtaUpdateCount + 1 WHERE OrderId = %s",
+                        (eta, order_id))
+        log_audit(db, user["UserId"], "PICKUP_ETA", "Order", order_id, {"eta": order["CustomerEtaAt"]},
+                  {"eta": eta, "minutes": payload.minutes, "store_id": order["StoreId"], "count": used + 1})
+    return {"success": True, "customer_eta_at": eta, "eta_updates_left": config.MAX_PICKUP_ETA_UPDATES - used - 1}
 
 
 @router.post("/{order_id}/recall")

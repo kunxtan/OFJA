@@ -136,6 +136,19 @@ def test_no_show_needs_30_minutes():
     state.assert_no_show_allowed(now - timedelta(minutes=30), now)
 
 
+def test_no_show_waits_for_customer_eta():
+    """ลูกค้าแจ้งว่าจะมาช้า: ครบ 30 นาทีแล้วก็ยังตัดคิวไม่ได้จนเลยเวลาที่แจ้ง"""
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    ready = now - timedelta(minutes=45)
+    with pytest.raises(DomainError) as e:
+        state.assert_no_show_allowed(ready, now, 30, customer_eta=now + timedelta(minutes=1))
+    assert "12:01" in e.value.detail
+    state.assert_no_show_allowed(ready, now, 30, customer_eta=now)                       # ถึงเวลาที่แจ้งพอดี
+    state.assert_no_show_allowed(ready, now, 30, customer_eta=now - timedelta(minutes=5))
+    with pytest.raises(DomainError):  # เลยเวลาที่แจ้งแล้ว แต่ยังไม่ครบ 30 นาทีหลังอาหารพร้อม
+        state.assert_no_show_allowed(now - timedelta(minutes=10), now, 30, customer_eta=now - timedelta(minutes=5))
+
+
 def test_reminder_comes_before_no_show_unlock():
     """ลูกค้าต้องได้รับเตือนก่อนที่พนักงานจะตัดคิวได้ (ไม่งั้นไม่มีเวลาตอบสนอง)"""
     import config

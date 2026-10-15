@@ -348,9 +348,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
 
   const openNoShowModal = (order) => {
-    const minutes = order.ReadyAt ? (nowTick - new Date(order.ReadyAt).getTime()) / 60000 : 0;
-    if (minutes < NO_SHOW_UNLOCK_MINUTES) {
-      showToast(`คิว ${order.QueueNo} ยังไม่ถึง ${NO_SHOW_UNLOCK_MINUTES} นาที`);
+    if (!canMarkNoShow(order)) {
+      showToast(beforeEta(order)
+        ? `คิว ${order.QueueNo} ลูกค้าแจ้งว่าจะมาถึง ${fmtClock(order.CustomerEtaAt)} น.`
+        : `คิว ${order.QueueNo} ยังไม่ถึง ${NO_SHOW_UNLOCK_MINUTES} นาที`);
       return;
     }
     setNoShowModal(order);
@@ -522,7 +523,20 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   const minutesWaiting = (timestamp) => timestamp ? Math.max(0, (nowTick - new Date(timestamp).getTime()) / 60000) : 0;
   const isPickupWarning = (timestamp) => minutesWaiting(timestamp) >= PICKUP_WARNING_MINUTES;
-  const canMarkNoShow = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_UNLOCK_MINUTES;
+  // ลูกค้าแจ้งร้านว่าจะมาช้า (CustomerEtaAt): ยังไม่ถึงเวลาที่แจ้ง = ไม่ต้องเตือน/โทร และยังตัดคิวไม่ได้
+  const etaMs = (o) => (o.CustomerEtaAt ? new Date(o.CustomerEtaAt).getTime() : null);
+  const beforeEta = (o) => etaMs(o) !== null && nowTick < etaMs(o);
+  // เวลาที่ปุ่ม "ลูกค้าไม่มารับ" กดได้ = หลังอาหารพร้อม NO_SHOW_UNLOCK_MINUTES นาที และเลยเวลาที่ลูกค้าแจ้ง (ถ้ามี)
+  const noShowUnlockAt = (o) => {
+    const byReady = o.ReadyAt ? new Date(o.ReadyAt).getTime() + NO_SHOW_UNLOCK_MINUTES * 60000 : Infinity;
+    return Math.max(byReady, etaMs(o) ?? 0);
+  };
+  const canMarkNoShow = (o) => nowTick >= noShowUnlockAt(o);
+  const noShowCountdown = (o) => {
+    const r = Math.max(0, Math.ceil((noShowUnlockAt(o) - nowTick) / 1000));
+    const h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60), sec = r % 60;
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+  };
   const fmtPhone = (p) => {
     const d = String(p || '').replace(/\D/g, '');
     return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : (p || '');
@@ -809,25 +823,36 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                 <Badge tone={getStatusBadgeTone(o.Status)}>{getStatusLabel(o.Status)}</Badge>
                                 {o.Status === 'Ready' && (
                                   <div style={{ marginTop: '6px' }}>
-                                    <Badge tone={canMarkNoShow(o.ReadyAt) ? 'danger' : isPickupWarning(o.ReadyAt) ? 'warning' : 'neutral'}>
+                                    <Badge tone={canMarkNoShow(o) ? 'danger' : isPickupWarning(o.ReadyAt) && !beforeEta(o) ? 'warning' : 'neutral'}>
                                       รอมาแล้ว {getElapsedLabel(o.ReadyAt)}
                                     </Badge>
-                                    {isPickupWarning(o.ReadyAt) && (
+                                    {beforeEta(o) && (
+                                      <div className="pickup-eta" role="status">
+                                        🕒 ลูกค้าแจ้งจะมาถึง <b>{fmtClock(o.CustomerEtaAt)} น.</b>
+                                        <span className="pickup-sub">ยังไม่ต้องโทร · ตัดคิวได้หลังเวลานี้</span>
+                                      </div>
+                                    )}
+                                    {isPickupWarning(o.ReadyAt) && !beforeEta(o) && (
                                       <div className="pickup-warning" role="alert">
                                         {isWalkInOrder(o) ? (
                                           <>⚠️ ครบ {PICKUP_WARNING_MINUTES} นาทียังไม่มารับ<br />ลูกค้า Walk-in: เรียกด้วยเสียงหน้าร้าน</>
                                         ) : (
                                           <>
-                                            ⚠️ ครบ {PICKUP_WARNING_MINUTES} นาทียังไม่มารับ — โทรหาลูกค้า<br />
+                                            {o.CustomerEtaAt
+                                              ? <>⚠️ เลยเวลาที่ลูกค้าแจ้ง ({fmtClock(o.CustomerEtaAt)} น.) — โทรหาลูกค้า<br /></>
+                                              : <>⚠️ ครบ {PICKUP_WARNING_MINUTES} นาทียังไม่มารับ — โทรหาลูกค้า<br /></>}
                                             <b className="pickup-phone">{o.CustomerPhone ? fmtPhone(o.CustomerPhone) : 'ไม่มีเบอร์โทรในระบบ'}</b>
                                             <span className="pickup-sub">
-                                              {reminderNote(o)}
+                                              {o.CustomerEtaAt ? 'ลูกค้าแจ้งเวลามารับเองแล้ว ระบบจึงไม่ส่งเตือนซ้ำ' : reminderNote(o)}
                                             </span>
                                           </>
                                         )}
                                       </div>
                                     )}
                                   </div>
+                                )}
+                                {o.Status !== 'Ready' && o.CustomerEtaAt && (
+                                  <div className="pickup-eta compact">🕒 ลูกค้าแจ้งจะมาถึง <b>{fmtClock(o.CustomerEtaAt)} น.</b></div>
                                 )}
                                 {isPendingCancel && (
                                   <div style={{ fontSize: '11px', color: PALETTE.coral, fontWeight: '700', marginTop: '4px' }}>
@@ -844,13 +869,17 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                       </button>
                                       <button
                                         onClick={() => openNoShowModal(o)}
-                                        disabled={!canMarkNoShow(o.ReadyAt)}
+                                        disabled={!canMarkNoShow(o)}
                                         className="cv-btn btn-danger"
-                                        title={`กดได้เมื่อเกิน ${NO_SHOW_UNLOCK_MINUTES} นาทีหลังอาหารเสร็จ (พนักงานตัดสินใจเอง ระบบไม่ตัดให้)`}
+                                        title={beforeEta(o)
+                                          ? `ลูกค้าขอมารับภายใน ${fmtClock(o.CustomerEtaAt)} น. กดได้หลังเวลานี้`
+                                          : `กดได้เมื่อเกิน ${NO_SHOW_UNLOCK_MINUTES} นาทีหลังอาหารเสร็จ (พนักงานตัดสินใจเอง ระบบไม่ตัดให้)`}
                                       >
-                                        🚫 {canMarkNoShow(o.ReadyAt)
+                                        🚫 {canMarkNoShow(o)
                                           ? 'ลูกค้าไม่มารับอาหาร'
-                                          : `ลูกค้าไม่มารับ (อีก ${(() => { const r = Math.max(0, Math.ceil(NO_SHOW_UNLOCK_MINUTES * 60 - minutesWaiting(o.ReadyAt) * 60)); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}`; })()})`}
+                                          : beforeEta(o) && etaMs(o) >= noShowUnlockAt(o)
+                                            ? `ลูกค้าขอมาถึง ${fmtClock(o.CustomerEtaAt)} น. (อีก ${noShowCountdown(o)})`
+                                            : `ลูกค้าไม่มารับ (อีก ${noShowCountdown(o)})`}
                                       </button>
                                     </>
                                   )}
@@ -1149,6 +1178,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div className="info-row"><span>โทรศัพท์</span><b>{noShowModal.CustomerPhone || '-'}</b></div>
               <div className="info-row"><span>อีเมล</span><b>{noShowModal.CustomerEmail || '-'}</b></div>
               <div className="info-row"><span>รอมาแล้ว</span><b>{getElapsedLabel(noShowModal.ReadyAt)}</b></div>
+              {noShowModal.CustomerEtaAt && (
+                <div className="info-row"><span>ลูกค้าแจ้งจะมาถึง</span><b>{fmtClock(noShowModal.CustomerEtaAt)} น.</b></div>
+              )}
             </div>
             <p style={{ marginTop: 14, color: PALETTE.textSub, fontSize: 13 }}>ระบบเตือนลูกค้าให้แล้ว แนะนำให้โทรยืนยันก่อนตัดคิว หากลูกค้าแจ้งว่าจะมารับช้า ไม่ต้องตัดคิว (ตัดคิวแล้วไม่คืนเงิน)</p>
             <div className="modal-footer-btns">
@@ -1635,6 +1667,11 @@ const CV_STYLES = `
 .cv-modal-head h3 { margin: 0; font-size: 18px; font-weight: 600; color: ${PALETTE.dark}; }
 .cv-modal-head .caption { font-size: 12px; color: ${PALETTE.textSub}; margin-top: 2px; }
 .cv-modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: ${PALETTE.textSub}; }
+.pickup-eta { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: #EAF3FF; border: 1px solid #93C0F5; color: #1E4E8C; font-size: 12px; font-weight: 600; line-height: 1.5; max-width: 260px; }
+.pickup-eta b { font-size: 16px; }
+.pickup-eta .pickup-sub { display: block; font-size: 11px; font-weight: 500; color: #4A6E9C; }
+.pickup-eta.compact { padding: 4px 8px; font-size: 11px; }
+.pickup-eta.compact b { font-size: 12px; }
 .pickup-warning { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: #FFF4E5; border: 1px solid #F5B461; color: #8A4B00; font-size: 12px; font-weight: 600; line-height: 1.5; max-width: 260px; }
 .pickup-warning .pickup-phone { display: block; font-size: 18px; letter-spacing: .5px; color: #B45309; user-select: all; }
 .pickup-warning .pickup-sub { display: block; font-size: 11px; font-weight: 500; color: #9A6B2F; }

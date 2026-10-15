@@ -2,6 +2,7 @@
 from typing import Dict, Iterable, List
 
 from state import legacy_role, legacy_status
+from config import MAX_PICKUP_ETA_UPDATES
 from utils import queue_label
 
 USER_SELECT = """
@@ -34,7 +35,7 @@ LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
 ORDER_SELECT = """
 SELECT o.OrderId AS OrderID, o.OrderId, o.StoreId, o.CustomerId AS UserId, o.CustomerId,
        o.CreatedByStaffId, o.QueueNo, o.TotalAmount, os.StatusCode, os.StatusNameTh,
-       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CancelReason, o.CancelDeadline,
+       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CustomerEtaAt, o.EtaUpdateCount, o.CancelReason, o.CancelDeadline,
        s.StoreName, s.QueueCode, u.FullName AS CustomerName, u.Username AS UserName,
        u.Phone AS CustomerPhone, u.Email AS CustomerEmail,
        pm.MethodCode AS PaymentMethodCode, pm.MethodNameTh AS PaymentMethod,
@@ -59,6 +60,8 @@ def shape_order(row: dict) -> dict:
     row = dict(row)
     row["QueueNo"] = queue_label(row["QueueNo"], row.get("QueueCode"))
     row["Status"] = legacy_status(row["StatusCode"])
+    if "EtaUpdateCount" in row:  # ลูกค้าแจ้งมารับช้าได้อีกกี่ครั้ง (ใช้ในหน้าลูกค้า)
+        row["EtaUpdatesLeft"] = max(0, MAX_PICKUP_ETA_UPDATES - int(row["EtaUpdateCount"] or 0))
     row["TopUpAmount"] = float(row["TopUpAmount"]) if row.get("TopUpAmount") is not None else None
     created = row.get("CreatedAt")
     row["OrderTime"] = created.strftime("%Y-%m-%d %H:%M:%S") if created else None

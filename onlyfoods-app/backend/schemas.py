@@ -191,6 +191,10 @@ class PrintRequestSchema(BaseModel):
     printer: str = Field(default="MOCK_PRINTER_01", max_length=100)
 
 
+class PickupEtaSchema(BaseModel):
+    minutes: int  # ต้องเป็นค่าใน config.PICKUP_ETA_CHOICES (ตรวจใน endpoint)
+
+
 class RecallRequestSchema(BaseModel):
     queue_no: str
 
