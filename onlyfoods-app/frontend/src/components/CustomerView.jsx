@@ -884,8 +884,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return;
     }
 
-    // คำนวณเวลาที่คาดว่าจะมาถึง
-    const arrivalDate = new Date();
+    // คำนวณเวลาที่จะมารับช้า
+    const pickupTime = orderPickupTimes[orderId];
+    const arrivalDate = pickupTime
+      ? new Date(pickupTime)
+      : new Date();
+
     arrivalDate.setMinutes(
       arrivalDate.getMinutes() + Number(minutes)
     );
@@ -1822,7 +1826,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           <button
                             type="button"
                             disabled={lateInfo.count >= 3}
-                            onClick={() => handleLatePickup(orderId, selectedMinutes)}
+                            onClick={() => handleLatePickup(order, selectedMinutes)}
                             style={{
                               width: "100%",
                               marginTop: "10px",
