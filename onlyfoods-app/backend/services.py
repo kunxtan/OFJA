@@ -178,6 +178,22 @@ def log_first_status(cur, order_id: int, code: str, actor_id: Optional[int]) -> 
     )
 
 
+# ออเดอร์จบแล้ว: ใบลูกค้าที่ยังรอพิมพ์ไม่มีประโยชน์ -> ปิดเป็น SKIPPED (ไม่งั้นค้างในแบนเนอร์หน้าร้านตลอดไป)
+_PRINT_SKIP_REASON = {
+    state.COMPLETED: "ส่งมอบอาหารแล้วก่อนพิมพ์",
+    state.NO_SHOW: "ลูกค้าไม่มารับอาหาร",
+    state.CANCELLED: "ออเดอร์ถูกยกเลิก",
+}
+
+
+def skip_queued_print_jobs(cur, order_id: int, reason: str) -> None:
+    cur.execute(
+        "UPDATE PrintJob SET PrintStatus = 'SKIPPED', ErrorMessage = %s "
+        "WHERE OrderId = %s AND PrintType = 'CUSTOMER' AND PrintStatus = 'QUEUED'",
+        (reason[:255], order_id),
+    )
+
+
 def queue_print_job(cur, order_id: int) -> None:
     """ออเดอร์พร้อมรับ -> ต้องมีงานพิมพ์ใบลูกค้า 1 งาน (ไม่สร้างซ้ำ)"""
     cur.execute("SELECT PrintJobId FROM PrintJob WHERE OrderId = %s AND PrintType = 'CUSTOMER' LIMIT 1", (order_id,))
@@ -325,6 +341,8 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
     q = queue_label(order["QueueNo"], order.get("QueueCode"))
     if final_code == state.READY:
         queue_print_job(cur, oid)
+    if final_code in _PRINT_SKIP_REASON:
+        skip_queued_print_jobs(cur, oid, _PRINT_SKIP_REASON[final_code])
     if final_code == state.CANCELLED:
         close_pending_top_ups(cur, oid, "ออเดอร์ถูกยกเลิกก่อนโอนส่วนต่าง")
         refunded = refund_full_cancel(cur, oid, reason or "ยกเลิกออเดอร์")
