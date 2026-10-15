@@ -152,7 +152,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const isUpdatingRef = useRef(false);
   const pendingUndoRef = useRef(new Set()); // ล็อก ID ฝั่ง Frontend ป้องกันอาการเด้งกระพริบ
 
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
@@ -213,7 +212,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       .then(data => {
         if (Array.isArray(data)) {
           setAllOrders(prev => {
-            // ยกเว้นรายการที่กำลังกด Undo / เปลี่ยนสถานะอยู่ ไม่ให้โดนทับ
             return data.map(newOrder => {
               if (pendingUndoRef.current.has(newOrder.OrderID)) {
                 const localOrder = prev.find(o => o.OrderID === newOrder.OrderID);
@@ -255,7 +253,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // --- Logic ใหม่: คำนวณเวลานัดรับจาก "จำนวนจานรวม" ทั้งหมดในคิว ---
+  // --- Logic คำนวณเวลานัดรับจาก "จำนวนจานรวม" (คิดจานละ 4 นาที) ---
   const getCalculatedTargetDate = (order, orderList) => {
     const created = parseDate(order.CreatedAt) || new Date();
     const pickupStr = order.PickupTime ? String(order.PickupTime).trim() : '';
@@ -289,8 +287,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     // 3. คำนวณจำนวนจานของออเดอร์ปัจจุบัน
     const currentOrderQty = order.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
 
-    // 4. คิดอัตรา 1 จาน = 3 นาที (และมีเวลาทำอย่างน้อย 3 นาที)
-    const minutesToWait = Math.max(5, (prevTotalItems + currentOrderQty) * 4);
+    // 4. คิดอัตรา 1 จาน = 4 นาที (อย่างน้อยขั้นต่ำ 4 นาที)
+    const minutesToWait = Math.max(4, (prevTotalItems + currentOrderQty) * 4);
     const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
 
     return {
@@ -542,7 +540,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           </div>
         </div>
 
-        {/* ส่วนแสดงเวลารวม สรุปคิว และสรุปรายการเมนูที่ปรับปรุงใหม่ (Responsive Scroll) */}
+        {/* ส่วนแสดงเวลารวม สรุปคิว และสรุปรายการเมนูที่ดีไซน์ใหม่ */}
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
@@ -584,16 +582,16 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '4px' }}>{pendingOrders.length}</span>
           </div>
 
-          {/* สรุปรายการอาหาร ( Scroll ซ้าย-ขวา ไม่ดันส่วนอื่นจนพัง) */}
+          {/* แถบสรุปรายการอาหารดีไซน์ใหม่ (Pill shape คลีน สวยงาม เลื่อนซ้าย-ขวาได้) */}
           {summary.length > 0 && (
             <div 
               className="summary-scroll-container"
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
+                gap: '6px',
                 overflowX: 'auto',
-                maxWidth: '400px',
+                maxWidth: '420px',
                 padding: '2px 0',
                 msOverflowStyle: 'none',
                 scrollbarWidth: 'none'
@@ -601,9 +599,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             >
               {summary.map((s, i) => (
                 <div key={i} style={{
-                  background: theme.cardInner,
-                  border: `1px solid ${theme.border}`,
-                  padding: '6px 12px',
+                  background: isDark ? 'rgba(255, 114, 76, 0.12)' : '#FFF0ED',
+                  border: `1px solid ${isDark ? 'rgba(255, 114, 76, 0.3)' : '#FFDCD3'}`,
+                  padding: '5px 12px',
                   borderRadius: '99px',
                   fontSize: '12.5px',
                   display: 'flex',
@@ -612,8 +610,23 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                   whiteSpace: 'nowrap',
                   flexShrink: 0
                 }}>
-                  <span style={{ fontWeight: '600' }}>{s.ProductName}</span>
-                  <span style={{ background: PALETTE.coral, color: '#FFF', borderRadius: '99px', padding: '1px 7px', fontSize: '11.5px', fontWeight: '800' }}>{s.TotalQty}</span>
+                  <span style={{ 
+                    width: '6px', 
+                    height: '6px', 
+                    borderRadius: '50%', 
+                    background: PALETTE.coral 
+                  }} />
+                  <span style={{ fontWeight: '600', color: theme.textMain }}>{s.ProductName}</span>
+                  <span style={{ 
+                    background: PALETTE.coral, 
+                    color: '#FFF', 
+                    borderRadius: '99px', 
+                    padding: '1px 7px', 
+                    fontSize: '11.5px', 
+                    fontWeight: '800' 
+                  }}>
+                    {s.TotalQty}
+                  </span>
                 </div>
               ))}
             </div>
@@ -1133,7 +1146,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณจากจำนวนจาน):' : 'เวลานัดรับ:'}
+                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณจานละ 4 น.):' : 'เวลานัดรับ:'}
                   </span>
                   <strong style={{ color: PALETTE.coral }}>{formatTime(calculatedInfo.targetDate)}</strong>
                 </div>
