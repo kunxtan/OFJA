@@ -274,19 +274,59 @@ def foodcourt_is_open(row: dict, now: Optional[datetime] = None) -> bool:
     cur = now.hour * 60 + now.minute
     return time_to_minutes(row["OpenTime"]) <= cur < time_to_minutes(row["CloseTime"])
 
+# สัญญา
+#  กติกา: สัญญามีผลตั้งแต่ 00:00:00 ของวันเริ่ม ถึง 23:59:59 ของวันสิ้นสุด (เวลาไทย)
+#  สถานะคำนวณจากวันที่เสมอ (เหมือนสถานะเปิด/ปิดศูนย์อาหาร) ไม่เชื่อคอลัมน์ ContractStatus
+CONTRACT_NONE = "NONE"          # ยังไม่มีสัญญา  -> ขาย/เปิดร้านไม่ได้ แต่ยังล็อกอินได้
+CONTRACT_UPCOMING = "UPCOMING"  # ยังไม่ถึงวันเริ่ม -> ขาย/เปิดร้านไม่ได้ แต่ล็อกอินเตรียมร้านได้
+CONTRACT_ACTIVE = "ACTIVE"      # อยู่ในช่วงสัญญา -> ใช้งานได้ปกติ
+CONTRACT_EXPIRED = "EXPIRED"    # เลย 23:59:59 ของวันสิ้นสุด -> บัญชีร้านทุกบัญชีใช้งานไม่ได้
 
-# -------------------------------------------------------------------- contract
+
+def contract_state(start: Optional[date], end: Optional[date], today: Optional[date] = None) -> str:
+    if not start or not end:
+        return CONTRACT_NONE
+    today = today or bangkok_now().date()
+    if today > end:
+        return CONTRACT_EXPIRED
+    if today < start:
+        return CONTRACT_UPCOMING
+    return CONTRACT_ACTIVE
+
+
 def contract_active(start: Optional[date], end: Optional[date], status: Optional[str] = None,
                     today: Optional[date] = None) -> bool:
-    """ไม่มีสัญญา = ใช้ได้ (พฤติกรรมเดิม) ; ก่อนวันเริ่ม/หลังวันสิ้นสุด/TERMINATED = ใช้ไม่ได้"""
+    """ขาย/เปิดร้านได้เฉพาะช่วงสัญญา ; ไม่มีสัญญา = ไม่ได้ (status ไม่ใช้แล้ว เก็บพารามิเตอร์ไว้ให้โค้ดเดิมเรียกได้)"""
+    return contract_state(start, end, today) == CONTRACT_ACTIVE
+
+
+def contract_status_for(end: date, today: Optional[date] = None) -> str:
+    """ค่าที่เขียนลงคอลัมน์ StoreContract.ContractStatus ตอนบันทึก (ใช้แสดงผลเท่านั้น)"""
     today = today or bangkok_now().date()
-    if status == "TERMINATED":
-        return False
-    if start and today < start:
-        return False
-    if end and today > end:
-        return False
-    return True
+    if end < today:
+        return "EXPIRED"
+    if (end - today).days <= 30:
+        return "EXPIRING"
+    return "ACTIVE"
+
+
+def add_years_minus_one_day(start: date, years: int = 1) -> date:
+    """วันสิ้นสุดของสัญญา N ปี : 2026-10-15 + 1 ปี -> 2027-10-14 (29 ก.พ. -> 28 ก.พ.)"""
+    try:
+        same_day = start.replace(year=start.year + years)
+    except ValueError:  # 29 ก.พ. ในปีที่ไม่มี
+        same_day = start.replace(year=start.year + years, day=28) + timedelta(days=1)
+    return same_day - timedelta(days=1)
+
+
+def clean_reason(value: Optional[str]) -> str:
+    """เหตุผลการแก้สัญญา: บังคับกรอก 5–255 ตัวอักษร (เก็บลง AuditLog เป็นหลักฐาน)"""
+    reason = " ".join((value or "").split())
+    if len(reason) < 5:
+        raise DomainError(400, "กรุณาระบุเหตุผลอย่างน้อย 5 ตัวอักษร (เช่น เลขที่หนังสือ/รอบประมูล)")
+    if len(reason) > 255:
+        raise DomainError(400, "เหตุผลต้องไม่เกิน 255 ตัวอักษร")
+    return reason
 
 
 def contract_status_for(end: date, today: Optional[date] = None) -> str:

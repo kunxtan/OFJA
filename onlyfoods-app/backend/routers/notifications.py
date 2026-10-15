@@ -1,11 +1,17 @@
 """การแจ้งเตือนของผู้ใช้ + แจ้งเตือนสัญญาใกล้หมดอายุของผู้บริหาร"""
 from fastapi import APIRouter, Depends
 
+from datetime import timedelta
+
+import config
 from auth import get_current_user, require_role
 from db import get_db, transaction
 from errors import DomainError
+from services import purge_expired_stores
+from utils import bangkok_now
 
 router = APIRouter(prefix="/api", tags=["notifications"])
+_last_purge_at = None  # เก็บกวาดร้านหมดสัญญาไม่เกินชั่วโมงละครั้ง (endpoint นี้ถูกเรียกทุกไม่กี่วินาที)
 
 _NOTIF_COLS = """
     NotificationId AS NotifId, NotificationId, UserId, OrderId, NotificationType, Title, Message, IsRead, CreatedAt
@@ -50,8 +56,14 @@ def mark_all_notifications_read(user_id: int, user=Depends(get_current_user), db
 @router.get("/executive/contract-notifications/{user_id}")
 def get_executive_contract_notifications(user_id: int, user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
     if user["UserId"] != user_id:
-        raise DomainError(403, "ดูได้เฉพาะการแจ้งเตือนของตัวเอง")
+                raise DomainError(403, "ดูได้เฉพาะการแจ้งเตือนของตัวเอง")
+    global _last_purge_at
     with transaction(db):
+        # endpoint นี้ถูกเรียกเป็นระยะจากหน้าผู้บริหาร จึงใช้เป็นจุดเก็บกวาดร้านที่หมดสัญญานานเกินกำหนด
+        now = bangkok_now()
+        if _last_purge_at is None or now - _last_purge_at >= timedelta(hours=1):
+            purge_expired_stores(db, config.CONTRACT_PURGE_AFTER_DAYS)
+            _last_purge_at = now
         with db.cursor() as cur:
             cur.execute(
                 """
@@ -74,9 +86,9 @@ def get_executive_contract_notifications(user_id: int, user=Depends(require_role
                     continue
                 days = c["DaysLeft"]
                 if days < 0:
-                    msg = f"สัญญาร้าน {c['StoreName']} หมดอายุแล้ว"
+                    msg = f"สัญญาร้าน {c['StoreName']} หมดอายุแล้ว บัญชีร้านถูกล็อก (กดปุ่ม \"หมดสัญญา\" หากต่อสัญญาภายนอกแล้ว)"
                 elif days == 0:
-                    msg = f"สัญญาร้าน {c['StoreName']} หมดอายุวันนี้"
+                    msg = f"สัญญาร้าน {c['StoreName']} หมดอายุคืนนี้ 23:59:59 น."
                 else:
                     msg = f"สัญญาร้าน {c['StoreName']} ใกล้หมดอายุ (เหลือ {days} วัน)"
                 cur.execute(
