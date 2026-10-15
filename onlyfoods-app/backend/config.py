@@ -33,7 +33,15 @@ TIMEZONE = os.getenv("TZ", "Asia/Bangkok")
 MIN_PASSWORD_LENGTH = 8
 MAX_FAILED_LOGINS = 5
 LOCK_MINUTES = 15
-NO_SHOW_AFTER_MINUTES = 15
+
+# อาหารพร้อมรับ (READY) แล้วลูกค้ายังไม่มา:
+#  - ครบ PICKUP_REMINDER_MINUTES : ระบบเตือนลูกค้าอัตโนมัติ 1 ครั้ง + หน้าร้านขึ้นป้ายให้โทรหาลูกค้า
+#  - ครบ NO_SHOW_AFTER_MINUTES   : ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (พนักงานกดเอง ไม่ตัดอัตโนมัติ)
+PICKUP_REMINDER_MINUTES = _int("PICKUP_REMINDER_MINUTES", 15)
+NO_SHOW_AFTER_MINUTES = _int("NO_SHOW_AFTER_MINUTES", 30)
+# ไม่เตือนออเดอร์ READY ที่ค้างนานกว่านี้ (กันส่งรัวตอน deploy) / ความถี่ในการเช็ค
+PICKUP_REMINDER_MAX_AGE_HOURS = _int("PICKUP_REMINDER_MAX_AGE_HOURS", 3)
+REMINDER_LOOP_SECONDS = _int("REMINDER_LOOP_SECONDS", 30)
 
 
 def require_secrets() -> None:

@@ -221,7 +221,7 @@ CREATE TABLE Product (
 --   PENDING              -> COOKING | PENDING_CANCELLATION
 --   COOKING              -> COOKED  | PENDING_CANCELLATION
 --   COOKED               -> READY
---   READY                -> COMPLETED | NO_SHOW   (NO_SHOW >= 15 min after ReadyAt)
+--   READY                -> COMPLETED | NO_SHOW   (NO_SHOW >= 30 min after ReadyAt, staff press it by hand)
 --   PENDING_CANCELLATION -> PENDING | AWAITING_TOP_UP | CANCELLED
 --   AWAITING_TOP_UP      -> PENDING | CANCELLED   (swapped to a pricier item: the
 --                           kitchen waits until the top-up slip is verified)
@@ -238,6 +238,7 @@ CREATE TABLE `Order` (
   IsWalkIn          BOOLEAN           NOT NULL DEFAULT FALSE,
   PickupTime        DATETIME          NULL COMMENT 'customer-requested pickup time',
   ReadyAt           DATETIME          NULL COMMENT 'set when status becomes READY; no-show clock starts here',
+  PickupReminderAt  DATETIME          NULL COMMENT 'when the customer was auto-reminded to pick up (15 min after ReadyAt); NULL = not yet',
   CancelReason      VARCHAR(255)      NULL,
   CancelDeadline    DATETIME          NULL COMMENT 'after this, customer self-cancel is refused',
   CreatedAt         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -650,5 +651,6 @@ WHERE sc.ContractStatus IN ('ACTIVE', 'EXPIRING')
 --   6. A substitute item that costs more creates a PENDING TOP_UP payment and
 --      the order waits in AWAITING_TOP_UP until that slip is verified;
 --      a cheaper one creates a PRICE_DIFF refund.
---   7. NO_SHOW only from READY and only >= 15 minutes after ReadyAt.
+--   7. NO_SHOW only from READY and only >= 30 minutes after ReadyAt; the customer is auto-reminded
+--      once at 15 minutes (PickupReminderAt).
 -- =====================================================================
