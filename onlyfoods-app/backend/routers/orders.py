@@ -11,7 +11,7 @@ from auth import STORE_SCOPED, assert_store_access, get_current_user, require_ro
 from db import get_db, transaction
 from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
-                     RecallRequestSchema, StatusUpdateSchema, TopUpSlipSchema)
+                     RecallRequestSchema, StatusUpdateSchema, TopUpSlipSchema, LatePickupSchema)
 from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
                       lock_order, log_audit, log_first_status, pending_top_up, refund_price_diff, send_notif,
                       status_id)
@@ -522,6 +522,69 @@ def upload_top_up_slip(order_id: int, payload: TopUpSlipSchema,
         log_audit(db, user["UserId"], "UPLOAD_TOP_UP_SLIP", "Payment", pay["PaymentId"], None,
                   {"order_id": order_id, "amount": pay["Amount"], "store_id": order["StoreId"]})
     return {"success": True, "amount": float(pay["Amount"])}
+
+
+@router.put("/{order_id}/late-pickup")
+def report_late_pickup(
+    order_id: int,
+    payload: LatePickupSchema,
+    user=Depends(require_role("CUSTOMER")),
+    db=Depends(get_db),
+):
+    with transaction(db):
+        with db.cursor() as cur:
+            order = _customer_own_order(cur, order_id, user)
+
+            if order["StatusCode"] in (
+                state.CANCELLED,
+                state.NO_SHOW,
+            ):
+                raise DomainError(
+                    400,
+                    "ออเดอร์นี้ไม่สามารถแจ้งมารับช้าได้",
+                )
+
+            if not order.get("PickupTime"):
+                raise DomainError(
+                    400,
+                    "ไม่พบเวลานัดรับอาหารของออเดอร์นี้",
+                )
+
+            count = int(order.get("LatePickupCount") or 0)
+
+            if count >= 3:
+                raise DomainError(
+                    400,
+                    "คุณแจ้งเวลามารับช้าออเดอร์นี้ครบ 3 ครั้งแล้ว",
+                )
+
+            arrival_time = (
+                order["PickupTime"]
+                + timedelta(minutes=payload.minutes)
+            )
+
+            cur.execute(
+                """
+                UPDATE `Order`
+                SET LatePickupMinutes = %s,
+                    LatePickupArrivalTime = %s,
+                    LatePickupCount = LatePickupCount + 1
+                WHERE OrderId = %s
+                """,
+                (
+                    payload.minutes,
+                    arrival_time,
+                    order_id,
+                ),
+            )
+
+    return {
+        "success": True,
+        "order_id": order_id,
+        "minutes": payload.minutes,
+        "arrival_time": arrival_time.isoformat(),
+        "count": count + 1,
+    }
 
 
 def _customer_cancel(order_id: int, payload: CustomerCancelSchema, user: dict, db):

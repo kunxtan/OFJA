@@ -892,7 +892,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // LATE PICKUP HANDLER
-  const handleLatePickup = (order, minutes) => {
+
+  const handleLatePickup = async (order, minutes) => {
     const orderId = order.OrderID;
 
     const currentData = latePickupOrder[orderId] || {
@@ -909,56 +910,63 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return;
     }
 
-    // ใช้เวลานัดรับอาหาร ไม่ใช่เวลาที่สั่งหรือเวลาปัจจุบัน
-    const rawPickupTime = String(
-      order.PickupTime || order.pickup_time || ""
-    ).trim();
-
-    const timeMatch = rawPickupTime.match(/(\d{1,2}):(\d{2})/);
-
-    if (!timeMatch) {
-      customAlert(
-        "ไม่พบเวลานัดรับ",
-        "ไม่สามารถอ่านเวลานัดรับอาหารของออเดอร์นี้ได้",
-        "warning"
+    try {
+      const res = await fetch(
+        `${apiBase}/api/orders/${orderId}/late-pickup`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            minutes: Number(minutes),
+          }),
+        }
       );
-      return;
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        customAlert(
+          "แจ้งเวลามารับไม่สำเร็จ",
+          data.detail || "ไม่สามารถบันทึกเวลามารับได้ กรุณาลองใหม่",
+          "warning"
+        );
+        return;
+      }
+
+      // ใช้เวลาที่ Backend คำนวณและบันทึกลงฐานข้อมูลแล้ว
+      const arrivalDate = new Date(data.arrival_time);
+
+      const arrivalTime = arrivalDate.toLocaleTimeString("th-TH", {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+
+      // อัปเดตหน้าจอหลังจากบันทึกฐานข้อมูลสำเร็จเท่านั้น
+      setLatePickupOrder((prev) => ({
+        ...prev,
+        [orderId]: {
+          count: Number(data.count),
+          arrivalTime,
+          minutes: Number(data.minutes),
+        },
+      }));
+
+      customAlert(
+        "แจ้งเวลามารับเรียบร้อย",
+        `คุณแจ้งว่าจะมาถึงเวลา ${arrivalTime} น. (แจ้งแล้ว ${data.count}/3 ครั้ง)`,
+        "success"
+      );
+    } catch (error) {
+      customAlert(
+        "เชื่อมต่อไม่สำเร็จ",
+        "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง",
+        "error"
+      );
     }
-
-    const pickupDate = new Date();
-    pickupDate.setHours(
-      Number(timeMatch[1]),
-      Number(timeMatch[2]),
-      0,
-      0
-    );
-
-    // เพิ่มระยะเวลาจากเวลานัดรับอาหาร
-    pickupDate.setMinutes(
-      pickupDate.getMinutes() + Number(minutes)
-    );
-
-    const arrivalTime = pickupDate.toLocaleTimeString("th-TH", {
-      timeZone: "Asia/Bangkok",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    setLatePickupOrder((prev) => ({
-      ...prev,
-      [orderId]: {
-        count: currentData.count + 1,
-        arrivalTime,
-        minutes: Number(minutes),
-      },
-    }));
-
-    customAlert(
-      "แจ้งเวลามารับเรียบร้อย",
-      `คุณแจ้งว่าจะมาถึงเวลา ${arrivalTime} น.`,
-      "success"
-    );
   };
 
 
@@ -1861,27 +1869,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               </button>
                             ))}
                           </div>
-
                           <button
-                            type="button"
-                            disabled={lateInfo.count >= 3}
                             onClick={() => handleLatePickup(order, selectedMinutes)}
-                            style={{
-                              width: "100%",
-                              marginTop: "10px",
-                              padding: "10px",
-                              border: "none",
-                              borderRadius: "9px",
-                              background: lateInfo.count >= 3 ? "#CBD5E1" : COLORS.orange,
-                              color: "#FFFFFF",
-                              fontWeight: "800",
-                              fontSize: "13px",
-                              cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
-                            }}
+                            disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
                           >
-                            {lateInfo.count >= 3
-                              ? "แจ้งครบ 3 ครั้งแล้ว"
-                              : "ยืนยันแจ้งเวลามารับช้า"}
+                            {(latePickupOrder[order.OrderID]?.count || 0) === 0
+                              ? "แจ้งมารับช้า"
+                              : (latePickupOrder[order.OrderID]?.count || 0) >= 3
+                                ? "แจ้งครบแล้ว (3/3)"
+                                : `ยืนยันครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
                           </button>
 
                           <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "6px" }}>
