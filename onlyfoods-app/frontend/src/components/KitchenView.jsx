@@ -225,7 +225,26 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  const sortedOrders = [...allOrders].sort((a, b) => (a.OrderID || 0) - (b.OrderID || 0));
+  //เรียงตามเวลานัดรับก่อน แล้วค่อยตามด้วยลำดับคิว/OrderID
+  const sortedOrders = [...allOrders].sort((a, b) => {
+    const timeA = parseDate(a.PickupTime);
+    const timeB = parseDate(b.PickupTime);
+
+    // 1. ถ้ามีเวลานัดรับทั้งคู่ ให้เอาอันที่ถึงเวลาก่อนขึ้นก่อน
+    if (timeA && timeB) {
+      const diff = timeA.getTime() - timeB.getTime();
+      if (diff !== 0) return diff;
+    }
+
+    // 2. ถ้าออเดอร์ A มีเวลานัดรับ แต่ B ไม่มี -> ให้ A อยู่ก่อน (ซ้าย/บนสุด)
+    if (timeA && !timeB) return -1;
+
+    // 3. ถ้าออเดอร์ B มีเวลานัดรับ แต่ A ไม่มี -> ให้ B อยู่ก่อน
+    if (!timeA && timeB) return 1;
+
+    // 4. ถ้าไม่มีเวลานัดรับทั้งคู่ หรือเวลานัดรับเท่ากัน -> ให้เรียงตามคิว/OrderID ปกติ
+    return (a.OrderID || 0) - (b.OrderID || 0);
+  });
 
   const pendingOrders = sortedOrders.filter(o => o.Status === 'Pending' || o.Status === 'Cooking');
   const readyOrders = sortedOrders.filter(o => o.Status === 'Ready' || o.Status === 'Completed');
