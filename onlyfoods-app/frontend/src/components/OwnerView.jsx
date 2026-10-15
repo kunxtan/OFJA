@@ -2877,9 +2877,9 @@ body, html {
   transition: all 0.2s ease;
 }
 .berry-icon-btn.purple-light { background: var(--berry-purple-light); color: var(--berry-purple); }
-.berry-icon-btn.purple-light:hover { background: var(--berry-purple); color: white; }
+@media (hover: hover) { .berry-icon-btn.purple-light:hover { background: var(--berry-purple); color: white; } }
 .berry-icon-btn.amber-light { background: var(--berry-amber-light); color: var(--berry-amber); }
-.berry-icon-btn.amber-light:hover { background: var(--berry-amber); color: white; }
+@media (hover: hover) { .berry-icon-btn.amber-light:hover { background: var(--berry-amber); color: white; } }
 
 .berry-topbar-right {
   display: flex;
@@ -4200,7 +4200,10 @@ body, html {
 .op-burger .lines span:nth-child(1) { top: 0; }
 .op-burger .lines span:nth-child(2) { top: 6px; width: 72%; }
 .op-burger .lines span:nth-child(3) { top: 12px; }
-.op-burger:hover .lines span:nth-child(2) { width: 100%; }
+@media (hover: hover) { .op-burger:hover .lines span:nth-child(2) { width: 100%; } }
+.op-burger { -webkit-tap-highlight-color: transparent; transition: background 0.25s ease, color 0.25s ease, transform 0.15s ease; }
+.op-burger:focus { outline: none; }
+.op-burger:focus-visible { outline: 2px solid var(--berry-purple); outline-offset: 2px; }
 .op-burger:active { transform: scale(0.92); }
 @media (max-width: 768px) {
   .op-burger.is-open { background: var(--berry-purple) !important; color: #FFFFFF !important; }
