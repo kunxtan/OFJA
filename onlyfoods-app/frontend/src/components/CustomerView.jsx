@@ -31,6 +31,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [newSelectedProduct, setNewSelectedProduct] = useState(null);
   const [timeLeft, setTimeLeft] = useState(1800);
 
+  // TOP-UP (เปลี่ยนเป็นเมนูที่แพงกว่า -> โอนส่วนต่าง + แนบสลิป)
+  const [topUpSlip, setTopUpSlip] = useState(null);
+  const [isSubmittingTopUp, setIsSubmittingTopUp] = useState(false);
+  const [hiddenTopUpOrderId, setHiddenTopUpOrderId] = useState(null);
+
   // NAVIGATION & VIEWS
   const [activeTab, setActiveTab] = useState("menu");
   const [search, setSearch] = useState("");
@@ -606,7 +611,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && (data.success || data.message)) {
-        customAlert("สำเร็จ", "เปลี่ยนเมนูสำเร็จ ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว", "success");
+        if (Number(data.top_up_due) > 0) {
+          customAlert("เปลี่ยนเมนูสำเร็จ", `กรุณาโอนส่วนต่าง ${Number(data.top_up_due).toFixed(2)} บาท และแนบสลิป ร้านจะเริ่มทำอาหารหลังตรวจสลิปแล้ว`, "success");
+        } else {
+          customAlert("สำเร็จ", "เปลี่ยนเมนูสำเร็จ ระบบได้ส่งข้อมูลปรับเปลี่ยนไปยังหน้าร้านเรียบร้อยแล้ว", "success");
+        }
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
@@ -617,6 +626,74 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     } catch (error) {
       console.error("Error changing menu:", error);
       customAlert("เกิดข้อผิดพลาด", "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้", "error");
+    }
+  };
+
+  // TOP-UP HANDLERS
+  const topUpOrder = myOrders.find((ord) => ord.Status === "Awaiting_Top_Up") || null;
+
+  const handleTopUpSlipChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) {
+      customAlert("รองรับเฉพาะไฟล์รูป PNG, JPG หรือ WEBP", "", "warning");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      customAlert("ขนาดไฟล์สลิปต้องไม่เกิน 5MB", "", "warning");
+      e.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setTopUpSlip(reader.result);
+    reader.onerror = () => customAlert("อ่านไฟล์สลิปไม่สำเร็จ", "กรุณาเลือกรูปใหม่อีกครั้ง", "error");
+    reader.readAsDataURL(file);
+  };
+
+  const submitTopUpSlip = async () => {
+    if (!topUpOrder || !topUpSlip || isSubmittingTopUp) return;
+    setIsSubmittingTopUp(true);
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${topUpOrder.OrderID}/top-up-slip`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slip_url: topUpSlip }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        customAlert("ส่งสลิปแล้ว", "รอร้านตรวจสลิปส่วนต่าง แล้วร้านจะเริ่มทำอาหาร", "success");
+        setTopUpSlip(null);
+        await fetchMyOrders();
+      } else {
+        customAlert("เกิดข้อผิดพลาด", data.detail || "ส่งสลิปไม่สำเร็จ", "error");
+      }
+    } catch (error) {
+      console.error("Error uploading top-up slip:", error);
+      customAlert("เกิดข้อผิดพลาด", "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้", "error");
+    } finally {
+      setIsSubmittingTopUp(false);
+    }
+  };
+
+  const cancelTopUpOrder = async () => {
+    if (!topUpOrder) return;
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${topUpOrder.OrderID}/cancel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "ลูกค้ายกเลิกแทนการโอนส่วนต่าง" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        customAlert("สำเร็จ", "ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบกำลังดำเนินการคืนเงิน", "success");
+        setTopUpSlip(null);
+        await fetchMyOrders();
+      } else {
+        customAlert("เกิดข้อผิดพลาด", data.detail || "ไม่สามารถยกเลิกออเดอร์ได้", "error");
+      }
+    } catch (error) {
+      console.error("Error cancelling order:", error);
     }
   };
 
@@ -1480,7 +1557,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       </span>
                     </div>
                     <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "4px 12px", borderRadius: "15px", fontSize: "11px", fontWeight: "800" }}>
-                      {order.Status || "Pending"}
+                      {order.Status === "Awaiting_Top_Up" ? "รอโอนส่วนต่าง" : (order.Status || "Pending")}
                     </span>
                   </div>
 
@@ -1508,6 +1585,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       <strong style={{ fontSize: "16px", color: COLORS.orange }}>{Number(order.TotalAmount || 0).toFixed(2)} ฿</strong>
                     </div>
 
+                    {order.Status === "Awaiting_Top_Up" && (
+                      <button
+                        onClick={() => setHiddenTopUpOrderId(null)}
+                        style={{ padding: "7px 14px", border: "none", borderRadius: "10px", background: COLORS.orange, color: COLORS.white, fontSize: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+                      >
+                        โอนส่วนต่าง {Number(order.TopUpAmount || 0).toFixed(2)} ฿
+                      </button>
+                    )}
                     {order.Status === "Completed" && (
                       <button
                         onClick={() => handleOpenReviewModal(order)}
@@ -1579,7 +1664,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     )}
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
-                    {order.Status || "Pending"}
+                    {order.Status === "Awaiting_Top_Up" ? "รอโอนส่วนต่าง" : (order.Status || "Pending")}
                   </span>
                 </div>
 
@@ -2024,8 +2109,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const isSameStore = Number(p.StoreId || p.store_id) === Number(outOfStockOrder.StoreId || outOfStockOrder.StoreID);
       const isAvailable = !Number(p.IsOutOfStock);
       const isNotOriginal = Number(p.ProductId) !== Number(targetItem?.ProductId);
-      const notPricier = !targetItem || Number(p.UnitPrice) <= targetPrice;
-      return isSameStore && isAvailable && isNotOriginal && notPricier;
+      return isSameStore && isAvailable && isNotOriginal;
     });
 
     return (
@@ -2041,7 +2125,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
             <div style={{ background: "#F8F8FA", borderRadius: "12px", padding: "10px 14px", marginTop: "10px", fontSize: "13px", textAlign: "left" }}>
               <div>เมนูที่หมด: <b>{targetItem.ProductName}</b> ({Number(targetItem.UnitPrice || 0).toFixed(2)} ฿)</div>
               {outOfStockOrder.CancelReason && <div style={{ color: COLORS.gray, marginTop: "4px" }}>เหตุผลจากร้าน: {outOfStockOrder.CancelReason}</div>}
-              <div style={{ color: COLORS.gray, marginTop: "4px" }}>เลือกเมนูใหม่ได้เฉพาะราคาเท่ากันหรือถูกกว่า (ส่วนต่างคืนเงินให้)</div>
+              <div style={{ color: COLORS.gray, marginTop: "4px" }}>เมนูที่ถูกกว่า: คืนเงินส่วนต่างให้ • เมนูที่แพงกว่า: โอนส่วนต่างเพิ่มแล้วแนบสลิป</div>
             </div>
           )}
 
@@ -2096,7 +2180,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     >
                       <div>
                         <div style={{ fontWeight: "800", fontSize: "14px" }}>{product.ProductName}</div>
-                        <div style={{ fontSize: "12px", color: COLORS.gray }}>{product.UnitPrice} ฿</div>
+                        <div style={{ fontSize: "12px", color: COLORS.gray }}>
+                          {product.UnitPrice} ฿
+                          {(() => {
+                            const diff = (Number(product.UnitPrice) - targetPrice) * Number(targetItem?.Qty || 1);
+                            if (!targetItem || diff === 0) return null;
+                            return diff > 0
+                              ? <span style={{ color: COLORS.red, fontWeight: "800" }}> • โอนเพิ่ม {diff.toFixed(2)} ฿</span>
+                              : <span style={{ color: COLORS.green, fontWeight: "800" }}> • คืนเงิน {(-diff).toFixed(2)} ฿</span>;
+                          })()}
+                        </div>
                       </div>
                       {newSelectedProduct?.ProductId === product.ProductId && (
                         <span style={{ color: COLORS.orange, fontWeight: "900" }}>✓ เลือก</span>
@@ -2132,6 +2225,76 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    );
+  };
+
+  // TOP-UP MODAL (รอโอนส่วนต่าง)
+  const renderTopUpModal = () => {
+    if (!topUpOrder || outOfStockOrder || hiddenTopUpOrderId === topUpOrder.OrderID) return null;
+    const amount = Number(topUpOrder.TopUpAmount || 0);
+    const waitingCheck = Boolean(topUpOrder.TopUpSlipUrl);
+    const lastRejected = [...(topUpOrder.Payments || [])].reverse()
+      .find((p) => p.PaymentType === "TOP_UP" && p.PaymentStatus === "REJECTED" && p.SlipUrl);
+    return (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.75)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+        <div style={{ background: COLORS.white, width: "min(460px, 100%)", maxHeight: "92vh", overflowY: "auto", borderRadius: "24px", padding: "25px", textAlign: "center" }}>
+          <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>โอนส่วนต่างค่าอาหาร</h3>
+          <p style={{ color: COLORS.gray, fontSize: "13px", marginTop: "6px" }}>
+            คิว #{topUpOrder.QueueNo} • ร้าน {topUpOrder.StoreName} • เมนูใหม่ราคาสูงกว่าเดิม
+          </p>
+          <div style={{ fontSize: "30px", fontWeight: "900", color: COLORS.orange, margin: "8px 0" }}>{amount.toFixed(2)} ฿</div>
+
+          {waitingCheck ? (
+            <div style={{ background: "#ECFDF5", color: "#047857", padding: "12px", borderRadius: "12px", fontSize: "14px", fontWeight: "800" }}>
+              ส่งสลิปแล้ว รอร้านตรวจสอบ
+              <div style={{ fontSize: "12px", fontWeight: "normal", marginTop: "4px" }}>ร้านจะเริ่มทำอาหารหลังยืนยันสลิป (แนบใหม่ทับได้ถ้าส่งผิดรูป)</div>
+            </div>
+          ) : (
+            <>
+              {lastRejected && (
+                <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "10px", borderRadius: "12px", fontSize: "13px", fontWeight: "800", marginBottom: "10px" }}>
+                  สลิปก่อนหน้าถูกปฏิเสธ: {lastRejected.RejectReason || "สลิปไม่ถูกต้อง"} กรุณาแนบสลิปใหม่
+                </div>
+              )}
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${amount}`}
+                alt="PromptPay QR Code"
+                style={{ width: "160px", height: "160px", margin: "4px auto 10px", display: "block" }}
+              />
+            </>
+          )}
+
+          <label style={{ display: "block", marginTop: "12px", padding: "12px", border: `2px dashed ${COLORS.border}`, borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "800", color: COLORS.navy }}>
+            {topUpSlip ? "เปลี่ยนรูปสลิป" : waitingCheck ? "แนบสลิปใหม่ (ทับใบเดิม)" : "เลือกรูปสลิปส่วนต่าง"}
+            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleTopUpSlipChange} style={{ display: "none" }} />
+          </label>
+          {topUpSlip && <img src={topUpSlip} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", margin: "10px auto 0", display: "block", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />}
+
+          <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+            <button
+              onClick={submitTopUpSlip}
+              disabled={!topUpSlip || isSubmittingTopUp}
+              style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: topUpSlip ? COLORS.green : "#CCCCCC", color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: topUpSlip ? "pointer" : "not-allowed" }}
+            >
+              {isSubmittingTopUp ? "กำลังส่ง..." : "ส่งสลิปส่วนต่าง"}
+            </button>
+            {!waitingCheck && (
+              <button
+                onClick={cancelTopUpOrder}
+                style={{ width: "100%", padding: "14px", border: `1px solid ${COLORS.red}`, borderRadius: "14px", background: "#FFF0ED", color: COLORS.red, fontWeight: "900", fontSize: "15px", cursor: "pointer" }}
+              >
+                ไม่โอน ยกเลิกออเดอร์ (คืนเงินค่าอาหาร)
+              </button>
+            )}
+            <button
+              onClick={() => setHiddenTopUpOrderId(topUpOrder.OrderID)}
+              style={{ width: "100%", padding: "10px", border: "none", background: "transparent", color: COLORS.gray, fontSize: "13px", cursor: "pointer" }}
+            >
+              ปิดไว้ก่อน (เปิดอีกครั้งได้จากประวัติการสั่งซื้อ)
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -2671,6 +2834,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       {renderPaymentModal()}
       {renderReviewModal()}
       {renderOutOfStockModal()}
+      {renderTopUpModal()}
       {renderStoreReviewsModal()}
       {renderReportModal()}
       {renderViewReportsModal()}

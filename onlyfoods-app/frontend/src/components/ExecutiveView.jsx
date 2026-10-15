@@ -3166,6 +3166,7 @@ function StoreSalesPage({ ctx }) {
 const EMPTY_STORE_FORM = {
     StoreId: null,
     name: '',
+    queueCode: '',
     category: '',
     contactName: '',
     phone: '',
@@ -3200,6 +3201,8 @@ function looksLikeGarbage(value) {
 const EMAIL_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 function validateStoreForm(form, mode = 'create') {
     const errors = {};
+    if (form.queueCode && !/^[A-Za-z]{1,2}$/.test(form.queueCode.trim()))
+        errors.queueCode = 'ตัวอักษรคิวต้องเป็นภาษาอังกฤษ A-Z 1-2 ตัว เช่น A หรือ AB';
     const name = form.name.trim();
     if (!name)
         errors.name = 'กรุณากรอกชื่อร้านค้า';
@@ -3461,6 +3464,10 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
         </>}>
       <Field label="ชื่อร้านค้า" required error={errors.name}>
         <input value={form.name} onChange={update('name')} maxLength={100} placeholder="เช่น ร้านข้าวแกงวิศวะเดือด" style={inputStyle}/>
+      </Field>
+
+      <Field label="ตัวอักษรคิวของร้าน" error={errors.queueCode} hint="เลขคิวจะแสดงเป็น A001, A002 ... เว้นว่าง = ระบบเลือกตัวอักษรที่ยังว่างให้">
+        <input value={form.queueCode || ''} onChange={update('queueCode')} maxLength={2} placeholder="เช่น A" style={{ ...inputStyle, textTransform: 'uppercase' }}/>
       </Field>
 
       <Field label="ประเภทอาหาร" required error={errors.category}>
@@ -4038,6 +4045,7 @@ function StoreManagePage({ ctx }) {
         }
         const payload = {
             store_name: form.name.trim(),
+            queue_code: (form.queueCode || '').trim().toUpperCase() || null,
             category: form.category,
             contact_name: form.contactName.trim(),
             contact_phone: form.phone,

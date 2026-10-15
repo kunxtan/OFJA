@@ -509,6 +509,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     switch (status) {
       case 'Ready': return 'success';
       case 'Pending_Cancellation': return 'warning';
+      case 'Awaiting_Top_Up': return 'warning';
       case 'NoShow': return 'danger';
       case 'Cooking': return 'coral';
       default: return 'neutral';
@@ -519,6 +520,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     switch (status) {
       case 'Ready': return 'พร้อมเสิร์ฟ';
       case 'Pending_Cancellation': return 'รอเปลี่ยนเมนู (30น.)';
+      case 'Awaiting_Top_Up': return 'รอลูกค้าโอนส่วนต่าง';
       case 'NoShow': return 'ไม่มารับ (No-Show)';
       case 'Cooking': return 'กำลังปรุง';
       case 'Pending': return 'รอคิวเข้าครัว';
@@ -544,8 +546,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const isPickupWarning = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_WARNING_MINUTES;
   const is120Reminder = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_MANUAL_REMINDER_MINUTES;
 
-  const verifyingOrders = orders.filter(o => o.Status === 'Verifying_Slip');
-  const activeOrders = orders.filter(o => o.Status !== 'Verifying_Slip' && o.Status !== 'Completed' && o.Status !== 'Cancelled' && o.Status !== 'NoShow');
+  // สลิปที่รอตรวจ: ค่าอาหาร (Verifying_Slip) + ส่วนต่างที่ลูกค้าแนบมาแล้ว (Awaiting_Top_Up ที่มี TopUpSlipUrl)
+  const isTopUpSlip = (o) => o.Status === 'Awaiting_Top_Up' && Boolean(o.TopUpSlipUrl);
+  const slipToCheck = (o) => (isTopUpSlip(o) ? o.TopUpSlipUrl : o.SlipUrl);
+  const verifyingOrders = orders.filter(o => o.Status === 'Verifying_Slip' || isTopUpSlip(o));
+  const activeOrders = orders.filter(o => o.Status !== 'Verifying_Slip' && !isTopUpSlip(o) && o.Status !== 'Completed' && o.Status !== 'Cancelled' && o.Status !== 'NoShow');
   const historyOrders = orders
     .filter(o => dateKey(o.CreatedAt) === historyDate)
     .sort((a, b) => (b.OrderID || 0) - (a.OrderID || 0));
@@ -737,11 +742,14 @@ export default function CounterView({ user, apiBase, onLogout }) {
                         verifyingOrders.map(o => (
                           <tr key={o.OrderID}>
                             <td><span className="queue-pill">{o.QueueNo}</span></td>
-                            <td className="bold" style={{ color: PALETTE.coral, fontSize: '16px' }}>฿{fmtMoney(o.TotalAmount)}</td>
+                            <td className="bold" style={{ color: PALETTE.coral, fontSize: '16px' }}>
+                              ฿{fmtMoney(isTopUpSlip(o) ? o.TopUpAmount : o.TotalAmount)}
+                              {isTopUpSlip(o) && <div className="caption" style={{ fontWeight: 600 }}>ส่วนต่างเปลี่ยนเมนู</div>}
+                            </td>
                             <td>
-                              {o.SlipUrl ? (
+                              {slipToCheck(o) ? (
                                 <div onClick={() => setViewingSlip(o)} className="slip-thumb">
-                                  <img src={o.SlipUrl} alt="Slip" />
+                                  <img src={slipToCheck(o)} alt="Slip" />
                                   <span>ตรวจสลิป + รายการอาหาร</span>
                                 </div>
                               ) : <span style={{ color: PALETTE.red, fontWeight: 'bold' }}>ไม่มีสลิป</span>}
@@ -853,7 +861,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                       ⚠️ ของหมด
                                     </button>
                                   )}
-                                  {['Pending', 'Cooking', 'Pending_Cancellation'].includes(o.Status) && (
+                                  {['Pending', 'Cooking', 'Pending_Cancellation', 'Awaiting_Top_Up'].includes(o.Status) && (
                                     <button onClick={() => openCancelModal(o, 'immediate')} className="cv-btn btn-danger-light">
                                       ❌ ยกเลิก
                                     </button>
@@ -1268,9 +1276,28 @@ export default function CounterView({ user, apiBase, onLogout }) {
               ))}
               <div className="receipt-divider" />
               <div className="receipt-total-row"><span>ยอดรวม</span><span className="receipt-total-val">฿{fmtMoney(viewingSlip.TotalAmount)}</span></div>
+              {isTopUpSlip(viewingSlip) && (
+                <div className="receipt-total-row"><span>สลิปนี้: ส่วนต่างที่ต้องโอนเพิ่ม</span><span className="receipt-total-val">฿{fmtMoney(viewingSlip.TopUpAmount)}</span></div>
+              )}
             </div>
 
-            {viewingSlip.SlipUrl ? <img src={viewingSlip.SlipUrl} alt="Slip" className="slip-full-img" /> : <div className="empty-state">ไม่มีรูปสลิป</div>}
+            {slipToCheck(viewingSlip) ? <img src={slipToCheck(viewingSlip)} alt="Slip" className="slip-full-img" /> : <div className="empty-state">ไม่มีรูปสลิป</div>}
+
+            {/* สลิปทุกใบของออเดอร์นี้ (ค่าอาหาร + ส่วนต่าง รวมใบที่ถูกปฏิเสธ) */}
+            {(viewingSlip.Payments || []).filter(p => p.SlipUrl).length > 1 && (
+              <div className="slip-history">
+                <div className="receipt-title">สลิปทั้งหมดของออเดอร์นี้</div>
+                {(viewingSlip.Payments || []).filter(p => p.SlipUrl).map(p => (
+                  <a key={p.PaymentId} href={p.SlipUrl} target="_blank" rel="noreferrer" className="slip-history-item">
+                    <img src={p.SlipUrl} alt="Slip" />
+                    <span>
+                      {p.PaymentType === 'TOP_UP' ? 'ส่วนต่าง' : 'ค่าอาหาร'} ฿{fmtMoney(p.Amount)}<br />
+                      {p.PaymentStatus === 'VERIFIED' ? '✅ ยืนยันแล้ว' : p.PaymentStatus === 'REJECTED' ? `❌ ${p.RejectReason || 'ปฏิเสธ'}` : '⏳ รอตรวจ'}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
 
             <div className="modal-footer-btns">
               <button onClick={() => openRejectSlip(viewingSlip)} className="cv-btn btn-danger-light">❌ ปฏิเสธสลิป</button>
@@ -1605,6 +1632,9 @@ const CV_STYLES = `
 .cv-modal-head h3 { margin: 0; font-size: 18px; font-weight: 600; color: ${PALETTE.dark}; }
 .cv-modal-head .caption { font-size: 12px; color: ${PALETTE.textSub}; margin-top: 2px; }
 .cv-modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: ${PALETTE.textSub}; }
+.slip-history { margin-bottom: 16px; }
+.slip-history-item { display: inline-flex; align-items: center; gap: 8px; margin: 6px 12px 0 0; font-size: 12px; color: inherit; text-decoration: none; }
+.slip-history-item img { width: 42px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid ${PALETTE.border}; }
 .slip-full-img { width: 100%; max-height: 55vh; object-fit: contain; border-radius: var(--radius-md); border: 1px solid ${PALETTE.border}; margin-bottom: 16px; }
 .cv-customer-info .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid ${PALETTE.border}; font-size: 14px; }
 .cv-customer-info .info-row span { color: ${PALETTE.textSub}; }
