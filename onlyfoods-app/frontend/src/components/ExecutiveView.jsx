@@ -81,26 +81,21 @@ function parseOrderDate(value) {
     const parsed = new Date(hasTz || !ORDER_TIME_IS_UTC ? normalized : `${normalized}Z`);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
+
 function thaiDate(iso) {
+    if (!iso) return '-';
     const d = new Date(`${iso}T00:00:00`);
-    if (Number.isNaN(d.getTime()))
-        return iso;
-    const m = [
-        'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-    ];
-    return `${d.getDate()} ${m[d.getMonth()]} ${(d.getFullYear() + 543) % 100}`;
+    if (Number.isNaN(d.getTime())) return iso;
+    return toISODate(d);
 }
+
 function thaiDateTime(value) {
     const d = parseOrderDate(value);
-    if (!d)
-        return '-';
-    const m = [
-        'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-    ];
-    return `${d.getDate()} ${m[d.getMonth()]} ${(d.getFullYear() + 543) % 100} · ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    if (!d) return '-';
+
+    return `${toISODate(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
+
 function nowStamp() {
     const d = new Date();
     return `${toISODate(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -604,8 +599,8 @@ function ToastStack({ toasts, onDismiss }) {
       </div>
     </div>);
 }
-function Field({ label, required, error, hint, children }) {
-    return (<label style={{ display: 'block', marginBottom: '14px' , width: '100%',minWidth: 0 ,maxWidth: '100%',boxSizing: 'border-box'}}>
+function Field({ label, required, error, hint, children, as: Tag = 'label' }) {
+    return (<Tag style={{ display: 'block', marginBottom: '14px' , width: '100%',minWidth: 0 ,maxWidth: '100%',boxSizing: 'border-box'}}>
       <span style={{ ...captionStyle, color: T.text, fontWeight: 600, display: 'block' }}>
         {label}
         {required && <span style={{ color: T.down, marginLeft: '3px' }}>*</span>}
@@ -615,7 +610,7 @@ function Field({ label, required, error, hint, children }) {
       {error && (<span style={{ ...captionStyle, color: T.down, fontSize: '11.5px', fontWeight: 600 }}>
           {error}
         </span>)}
-    </label>);
+    </Tag>);
 }
 function EmptyState({ text, minHeight = '200px' }) {
     return (<div style={{minHeight,display: 'grid',placeItems: 'center',color:T.muted,fontSize: '13.5px'}}>
@@ -1573,11 +1568,11 @@ const returnFoodCourtToAuto = async () => {
         <Button variant="primary" icon="check" onClick={saveFoodCourtSchedule} disabled={savingFoodCourtSchedule}>{savingFoodCourtSchedule ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
     </>
 }>
-    <Field label="เวลาเปิดอัตโนมัติ" required hint="ศูนย์อาหารจะเริ่มรับออเดอร์ใหม่ตั้งแต่เวลานี้">
-        <input type="time" value={foodCourtOpenInput} onChange={e => setFoodCourtOpenInput(e.target.value)} disabled={savingFoodCourtSchedule} style={{ ...inputStyle, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', fontSize: '16px' }} />
+        <Field as="div" label="เวลาเปิดอัตโนมัติ" required hint="ศูนย์อาหารจะเริ่มรับออเดอร์ใหม่ตั้งแต่เวลานี้">
+        <TimeSelect value={foodCourtOpenInput} onChange={setFoodCourtOpenInput} disabled={savingFoodCourtSchedule} presets={['06:00', '07:00', '08:00', '09:00', '10:00']} />
     </Field>
-    <Field label="เวลาปิดอัตโนมัติ" required hint="เมื่อถึงเวลานี้ ระบบจะหยุดรับออเดอร์ใหม่">
-        <input type="time" value={foodCourtCloseInput} onChange={e => setFoodCourtCloseInput(e.target.value)} disabled={savingFoodCourtSchedule} style={{ ...inputStyle, width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', fontSize: '16px' }} />
+    <Field as="div" label="เวลาปิดอัตโนมัติ" required hint="เมื่อถึงเวลานี้ ระบบจะหยุดรับออเดอร์ใหม่">
+        <TimeSelect value={foodCourtCloseInput} onChange={setFoodCourtCloseInput} disabled={savingFoodCourtSchedule} presets={['17:00', '18:00', '19:00','20:00', '21:00']} />
     </Field>
     <div style={{ marginTop: '4px', padding: '11px 13px', borderRadius: T.radiusMd, background: T.accentSoft, color: '#8A5A00', fontSize: '12.5px', lineHeight: 1.6 }}>
         การปิดศูนย์อาหารจะหยุดรับออเดอร์ใหม่เท่านั้น ออเดอร์ที่สร้างไว้ก่อนแล้วจะดำเนินการต่อได้ตามปกติ
@@ -4453,9 +4448,9 @@ function ContractTrackingPage({ ctx }) {
     // วันที่สัญญาแสดงเป็นปี ค.ศ. ทั้งหมด ให้ตรงกับช่องเลือกวันที่ (input type="date" ใช้ปี ค.ศ. เสมอ)
     // เดิม th-TH แสดงเป็น พ.ศ. ขณะที่ช่องกรอกเป็น ค.ศ. จึงเห็นปีสองแบบในหน้าเดียวกัน
     const formatContractDate = (value) => {
-        const d = dateOnly(value);
-        return d ? d.toLocaleDateString('th-TH-u-ca-gregory', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
-    };
+    const d = dateOnly(value);
+    return d ? toISODate(d) : '—';
+};
     const addDaysISO = (value, days) => {
         const d = dateOnly(value);
         if (!d) return todayISO();
@@ -5032,39 +5027,43 @@ function AuditHistoryPage({ ctx }) {
         return { group: 'other', label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text };
     };
 
+    
     const actionName = (action) => {
         const names = {
-            CREATE_STORE: 'เพิ่มร้านค้า',
-            UPDATE_STORE: 'แก้ไขข้อมูลร้านค้า',
-            DELETE_STORE: 'ลบร้านค้า',
-            OPEN_STORE: 'เปิดร้านค้า',
-            CLOSE_STORE: 'ปิดร้านค้า',
-            SUSPEND_STORE: 'ระงับสิทธิ์ร้านค้า',
-            UNSUSPEND_STORE: 'ปลดระงับสิทธิ์ร้านค้า',
-            RENEW_CONTRACT: 'ต่อสัญญาร้านค้า',
-            OPEN_FOOD_COURT: 'เปิดศูนย์อาหาร',
-            UPDATE_FOOD_COURT_SCHEDULE: 'แก้ไขเวลาทำการศูนย์อาหาร',
-            FOOD_COURT_AUTO_MODE: 'กลับสู่ระบบเปิด-ปิดอัตโนมัติ',
-            CLOSE_FOOD_COURT: 'ปิดศูนย์อาหาร',
-            CREATE_ACCOUNT: 'สร้างบัญชีร้านค้า',
-            CREATE_STORE_ACCOUNT: 'สร้างบัญชีร้านค้า',
-            UPDATE_STORE_ACCOUNT: 'แก้ไขบัญชีร้านค้า',
-            DELETE_STORE_ACCOUNT: 'ลบบัญชีร้านค้า',
-            UPDATE_ACCOUNT: 'แก้ไขบัญชีร้านค้า',
-            DELETE_ACCOUNT: 'ลบบัญชีร้านค้า',
-            RESET_PASSWORD: 'เปลี่ยนรหัสผ่าน',
-            VERIFY_SLIP_APPROVE: 'อนุมัติสลิปการชำระเงิน',
-            VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปการชำระเงิน',
-            CREATE_ORDER: 'สร้างออเดอร์',
-            UPDATE_STATUS: 'อัปเดตสถานะออเดอร์',
-            PRINT_ORDER: 'พิมพ์ออเดอร์',
-            RECALL_QUEUE: 'เรียกคิวซ้ำ',
-            CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
-            CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
-            CANCEL_ORDER: 'ยกเลิกออเดอร์'
+            CREATE_STORE: 'CREATE STORE',
+            UPDATE_STORE: 'UPDATE STORE',
+            DELETE_STORE: 'DELETE STORE',
+            OPEN_STORE: 'OPEN STORE',
+            CLOSE_STORE: 'CLOSE STORE',
+            SUSPEND_STORE: 'SUSPEND STORE',
+            UNSUSPEND_STORE: 'UNSUSPEND STORE',
+            RENEW_CONTRACT: 'RENEW CONTRACT',
+            OPEN_FOOD_COURT: 'OPEN FOOD COURT',
+            UPDATE_FOOD_COURT_SCHEDULE: 'UPDATE FOOD COURT SCHEDULE',
+            FOOD_COURT_AUTO_MODE: 'RESTORE AUTOMATIC MODE',
+            CLOSE_FOOD_COURT: 'CLOSE FOOD COURT',
+            CREATE_ACCOUNT: 'CREATE ACCOUNT',
+            CREATE_STORE_ACCOUNT: 'CREATE STORE ACCOUNT',
+            UPDATE_STORE_ACCOUNT: 'UPDATE STORE ACCOUNT',
+            DELETE_STORE_ACCOUNT: 'DELETE STORE ACCOUNT',
+            UPDATE_ACCOUNT: 'UPDATE ACCOUNT',
+            DELETE_ACCOUNT: 'DELETE ACCOUNT',
+            RESET_PASSWORD: 'RESET PASSWORD',
+            VERIFY_SLIP_APPROVE: 'APPROVE PAYMENT SLIP',
+            VERIFY_SLIP_REJECT: 'REJECT PAYMENT SLIP',
+            CREATE_ORDER: 'CREATE ORDER',
+            UPDATE_STATUS: 'UPDATE ORDER STATUS',
+            PRINT_ORDER: 'PRINT ORDER',
+            RECALL_QUEUE: 'RECALL QUEUE',
+            CANCEL_REQUEST: 'REQUEST ORDER CANCELLATION',
+            CUSTOMER_CANCEL_ORDER: 'CUSTOMER CANCEL ORDER',
+            CANCEL_ORDER: 'CANCEL ORDER'
         };
-        return names[String(action || '').toUpperCase()] || String(action || '-').replaceAll('_', ' ');
+
+        return names[String(action || '').toUpperCase()]
+            || String(action || '-').replaceAll('_', ' ');
     };
+
 
     const filtered = logs.filter((log) => {
         const meta = actionMeta(log.Action);
@@ -5618,7 +5617,47 @@ const cancelChipStyle = (active) => ({ padding: '7px 14px', borderRadius: '999px
 const cancelItemWrapStyle = { display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px 2px' };
 const cancelItemRowStyle = { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px', color: T.text };
 const storeThumbStyle = { width: '38px', height: '38px', borderRadius: T.radiusMd, display: 'grid', placeItems: 'center', background: T.primarySoft, color: T.primary, fontWeight: 700 };
+// ===== ตัวเลือกเวลา (ชั่วโมง : นาที) + ปุ่มลัด ใช้แทน <input type="time"> =====
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0'));
+const SELECT_CHEVRON = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238A8FA6' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E\")";
+function TimeSelect({ value, onChange, disabled, presets = [] }) {
+    const [h = '00', m = '00'] = (value || '00:00').split(':');
+    const minuteOptions = MINUTES.includes(m) ? MINUTES : [...MINUTES, m].sort();
+    const selStyle = {
+        ...inputStyle,
+        width: '100%', minWidth: 0, boxSizing: 'border-box',
+        fontSize: '16px',
+        padding: '11px 30px 11px 12px',
+        appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
+        backgroundImage: SELECT_CHEVRON, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 11px center',
+        cursor: 'pointer',
+    };
+    return (<div style={{ width: '100%', minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr) auto', alignItems: 'center', gap: '8px' }}>
+        <select aria-label="ชั่วโมง" value={h} disabled={disabled} onChange={e => onChange(`${e.target.value}:${m}`)} style={selStyle}>
+          {HOURS.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <span style={{ fontWeight: 700, fontSize: '18px', color: T.ink }}>:</span>
+        <select aria-label="นาที" value={m} disabled={disabled} onChange={e => onChange(`${h}:${e.target.value}`)} style={selStyle}>
+          {minuteOptions.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <span style={{ color: T.muted, fontSize: '13px' }}>น.</span>
+      </div>
+      {presets.length > 0 && (<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
+        {presets.map(p => (<button key={p} type="button" disabled={disabled} onClick={() => onChange(p)} style={{
+            padding: '7px 12px', minHeight: '36px', borderRadius: '999px', fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer',
+            border: `1px solid ${value === p ? T.primary : T.line}`,
+            background: value === p ? T.primary : T.surface,
+            color: value === p ? '#fff' : T.text,
+          }}>{p}</button>))}
+      </div>)}
+    </div>);
+}
+
+
 const inputStyle = { width: '100%', padding: '11px 13px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, fontSize: '13.5px', fontFamily: FONT_STACK, color: T.text, background: T.surface, boxSizing: 'border-box', outlineColor: T.primary };
+
 const formDateInputStyle = { ...inputStyle, display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', WebkitAppearance: 'none', appearance: 'none' };
 const twoColStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(210px, 100%), 1fr))', gap: '0 14px' };
 const smallBtn = { padding: '7px 10px', fontSize: '12.5px' };
