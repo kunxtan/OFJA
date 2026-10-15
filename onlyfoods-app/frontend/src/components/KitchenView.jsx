@@ -209,7 +209,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
     fetch(`${apiBase}/api/orders?store_id=${storeId}`)
       .then(r => r.json())
-      .then(data => setAllOrders(Array.isArray(data) ? data : []))
+      .then(data => {
+        if (!isUpdatingRef.current) {
+          setAllOrders(Array.isArray(data) ? data : []);
+        }
+      })
       .catch(err => console.error("Error fetching kitchen orders:", err));
 
     fetch(`${apiBase}/api/orders/kitchen-summary?store_id=${storeId}`)
@@ -241,27 +245,32 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // --- Helper คำนวณ Target Time และเช็คว่าคือออเดอร์รับทันทีหรือไม่ ---
+  // --- Logic ตรวจสอบเวลานัดรับอัจฉริยะ ---
   const getCalculatedTargetDate = (order, orderList) => {
     const created = parseDate(order.CreatedAt) || new Date();
     const pickupStr = order.PickupTime ? String(order.PickupTime).trim() : '';
 
-    // เช็คว่าผู้ใช้ไม่ได้ระบุเวลานัดรับ / ระบุรับทันที / เวลาเดียวกับที่สั่ง
     const createdFormatted = created.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
-    const isImmediate = !pickupStr || pickupStr.includes('รับทันที') || pickupStr === createdFormatted;
+    const createdShort = created.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    // เช็คว่าถ้า PickupTime เท่ากับเวลาสั่งซื้อ (เช่น 17:31) หรือเป็นคำว่า "รับทันที" ให้ถือว่าเปน "ออเดอร์รับทันที"
+    const isImmediate = !pickupStr || 
+                        pickupStr.includes('รับทันที') || 
+                        pickupStr === createdFormatted || 
+                        pickupStr === createdShort;
 
     if (!isImmediate) {
       const pDate = parseDate(pickupStr);
       if (pDate) return { targetDate: pDate, isImmediate: false };
     }
 
-    // คำนวณเฉพาะออเดอร์ค้างปรุง (Pending / Cooking) ที่มาก่อนหน้านี้
+    // สำหรับออเดอร์รับทันที: คำนวณคิวก่อนหน้าที่ยังรอปรุงอยู่
     const pendingBefore = orderList.filter(o => 
       (o.Status === 'Pending' || o.Status === 'Cooking') && 
       (o.OrderID < order.OrderID)
     );
 
-    // สูตร: เวลาที่สั่ง + (จำนวนคิวก่อนหน้า * 5 นาที) + 5 นาทีทำ
+    // สูตร: เวลาสั่ง + (คิวก่อนหน้า * 5 นาที) + 5 นาที (เวลาปรุง)
     const minutesToWait = (pendingBefore.length * 5) + 5;
     const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
 
@@ -272,7 +281,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     };
   };
 
-  // Sort Orders: เรียงจากซ้ายไปขวา บนลงล่าง ตามเวลา Target Time (ใกล้นัดรับ/ใกล้กำหนดเสร็จขึ้นก่อน)
+  // Sort Orders: เรียงจากซ้ายไปขวา บนลงล่าง ตามเวลา Target Time
   const sortedOrders = [...allOrders].sort((a, b) => {
     const targetA = getCalculatedTargetDate(a, allOrders).targetDate;
     const targetB = getCalculatedTargetDate(b, allOrders).targetDate;
@@ -303,18 +312,19 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
   const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
     if (e) e.stopPropagation();
+    
+    // สั่งล็อกการ Sync ชั่วคราวเพื่อป้องกันอาการเด้งกระพริบ
     isUpdatingRef.current = true;
 
-    // อัปเดต Local State ทันที
+    // อัปเดต State ทันที (Optimistic UI)
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
-    // เมื่อกด Undo บังคับย้ายแท็บไปที่ 'Pending' (คิวรอปรุง) ทันทีเพื่อไม่ให้การ์ดหลุดหาย
     if (targetStatus === 'Pending') {
       setFilterTab('Pending');
     }
 
     try {
-      const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
+      await fetch(`${apiBase}/api/orders/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -323,13 +333,14 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           cancel_reason: null
         })
       });
-
-      if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
     } catch (err) {
       console.error("Update status error:", err);
-      fetchData();
     } finally {
-      isUpdatingRef.current = false;
+      // หน่วงเวลา 1.5 วินาทีให้ Backend ประมวลผลเสร็จแล้วค่อยปลดล็อกการ Sync
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+        fetchData();
+      }, 1500);
     }
   };
 
@@ -342,7 +353,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       const now = new Date();
       const diffMins = Math.floor((targetDate - now) / 60000);
 
-      // แจ้งเตือนเมื่อเหลือเวลา <= 5 นาที หรือเวลาเลยเวลานัดรับไปแล้ว
+      // แจ้งเตือนกระพริบแดงเมื่อเหลือเวลา <= 5 นาที หรือเลยเวลานัดรับไปแล้ว
       if (diffMins <= 5 && diffMins >= -120) {
         if (isImmediate) {
           return {
@@ -807,7 +818,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         </div>
                       </div>
 
-                      {/* แสดงป้ายเวลาบนการ์ด */}
+                      {/* ป้ายแสดงเวลานัดรับบนการ์ด */}
                       <div style={{
                         background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : (calculatedInfo.isImmediate ? (isDark ? 'rgba(16,185,129,0.12)' : '#ECFDF5') : theme.cardInner),
                         border: `1px solid ${pickupAlert ? '#EF4444' : (calculatedInfo.isImmediate ? PALETTE.emerald : theme.border)}`,
@@ -890,7 +901,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                     )}
                   </div>
 
-                  {/* ปุ่มเปลี่ยนสถานะ & ปุ่ม Undo */}
+                  {/* ปุ่มเปลี่ยนสถานะ & Undo */}
                   <div style={{ marginTop: '12px' }}>
                     {filterTab === 'Pending' ? (
                       <button
@@ -1084,7 +1095,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         <div>
                           <div style={{ fontSize: '16px', fontWeight: '700' }}>{item.ProductName}</div>
                           {item.ItemNote && (
-                            <div style={{ fontSize: '13px', color : PALETTE.coral, marginTop: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <div style={{ fontSize: '13px', color: PALETTE.coral, marginTop: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <NoteIcon />
                               <span>Note: {item.ItemNote}</span>
                             </div>
