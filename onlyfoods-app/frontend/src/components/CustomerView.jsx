@@ -2056,13 +2056,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <input
                     type="time"
                     value={pickupTime}
-                    min={(() => {
-                      const now = new Date();
-                      now.setMinutes(now.getMinutes() + 10);
-                      return `${String(now.getHours()).padStart(2, "0")}:${String(
-                        now.getMinutes()
-                      ).padStart(2, "0")}`;
-                    })()}
+                    min={foodCourtOpenTime || undefined}
                     max={foodCourtCloseTime || undefined}
                     onChange={(e) => {
                       const selectedTime = e.target.value;
@@ -2070,17 +2064,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         setPickupTime(selectedTime);
                         return;
                       }
-
                       const now = new Date();
-                      now.setMinutes(now.getMinutes() + 10);
-                      const minTime =
+                      const currentTime =
                         `${String(now.getHours()).padStart(2, "0")}:` +
                         `${String(now.getMinutes()).padStart(2, "0")}`;
-
-                      if (selectedTime < minTime) {
+                      if (selectedTime < currentTime) {
                         customAlert(
                           "เวลาไม่ถูกต้อง",
-                          `กรุณาเลือกเวลารับอาหารตั้งแต่ ${minTime} น. เป็นต้นไป`,
+                          "กรุณาเลือกเวลารับอาหารตั้งแต่เวลาปัจจุบันเป็นต้นไป",
                           "warning"
                         );
                         return;
@@ -2107,7 +2098,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       setPickupTime(selectedTime);
                     }}
                   />
-
 
                   <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
                 </div>
