@@ -1690,22 +1690,33 @@ const storeRows = Array.from(storeMap.values())
         };
     })
     .sort((a, b) => b.sales - a.sales);
-        const ordersByHour = Array.from({ length: 24 }, () => 0);
-        now.settled.forEach(o => { const at = parseOrderDate(o.CreatedAt); if (at) ordersByHour[at.getHours()] += 1; });
-        const peakHour = ordersByHour.indexOf(Math.max(...ordersByHour));
-        const peakOrderCount = ordersByHour[peakHour] || 0;
-        return {
-            now,
-            before,
-            current,
-            hasPreviousData: previous.length > 0,
-            storeRows,
-            buckets: customRange
-                ? buildBucketsForRange(now.settled, customStart, customEnd)
-                : buildBuckets(now.settled, anchor, days),
-            peakOrderCount,
-            activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
-        };
+        
+const ordersByHour = Array.from({ length: 24 }, () => 0);
+
+now.settled.forEach(o => {
+    const at = parseOrderDate(o.CreatedAt);
+    if (at) ordersByHour[at.getHours()] += 1;
+});
+
+const peakOrderCount = Math.max(...ordersByHour);
+const peakHour = peakOrderCount > 0
+    ? ordersByHour.indexOf(peakOrderCount)
+    : null;
+
+return {
+    now,
+    before,
+    current,
+    hasPreviousData: previous.length > 0,
+    storeRows,
+    buckets: customRange
+        ? buildBucketsForRange(now.settled, customStart, customEnd)
+        : buildBuckets(now.settled, anchor, days),
+    peakHour,
+    peakOrderCount,
+    activeStores: stores.filter((s) => s.IsOpen && !s.IsSuspended).length
+};
+
     }, [orders, stores, anchor, days ,  customRange, customStart, customEnd]);
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
 const periodLabel = customRange ? effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
