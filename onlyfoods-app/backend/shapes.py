@@ -34,7 +34,7 @@ LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
 ORDER_SELECT = """
 SELECT o.OrderId AS OrderID, o.OrderId, o.StoreId, o.CustomerId AS UserId, o.CustomerId,
        o.CreatedByStaffId, o.QueueNo, o.TotalAmount, os.StatusCode, os.StatusNameTh,
-       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.CancelReason, o.CancelDeadline,
+       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CancelReason, o.CancelDeadline,
        s.StoreName, s.QueueCode, u.FullName AS CustomerName, u.Username AS UserName,
        u.Phone AS CustomerPhone, u.Email AS CustomerEmail,
        pm.MethodCode AS PaymentMethodCode, pm.MethodNameTh AS PaymentMethod,
@@ -111,6 +111,42 @@ def _attach_payments(cur, orders: List[Dict], ids: List[int], placeholders: str)
         by_order.setdefault(p.pop("OrderId"), []).append(p)
     for o in orders:
         o["Payments"] = by_order.get(o["OrderID"], [])
+
+
+# ขั้นตอนในไทม์ไลน์ -> บทบาทที่แสดงในหน้ารายละเอียดออเดอร์ (ใครรับ / ใครทำ / ใครเรียกคิว / ใครส่งมอบ)
+_PEOPLE_STEPS = {
+    "PENDING": "accepted",      # รับออเดอร์ (ยืนยันสลิปค่าอาหาร = ร้านรับออเดอร์)
+    "COOKING": "cooking",       # เริ่มทำอาหาร
+    "COOKED": "cooked",         # ทำเสร็จ
+    "READY": "called",          # เรียกคิว
+    "COMPLETED": "handed_over",  # ส่งมอบอาหาร
+    "NO_SHOW": "no_show",       # ตัดเป็นไม่มารับ
+    "CANCELLED": "cancelled",   # ยกเลิก
+}
+
+
+def order_people(order: Dict, timeline: List[Dict]) -> Dict[str, Dict]:
+    """สรุปว่าใครทำขั้นไหนของออเดอร์ จาก OrderStatusLog (เรียงตามเวลาแล้ว)
+
+    - ใช้ครั้งแรกที่เข้าแต่ละสถานะ (เช่นย้อนจากรอยกเลิกกลับมา PENDING อีกรอบ ยังนับคนรับคนแรก)
+    - walk-in: คนรับ = พนักงานที่คีย์ออเดอร์ (แถวแรกของ log สร้างออเดอร์เป็น PENDING เลย)
+    - ขั้นที่ระบบทำเอง (ChangedByType = SYSTEM) แสดงเป็น "ระบบ"
+    """
+    people: Dict[str, Dict] = {}
+    for step in timeline:
+        role = _PEOPLE_STEPS.get(step["NewStatusCode"])
+        if not role or role in people:
+            continue
+        if role == "accepted" and step["OldStatusCode"] is None and not order.get("IsWalkIn"):
+            continue  # ออเดอร์ออนไลน์ไม่ได้เริ่มที่ PENDING ; กันข้อมูลแปลกไว้
+        people[role] = {
+            "UserId": step["ChangedBy"],
+            "Name": step["ChangedByName"] if step["ChangedByType"] == "USER" else "ระบบ",
+            "RoleCode": step["ChangedByRole"],
+            "At": step["CreatedAt"],
+            "IsSystem": step["ChangedByType"] == "SYSTEM",
+        }
+    return people
 
 
 def in_clause(values: Iterable) -> str:

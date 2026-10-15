@@ -202,6 +202,11 @@ class ReviewCreateSchema(BaseModel):
     image_url: Optional[str] = None
 
 
+class IssueUpdateSchema(BaseModel):
+    status: str = Field(pattern="^(OPEN|IN_PROGRESS|RESOLVED|REJECTED)$")
+    note: Optional[str] = Field(default=None, max_length=500)  # ข้อความตอบกลับลูกค้า (IssueReport.AdminNote)
+
+
 class CreateIssueReportSchema(BaseModel):
     order_id: Optional[int] = None
     store_id: int

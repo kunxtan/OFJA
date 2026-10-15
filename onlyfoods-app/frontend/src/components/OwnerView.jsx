@@ -1761,7 +1761,7 @@ const NOTIF_KIND_LABEL = {
   system: 'ประกาศจากระบบ',
 };
 const NOTIF_GO = {
-  cancel: { page: 'cancel', label: 'ดูประวัติการยกเลิก' },
+  cancel: { page: 'history', label: 'ดูรายละเอียดในประวัติการขาย' },
   issue: { page: 'issues', label: 'ไปที่รายงานปัญหา' },
   stock: { page: 'menu', label: 'ไปที่จัดการเมนู' },
 };
@@ -1916,6 +1916,638 @@ function NotifDetailModal({ item, order, issue, product, onClose, onGo }) {
   );
 }
 
+/* ============================================================
+   ประวัติการขาย (sh-*)
+   ============================================================ */
+const ORDER_STATUS_META = {
+  VERIFYING_SLIP: { label: 'รอตรวจสลิป', tone: 'warning' },
+  PENDING: { label: 'รอร้านรับ', tone: 'warning' },
+  COOKING: { label: 'กำลังทำ', tone: 'primary' },
+  COOKED: { label: 'ทำเสร็จแล้ว', tone: 'primary' },
+  READY: { label: 'เรียกคิวแล้ว', tone: 'primary' },
+  COMPLETED: { label: 'สำเร็จ', tone: 'success' },
+  PENDING_CANCELLATION: { label: 'รอยืนยันยกเลิก', tone: 'warning' },
+  AWAITING_TOP_UP: { label: 'รอโอนส่วนต่าง', tone: 'warning' },
+  CANCELLED: { label: 'ยกเลิก', tone: 'danger' },
+  NO_SHOW: { label: 'ไม่มารับ', tone: 'neutral' },
+};
+const orderStatusMeta = (code) => ORDER_STATUS_META[code] || { label: code || '-', tone: 'neutral' };
+const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED', 'NO_SHOW'];
+// ยอดขาย = ออเดอร์ที่จบแบบ COMPLETED / NO_SHOW (เหมือนแดชบอร์ด: ไม่มารับยังนับเป็นรายได้ ยกเลิกไม่นับ)
+const REVENUE_STATUSES = ['COMPLETED', 'NO_SHOW'];
+
+const ROLE_TH = {
+  CUSTOMER: 'ลูกค้า',
+  FRONT_STAFF: 'พนักงานหน้าร้าน',
+  KITCHEN_STAFF: 'พนักงานครัว',
+  STORE_OWNER: 'เจ้าของร้าน',
+  ACCOUNTANT: 'ฝ่ายบัญชี',
+  EXECUTIVE: 'ผู้บริหาร',
+};
+const PAYMENT_STATUS_META = {
+  PENDING: { label: 'รอตรวจ', tone: 'warning' },
+  VERIFIED: { label: 'ยืนยันแล้ว', tone: 'success' },
+  REJECTED: { label: 'ปฏิเสธ', tone: 'danger' },
+};
+const REFUND_TYPE_TH = { FULL_CANCEL: 'คืนเงินทั้งออเดอร์', PRICE_DIFF: 'คืนส่วนต่างราคา', ITEM_CANCEL: 'คืนเงินบางรายการ' };
+const REFUND_STATUS_META = {
+  PENDING: { label: 'รอโอนคืน', tone: 'warning' },
+  DONE: { label: 'โอนคืนแล้ว', tone: 'success' },
+  FAILED: { label: 'ไม่สำเร็จ', tone: 'danger' },
+};
+const PRINT_TYPE_TH = { CUSTOMER: 'ใบรับอาหาร', KITCHEN: 'ใบครัว', REPRINT: 'พิมพ์ซ้ำ' };
+
+function minutesBetween(a, b) {
+  const x = parseOrderDate(a);
+  const y = parseOrderDate(b);
+  if (!x || !y) return null;
+  return Math.max(0, Math.round((y - x) / 60000));
+}
+
+function formatDuration(mins) {
+  if (mins === null || mins === undefined) return '—';
+  if (mins < 1) return 'ไม่ถึง 1 นาที';
+  if (mins < 60) return `${mins} นาที`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} ชม. ${m} นาที` : `${h} ชม.`;
+}
+
+const timeHM = (value) => {
+  const d = parseOrderDate(value);
+  return d ? d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-';
+};
+
+function SalesPersonCard({ label, icon, person, extra, empty = 'ยังไม่ถึงขั้นนี้' }) {
+  return (
+    <div className={`sh-person ${person ? '' : 'empty'}`}>
+      <div className="sh-person-label"><Icon name={icon} size={14} /> {label}</div>
+      {person ? (
+        <div className="sh-person-body">
+          {person.IsSystem
+            ? <span className="sh-system-avatar"><Icon name="settings" size={18} /></span>
+            : <StaffAvatar name={person.Name} id={person.UserId} size={36} />}
+          <div style={{ minWidth: 0 }}>
+            <div className="sh-person-name" title={person.Name}>{person.Name || '-'}</div>
+            <div className="sh-person-sub">{person.IsSystem ? 'อัตโนมัติ' : (ROLE_TH[person.RoleCode] || person.RoleCode || '')}</div>
+            {person.At && <div className="sh-person-time"><Icon name="clock" size={11} /> {timeHM(person.At)} น.</div>}
+            {extra && <div className="sh-person-extra">{extra}</div>}
+          </div>
+        </div>
+      ) : (
+        <div className="sh-person-empty">{empty}</div>
+      )}
+    </div>
+  );
+}
+
+// --- รายละเอียดเชิงลึกของออเดอร์ (ดึงจาก GET /api/orders/{id}/detail) ---
+function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
+  const [detail, setDetail] = useState(null);
+  const [error, setError] = useState('');
+  useEscapeToClose(onClose, false);
+
+  // โหลดใหม่เมื่อสถานะออเดอร์เปลี่ยน (หน้าหลัก polling ทุก 4 วินาที)
+  useEffect(() => {
+    let alive = true;
+    fetch(`${apiBase}/api/orders/${orderId}/detail`)
+      .then(async r => {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.detail || 'โหลดรายละเอียดออเดอร์ไม่สำเร็จ');
+        return data;
+      })
+      .then(d => { if (alive) { setDetail(d); setError(''); } })
+      .catch(err => { if (alive) setError(err.message); });
+    return () => { alive = false; };
+  }, [apiBase, orderId, statusCode]);
+
+  const o = detail?.order;
+  const people = detail?.people || {};
+  const meta = orderStatusMeta(o?.StatusCode || statusCode);
+  const items = detail?.order?.items || [];
+  const replacedBy = Object.fromEntries(items.filter(i => i.ReplacesItemId).map(i => [i.ReplacesItemId, i]));
+  const calledAt = people.called?.At;
+  const stats = o ? [
+    { label: 'สั่ง → เรียกคิว', value: calledAt ? formatDuration(minutesBetween(o.CreatedAt, calledAt)) : '—' },
+    { label: 'เวลาทำอาหาร', value: people.cooking && people.cooked ? formatDuration(minutesBetween(people.cooking.At, people.cooked.At)) : '—' },
+    { label: 'เรียกคิว → ลูกค้ารับ', value: calledAt && people.handed_over ? formatDuration(minutesBetween(calledAt, people.handed_over.At)) : '—' },
+  ] : [];
+
+  return (
+    <div className="berry-modal-overlay mf-overlay sh-overlay" onClick={onClose}>
+      <div className="mf-modal sh-modal" role="dialog" aria-modal="true" aria-labelledby="sh-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head sh-head">
+          <div className="sh-queue-big">{o?.QueueNo || '…'}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sh-head-badges">
+              <Badge tone={meta.tone}>{meta.label}</Badge>
+              {o && <span className={`sh-type ${o.IsWalkIn ? 'walkin' : 'online'}`}>{o.IsWalkIn ? 'Walk-in หน้าร้าน' : 'สั่งออนไลน์'}</span>}
+            </div>
+            <h3 id="sh-title">ออเดอร์ #{orderId}</h3>
+            <p>{o ? `สั่งเมื่อ ${thaiDateTime(o.CreatedAt, true)}` : 'กำลังโหลด...'}{o?.PickupTime ? ` · นัดรับ ${o.PickupTime}` : ''}</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} aria-label="ปิด"><Icon name="close" size={18} /></button>
+        </div>
+
+        <div className="mf-body sh-body">
+          {error && <div className="mf-form-error">{error}</div>}
+          {!detail && !error && (
+            <div className="sh-loading">
+              <Skeleton height={86} radius={14} />
+              <Skeleton height={120} radius={14} />
+              <Skeleton height={160} radius={14} />
+            </div>
+          )}
+
+          {detail && (
+            <>
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="users" size={16} /> ผู้เกี่ยวข้องกับออเดอร์นี้</h4>
+                <div className="sh-people">
+                  <div className="sh-person">
+                    <div className="sh-person-label"><Icon name="user" size={14} /> ลูกค้า</div>
+                    <div className="sh-person-body">
+                      <StaffAvatar name={o.IsWalkIn ? 'Walk in' : o.CustomerName} id={o.CustomerId || 0} size={36} />
+                      <div style={{ minWidth: 0 }}>
+                        <div className="sh-person-name">{o.IsWalkIn ? 'ลูกค้า Walk-in' : (o.CustomerName || '-')}</div>
+                        <div className="sh-person-sub">
+                          {o.CustomerPhone ? <a href={`tel:${o.CustomerPhone}`}>{formatPhone(o.CustomerPhone)}</a> : (o.IsWalkIn ? 'สั่งที่หน้าร้าน' : '-')}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <SalesPersonCard
+                    label={o.IsWalkIn ? 'คีย์ออเดอร์ / รับเงิน' : 'รับออเดอร์ (ยืนยันสลิป)'}
+                    icon="check"
+                    person={people.accepted}
+                    empty={o.StatusCode === 'VERIFYING_SLIP' ? 'รอตรวจสลิป' : 'ยังไม่มีคนรับ'}
+                  />
+                  <SalesPersonCard
+                    label="ทำอาหาร"
+                    icon="flame"
+                    person={people.cooking || people.cooked}
+                    extra={people.cooked && people.cooking && people.cooked.UserId !== people.cooking.UserId
+                      ? `ทำเสร็จโดย ${people.cooked.Name}` : (people.cooked ? `เสร็จ ${timeHM(people.cooked.At)} น.` : null)}
+                  />
+                  <SalesPersonCard label="เรียกคิว" icon="bell" person={people.called} />
+                  {people.cancelled ? (
+                    <SalesPersonCard label="ยกเลิกโดย" icon="soldout" person={people.cancelled} />
+                  ) : people.no_show ? (
+                    <SalesPersonCard label="ตัดเป็นไม่มารับโดย" icon="soldout" person={people.no_show} />
+                  ) : (
+                    <SalesPersonCard label="ส่งมอบอาหาร" icon="award" person={people.handed_over} />
+                  )}
+                </div>
+                <div className="sh-stats">
+                  {stats.map(s => (
+                    <div key={s.label}><strong>{s.value}</strong><span>{s.label}</span></div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="receipt" size={16} /> รายการอาหาร</h4>
+                <div className="nd-card">
+                  <ul className="sh-items">
+                    {items.map(i => {
+                      const replaced = i.ItemStatus === 'REPLACED';
+                      return (
+                        <li key={i.OrderItemId} className={replaced ? 'replaced' : ''}>
+                          <span className="sh-item-img">{i.ImageUrl ? <img src={i.ImageUrl} alt="" /> : <Icon name="photo" size={16} />}</span>
+                          <span className="sh-item-name">
+                            {i.ProductName} <b>× {i.Qty}</b>
+                            {i.ItemStatus === 'OUT_OF_STOCK' && <em className="nd-tag">ของหมด</em>}
+                            {i.ItemStatus === 'CANCELLED' && <em className="nd-tag">ยกเลิก</em>}
+                            {replaced && <small>ลูกค้าเปลี่ยนเป็น “{replacedBy[i.OrderItemId]?.ProductName || 'เมนูอื่น'}”</small>}
+                            {i.ReplacesItemId && <small className="sh-swap">เมนูที่เปลี่ยนมาแทน</small>}
+                            {i.ItemNote && <small>หมายเหตุ: {i.ItemNote}</small>}
+                          </span>
+                          <span className="sh-item-price">฿{fmtMoney(Number(i.UnitPrice) * Number(i.Qty))}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {o.Note && <div className="sh-note"><Icon name="edit" size={14} /> หมายเหตุจากลูกค้า: {o.Note}</div>}
+                  <div className="sh-total"><span>ยอดรวม</span><b>฿{fmtMoney(o.TotalAmount)}</b></div>
+                  {o.CancelReason && <div className="sh-cancel-reason"><Icon name="soldout" size={14} /> เหตุผลที่ยกเลิก: {o.CancelReason}</div>}
+                </div>
+              </section>
+
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="coin" size={16} /> การชำระเงิน</h4>
+                {detail.payments.length === 0 ? (
+                  <div className="sf-note">ไม่มีข้อมูลการชำระเงิน</div>
+                ) : detail.payments.map(p => {
+                  const ps = PAYMENT_STATUS_META[p.PaymentStatus] || { label: p.PaymentStatus, tone: 'neutral' };
+                  return (
+                    <div key={p.PaymentId} className="nd-card sh-pay">
+                      {p.SlipUrl ? (
+                        <a className="sh-slip" href={p.SlipUrl} target="_blank" rel="noopener noreferrer" title="เปิดสลิปขนาดเต็ม">
+                          <img src={p.SlipUrl} alt="สลิปการโอน" />
+                        </a>
+                      ) : (
+                        <span className="sh-slip none"><Icon name={p.MethodCode === 'CASH' ? 'coin' : 'receipt'} size={20} /></span>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="sh-pay-head">
+                          <strong>{p.PaymentType === 'TOP_UP' ? 'ส่วนต่างค่าอาหาร' : 'ค่าอาหาร'} · ฿{fmtMoney(p.Amount)}</strong>
+                          <Badge tone={ps.tone}>{ps.label}</Badge>
+                        </div>
+                        <div className="sh-pay-sub">{p.MethodNameTh}{p.SlipUrl ? '' : (p.MethodCode === 'CASH' ? '' : ' · ไม่มีสลิปแนบ')}</div>
+                        <div className="sh-pay-sub">
+                          {p.VerifiedByName
+                            ? <>{p.PaymentStatus === 'REJECTED' ? 'ปฏิเสธโดย' : 'ตรวจโดย'} <b>{p.VerifiedByName}</b> ({ROLE_TH[p.VerifiedByRole] || p.VerifiedByRoleTh}){p.PaidAt ? ` · ${thaiDateTime(p.PaidAt, true)}` : ''}</>
+                            : 'ยังไม่มีคนตรวจ'}
+                        </div>
+                        {p.RejectReason && <div className="sh-pay-reject">เหตุผลที่ปฏิเสธ: {p.RejectReason}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+
+              <section className="sh-section">
+                <h4 className="sf-section-title"><Icon name="history" size={16} /> ไทม์ไลน์</h4>
+                <ol className="sh-timeline">
+                  {detail.timeline.map((t, idx) => {
+                    const tm = orderStatusMeta(t.NewStatusCode);
+                    const prev = detail.timeline[idx - 1];
+                    const gap = prev ? minutesBetween(prev.CreatedAt, t.CreatedAt) : null;
+                    return (
+                      <li key={t.LogId} className={`tone-${tm.tone}`}>
+                        <span className="dot" />
+                        <div className="sh-tl-head">
+                          <strong>{t.OldStatusCode ? t.NewStatusNameTh : `สร้างออเดอร์ · ${t.NewStatusNameTh}`}</strong>
+                          <span>{thaiDateTime(t.CreatedAt, true)}</span>
+                        </div>
+                        <div className="sh-tl-sub">
+                          {t.ChangedByType === 'SYSTEM'
+                            ? 'โดยระบบอัตโนมัติ'
+                            : <>โดย <b>{t.ChangedByName || '-'}</b> ({ROLE_TH[t.ChangedByRole] || t.ChangedByRoleTh || '-'})</>}
+                          {gap !== null && <span className="sh-gap">+{formatDuration(gap)}</span>}
+                        </div>
+                        {t.Reason && <div className="sh-tl-reason">{t.Reason}</div>}
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+
+              {detail.refunds.length > 0 && (
+                <section className="sh-section">
+                  <h4 className="sf-section-title"><Icon name="coin" size={16} /> การคืนเงิน</h4>
+                  {detail.refunds.map(r => {
+                    const rs = REFUND_STATUS_META[r.RefundStatus] || { label: r.RefundStatus, tone: 'neutral' };
+                    return (
+                      <div key={r.RefundId} className="nd-card sh-row-card">
+                        <div style={{ minWidth: 0 }}>
+                          <strong>{REFUND_TYPE_TH[r.RefundType] || r.RefundType} · ฿{fmtMoney(r.Amount)}</strong>
+                          <div className="sh-pay-sub">{r.Reason || '-'}</div>
+                          <div className="sh-pay-sub">
+                            ขอคืน {thaiDateTime(r.RequestedAt, true)}
+                            {r.RefundedAt && ` · โอนแล้ว ${thaiDateTime(r.RefundedAt, true)}${r.RefundedByName ? ` โดย ${r.RefundedByName}` : ''}`}
+                          </div>
+                        </div>
+                        <Badge tone={rs.tone}>{rs.label}</Badge>
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+
+              {(detail.review || detail.issues.length > 0) && (
+                <section className="sh-section">
+                  <h4 className="sf-section-title"><Icon name="star" size={16} /> ความเห็นจากลูกค้า</h4>
+                  {detail.review && (
+                    <div className="nd-card sh-row-card">
+                      <div style={{ minWidth: 0 }}>
+                        <div className="sh-stars" aria-label={`${detail.review.Rating} ดาว`}>
+                          {[1, 2, 3, 4, 5].map(n => <span key={n} className={n <= detail.review.Rating ? 'on' : ''}>★</span>)}
+                        </div>
+                        <div className="sh-pay-sub">{detail.review.Comment || 'ไม่ได้เขียนความเห็น'}</div>
+                      </div>
+                      <span className="nd-muted">{thaiDateTime(detail.review.CreatedAt)}</span>
+                    </div>
+                  )}
+                  {detail.issues.map(is => (
+                    <div key={is.IssueReportId} className="nd-card sh-row-card">
+                      <div style={{ minWidth: 0 }}>
+                        <strong>รายงานปัญหา: {is.IssueType}</strong>
+                        <div className="sh-pay-sub">{is.Description}</div>
+                      </div>
+                      <Badge tone={(ISSUE_STATUS[is.IssueStatus] || {}).tone || 'neutral'}>{(ISSUE_STATUS[is.IssueStatus] || {}).label || is.IssueStatus}</Badge>
+                    </div>
+                  ))}
+                </section>
+              )}
+
+              {detail.prints.length > 0 && (
+                <section className="sh-section">
+                  <h4 className="sf-section-title"><Icon name="receipt" size={16} /> การพิมพ์</h4>
+                  <div className="nd-card">
+                    <ul className="sh-prints">
+                      {detail.prints.map(pj => (
+                        <li key={pj.PrintJobId}>
+                          <span>{PRINT_TYPE_TH[pj.PrintType] || pj.PrintType}{pj.PerformedByName ? ` · โดย ${pj.PerformedByName}` : ''}</span>
+                          <span className="nd-muted">{pj.PrintStatus === 'PRINTED' ? thaiDateTime(pj.PrintedAt, true) : 'รอพิมพ์'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="mf-footer" style={{ gridTemplateColumns: '1fr' }}>
+          <button type="button" className="mf-btn ghost" onClick={onClose}>ปิด</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   รีวิวจากลูกค้า (rv-*)
+   ============================================================ */
+const RATING_LABEL = { 5: 'ยอดเยี่ยม', 4: 'ดี', 3: 'พอใช้', 2: 'ควรปรับปรุง', 1: 'แย่' };
+const RATING_TONE = { 5: 'green', 4: 'green', 3: 'amber', 2: 'red', 1: 'red' };
+
+function Stars({ value, size = 16 }) {
+  const v = Math.max(0, Math.min(5, Number(value) || 0));
+  return (
+    <span className="rv-stars" style={{ fontSize: size }} aria-label={`${v.toFixed(1)} จาก 5 ดาว`}>
+      {[1, 2, 3, 4, 5].map(n => {
+        const fill = Math.max(0, Math.min(1, v - (n - 1)));
+        return (
+          <span key={n} className="rv-star">
+            ★<span className="rv-star-fill" style={{ width: `${fill * 100}%` }}>★</span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// รูปรีวิวขนาดเต็ม
+function ReviewPhotoLightbox({ src, onClose }) {
+  useEscapeToClose(onClose, false);
+  return (
+    <div className="rv-lightbox" onClick={onClose} role="dialog" aria-modal="true" aria-label="รูปจากรีวิว">
+      <img src={src} alt="รูปจากรีวิว" onClick={e => e.stopPropagation()} />
+      <button type="button" className="rv-lightbox-close" onClick={onClose} aria-label="ปิด"><Icon name="close" size={20} /></button>
+    </div>
+  );
+}
+
+function ReviewCard({ review, onPhoto }) {
+  const r = review;
+  const keyNum = parseInt(String(r.ReviewerKey || '0').slice(0, 6), 16) || 0;
+  const comment = (r.Comment || '').trim();
+  return (
+    <article className={`rv-card tone-${RATING_TONE[r.Rating]}`}>
+      <header className="rv-card-head">
+        <StaffAvatar name={r.ReviewerName} id={keyNum} size={42} />
+        <div className="rv-who">
+          <div className="rv-name">
+            {r.ReviewerName}
+            {r.Visits >= 3 && <span className="rv-regular" title={`สั่งร้านนี้สำเร็จ ${r.Visits} ครั้ง`}><Icon name="award" size={12} /> ลูกค้าประจำ</span>}
+          </div>
+          <div className="rv-sub">
+            สั่งร้านนี้ {fmtMoney(r.Visits)} ครั้ง
+            {r.ReviewerReviewCount > 1 && <> · รีวิว {r.ReviewerReviewCount} ครั้ง</>}
+          </div>
+        </div>
+        <div className="rv-rating">
+          <Stars value={r.Rating} size={15} />
+          <span className={`rv-rating-label tone-${RATING_TONE[r.Rating]}`}>{RATING_LABEL[r.Rating]}</span>
+        </div>
+      </header>
+
+      <div className="rv-body">
+        {comment
+          ? <p className="rv-comment">{comment}</p>
+          : <p className="rv-comment empty">ลูกค้าให้คะแนนโดยไม่ได้เขียนความเห็น</p>}
+        {r.ImageUrl && (
+          <button type="button" className="rv-photo" onClick={() => onPhoto(r.ImageUrl)} aria-label="ดูรูปขนาดเต็ม">
+            <img src={r.ImageUrl} alt="รูปจากรีวิว" />
+            <span><Icon name="photo" size={13} /> ดูรูป</span>
+          </button>
+        )}
+      </div>
+
+      <footer className="rv-order">
+        <div className="rv-order-meta">
+          <span className="rv-queue">คิว {r.QueueNo}</span>
+          <span>สั่งเมื่อ {thaiDateTime(r.OrderedAt)}</span>
+          <span>฿{fmtMoney(r.TotalAmount)}</span>
+          <span className="rv-time" title={thaiDateTime(r.CreatedAt, true)}>รีวิว {timeAgo(r.CreatedAt)}</span>
+        </div>
+        {r.items?.length > 0 && (
+          <div className="rv-items">
+            {r.items.map((it, i) => (
+              <span key={`${it.ProductId}-${i}`} className="rv-item">
+                <span className="rv-item-img">{it.ImageUrl ? <img src={it.ImageUrl} alt="" /> : <Icon name="photo" size={11} />}</span>
+                {it.ProductName} ×{it.Qty}
+              </span>
+            ))}
+          </div>
+        )}
+      </footer>
+    </article>
+  );
+}
+
+/* ============================================================
+   รายงานปัญหาจากลูกค้า (is-*)
+   ============================================================ */
+const ISSUE_TYPE_ICON = {
+  WRONG_ORDER: 'receipt', MISSING_ITEM: 'box', FOOD_QUALITY: 'flame', SLOW_SERVICE: 'clock',
+  PAYMENT_ISSUE: 'coin', STAFF_BEHAVIOR: 'users', OTHER: 'alert',
+};
+const ISSUE_STATUS_UI = {
+  OPEN: { label: 'รอดำเนินการ', tone: 'red', badge: 'danger' },
+  IN_PROGRESS: { label: 'กำลังดำเนินการ', tone: 'amber', badge: 'warning' },
+  RESOLVED: { label: 'แก้ไขแล้ว', tone: 'green', badge: 'success' },
+  REJECTED: { label: 'ไม่รับเรื่อง', tone: 'neutral', badge: 'neutral' },
+};
+const ISSUE_OPEN_STATES = ['OPEN', 'IN_PROGRESS'];
+const ISSUE_STALE_HOURS = 24; // ค้างเกินนี้ขึ้นป้ายเตือน
+
+// ข้อความตอบกลับสำเร็จรูป (กดแล้วเติมลงช่อง แก้ต่อได้)
+const ISSUE_QUICK_REPLIES = {
+  IN_PROGRESS: ['ร้านรับเรื่องแล้ว กำลังตรวจสอบให้นะคะ', 'ขออภัยในความไม่สะดวก ร้านกำลังแก้ไขให้ค่ะ'],
+  RESOLVED: ['ร้านแก้ไขเรียบร้อยแล้ว ขอบคุณที่แจ้งให้ทราบค่ะ', 'ร้านได้ปรับปรุงขั้นตอนแล้ว ขออภัยอีกครั้งค่ะ', 'ร้านติดต่อคืนเงินให้เรียบร้อยแล้วค่ะ'],
+  REJECTED: ['ตรวจสอบแล้วไม่พบปัญหาตามที่แจ้งค่ะ', 'เรื่องนี้ไม่เกี่ยวข้องกับทางร้าน รบกวนติดต่อศูนย์อาหารค่ะ'],
+  OPEN: [],
+};
+
+function hoursSince(value) {
+  const d = parseOrderDate(value);
+  return d ? (Date.now() - d.getTime()) / 3600000 : 0;
+}
+
+function formatHours(h) {
+  if (h === null || h === undefined) return '—';
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} นาที`;
+  if (h < 48) return `${Math.round(h * 10) / 10} ชม.`;
+  return `${Math.round(h / 24)} วัน`;
+}
+
+// --- อัปเดตสถานะ + ข้อความตอบกลับลูกค้า ---
+function IssueRespondModal({ issue, target, onClose, onSubmit }) {
+  const st = ISSUE_STATUS_UI[target];
+  const [note, setNote] = useState(issue.AdminNote || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEscapeToClose(onClose, saving);
+  const needNote = target === 'REJECTED';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (needNote && !note.trim()) { setError('กรุณาระบุเหตุผลที่ไม่รับเรื่อง ลูกค้าจะเห็นข้อความนี้'); return; }
+    setSaving(true);
+    try {
+      await onSubmit(target, note.trim());
+    } catch (err) {
+      setError(err.message || 'บันทึกไม่สำเร็จ');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="berry-modal-overlay mf-overlay" onClick={() => { if (!saving) onClose(); }}>
+      <div className="mf-modal" role="dialog" aria-modal="true" aria-labelledby="is-respond-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head">
+          <div className={`is-type-icon tone-${st.tone}`}><Icon name={ISSUE_TYPE_ICON[issue.TypeCode] || 'alert'} size={20} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 id="is-respond-title">เปลี่ยนเป็น “{st.label}”</h3>
+            <p>{issue.IssueType}{issue.QueueNo ? ` · คิว ${issue.QueueNo}` : ''} · ผู้แจ้ง {issue.ReporterName}</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} disabled={saving} aria-label="ปิด"><Icon name="close" size={18} /></button>
+        </div>
+        <form onSubmit={submit} noValidate>
+          <div className="mf-body">
+            <div className="is-quote small">{issue.Description}</div>
+            <div className="mf-field">
+              <label htmlFor="is-note">
+                ข้อความตอบกลับลูกค้า {needNote ? <span className="req">*</span> : <span className="optional">ไม่บังคับ</span>}
+                <span className="mf-counter">{note.length}/500</span>
+              </label>
+              <textarea id="is-note" rows={4} maxLength={500} value={note} disabled={saving}
+                onChange={e => { setNote(e.target.value); setError(''); }}
+                placeholder={needNote ? 'เช่น ตรวจสอบแล้วไม่พบปัญหาตามที่แจ้ง' : 'เช่น ร้านแก้ไขเรียบร้อยแล้ว ขอบคุณที่แจ้งค่ะ'} autoFocus />
+              {(ISSUE_QUICK_REPLIES[target] || []).length > 0 && (
+                <div className="is-quick">
+                  {ISSUE_QUICK_REPLIES[target].map(t => (
+                    <button key={t} type="button" className="is-quick-btn" onClick={() => { setNote(t); setError(''); }} disabled={saving}>{t}</button>
+                  ))}
+                </div>
+              )}
+              <div className="mf-hint">ลูกค้าจะได้รับการแจ้งเตือน และเห็นข้อความนี้ในหน้าประวัติการแจ้งปัญหา</div>
+            </div>
+            {error && <div className="mf-form-error">{error}</div>}
+          </div>
+          <div className="mf-footer">
+            <button type="button" className="mf-btn ghost" onClick={onClose} disabled={saving}>ยกเลิก</button>
+            <button type="submit" className={`mf-btn ${target === 'REJECTED' ? 'danger' : 'primary'}`} disabled={saving}>
+              {saving ? <span className="berry-spinner" /> : <Icon name="check" size={17} />}
+              {saving ? 'กำลังบันทึก...' : 'บันทึกและแจ้งลูกค้า'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function IssueCard({ issue, busy, onAction }) {
+  const i = issue;
+  const st = ISSUE_STATUS_UI[i.IssueStatus] || ISSUE_STATUS_UI.OPEN;
+  const keyNum = parseInt(String(i.ReporterKey || '0').slice(0, 6), 16) || 0;
+  const isOpen = ISSUE_OPEN_STATES.includes(i.IssueStatus);
+  const age = hoursSince(i.CreatedAt);
+  const stale = isOpen && age >= ISSUE_STALE_HOURS;
+  return (
+    <article className={`is-card tone-${st.tone} ${stale ? 'stale' : ''}`}>
+      <header className="is-card-head">
+        <span className={`is-type-icon tone-${st.tone}`}><Icon name={ISSUE_TYPE_ICON[i.TypeCode] || 'alert'} size={18} /></span>
+        <div className="is-title">
+          <strong>{i.IssueType}</strong>
+          <span title={thaiDateTime(i.CreatedAt, true)}>แจ้งเมื่อ {timeAgo(i.CreatedAt)} · #{i.IssueReportId}</span>
+        </div>
+        <div className="is-head-right">
+          <Badge tone={st.badge}>{st.label}</Badge>
+          {stale && <span className="is-stale"><Icon name="clock" size={12} /> ค้าง {formatHours(age)}</span>}
+        </div>
+      </header>
+
+      <div className="is-reporter">
+        <StaffAvatar name={i.ReporterName} id={keyNum} size={32} />
+        <div style={{ minWidth: 0 }}>
+          <div className="is-reporter-name">{i.ReporterName}{i.Visits >= 3 && <span className="rv-regular"><Icon name="award" size={11} /> ลูกค้าประจำ</span>}</div>
+          <div className="is-reporter-sub">สั่งร้านนี้ {fmtMoney(i.Visits)} ครั้ง · แจ้งปัญหา {fmtMoney(i.ReporterIssueCount)} ครั้ง</div>
+        </div>
+      </div>
+
+      <p className="is-quote">{i.Description}</p>
+
+      {i.OrderID ? (
+        <div className="is-order">
+          <div className="is-order-meta">
+            <span className="rv-queue">คิว {i.QueueNo}</span>
+            <span>สั่ง {thaiDateTime(i.OrderedAt, true)}</span>
+            {i.TotalAmount !== null && <span>฿{fmtMoney(i.TotalAmount)}</span>}
+            {i.OrderStatusNameTh && <span className="is-order-status">{i.OrderStatusNameTh}</span>}
+            {i.ReadyMinutes !== null && (
+              <span className={`is-ready ${i.TypeCode === 'SLOW_SERVICE' ? 'hl' : ''}`}><Icon name="clock" size={12} /> สั่ง → เรียกคิว {formatDuration(i.ReadyMinutes)}</span>
+            )}
+          </div>
+          {i.items?.length > 0 && (
+            <div className="rv-items">
+              {i.items.map((it, idx) => (
+                <span key={`${it.ProductId}-${idx}`} className="rv-item">
+                  <span className="rv-item-img">{it.ImageUrl ? <img src={it.ImageUrl} alt="" /> : <Icon name="photo" size={11} />}</span>
+                  {it.ProductName} ×{it.Qty}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="is-order none"><Icon name="receipt" size={14} /> ไม่ได้ระบุออเดอร์ (ปัญหาทั่วไปของร้าน)</div>
+      )}
+
+      {(i.AdminNote || i.HandledByName) && (
+        <div className={`is-reply tone-${st.tone}`}>
+          <div className="is-reply-head">
+            <Icon name={i.AdminNote ? 'check' : 'user'} size={13} />
+            {i.AdminNote ? 'ตอบกลับลูกค้า' : 'รับเรื่องโดย'}{i.HandledByName ? ` ${i.AdminNote ? '· โดย ' : ''}${i.HandledByName}` : ''}
+          </div>
+          {i.AdminNote && <div>{i.AdminNote}</div>}
+          {i.ResolvedAt && <div className="is-reply-time">ปิดเรื่องเมื่อ {thaiDateTime(i.ResolvedAt, true)}</div>}
+        </div>
+      )}
+
+      <footer className="is-actions">
+        {i.IssueStatus === 'OPEN' && (
+          <button type="button" className="sf-act" onClick={() => onAction(i, 'IN_PROGRESS')} disabled={busy}><Icon name="clock" size={15} /> รับเรื่อง</button>
+        )}
+        {isOpen && (
+          <>
+            <button type="button" className="sf-act success" onClick={() => onAction(i, 'RESOLVED')} disabled={busy}><Icon name="check" size={15} /> แก้ไขแล้ว</button>
+            <button type="button" className="sf-act danger" onClick={() => onAction(i, 'REJECTED')} disabled={busy}><Icon name="close" size={15} /> ไม่รับเรื่อง</button>
+          </>
+        )}
+        {!isOpen && (
+          <button type="button" className="sf-act" onClick={() => onAction(i, 'IN_PROGRESS')} disabled={busy}><Icon name="history" size={15} /> เปิดเรื่องอีกครั้ง</button>
+        )}
+      </footer>
+    </article>
+  );
+}
+
 export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!document.getElementById('berry-font-link')) {
@@ -1938,7 +2570,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [foodCourtHours, setFoodCourtHours] = useState(null); // { open: '08:00', close: '20:00' }
   // โหลดข้อมูลครั้งแรกเสร็จหรือยัง (ใช้แสดง skeleton แทนเลข 0)
-  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false });
+  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false, reviews: false, issues: false });
   const markLoaded = (key) => setLoaded(prev => (prev[key] ? prev : { ...prev, [key]: true }));
   // หน้าเมนู: การเรียง + โหมดเลือกหลายเมนู
   const [menuSort, setMenuSort] = useState('default');
@@ -2015,10 +2647,38 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [staffBusyId, setStaffBusyId] = useState(null);
   const [eraseStaff, setEraseStaff] = useState(null);
   const [notifDetail, setNotifDetail] = useState(null); // รายการแจ้งเตือนที่เปิดดูรายละเอียด
+  // หน้าประวัติการขาย
+  const [salesRange, setSalesRange] = useState('7'); // today | 7 | 30 | all | custom
+  const [salesFrom, setSalesFrom] = useState(todayISO());
+  const [salesTo, setSalesTo] = useState(todayISO());
+  const [salesStatus, setSalesStatus] = useState('all'); // all | done | active | cancelled | noshow
+  const [salesSearch, setSalesSearch] = useState('');
+  const [salesLimit, setSalesLimit] = useState(60);
+  const [salesDetailId, setSalesDetailId] = useState(null); // ออเดอร์ที่เปิดดูรายละเอียด
+  // ไปหน้าประวัติการขายพร้อมตั้งตัวกรอง (ใช้จากการแจ้งเตือน / แดชบอร์ด) ; orderId = เปิดรายละเอียดออเดอร์นั้นเลย
+  const openSalesHistory = ({ status = 'all', range = '7', orderId = null } = {}) => {
+    setSalesStatus(status);
+    setSalesRange(range);
+    setSalesSearch('');
+    setSalesLimit(60);
+    setPage('history');
+    if (orderId) setSalesDetailId(orderId);
+  };
 
   // --- Filter States ---
   const [reviewFilter, setReviewFilter] = useState('all');
-  const [issueFilter, setIssueFilter] = useState('all');
+  const [reviewOnly, setReviewOnly] = useState(null); // null | comment | photo
+  const [reviewSort, setReviewSort] = useState('new'); // new | low | high
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [reviewPhoto, setReviewPhoto] = useState(null); // รูปที่เปิดดูขนาดเต็ม
+  const [issueFilter, setIssueFilter] = useState('all'); // 'all' | TypeCode
+  const [issueStatusFilter, setIssueStatusFilter] = useState('all'); // all | pending | IN_PROGRESS | RESOLVED | REJECTED
+  const [issueRange, setIssueRange] = useState('all'); // 7 | 30 | all
+  const [issueSort, setIssueSort] = useState('new'); // new | old
+  const [issueSearch, setIssueSearch] = useState('');
+  const [issueRespond, setIssueRespond] = useState(null); // { issue, target }
+  const [issueBusyId, setIssueBusyId] = useState(null);
+  const [issuesSummary, setIssuesSummary] = useState(null);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -2051,8 +2711,11 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         }
       })
       .catch(err => console.error(err));
-    fetch(`${apiBase}/api/stores/${storeId}/reviews`).then(r => r.json()).then(d => setReviewsData(d)).catch(err => console.error(err));
-    fetch(`${apiBase}/api/reports/issue/store/${storeId}`).then(r => r.json()).then(d => setIssues(Array.isArray(d) ? d : [])).catch(err => console.error(err));
+    fetch(`${apiBase}/api/stores/${storeId}/reviews/detail`).then(r => r.json()).then(d => { if (d && Array.isArray(d.reviews)) { setReviewsData(d); markLoaded('reviews'); } }).catch(err => console.error(err));
+    // รายงานปัญหาแบบละเอียด (ชื่อผู้แจ้งแบบย่อ ไม่มีข้อมูลติดต่อ)
+    fetch(`${apiBase}/api/stores/${storeId}/issues/detail`).then(r => r.json()).then(d => {
+      if (d && Array.isArray(d.issues)) { setIssues(d.issues); setIssuesSummary(d.summary); markLoaded('issues'); }
+    }).catch(err => console.error(err));
     
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
       .then(r => r.json())
@@ -2131,7 +2794,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   useEffect(() => {
     if (!isFirstFetch.current && cancels.length > knownCancelsCount) {
-      if (page !== 'cancel') {
+      if (page !== 'history') {
         setUnreadCancels(cancels.length - knownCancelsCount);
       } else {
         setKnownCancelsCount(cancels.length);
@@ -2140,7 +2803,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   }, [cancels.length, page, knownCancelsCount]);
 
   useEffect(() => {
-    if (page === 'cancel') {
+    if (page === 'history') {
       setUnreadCancels(0);
       setKnownCancelsCount(cancels.length);
     }
@@ -2427,6 +3090,24 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     fetchData();
   };
 
+  // เปลี่ยนสถานะรายงานปัญหา (+ ข้อความตอบกลับ) ; fromModal = ให้ error กลับไปแสดงในหน้าต่าง
+  const updateIssueStatus = async (issue, status, note, fromModal = false) => {
+    setIssueBusyId(issue.IssueReportId);
+    try {
+      const res = await fetch(`${apiBase}/api/issues/${issue.IssueReportId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, note }),
+      });
+      if (!res.ok) throw await apiError(res, 'อัปเดตรายงานปัญหาไม่สำเร็จ');
+      showSuccess(`${ISSUE_STATUS_UI[status].label}`, 'แจ้งลูกค้าเรียบร้อยแล้ว');
+      fetchData();
+    } catch (err) {
+      if (fromModal) throw err;
+      showToast(err.message);
+    } finally {
+      setIssueBusyId(null);
+    }
+  };
+
   const askDeactivateStaff = (target) => {
     setConfirmDelete({
       type: 'staff', id: target.UserId, name: target.FullName,
@@ -2448,8 +3129,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมร้านค้า', icon: 'dashboard' },
     { id: 'menu', label: 'Manage Menu', caption: 'จัดการเมนู/สต็อก', icon: 'menu' },
     { id: 'staff', label: 'Manage Staff', caption: 'จัดการพนักงาน', icon: 'users' },
-    { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history' },
-    { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
+    // ออเดอร์ที่ยกเลิกรวมอยู่ในประวัติการขายแล้ว (แท็บ "ยกเลิก") : badge ยกเลิกใหม่จึงย้ายมาอยู่ที่นี่
+    { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history', badge: unreadCancels > 0 ? unreadCancels : null },
     { id: 'reviews', label: 'Customer Reviews', caption: 'รีวิวจากลูกค้า', icon: 'star' },
     { id: 'issues', label: 'Issue Reports', caption: 'ประวัติการแจ้งปัญหา', icon: 'alert' },
   ];
@@ -2457,7 +3138,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const navGroups = [
     { label: 'ภาพรวม', items: ['dashboard'] },
     { label: 'จัดการร้าน', items: ['menu', 'staff'] },
-    { label: 'ประวัติและความคิดเห็น', items: ['history', 'cancel', 'reviews', 'issues'] },
+    { label: 'ประวัติและความคิดเห็น', items: ['history', 'reviews', 'issues'] },
   ].map(g => ({ ...g, items: g.items.map(id => navById[id]) }));
 
   const isSuspended = Boolean(storeDetail?.IsSuspended);
@@ -2494,12 +3175,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     document.getElementById('owner-contract')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const getReviewCount = (star) => (reviewsData.reviews || []).filter(r => String(r.Rating) === String(star)).length;
-  const filteredReviews = reviewFilter === 'all' ? (reviewsData.reviews || []) : (reviewsData.reviews || []).filter(r => String(r.Rating) === reviewFilter);
   
-  const issueTypes = [...new Set(issues.map(i => i.IssueType))].filter(Boolean);
-  const getIssueCount = (type) => issues.filter(i => i.IssueType === type).length;
-  const filteredIssues = issueFilter === 'all' ? issues : issues.filter(i => i.IssueType === issueFilter);
 
   return (
     <div className="berry-root">
@@ -2666,8 +3342,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                       ))}
                     </div>
 
-                    <button type="button" className="op-notif-foot" onClick={() => { setPage('cancel'); setNotifOpen(false); }}>
-                      ดูประวัติการยกเลิกทั้งหมด <Icon name="arrowRight" size={15} />
+                    <button type="button" className="op-notif-foot" onClick={() => { openSalesHistory({ status: 'cancelled', range: 'all' }); setNotifOpen(false); }}>
+                      ดูออเดอร์ที่ยกเลิกทั้งหมดในประวัติการขาย <Icon name="arrowRight" size={15} />
                     </button>
                   </div>
                 </>
@@ -2803,8 +3479,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 <div className="od-live-grid">
                   {live.map(item => (
                     <button key={item.key} type="button" className={`od-live-item tone-${item.tone} ${item.value > 0 ? 'has' : ''}`} onClick={() => {
-                      if (item.go === 'menu') setMenuFilter(item.key === 'out' ? 'out' : 'all');
-                      setPage(item.go);
+                      if (item.go === 'menu') { setMenuFilter(item.key === 'out' ? 'out' : 'all'); setPage('menu'); }
+                      else openSalesHistory({ status: 'active', range: 'today' });
                     }}>
                       <span className="icon"><Icon name={item.icon} size={18} /></span>
                       <span className="text">
@@ -3342,7 +4018,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   ))}
                 </div>
 
-                <div className="mm-toolbar">
+                <div className="mm-toolbar mm-wrap-tabs">
                   <div className="mm-tabs" role="tablist" aria-label="กรองพนักงาน">
                     {tabs.map(t => (
                       <button
@@ -3410,207 +4086,484 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             );
           })()}
 
-          {page === 'history' && (
-            <>
-            <PageHeader title="ประวัติการขาย" subtitle="ออเดอร์ทั้งหมดของร้าน เรียงจากล่าสุด" icon="history">
-              <span className="op-count-chip">{fmtMoney(history.length)} ออเดอร์</span>
-            </PageHeader>
-            <div className="berry-card">
-              <div className="berry-table-container">
-                <table className="berry-table">
-                  <thead>
-                    <tr>
-                      <th>วันที่ / เวลา</th>
-                      <th>คิว</th>
-                      <th>รายการอาหาร</th>
-                      <th>ยอดรวม</th>
-                      <th>สถานะ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {history.length === 0 && <tr><td colSpan="5" className="empty-state">{loaded.history ? 'ยังไม่มีประวัติการขาย' : 'กำลังโหลดข้อมูล...'}</td></tr>}
-                    {history.map(h => (
-                      <tr key={h.OrderID}>
-                        <td className="mono muted" data-label="วันที่ / เวลา">
-                          {h.CreatedAt ? new Date(h.CreatedAt).toLocaleString('th-TH') : '-'}
-                        </td>
-                        <td className="mono" data-label="คิว" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{h.QueueNo}</td>
-                        <td data-label="รายการอาหาร" className="op-td-block">
-                          {h.items?.map((item, idx) => (
-                            <div key={idx} style={{ fontSize: '13px', marginBottom: '4px', color: 'var(--berry-text-dark)' }}>
-                              • {item.ProductName} <span style={{ color: 'var(--berry-text-muted)' }}>(x{item.Qty})</span>
-                            </div>
-                          ))}
-                        </td>
-                        <td className="mono bold" data-label="ยอดรวม">฿{fmtMoney(h.TotalAmount)}</td>
-                        <td data-label="สถานะ">
-                          <Badge tone={h.Status === 'Completed' ? 'success' : h.Status === 'Cancelled' ? 'danger' : 'warning'}>
-                            {getStatusLabel(h.Status)}
-                          </Badge>
-                        </td>
-                      </tr>
+          {page === 'history' && (() => {
+            // ---- ช่วงวันที่ ----
+            const today = todayISO();
+            const shiftDays = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return toISODate(d); };
+            const range = salesRange === 'custom'
+              ? { from: salesFrom || today, to: salesTo || today }
+              : salesRange === 'all' ? null
+              : { from: salesRange === 'today' ? today : shiftDays(Number(salesRange) - 1), to: today };
+            const inRange = history.filter(o => {
+              if (!range) return true;
+              const d = parseOrderDate(o.CreatedAt);
+              const iso = d ? toISODate(d) : '';
+              return iso >= range.from && iso <= range.to;
+            });
+
+            // ---- สถานะ + ค้นหา ----
+            const group = (o) => (o.StatusCode === 'COMPLETED' ? 'done'
+              : o.StatusCode === 'CANCELLED' ? 'cancelled'
+              : o.StatusCode === 'NO_SHOW' ? 'noshow' : 'active');
+            const counts = inRange.reduce((acc, o) => { acc[group(o)] += 1; return acc; }, { done: 0, active: 0, cancelled: 0, noshow: 0 });
+            const q = salesSearch.trim().toLowerCase();
+            const shown = inRange
+              .filter(o => salesStatus === 'all' || group(o) === salesStatus)
+              .filter(o => !q
+                || String(o.QueueNo || '').toLowerCase().includes(q)
+                || String(o.OrderID).includes(q)
+                || String(o.CustomerName || '').toLowerCase().includes(q)
+                || (o.items || []).some(i => String(i.ProductName || '').toLowerCase().includes(q)))
+              // เรียงตามเวลาสั่งล่าสุดก่อน (API เรียงตามเลขออเดอร์) : ต้องเรียงก่อนจัดกลุ่มวัน ไม่งั้นวันเดียวกันแตกเป็นหลายกลุ่ม
+              .sort((x, y) => (parseOrderDate(y.CreatedAt)?.getTime() || 0) - (parseOrderDate(x.CreatedAt)?.getTime() || 0)
+                || y.OrderID - x.OrderID);
+
+            // ---- สรุปยอดของช่วงที่เลือก ----
+            const revenueOrders = inRange.filter(o => REVENUE_STATUSES.includes(o.StatusCode));
+            const revenue = revenueOrders.reduce((s, o) => s + Number(o.TotalAmount || 0), 0);
+            const cancelRate = inRange.length ? Math.round((counts.cancelled / inRange.length) * 100) : 0;
+            const kpis = [
+              { tone: 'orange', icon: 'receipt', value: fmtMoney(inRange.length), label: 'ออเดอร์ทั้งหมด', sub: counts.active ? `กำลังดำเนินการ ${counts.active}` : null },
+              { tone: 'green', icon: 'coin', value: `฿${fmtMoney(revenue)}`, label: 'ยอดขาย (สำเร็จ + ไม่มารับ)' },
+              { tone: 'blue', icon: 'trend', value: `฿${fmtMoney(revenueOrders.length ? revenue / revenueOrders.length : 0)}`, label: 'เฉลี่ยต่อออเดอร์' },
+              { tone: 'amber', icon: 'soldout', value: fmtMoney(counts.cancelled), label: 'ยกเลิก', sub: inRange.length ? `${cancelRate}% ของออเดอร์` : null },
+            ];
+            const statusTabs = [
+              { id: 'all', label: 'ทั้งหมด', count: inRange.length },
+              { id: 'done', label: 'สำเร็จ', count: counts.done, tone: 'green' },
+              { id: 'active', label: 'กำลังดำเนินการ', count: counts.active },
+              { id: 'cancelled', label: 'ยกเลิก', count: counts.cancelled, tone: 'red' },
+              { id: 'noshow', label: 'ไม่มารับ', count: counts.noshow },
+            ];
+            const rangeChips = [
+              { id: 'today', label: 'วันนี้' }, { id: '7', label: '7 วัน' }, { id: '30', label: '30 วัน' },
+              { id: 'all', label: 'ทั้งหมด' }, { id: 'custom', label: 'กำหนดเอง' },
+            ];
+
+            // ---- จัดกลุ่มตามวัน (แสดงทีละ salesLimit รายการ) ----
+            const visible = shown.slice(0, salesLimit);
+            const days = [];
+            visible.forEach(o => {
+              const d = parseOrderDate(o.CreatedAt);
+              const key = d ? toISODate(d) : 'unknown';
+              let day = days[days.length - 1];
+              if (!day || day.key !== key) { day = { key, date: d, orders: [] }; days.push(day); }
+              day.orders.push(o);
+            });
+            const daySummary = (key) => {
+              const list = shown.filter(o => { const d = parseOrderDate(o.CreatedAt); return (d ? toISODate(d) : 'unknown') === key; });
+              return { count: list.length, sales: list.filter(o => REVENUE_STATUSES.includes(o.StatusCode)).reduce((s, o) => s + Number(o.TotalAmount || 0), 0) };
+            };
+
+            return (
+              <>
+                <PageHeader title="ประวัติการขาย" subtitle="ออเดอร์ทั้งหมดของร้าน กดที่ออเดอร์เพื่อดูรายละเอียด ใครรับ ใครทำ และไทม์ไลน์" icon="history">
+                  <span className="op-count-chip">{fmtMoney(shown.length)} ออเดอร์</span>
+                </PageHeader>
+
+                <div className="sh-filter-bar">
+                  <div className="sh-range" role="group" aria-label="ช่วงวันที่">
+                    <Icon name="calendar" size={16} />
+                    {rangeChips.map(c => (
+                      <button key={c.id} type="button" className={salesRange === c.id ? 'active' : ''}
+                        onClick={() => { setSalesRange(c.id); setSalesLimit(60); }}>
+                        {c.label}
+                      </button>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            </>
-          )}
+                  </div>
+                  {salesRange === 'custom' && (
+                    <div className="berry-date-range sh-dates">
+                      <label>
+                        ตั้งแต่
+                        <input type="date" value={salesFrom} max={salesTo || today}
+                          onChange={e => { const v = e.target.value || today; setSalesFrom(v); if (v > salesTo) setSalesTo(v); setSalesLimit(60); }} />
+                      </label>
+                      <label>
+                        ถึง
+                        <input type="date" value={salesTo} min={salesFrom} max={today}
+                          onChange={e => { setSalesTo(e.target.value || today); setSalesLimit(60); }} />
+                      </label>
+                    </div>
+                  )}
+                  <span className="sh-range-label">
+                    {range ? (range.from === range.to ? thaiDate(range.from) : `${thaiDate(range.from)} – ${thaiDate(range.to)}`) : 'ทุกช่วงเวลา'}
+                  </span>
+                </div>
 
-          {page === 'cancel' && (
-            <>
-            <PageHeader title="ประวัติการยกเลิกออเดอร์" subtitle="ออเดอร์ที่ถูกยกเลิกพร้อมเหตุผล" icon="cancel">
-              <span className="op-count-chip danger">{fmtMoney(cancels.length)} ออเดอร์</span>
-            </PageHeader>
-            <div className="berry-card">
-              <div className="berry-table-container">
-                <table className="berry-table">
-                  <thead>
-                    <tr>
-                      <th>วันที่ / เวลา</th>
-                      <th>คิว</th>
-                      <th>ยอดรวม</th>
-                      <th>เหตุผลที่ยกเลิก</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cancels.length === 0 && <tr><td colSpan="4" className="empty-state">ยังไม่มีออเดอร์ที่ถูกยกเลิก</td></tr>}
-                    {cancels.map(c => (
-                      <tr key={c.OrderID}>
-                        <td className="mono muted" data-label="วันที่ / เวลา">
-                          {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
-                        </td>
-                        <td className="mono" data-label="คิว" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{c.QueueNo}</td>
-                        <td className="mono bold" data-label="ยอดรวม">฿{fmtMoney(c.TotalAmount)}</td>
-                        <td data-label="เหตุผล" style={{ color: 'var(--berry-red)', fontWeight: '500' }}>{c.CancelReason || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            </>
-          )}
-
-          {page === 'reviews' && (
-            <>
-            <PageHeader title="รีวิวจากลูกค้า" subtitle="คะแนนและความคิดเห็นที่ลูกค้าให้ร้านของคุณ" icon="star">
-              <div className="op-rating-chip">
-                <span className="star">★</span>
-                <strong>{reviewsData.summary?.average?.toFixed(1) || '0.0'}</strong>
-                <span>/ 5 · {fmtMoney((reviewsData.reviews || []).length)} รีวิว</span>
-              </div>
-            </PageHeader>
-            <div className="berry-card">
-              {/* ปุ่มกรองคะแนน */}
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '0 0 16px', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginRight: '4px' }}>กรองคะแนน:</span>
-                <button 
-                  onClick={() => setReviewFilter('all')} 
-                  className={`berry-period-btn ${reviewFilter === 'all' ? 'active' : ''}`} 
-                  style={{ border: reviewFilter === 'all' ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                >
-                  ทั้งหมด ({(reviewsData.reviews || []).length})
-                </button>
-                {[5, 4, 3, 2, 1].map(star => (
-                  <button 
-                    key={star} 
-                    onClick={() => setReviewFilter(String(star))} 
-                    className={`berry-period-btn ${reviewFilter === String(star) ? 'active' : ''}`} 
-                    style={{ border: reviewFilter === String(star) ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                  >
-                    {star} ★ ({getReviewCount(star)})
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-                {filteredReviews.length === 0 ? (
-                  <div className="empty-state">ไม่มีรีวิวในหมวดหมู่นี้</div>
-                ) : (
-                  filteredReviews.map(r => (
-                    <div key={r.ReviewId} style={{ padding: '16px 0', borderBottom: '1px solid var(--berry-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontWeight: '600', fontSize: '14px', color: 'var(--berry-text-dark)' }}>
-                        {r.ReviewerName || "P'1"}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ color: 'var(--berry-amber)', fontSize: '16px', letterSpacing: '2px' }}>
-                          {'★'.repeat(r.Rating)}{'☆'.repeat(5 - r.Rating)}
-                        </span>
-                        <span style={{ color: 'var(--berry-text-muted)', fontSize: '12px' }}>
-                          {new Date(r.CreatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} · {new Date(r.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                <div className="sf-stats">
+                  {kpis.map(k => (
+                    <div key={k.label} className={`sf-stat tone-${k.tone}`}>
+                      <span className="icon"><Icon name={k.icon} size={20} /></span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="value">{loaded.history ? k.value : <Skeleton height={22} width={60} />}</div>
+                        <div className="label">{k.label}</div>
+                        {k.sub && <div className="sub">{k.sub}</div>}
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-            </>
-          )}
+                  ))}
+                </div>
 
-          {page === 'issues' && (
-            <>
-            <PageHeader title="รายงานปัญหาจากลูกค้า" subtitle="ปัญหาที่ลูกค้าแจ้งเข้ามาเกี่ยวกับร้านของคุณ" icon="alert">
-              <span className="op-count-chip">{fmtMoney(issues.length)} รายการ</span>
-            </PageHeader>
-            <div className="berry-card">
-              {/* ปุ่มกรองประเภทปัญหา */}
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '0 0 16px', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginRight: '4px' }}>ประเภทปัญหา:</span>
-                <button 
-                  onClick={() => setIssueFilter('all')} 
-                  className={`berry-period-btn ${issueFilter === 'all' ? 'active' : ''}`} 
-                  style={{ border: issueFilter === 'all' ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                >
-                  ทั้งหมด ({issues.length})
-                </button>
-                {issueTypes.map(type => (
-                  <button 
-                    key={type} 
-                    onClick={() => setIssueFilter(type)} 
-                    className={`berry-period-btn ${issueFilter === type ? 'active' : ''}`} 
-                    style={{ border: issueFilter === type ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                  >
-                    {type} ({getIssueCount(type)})
-                  </button>
-                ))}
-              </div>
+                <div className="mm-toolbar mm-wrap-tabs">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองตามสถานะ">
+                    {statusTabs.map(t => (
+                      <button key={t.id} type="button" role="tab" aria-selected={salesStatus === t.id}
+                        onClick={() => { setSalesStatus(t.id); setSalesLimit(60); }}
+                        className={`mm-tab ${salesStatus === t.id ? 'active' : ''} ${t.tone ? `tone-${t.tone}` : ''}`}>
+                        {t.tone && <span className="dot" />}
+                        {t.label}
+                        <span className="count">{t.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={salesSearch} onChange={e => { setSalesSearch(e.target.value); setSalesLimit(60); }}
+                      placeholder="ค้นหาเลขคิว เลขออเดอร์ ชื่อลูกค้า หรือเมนู..." aria-label="ค้นหาออเดอร์" />
+                    {salesSearch && (
+                      <button type="button" onClick={() => setSalesSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>
+                    )}
+                  </div>
+                </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {filteredIssues.length === 0 ? (
-                  <div className="empty-state">ไม่มีรายงานปัญหาในหมวดหมู่นี้</div>
+                {!loaded.history ? (
+                  <div className="sh-list">{[0, 1, 2, 3].map(i => <Skeleton key={i} height={72} radius={14} />)}</div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name={q ? 'search' : 'history'} size={28} /></span>
+                    <h3>{q ? 'ไม่พบออเดอร์ที่ตรงกับการค้นหา' : 'ไม่มีออเดอร์ในช่วงนี้'}</h3>
+                    <p>{q ? 'ลองค้นด้วยเลขคิว ชื่อลูกค้า หรือชื่อเมนูอื่น' : 'ลองเลือกช่วงวันที่ที่กว้างขึ้น หรือเปลี่ยนตัวกรองสถานะ'}</p>
+                  </div>
                 ) : (
-                  filteredIssues.map(issue => (
-                    <div key={issue.ReportID} style={{ border: '1px solid var(--berry-border)', borderRadius: '12px', padding: '16px', background: '#fff' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                            <span style={{ fontWeight: '600', color: 'var(--berry-text-dark)', fontSize: '15px' }}>{issue.IssueType}</span>
-                            {issue.QueueNo ? (
-                              <span style={{ background: 'var(--berry-blue-light)', color: 'var(--berry-text-muted)', padding: '2px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: '500' }}>คิว {issue.QueueNo}</span>
-                            ) : issue.OrderID ? (
-                              <span style={{ background: 'var(--berry-blue-light)', color: 'var(--berry-text-muted)', padding: '2px 10px', borderRadius: '16px', fontSize: '12px', fontWeight: '500' }}>คิว OF-{issue.OrderID}</span>
-                            ) : null}
+                  <div className="sh-list">
+                    {days.map(day => {
+                      const sum = daySummary(day.key);
+                      return (
+                        <section key={day.key} className="sh-day">
+                          <div className="sh-day-head">
+                            <strong>{day.date ? day.date.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'ไม่ทราบวันที่'}</strong>
+                            <span>{sum.count} ออเดอร์ · ยอดขาย ฿{fmtMoney(sum.sales)}</span>
                           </div>
-                          <div style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginBottom: '12px' }}>
-                            ผู้แจ้ง: {issue.CustomerName || "P'1"} · ออเดอร์ #{issue.OrderID}
+                          <div className="sh-day-card">
+                            {day.orders.map(o => {
+                              const sm = orderStatusMeta(o.StatusCode);
+                              const its = o.items || [];
+                              const itemText = its.slice(0, 2).map(i => `${i.ProductName} ×${i.Qty}`).join(', ');
+                              return (
+                                <button key={o.OrderID} type="button" className={`sh-row status-${group(o)}`} onClick={() => setSalesDetailId(o.OrderID)}>
+                                  <span className="sh-time">{timeHM(o.CreatedAt)}</span>
+                                  <span className="sh-queue">{o.QueueNo}</span>
+                                  <span className="sh-main">
+                                    <span className="sh-who">
+                                      {o.IsWalkIn ? <span className="sh-type walkin">Walk-in</span> : (o.CustomerName || 'ลูกค้า')}
+                                      <span className="sh-order-id">#{o.OrderID}</span>
+                                    </span>
+                                    <span className="sh-items-text">
+                                      {itemText || 'ไม่มีรายการอาหาร'}{its.length > 2 ? ` และอีก ${its.length - 2} รายการ` : ''}
+                                    </span>
+                                  </span>
+                                  <span className="sh-pay-method" title={o.PaymentMethod || ''}>
+                                    <Icon name={o.PaymentMethodCode === 'CASH' ? 'coin' : 'receipt'} size={14} />
+                                    {o.PaymentMethodCode === 'CASH' ? 'เงินสด' : 'โอน'}
+                                  </span>
+                                  <span className="sh-amount">฿{fmtMoney(o.TotalAmount)}</span>
+                                  <span className="sh-status"><Badge tone={sm.tone}>{sm.label}</Badge></span>
+                                  <span className="sh-chevron"><Icon name="arrowRight" size={16} /></span>
+                                </button>
+                              );
+                            })}
                           </div>
-                        </div>
-                        <div style={{ color: 'var(--berry-text-muted)', fontSize: '13px' }}>
-                          {new Date(issue.CreatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} · {new Date(issue.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                        </section>
+                      );
+                    })}
+                    {shown.length > salesLimit && (
+                      <button type="button" className="sh-more" onClick={() => setSalesLimit(n => n + 60)}>
+                        แสดงเพิ่ม ({fmtMoney(shown.length - salesLimit)} ออเดอร์ที่เหลือ)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
+
+          {page === 'reviews' && (() => {
+            const all = reviewsData.reviews || [];
+            const sm = reviewsData.summary || {};
+            const total = sm.total || 0;
+            const breakdown = sm.breakdown || {};
+            const last30 = sm.last30 || {};
+            const prev30 = sm.prev30 || {};
+            const trend = last30.average != null && prev30.average != null ? last30.average - prev30.average : null;
+            const q = reviewSearch.trim().toLowerCase();
+            const shown = all
+              .filter(r => reviewFilter === 'all' || String(r.Rating) === reviewFilter)
+              .filter(r => reviewOnly !== 'comment' || (r.Comment || '').trim())
+              .filter(r => reviewOnly !== 'photo' || r.ImageUrl)
+              .filter(r => !q || (r.Comment || '').toLowerCase().includes(q)
+                || (r.items || []).some(i => String(i.ProductName || '').toLowerCase().includes(q))
+                || String(r.QueueNo || '').toLowerCase().includes(q))
+              .sort((a, b) => (reviewSort === 'low' ? a.Rating - b.Rating : reviewSort === 'high' ? b.Rating - a.Rating : 0)
+                || (parseOrderDate(b.CreatedAt)?.getTime() || 0) - (parseOrderDate(a.CreatedAt)?.getTime() || 0));
+            const menu = reviewsData.menu || [];
+            const insights = [
+              {
+                icon: 'trend', tone: trend == null ? 'blue' : trend >= 0 ? 'green' : 'red',
+                value: last30.average != null ? last30.average.toFixed(1) : '—',
+                label: `เฉลี่ย 30 วันล่าสุด (${fmtMoney(last30.count || 0)} รีวิว)`,
+                sub: trend == null ? 'ยังไม่มีข้อมูลเทียบช่วงก่อน' : `${trend >= 0 ? '▲' : '▼'} ${Math.abs(trend).toFixed(1)} จาก 30 วันก่อนหน้า`,
+              },
+              { icon: 'award', tone: 'green', value: total ? `${Math.round(((sm.positive || 0) / total) * 100)}%` : '—', label: 'รีวิวดี (4–5 ดาว)' },
+              { icon: 'edit', tone: 'orange', value: fmtMoney(sm.with_comment || 0), label: 'รีวิวที่มีความเห็น' },
+              { icon: 'photo', tone: 'amber', value: fmtMoney(sm.with_photo || 0), label: 'รีวิวที่มีรูป' },
+            ];
+            return (
+              <>
+                <PageHeader title="รีวิวจากลูกค้า" subtitle="คะแนน ความเห็น และเมนูที่ลูกค้ารีวิว" icon="star">
+                  <div className="op-rating-chip">
+                    <span className="star">★</span>
+                    <strong>{(sm.average || 0).toFixed(1)}</strong>
+                    <span>/ 5 · {fmtMoney(total)} รีวิว</span>
+                  </div>
+                </PageHeader>
+
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมลของคนรีวิว</div>
+
+                <div className="rv-overview">
+                  <section className="rv-score">
+                    <div className="rv-score-big">{(sm.average || 0).toFixed(1)}</div>
+                    <Stars value={sm.average || 0} size={22} />
+                    <div className="rv-score-sub">จาก {fmtMoney(total)} รีวิว</div>
+                  </section>
+                  <section className="rv-bars" aria-label="จำนวนรีวิวแยกตามดาว">
+                    {[5, 4, 3, 2, 1].map(n => {
+                      const c = breakdown[String(n)] || 0;
+                      const pct = total ? Math.round((c / total) * 100) : 0;
+                      const active = reviewFilter === String(n);
+                      return (
+                        <button key={n} type="button" className={`rv-bar ${active ? 'active' : ''}`}
+                          onClick={() => setReviewFilter(active ? 'all' : String(n))} title={active ? 'แสดงทั้งหมด' : `กรองเฉพาะ ${n} ดาว`}>
+                          <span className="rv-bar-label">{n} ★</span>
+                          <span className="rv-bar-track"><span className={`rv-bar-fill tone-${RATING_TONE[n]}`} style={{ width: `${pct}%` }} /></span>
+                          <span className="rv-bar-count">{fmtMoney(c)}</span>
+                        </button>
+                      );
+                    })}
+                  </section>
+                  <section className="rv-insights">
+                    {insights.map(it => (
+                      <div key={it.label} className={`rv-insight tone-${it.tone}`}>
+                        <span className="icon"><Icon name={it.icon} size={17} /></span>
+                        <div style={{ minWidth: 0 }}>
+                          <strong>{it.value}</strong>
+                          <span>{it.label}</span>
+                          {it.sub && <em>{it.sub}</em>}
                         </div>
                       </div>
-                      <div style={{ fontSize: '14px', color: 'var(--berry-text-dark)', lineHeight: '1.5' }}>
-                        {issue.Description || "-"}
+                    ))}
+                  </section>
+                </div>
+
+                {menu.length > 0 && (
+                  <section className="rv-menu-card">
+                    <h4 className="sf-section-title"><Icon name="menu" size={16} /> คะแนนตามเมนู <span className="rv-hint">คำนวณจากคะแนนของออเดอร์ที่มีเมนูนั้น</span></h4>
+                    <div className="rv-menu-list">
+                      {menu.slice(0, 8).map(m => (
+                        <button key={m.ProductId} type="button" className="rv-menu-item" onClick={() => setReviewSearch(m.ProductName)} title="ดูรีวิวของเมนูนี้">
+                          <span className="rv-item-img lg">{m.ImageUrl ? <img src={m.ImageUrl} alt="" /> : <Icon name="photo" size={16} />}</span>
+                          <span className="rv-menu-text">
+                            <strong>{m.ProductName}</strong>
+                            <span><Stars value={m.average} size={12} /> {m.average.toFixed(1)} · {fmtMoney(m.count)} รีวิว</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <div className="mm-toolbar mm-wrap-tabs">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองตามคะแนน">
+                    {['all', '5', '4', '3', '2', '1'].map(f => (
+                      <button key={f} type="button" role="tab" aria-selected={reviewFilter === f}
+                        className={`mm-tab ${reviewFilter === f ? 'active' : ''}`} onClick={() => setReviewFilter(f)}>
+                        {f === 'all' ? 'ทั้งหมด' : `${f} ★`}
+                        <span className="count">{f === 'all' ? total : (breakdown[f] || 0)}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rv-chips">
+                    {[{ id: 'comment', label: 'มีความเห็น', icon: 'edit' }, { id: 'photo', label: 'มีรูป', icon: 'photo' }].map(c => (
+                      <button key={c.id} type="button" className={`rv-chip ${reviewOnly === c.id ? 'active' : ''}`}
+                        onClick={() => setReviewOnly(reviewOnly === c.id ? null : c.id)}>
+                        <Icon name={c.icon} size={13} /> {c.label}
+                      </button>
+                    ))}
+                    <select className="mm-select" value={reviewSort} onChange={e => setReviewSort(e.target.value)} aria-label="เรียงรีวิว">
+                      <option value="new">ล่าสุดก่อน</option>
+                      <option value="low">คะแนนต่ำก่อน</option>
+                      <option value="high">คะแนนสูงก่อน</option>
+                    </select>
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} placeholder="ค้นหาในความเห็น ชื่อเมนู หรือเลขคิว..." aria-label="ค้นหารีวิว" />
+                    {reviewSearch && <button type="button" onClick={() => setReviewSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>}
+                  </div>
+                </div>
+
+                {!loaded.reviews ? (
+                  <div className="rv-grid">{[0, 1, 2, 3].map(i => <Skeleton key={i} height={210} radius={16} />)}</div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name="star" size={28} /></span>
+                    <h3>{total === 0 ? 'ยังไม่มีรีวิว' : 'ไม่มีรีวิวที่ตรงกับตัวกรอง'}</h3>
+                    <p>{total === 0 ? 'เมื่อลูกค้ารับอาหารแล้วรีวิวร้าน คะแนนและความเห็นจะแสดงที่นี่' : 'ลองเปลี่ยนตัวกรองคะแนน หรือล้างคำค้นหา'}</p>
+                  </div>
+                ) : (
+                  <div className="rv-grid">
+                    {shown.map(r => <ReviewCard key={r.ReviewId} review={r} onPhoto={setReviewPhoto} />)}
+                  </div>
+                )}
+                {reviewPhoto && <ReviewPhotoLightbox src={reviewPhoto} onClose={() => setReviewPhoto(null)} />}
+              </>
+            );
+          })()}
+
+          {page === 'issues' && (() => {
+            const sm = issuesSummary || {};
+            const byStatus = sm.by_status || {};
+            const pending = (byStatus.OPEN || 0) + (byStatus.IN_PROGRESS || 0);
+            const days = issueRange === 'all' ? null : Number(issueRange);
+            const q = issueSearch.trim().toLowerCase();
+            const inRange = issues.filter(i => days === null || hoursSince(i.CreatedAt) <= days * 24);
+            const shown = inRange
+              .filter(i => issueStatusFilter === 'all'
+                || (issueStatusFilter === 'pending' ? ISSUE_OPEN_STATES.includes(i.IssueStatus) : i.IssueStatus === issueStatusFilter))
+              .filter(i => issueFilter === 'all' || i.TypeCode === issueFilter)
+              .filter(i => !q || String(i.Description || '').toLowerCase().includes(q)
+                || String(i.QueueNo || '').toLowerCase().includes(q)
+                || (i.items || []).some(it => String(it.ProductName || '').toLowerCase().includes(q)))
+              .sort((a, b) => {
+                const ta = parseOrderDate(a.CreatedAt)?.getTime() || 0;
+                const tb = parseOrderDate(b.CreatedAt)?.getTime() || 0;
+                return issueSort === 'old' ? ta - tb : tb - ta;
+              });
+            const statusCount = (id) => inRange.filter(i => id === 'all' ? true
+              : id === 'pending' ? ISSUE_OPEN_STATES.includes(i.IssueStatus) : i.IssueStatus === id).length;
+            const statusTabs = [
+              { id: 'all', label: 'ทั้งหมด' },
+              { id: 'pending', label: 'ต้องจัดการ', tone: 'red' },
+              { id: 'IN_PROGRESS', label: 'กำลังดำเนินการ' },
+              { id: 'RESOLVED', label: 'แก้ไขแล้ว', tone: 'green' },
+              { id: 'REJECTED', label: 'ไม่รับเรื่อง' },
+            ];
+            const trend = (sm.last30 || 0) - (sm.prev30 || 0);
+            const kpis = [
+              { tone: 'red', icon: 'alert', value: fmtMoney(pending), label: 'เรื่องที่ต้องจัดการ', sub: byStatus.OPEN ? `ยังไม่รับเรื่อง ${byStatus.OPEN}` : null },
+              { tone: 'green', icon: 'check', value: fmtMoney(byStatus.RESOLVED || 0), label: 'แก้ไขแล้ว' },
+              { tone: 'blue', icon: 'clock', value: formatHours(sm.avg_resolve_hours), label: 'เวลาปิดเรื่องเฉลี่ย' },
+              { tone: 'amber', icon: 'trend', value: fmtMoney(sm.last30 || 0), label: 'เรื่องใหม่ 30 วันล่าสุด',
+                sub: sm.prev30 || sm.last30 ? `${trend > 0 ? '▲' : trend < 0 ? '▼' : '='} ${Math.abs(trend)} จาก 30 วันก่อน` : null },
+            ];
+            const maxType = Math.max(1, ...(sm.by_type || []).map(t => t.count));
+            return (
+              <>
+                <PageHeader title="รายงานปัญหาจากลูกค้า" subtitle="ติดตาม ตอบกลับ และปิดเรื่องที่ลูกค้าแจ้งเข้ามา" icon="alert">
+                  <span className={`op-count-chip ${pending ? 'danger' : ''}`}>{pending ? `ต้องจัดการ ${fmtMoney(pending)} เรื่อง` : `${fmtMoney(issues.length)} รายการ`}</span>
+                </PageHeader>
+
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อผู้แจ้งแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมล ตอบกลับลูกค้าได้ผ่านปุ่มในแต่ละเรื่อง</div>
+
+                <div className="sf-stats">
+                  {kpis.map(k => (
+                    <div key={k.label} className={`sf-stat tone-${k.tone === 'red' ? 'orange' : k.tone}`}>
+                      <span className="icon"><Icon name={k.icon} size={20} /></span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="value">{loaded.issues ? k.value : <Skeleton height={22} width={40} />}</div>
+                        <div className="label">{k.label}</div>
+                        {k.sub && <div className="sub">{k.sub}</div>}
                       </div>
                     </div>
-                  ))
+                  ))}
+                </div>
+
+                {(sm.by_type || []).length > 0 && (
+                  <section className="rv-menu-card">
+                    <h4 className="sf-section-title"><Icon name="pie" size={16} /> ประเภทปัญหาที่พบ <span className="rv-hint">กดเพื่อกรองเฉพาะประเภทนั้น</span></h4>
+                    <div className="is-types">
+                      {sm.by_type.map(t => {
+                        const active = issueFilter === t.TypeCode;
+                        return (
+                          <button key={t.TypeCode} type="button" className={`is-type-row ${active ? 'active' : ''}`}
+                            onClick={() => setIssueFilter(active ? 'all' : t.TypeCode)}>
+                            <span className="is-type-name"><Icon name={ISSUE_TYPE_ICON[t.TypeCode] || 'alert'} size={14} /> {t.IssueType}</span>
+                            <span className="rv-bar-track"><span className="rv-bar-fill tone-amber" style={{ width: `${(t.count / maxType) * 100}%` }} /></span>
+                            <span className="is-type-count">{t.count}{t.open > 0 && <em> · ค้าง {t.open}</em>}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
                 )}
-              </div>
-            </div>
-            </>
-          )}
+
+                <div className="mm-toolbar mm-wrap-tabs">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองตามสถานะ">
+                    {statusTabs.map(t => (
+                      <button key={t.id} type="button" role="tab" aria-selected={issueStatusFilter === t.id}
+                        className={`mm-tab ${issueStatusFilter === t.id ? 'active' : ''} ${t.tone ? `tone-${t.tone}` : ''}`}
+                        onClick={() => setIssueStatusFilter(t.id)}>
+                        {t.tone && <span className="dot" />}{t.label}<span className="count">{statusCount(t.id)}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rv-chips">
+                    <select className="mm-select" value={issueFilter} onChange={e => setIssueFilter(e.target.value)} aria-label="ประเภทปัญหา">
+                      <option value="all">ทุกประเภท</option>
+                      {(sm.by_type || []).map(t => <option key={t.TypeCode} value={t.TypeCode}>{t.IssueType}</option>)}
+                    </select>
+                    <select className="mm-select" value={issueRange} onChange={e => setIssueRange(e.target.value)} aria-label="ช่วงเวลา">
+                      <option value="7">7 วันล่าสุด</option>
+                      <option value="30">30 วันล่าสุด</option>
+                      <option value="all">ทุกช่วงเวลา</option>
+                    </select>
+                    <select className="mm-select" value={issueSort} onChange={e => setIssueSort(e.target.value)} aria-label="เรียงลำดับ">
+                      <option value="new">ใหม่ก่อน</option>
+                      <option value="old">ค้างนานก่อน</option>
+                    </select>
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={issueSearch} onChange={e => setIssueSearch(e.target.value)} placeholder="ค้นหาในรายละเอียด เลขคิว หรือชื่อเมนู..." aria-label="ค้นหารายงานปัญหา" />
+                    {issueSearch && <button type="button" onClick={() => setIssueSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>}
+                  </div>
+                </div>
+
+                {!loaded.issues ? (
+                  <div className="rv-grid">{[0, 1, 2].map(k => <Skeleton key={k} height={260} radius={16} />)}</div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name={issues.length ? 'search' : 'check'} size={28} /></span>
+                    <h3>{issues.length === 0 ? 'ยังไม่มีลูกค้าแจ้งปัญหา' : issueStatusFilter === 'pending' ? 'ไม่มีเรื่องค้าง เยี่ยมมาก!' : 'ไม่มีรายงานที่ตรงกับตัวกรอง'}</h3>
+                    <p>{issues.length === 0 ? 'เมื่อลูกค้าแจ้งปัญหาเกี่ยวกับร้าน จะแสดงที่นี่ พร้อมปุ่มตอบกลับ' : 'ลองเปลี่ยนช่วงเวลา สถานะ หรือประเภทปัญหา'}</p>
+                  </div>
+                ) : (
+                  <div className="rv-grid">
+                    {shown.map(i => (
+                      <IssueCard key={i.IssueReportId} issue={i} busy={issueBusyId === i.IssueReportId}
+                        onAction={(issue, target) => (target === 'IN_PROGRESS' && issue.IssueStatus === 'OPEN'
+                          ? updateIssueStatus(issue, 'IN_PROGRESS', issue.AdminNote || '')
+                          : setIssueRespond({ issue, target }))} />
+                    ))}
+                  </div>
+                )}
+                {issueRespond && (
+                  <IssueRespondModal issue={issueRespond.issue} target={issueRespond.target}
+                    onClose={() => setIssueRespond(null)}
+                    onSubmit={async (target, note) => { await updateIssueStatus(issueRespond.issue, target, note, true); setIssueRespond(null); }} />
+                )}
+              </>
+            );
+          })()}
+
 
         </main>
       </div>
@@ -3631,12 +4584,26 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       {eraseStaff && (
         <StaffEraseModal staff={eraseStaff} onClose={() => setEraseStaff(null)} onSubmit={eraseStaffAccount} />
       )}
+      {salesDetailId && (
+        <SalesOrderDetailModal
+          key={salesDetailId}
+          orderId={salesDetailId}
+          statusCode={history.find(o => o.OrderID === salesDetailId)?.StatusCode}
+          apiBase={apiBase}
+          onClose={() => setSalesDetailId(null)}
+        />
+      )}
       {notifDetail && (
         <NotifDetailModal
           item={notifDetail}
           {...resolveNotifContext(notifDetail)}
           onClose={() => setNotifDetail(null)}
-          onGo={(target) => { setNotifDetail(null); setPage(target); }}
+          onGo={(target) => {
+            const it = notifDetail;
+            setNotifDetail(null);
+            if (target === 'history') openSalesHistory({ status: 'all', range: 'all', orderId: it.orderId });
+            else setPage(target);
+          }}
         />
       )}
 
@@ -5020,6 +5987,332 @@ body, html {
 .nd-product-img img { width: 100%; height: 100%; object-fit: cover; }
 .nd-product-name { font-size: 15px; font-weight: 700; color: var(--berry-text-dark); }
 @media (max-width: 600px) { .nd-grid { grid-template-columns: 1fr; } }
+/* ===== ประวัติการขาย (sh-*) ===== */
+.sh-filter-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.sh-range { display: inline-flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border-radius: 12px; background: var(--berry-paper); box-shadow: var(--shadow-sm); color: var(--berry-text-muted); }
+.sh-range button { padding: 7px 12px; border: none; border-radius: 9px; background: transparent; color: var(--berry-text-muted); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.15s ease; }
+.sh-range button:hover { color: var(--berry-text-dark); }
+.sh-range button.active { background: var(--berry-purple); color: #FFFFFF; box-shadow: 0 4px 10px rgba(255,114,76,0.3); }
+.sh-dates { margin: 0; }
+.sh-range-label { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--berry-text-muted); }
+
+.sh-list { display: flex; flex-direction: column; gap: 18px; }
+.sh-day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 4px 8px; }
+.sh-day-head strong { font-size: 14px; color: var(--berry-text-dark); }
+.sh-day-head span { font-size: 12.5px; font-weight: 600; color: var(--berry-text-muted); }
+.sh-day-card { overflow: hidden; background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 16px; box-shadow: var(--shadow-sm); }
+.sh-row { position: relative; width: 100%; display: grid; grid-template-columns: 52px 64px minmax(0, 1fr) 74px 96px 128px 20px; align-items: center; gap: 12px; padding: 14px 18px; border: none; border-bottom: 1px solid var(--berry-border); background: transparent; font-family: inherit; text-align: left; cursor: pointer; transition: background 0.15s ease; }
+.sh-row:last-child { border-bottom: none; }
+.sh-row:hover { background: #FFF8F5; }
+.sh-row:hover .sh-chevron { color: var(--berry-purple); transform: translateX(2px); }
+.sh-row::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
+.sh-row.status-done::before { background: var(--berry-green); }
+.sh-row.status-cancelled::before { background: var(--berry-red); }
+.sh-row.status-active::before { background: var(--berry-amber); }
+.sh-row.status-noshow::before { background: var(--berry-text-muted); }
+.sh-time { font-size: 13px; font-weight: 600; color: var(--berry-text-muted); font-variant-numeric: tabular-nums; }
+.sh-queue { justify-self: start; padding: 4px 9px; border-radius: 8px; background: var(--berry-purple-light); color: var(--berry-purple); font-size: 13px; font-weight: 700; letter-spacing: 0.3px; }
+.sh-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sh-who { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sh-order-id { font-size: 12px; font-weight: 500; color: var(--berry-text-muted); }
+.sh-items-text { font-size: 12.5px; color: var(--berry-text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sh-type { display: inline-flex; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+.sh-type.walkin { background: var(--berry-blue-light); color: var(--berry-blue); }
+.sh-type.online { background: var(--berry-green-light); color: var(--berry-green); }
+.sh-pay-method { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--berry-text-muted); }
+.sh-amount { justify-self: end; font-size: 15px; font-weight: 700; color: var(--berry-text-dark); font-variant-numeric: tabular-nums; }
+.sh-status { justify-self: end; }
+.sh-chevron { color: #C3C6D4; transition: all 0.15s ease; }
+.sh-more { align-self: center; padding: 10px 18px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-dark); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.sh-more:hover { border-color: var(--berry-purple); color: var(--berry-purple); }
+
+/* หน้าต่างรายละเอียดออเดอร์ */
+.sh-modal.mf-modal { max-width: 880px; }
+.sh-head { align-items: center; }
+.sh-queue-big { min-width: 74px; padding: 10px 12px; border-radius: 14px; background: linear-gradient(135deg, var(--berry-purple), var(--berry-purple-dark)); color: #FFFFFF; font-size: 20px; font-weight: 800; text-align: center; letter-spacing: 0.5px; box-shadow: 0 8px 18px rgba(255,114,76,0.3); }
+.sh-head-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.sh-body { background: #FBFBFD; }
+.sh-loading { display: grid; gap: 12px; }
+.sh-section { margin-bottom: 18px; }
+.sh-section .nd-card + .nd-card { margin-top: 8px; }
+.sh-people { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.sh-person { min-width: 0; padding: 12px; border: 1px solid var(--berry-border); border-radius: 14px; background: var(--berry-paper); }
+.sh-person.empty { background: transparent; border-style: dashed; }
+.sh-person-label { display: flex; align-items: center; gap: 5px; margin-bottom: 8px; font-size: 11.5px; font-weight: 700; color: var(--berry-text-muted); }
+.sh-person-label svg { color: var(--berry-purple); }
+.sh-person-body { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.sh-person-body .sf-avatar { box-shadow: none; }
+.sh-person-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 700; line-height: 1.3; color: var(--berry-text-dark); word-break: break-word; }
+.sh-person-time { display: flex; align-items: center; gap: 3px; margin-top: 1px; font-size: 11px; color: var(--berry-text-muted); }
+.sh-person-sub { font-size: 11.5px; color: var(--berry-text-muted); }
+.sh-person-sub a { color: var(--berry-text-muted); text-decoration: none; }
+.sh-person-sub a:hover { color: var(--berry-purple); }
+.sh-person-extra { margin-top: 2px; font-size: 11px; font-weight: 600; color: var(--berry-green); }
+.sh-person-empty { font-size: 12px; color: var(--berry-text-muted); font-style: italic; }
+.sh-system-avatar { width: 36px; height: 36px; min-width: 36px; display: grid; place-items: center; border-radius: 50%; background: var(--berry-blue-light); color: var(--berry-blue); }
+.sh-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.sh-stats > div { padding: 10px 12px; border-radius: 12px; background: var(--berry-blue-light); }
+.sh-stats strong { display: block; font-size: 15px; color: var(--berry-text-dark); }
+.sh-stats span { font-size: 11.5px; color: var(--berry-text-muted); }
+
+.sh-items { margin: 0; padding: 0; list-style: none; }
+.sh-items li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px dashed var(--berry-border); }
+.sh-items li:last-child { border-bottom: none; }
+.sh-items li.replaced { opacity: 0.6; }
+.sh-items li.replaced .sh-item-name > b, .sh-items li.replaced .sh-item-price { text-decoration: line-through; }
+.sh-item-img { width: 40px; height: 40px; min-width: 40px; display: grid; place-items: center; overflow: hidden; border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); }
+.sh-item-img img { width: 100%; height: 100%; object-fit: cover; }
+.sh-item-name { flex: 1; min-width: 0; font-size: 13.5px; color: var(--berry-text-dark); }
+.sh-item-name b { font-weight: 600; color: var(--berry-text-muted); }
+.sh-item-name small { display: block; font-size: 11.5px; color: var(--berry-text-muted); }
+.sh-item-name small.sh-swap { color: var(--berry-green); font-weight: 600; }
+.sh-item-price { font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sh-note { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: var(--berry-amber-light); color: #8A5A00; font-size: 12.5px; }
+.sh-total { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--berry-border); font-size: 14px; }
+.sh-total b { font-size: 17px; color: var(--berry-text-dark); }
+.sh-cancel-reason { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: var(--berry-red-light); color: var(--berry-red); font-size: 12.5px; font-weight: 600; }
+
+.sh-pay { display: flex; gap: 12px; align-items: flex-start; }
+.sh-slip { width: 64px; height: 84px; min-width: 64px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); }
+.sh-slip img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s ease; }
+.sh-slip:hover img { transform: scale(1.06); }
+.sh-slip.none { height: 64px; }
+.sh-pay-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.sh-pay-head strong { font-size: 14px; color: var(--berry-text-dark); }
+.sh-pay-sub { margin-top: 3px; font-size: 12.5px; color: var(--berry-text-muted); line-height: 1.5; }
+.sh-pay-sub b { color: var(--berry-text-dark); font-weight: 600; }
+.sh-pay-reject { margin-top: 6px; padding: 6px 9px; border-radius: 8px; background: var(--berry-red-light); color: var(--berry-red); font-size: 12px; }
+.sh-row-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sh-row-card strong { font-size: 13.5px; color: var(--berry-text-dark); }
+
+.sh-timeline { position: relative; margin: 0; padding: 4px 0 0 22px; list-style: none; }
+.sh-timeline::before { content: ''; position: absolute; left: 6px; top: 10px; bottom: 10px; width: 2px; background: var(--berry-border); }
+.sh-timeline li { position: relative; padding: 0 0 14px; }
+.sh-timeline li:last-child { padding-bottom: 0; }
+.sh-timeline .dot { position: absolute; left: -22px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--berry-paper); border: 3px solid var(--berry-amber); }
+.sh-timeline li.tone-success .dot { border-color: var(--berry-green); }
+.sh-timeline li.tone-danger .dot { border-color: var(--berry-red); }
+.sh-timeline li.tone-primary .dot { border-color: var(--berry-blue); }
+.sh-timeline li.tone-neutral .dot { border-color: var(--berry-text-muted); }
+.sh-timeline li:last-child .dot { box-shadow: 0 0 0 4px var(--berry-purple-light); }
+.sh-tl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.sh-tl-head strong { font-size: 13.5px; color: var(--berry-text-dark); }
+.sh-tl-head span { font-size: 12px; color: var(--berry-text-muted); }
+.sh-tl-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; font-size: 12.5px; color: var(--berry-text-muted); }
+.sh-tl-sub b { color: var(--berry-text-dark); font-weight: 600; }
+.sh-gap { padding: 1px 7px; border-radius: 999px; background: var(--berry-blue-light); font-size: 11px; font-weight: 600; }
+.sh-tl-reason { margin-top: 4px; padding: 6px 9px; border-radius: 8px; background: var(--berry-bg); font-size: 12px; color: var(--berry-text-dark); }
+.sh-stars span { color: #D7DAE5; font-size: 16px; }
+.sh-stars span.on { color: #F5B301; }
+.sh-prints { margin: 0; padding: 0; list-style: none; }
+.sh-prints li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 13px; border-bottom: 1px dashed var(--berry-border); }
+.sh-prints li:last-child { border-bottom: none; }
+
+@media (max-width: 1100px) {
+  .sh-row { grid-template-columns: 48px 60px minmax(0, 1fr) 90px 120px 18px; }
+  .sh-pay-method { display: none; }
+  .sh-people { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .sh-filter-bar { gap: 8px; }
+  .sh-range { width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px; }
+  .sh-range > svg { display: none; }
+  .sh-range button { padding: 8px 2px; font-size: 12.5px; }
+  .sh-dates { width: 100%; }
+  .sh-range-label { margin-left: 4px; }
+  /* แท็บหลายอัน (ประวัติการขาย / พนักงาน) ตัดบรรทัดได้ ไม่ดันหน้าให้กว้างเกินจอ */
+  .mm-wrap-tabs { padding: 10px; }
+  .mm-wrap-tabs .mm-tabs { flex-wrap: wrap; }
+  .mm-wrap-tabs .mm-tab { flex: 1 1 auto; padding: 7px 8px; }
+  .mm-wrap-tabs .mm-search { flex-basis: 100%; }
+  .sh-row { grid-template-columns: 56px minmax(0, 1fr) auto; grid-template-areas: "queue main amount" "time main status"; row-gap: 4px; padding: 12px 14px; }
+  .sh-queue { grid-area: queue; }
+  .sh-time { grid-area: time; font-size: 12px; }
+  .sh-main { grid-area: main; }
+  .sh-amount { grid-area: amount; }
+  .sh-status { grid-area: status; }
+  .sh-chevron { display: none; }
+  .sh-people { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sh-stats { gap: 6px; }
+  .sh-stats > div { padding: 8px 10px; }
+  .sh-stats strong { font-size: 13px; }
+  .sh-stats span { font-size: 10.5px; }
+  .sh-queue-big { min-width: 60px; font-size: 17px; padding: 8px; }
+}
+@media (max-width: 600px) {
+  .sh-overlay { padding: 0; }
+  .sh-modal.mf-modal { width: 100%; max-width: 100%; height: 100%; max-height: 100dvh; border-radius: 0; }
+  .sh-modal .mf-head { padding: 14px 16px 12px; gap: 10px; }
+  .sh-modal .mf-head h3 { font-size: 17px; }
+  .sh-modal .mf-body { padding: 14px 14px 8px; }
+  .sh-modal .mf-footer { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); }
+  .sh-section { margin-bottom: 16px; }
+  .sh-people { gap: 6px; }
+  .sh-person { padding: 10px; }
+  .sh-tl-head { flex-direction: column; gap: 1px; }
+  .sh-tl-head span { font-size: 11.5px; }
+  .sh-pay { gap: 10px; }
+  .sh-slip { width: 54px; height: 70px; min-width: 54px; }
+  .sh-items li { gap: 8px; }
+}
+/* ===== รีวิวจากลูกค้า (rv-*) ===== */
+.rv-stars { display: inline-flex; gap: 1px; line-height: 1; letter-spacing: 0; }
+.rv-star { position: relative; color: #DADDE7; }
+.rv-star-fill { position: absolute; left: 0; top: 0; overflow: hidden; color: #F5B301; white-space: nowrap; }
+.rv-privacy { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding: 10px 14px; border-radius: 12px; background: var(--berry-blue-light); color: var(--berry-text-muted); font-size: 12.5px; }
+.rv-privacy svg { color: var(--berry-green); flex-shrink: 0; }
+
+.rv-overview { display: grid; grid-template-columns: 200px minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; padding: 20px; background: var(--berry-paper); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.rv-score { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding-right: 16px; border-right: 1px solid var(--berry-border); }
+.rv-score-big { font-size: 52px; font-weight: 800; line-height: 1; color: var(--berry-text-dark); }
+.rv-score-sub { font-size: 12.5px; color: var(--berry-text-muted); }
+.rv-bars { display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.rv-bar { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 10px; padding: 4px 8px; border: none; border-radius: 8px; background: transparent; font-family: inherit; cursor: pointer; transition: background 0.15s ease; }
+.rv-bar:hover, .rv-bar.active { background: var(--berry-bg); }
+.rv-bar.active .rv-bar-label { color: var(--berry-purple); }
+.rv-bar-label { font-size: 12.5px; font-weight: 700; color: var(--berry-text-dark); text-align: left; }
+.rv-bar-track { height: 9px; border-radius: 999px; background: var(--berry-blue-light); overflow: hidden; }
+.rv-bar-fill { display: block; height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+.rv-bar-fill.tone-green { background: var(--berry-green); }
+.rv-bar-fill.tone-amber { background: var(--berry-amber); }
+.rv-bar-fill.tone-red { background: var(--berry-red); }
+.rv-bar-count { font-size: 12px; font-weight: 600; color: var(--berry-text-muted); text-align: right; }
+.rv-insights { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rv-insight { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--berry-bg); }
+.rv-insight .icon { width: 32px; height: 32px; min-width: 32px; display: grid; place-items: center; border-radius: 9px; }
+.rv-insight.tone-green .icon { background: var(--berry-green-light); color: var(--berry-green); }
+.rv-insight.tone-red .icon { background: var(--berry-red-light); color: var(--berry-red); }
+.rv-insight.tone-blue .icon { background: var(--berry-blue-light); color: var(--berry-blue); }
+.rv-insight.tone-orange .icon { background: var(--berry-purple-light); color: var(--berry-purple); }
+.rv-insight.tone-amber .icon { background: var(--berry-amber-light); color: var(--berry-amber); }
+.rv-insight strong { display: block; font-size: 17px; color: var(--berry-text-dark); line-height: 1.2; }
+.rv-insight span { display: block; font-size: 11.5px; color: var(--berry-text-muted); }
+.rv-insight em { display: block; margin-top: 2px; font-size: 11px; font-style: normal; font-weight: 600; color: var(--berry-text-muted); }
+.rv-insight.tone-green em { color: var(--berry-green); }
+.rv-insight.tone-red em { color: var(--berry-red); }
+
+.rv-menu-card { margin-bottom: 16px; padding: 16px 18px; background: var(--berry-paper); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.rv-hint { margin-left: 4px; font-size: 11.5px; font-weight: 500; color: var(--berry-text-muted); }
+.rv-menu-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.rv-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--berry-border); border-radius: 12px; background: var(--berry-paper); font-family: inherit; text-align: left; cursor: pointer; transition: all 0.15s ease; }
+.rv-menu-item:hover { border-color: var(--berry-purple); background: #FFF8F5; }
+.rv-menu-text { min-width: 0; }
+.rv-menu-text strong { display: block; font-size: 13px; color: var(--berry-text-dark); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rv-menu-text > span { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--berry-text-muted); }
+
+.rv-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rv-chip { display: inline-flex; align-items: center; gap: 5px; height: 36px; padding: 0 12px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-muted); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.rv-chip.active { border-color: var(--berry-purple); background: var(--berry-purple-light); color: var(--berry-purple); }
+
+.rv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.rv-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 18px; background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 16px; box-shadow: var(--shadow-sm); overflow: hidden; animation: berryFadeIn 0.25s ease-out; }
+.rv-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.rv-card.tone-green::before { background: var(--berry-green); }
+.rv-card.tone-amber::before { background: var(--berry-amber); }
+.rv-card.tone-red::before { background: var(--berry-red); }
+.rv-card-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.rv-card-head .sf-avatar { box-shadow: none; }
+.rv-who { flex: 1; min-width: 0; }
+.rv-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14.5px; font-weight: 700; color: var(--berry-text-dark); }
+.rv-regular { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 999px; background: var(--berry-amber-light); color: #B7791F; font-size: 11px; font-weight: 700; }
+.rv-sub { margin-top: 2px; font-size: 12px; color: var(--berry-text-muted); }
+.rv-rating { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.rv-rating-label { font-size: 11.5px; font-weight: 700; }
+.rv-rating-label.tone-green { color: var(--berry-green); }
+.rv-rating-label.tone-amber { color: #B7791F; }
+.rv-rating-label.tone-red { color: var(--berry-red); }
+.rv-body { display: flex; gap: 12px; align-items: flex-start; }
+.rv-comment { flex: 1; margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--berry-bg); font-size: 14px; line-height: 1.6; color: var(--berry-text-dark); white-space: pre-wrap; word-break: break-word; }
+.rv-comment.empty { background: transparent; padding: 4px 0; color: var(--berry-text-muted); font-size: 13px; font-style: italic; }
+.rv-photo { position: relative; width: 88px; height: 88px; min-width: 88px; padding: 0; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 12px; background: var(--berry-bg); cursor: zoom-in; }
+.rv-photo img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s ease; }
+.rv-photo:hover img { transform: scale(1.06); }
+.rv-photo span { position: absolute; left: 4px; bottom: 4px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 999px; background: rgba(29,31,47,0.65); color: #FFFFFF; font-size: 10.5px; font-weight: 600; }
+.rv-order { margin-top: auto; padding-top: 10px; border-top: 1px dashed var(--berry-border); }
+.rv-order-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--berry-text-muted); }
+.rv-queue { font-weight: 700; color: var(--berry-purple); }
+.rv-time { margin-left: auto; }
+.rv-items { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.rv-item { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 3px; border-radius: 999px; background: var(--berry-bg); font-size: 12px; color: var(--berry-text-dark); }
+.rv-item-img { width: 22px; height: 22px; min-width: 22px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: var(--berry-paper); color: var(--berry-text-muted); }
+.rv-item-img img { width: 100%; height: 100%; object-fit: cover; }
+.rv-item-img.lg { width: 40px; height: 40px; min-width: 40px; border-radius: 10px; background: var(--berry-bg); }
+
+.rv-lightbox { position: fixed; inset: 0; z-index: 10050; display: grid; place-items: center; padding: 24px; background: rgba(15,16,26,0.82); animation: berryFadeIn 0.18s ease-out; cursor: zoom-out; }
+.rv-lightbox img { max-width: min(92vw, 900px); max-height: 86vh; border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.45); cursor: default; }
+.rv-lightbox-close { position: absolute; top: 16px; right: 16px; width: 42px; height: 42px; display: grid; place-items: center; border: none; border-radius: 50%; background: rgba(255,255,255,0.15); color: #FFFFFF; cursor: pointer; }
+.rv-lightbox-close:hover { background: rgba(255,255,255,0.28); }
+
+@media (max-width: 1100px) {
+  .rv-overview { grid-template-columns: 170px minmax(0, 1fr); }
+  .rv-insights { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .rv-overview { grid-template-columns: 1fr; padding: 16px; }
+  .rv-score { padding: 0 0 12px; border-right: none; border-bottom: 1px solid var(--berry-border); }
+  .rv-score-big { font-size: 44px; }
+  .rv-insights { grid-template-columns: 1fr 1fr; }
+  .rv-grid { grid-template-columns: 1fr; }
+  .rv-card { padding: 14px; }
+  .rv-photo { width: 72px; height: 72px; min-width: 72px; }
+  .rv-chips { width: 100%; }
+  .rv-chips .mm-select { margin-left: auto; }
+  .rv-time { margin-left: 0; }
+}
+/* ===== รายงานปัญหา (is-*) ===== */
+.is-type-icon { width: 38px; height: 38px; min-width: 38px; display: grid; place-items: center; border-radius: 11px; }
+.is-type-icon.tone-red { background: var(--berry-red-light); color: var(--berry-red); }
+.is-type-icon.tone-amber { background: var(--berry-amber-light); color: var(--berry-amber); }
+.is-type-icon.tone-green { background: var(--berry-green-light); color: var(--berry-green); }
+.is-type-icon.tone-neutral { background: var(--berry-blue-light); color: var(--berry-text-muted); }
+.is-types { display: grid; gap: 4px; }
+.is-type-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 110px; align-items: center; gap: 12px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
+.is-type-row:hover, .is-type-row.active { background: var(--berry-bg); }
+.is-type-row.active .is-type-name { color: var(--berry-purple); }
+.is-type-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.is-type-name svg { color: var(--berry-text-muted); flex-shrink: 0; }
+.is-type-count { font-size: 12.5px; font-weight: 700; color: var(--berry-text-dark); text-align: right; }
+.is-type-count em { font-style: normal; font-weight: 600; color: var(--berry-red); }
+
+.is-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 18px; background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 16px; box-shadow: var(--shadow-sm); overflow: hidden; animation: berryFadeIn 0.25s ease-out; }
+.is-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.is-card.tone-red::before { background: var(--berry-red); }
+.is-card.tone-amber::before { background: var(--berry-amber); }
+.is-card.tone-green::before { background: var(--berry-green); }
+.is-card.tone-neutral::before { background: #C3C6D4; }
+.is-card.stale { border-color: rgba(226,69,47,0.4); }
+.is-card-head { display: flex; align-items: flex-start; gap: 12px; }
+.is-title { flex: 1; min-width: 0; }
+.is-title strong { display: block; font-size: 15px; color: var(--berry-text-dark); }
+.is-title span { font-size: 12px; color: var(--berry-text-muted); }
+.is-head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.is-stale { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; color: var(--berry-red); }
+.is-reporter { display: flex; align-items: center; gap: 10px; }
+.is-reporter .sf-avatar { box-shadow: none; }
+.is-reporter-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13.5px; font-weight: 700; color: var(--berry-text-dark); }
+.is-reporter-sub { font-size: 11.5px; color: var(--berry-text-muted); }
+.is-quote { margin: 0; padding: 12px 14px; border-left: 3px solid var(--berry-red); border-radius: 0 12px 12px 0; background: #FFF7F5; font-size: 14px; line-height: 1.6; color: var(--berry-text-dark); white-space: pre-wrap; word-break: break-word; }
+.is-quote.small { margin-bottom: 14px; font-size: 13px; }
+.is-order { padding: 10px 12px; border: 1px dashed var(--berry-border); border-radius: 12px; }
+.is-order.none { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--berry-text-muted); }
+.is-order-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--berry-text-muted); }
+.is-order-status { padding: 0 8px; border-radius: 999px; background: var(--berry-blue-light); font-weight: 600; }
+.is-ready { display: inline-flex; align-items: center; gap: 3px; }
+.is-ready.hl { color: var(--berry-red); font-weight: 700; }
+.is-reply { padding: 10px 12px; border-radius: 12px; background: var(--berry-bg); font-size: 13px; line-height: 1.5; color: var(--berry-text-dark); }
+.is-reply.tone-green { background: var(--berry-green-light); }
+.is-reply-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 3px; font-size: 11.5px; font-weight: 700; color: var(--berry-text-muted); }
+.is-reply-time { margin-top: 4px; font-size: 11.5px; color: var(--berry-text-muted); }
+.is-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
+.is-actions .sf-act { flex: 1 1 auto; }
+.is-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.is-quick-btn { padding: 5px 10px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-dark); font-family: inherit; font-size: 12px; cursor: pointer; text-align: left; }
+.is-quick-btn:hover:not(:disabled) { border-color: var(--berry-purple); color: var(--berry-purple); }
+@media (max-width: 700px) {
+  .is-type-row { grid-template-columns: minmax(0, 1fr) 70px; }
+  .is-type-row .rv-bar-track { display: none; }
+  .is-card { padding: 14px; }
+}
 .mf-btn.danger { background: var(--berry-red); color: #FFFFFF; border: 1px solid var(--berry-red); box-shadow: 0 6px 16px rgba(226,69,47,0.28); }
 .mf-btn.danger:hover:not(:disabled) { background: #C93A26; }
 .mf-btn.danger:disabled { background: #F0A79B; border-color: #F0A79B; box-shadow: none; opacity: 1; }

@@ -127,13 +127,20 @@ def test_unknown_status_rejected():
         state.plan_status_change("PENDING", "", "STORE_OWNER")
 
 
-def test_no_show_needs_15_minutes():
+def test_no_show_needs_30_minutes():
     now = datetime(2026, 1, 1, 12, 0, 0)
     with pytest.raises(DomainError):
         state.assert_no_show_allowed(None, now)
     with pytest.raises(DomainError):
-        state.assert_no_show_allowed(now - timedelta(minutes=14, seconds=59), now)
-    state.assert_no_show_allowed(now - timedelta(minutes=15), now)
+        state.assert_no_show_allowed(now - timedelta(minutes=29, seconds=59), now)
+    state.assert_no_show_allowed(now - timedelta(minutes=30), now)
+
+
+def test_reminder_comes_before_no_show_unlock():
+    """ลูกค้าต้องได้รับเตือนก่อนที่พนักงานจะตัดคิวได้ (ไม่งั้นไม่มีเวลาตอบสนอง)"""
+    import config
+    assert config.PICKUP_REMINDER_MINUTES < config.NO_SHOW_AFTER_MINUTES
+    assert (config.PICKUP_REMINDER_MINUTES, config.NO_SHOW_AFTER_MINUTES) == (15, 30)
 
 
 def test_legacy_names_round_trip():

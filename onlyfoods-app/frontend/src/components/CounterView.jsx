@@ -78,7 +78,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [printerStatus, setPrinterStatus] = useState('READY'); // READY | OFFLINE (Mock)
   const [pendingPrintJobs, setPendingPrintJobs] = useState([]);
   const [printConfirmOrder, setPrintConfirmOrder] = useState(null); // { order, type }
-  const [recallBusy, setRecallBusy] = useState({});
   const [printBusy, setPrintBusy] = useState(false);
   const dateKey = (d) => {
     const x = new Date(d);
@@ -88,8 +87,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [historyDate, setHistoryDate] = useState(() => dateKey(Date.now()));
   const autoPromptedJobsRef = useRef(new Set()); // job ที่เด้ง popup อัตโนมัติไปแล้ว (ปิดแล้วไม่เด้งซ้ำ ยังกดจากแถบเหลืองได้)
   const [noShowModal, setNoShowModal] = useState(null);
-  const NO_SHOW_WARNING_MINUTES = 15;
-  const NO_SHOW_MANUAL_REMINDER_MINUTES = 120;
+  // อาหารพร้อมรับแล้วลูกค้ายังไม่มา: 15 นาที = ระบบเตือนลูกค้าเอง + ป้ายให้พนักงานโทรตาม ;
+  // 30 นาที = ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (พนักงานกดเองเสมอ กันกรณีลูกค้าแจ้งว่าจะมาช้า)
+  const PICKUP_WARNING_MINUTES = 15;
+  const NO_SHOW_UNLOCK_MINUTES = 30;
 
   // 🔴 Modal ยกเลิกคำสั่งซื้อแบบใหม่
   const [cancelModal, setCancelModal] = useState(null); // { order, actionType: 'immediate' | 'window' }
@@ -346,33 +347,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }
   };
 
-  const recallQueue = async (order) => {
-    if (recallBusy[order.OrderID]) return;
-    setRecallBusy(prev => ({ ...prev, [order.OrderID]: true }));
-    try {
-      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/recall`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queue_no: order.QueueNo, user_role: 'Front Staff' })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToast(apiErr(res, data, 'ไม่สามารถเรียกคิวซ้ำได้'));
-        return;
-      }
-      showToast(`📢 เรียกคิว ${order.QueueNo} อีกครั้ง`);
-      fetchData();
-    } catch {
-      showToast('ไม่สามารถเชื่อมต่อระบบเรียกคิว');
-    } finally {
-      setRecallBusy(prev => ({ ...prev, [order.OrderID]: false }));
-    }
-  };
-
   const openNoShowModal = (order) => {
     const minutes = order.ReadyAt ? (nowTick - new Date(order.ReadyAt).getTime()) / 60000 : 0;
-    if (minutes < NO_SHOW_WARNING_MINUTES) {
-      showToast(`คิว ${order.QueueNo} ยังไม่ถึง ${NO_SHOW_WARNING_MINUTES} นาที`);
+    if (minutes < NO_SHOW_UNLOCK_MINUTES) {
+      showToast(`คิว ${order.QueueNo} ยังไม่ถึง ${NO_SHOW_UNLOCK_MINUTES} นาที`);
       return;
     }
     setNoShowModal(order);
@@ -543,8 +521,23 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
 
   const minutesWaiting = (timestamp) => timestamp ? Math.max(0, (nowTick - new Date(timestamp).getTime()) / 60000) : 0;
-  const isPickupWarning = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_WARNING_MINUTES;
-  const is120Reminder = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_MANUAL_REMINDER_MINUTES;
+  const isPickupWarning = (timestamp) => minutesWaiting(timestamp) >= PICKUP_WARNING_MINUTES;
+  const canMarkNoShow = (timestamp) => minutesWaiting(timestamp) >= NO_SHOW_UNLOCK_MINUTES;
+  const fmtPhone = (p) => {
+    const d = String(p || '').replace(/\D/g, '');
+    return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : (p || '');
+  };
+  // ข้อความบอกสถานะการเตือนลูกค้าบนป้าย ต้องไม่อ้างว่าเตือนแล้วถ้าไม่ได้เตือนจริง:
+  //  - เตือนจริงเกิดหลัง ReadyAt อย่างน้อย PICKUP_WARNING_MINUTES เสมอ ; ค่าที่ migration ใส่ไว้ให้ออเดอร์เก่า = ReadyAt (ห่าง 0)
+  //  - ยังไม่มีเวลาเตือนและเพิ่งครบเวลาไม่นาน = backend กำลังจะส่ง ; ค้างนานกว่านั้น = ระบบจะไม่ส่งแล้ว
+  const reminderNote = (o) => {
+    const at = o.PickupReminderAt ? new Date(o.PickupReminderAt).getTime() : null;
+    const ready = o.ReadyAt ? new Date(o.ReadyAt).getTime() : null;
+    if (at && ready && at - ready >= (PICKUP_WARNING_MINUTES * 60 - 5) * 1000) return `ระบบเตือนลูกค้าแล้วเมื่อ ${fmtClock(o.PickupReminderAt)} น.`;
+    if (!at && minutesWaiting(o.ReadyAt) < PICKUP_WARNING_MINUTES + 2) return 'กำลังส่งแจ้งเตือนลูกค้า...';
+    return 'ระบบไม่ได้ส่งแจ้งเตือนออเดอร์นี้ — โทรตามได้เลย';
+  };
+  const fmtClock = (ts) => ts ? new Date(ts).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
 
   // สลิปที่รอตรวจ: ค่าอาหาร (Verifying_Slip) + ส่วนต่างที่ลูกค้าแนบมาแล้ว (Awaiting_Top_Up ที่มี TopUpSlipUrl)
   const isTopUpSlip = (o) => o.Status === 'Awaiting_Top_Up' && Boolean(o.TopUpSlipUrl);
@@ -816,11 +809,24 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                 <Badge tone={getStatusBadgeTone(o.Status)}>{getStatusLabel(o.Status)}</Badge>
                                 {o.Status === 'Ready' && (
                                   <div style={{ marginTop: '6px' }}>
-                                    <Badge tone={is120Reminder(o.ReadyAt) ? 'danger' : isPickupWarning(o.ReadyAt) ? 'warning' : 'neutral'}>
+                                    <Badge tone={canMarkNoShow(o.ReadyAt) ? 'danger' : isPickupWarning(o.ReadyAt) ? 'warning' : 'neutral'}>
                                       รอมาแล้ว {getElapsedLabel(o.ReadyAt)}
-                                      {isPickupWarning(o.ReadyAt) && !is120Reminder(o.ReadyAt) ? ' ⚠️ ยังไม่มารับ' : ''}
-                                      {is120Reminder(o.ReadyAt) ? ' ⏰ เกิน 120 นาที' : ''}
                                     </Badge>
+                                    {isPickupWarning(o.ReadyAt) && (
+                                      <div className="pickup-warning" role="alert">
+                                        {isWalkInOrder(o) ? (
+                                          <>⚠️ ครบ {PICKUP_WARNING_MINUTES} นาทียังไม่มารับ<br />ลูกค้า Walk-in: เรียกด้วยเสียงหน้าร้าน</>
+                                        ) : (
+                                          <>
+                                            ⚠️ ครบ {PICKUP_WARNING_MINUTES} นาทียังไม่มารับ — โทรหาลูกค้า<br />
+                                            <b className="pickup-phone">{o.CustomerPhone ? fmtPhone(o.CustomerPhone) : 'ไม่มีเบอร์โทรในระบบ'}</b>
+                                            <span className="pickup-sub">
+                                              {reminderNote(o)}
+                                            </span>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                                 {isPendingCancel && (
@@ -833,21 +839,18 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                 <div className="cv-action-buttons">
                                   {o.Status === 'Ready' && (
                                     <>
-                                      <button onClick={() => recallQueue(o)} className="cv-btn btn-warning-light" disabled={recallBusy[o.OrderID]}>
-                                        📢 {recallBusy[o.OrderID] ? 'กำลังเรียก...' : 'เรียกคิวอีกครั้ง'}
-                                      </button>
                                       <button onClick={() => updateStatus(o.OrderID, 'Completed')} className="cv-btn btn-success">
                                         ✅ ส่งมอบอาหาร
                                       </button>
                                       <button
                                         onClick={() => openNoShowModal(o)}
-                                        disabled={!isPickupWarning(o.ReadyAt)}
+                                        disabled={!canMarkNoShow(o.ReadyAt)}
                                         className="cv-btn btn-danger"
-                                        title="กดได้เมื่อเกิน 15 นาทีหลังอาหารเสร็จ"
+                                        title={`กดได้เมื่อเกิน ${NO_SHOW_UNLOCK_MINUTES} นาทีหลังอาหารเสร็จ (พนักงานตัดสินใจเอง ระบบไม่ตัดให้)`}
                                       >
-                                        🚫 {isPickupWarning(o.ReadyAt)
+                                        🚫 {canMarkNoShow(o.ReadyAt)
                                           ? 'ลูกค้าไม่มารับอาหาร'
-                                          : `ลูกค้าไม่มารับ (อีก ${(() => { const r = Math.max(0, Math.ceil(NO_SHOW_WARNING_MINUTES * 60 - minutesWaiting(o.ReadyAt) * 60)); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}`; })()})`}
+                                          : `ลูกค้าไม่มารับ (อีก ${(() => { const r = Math.max(0, Math.ceil(NO_SHOW_UNLOCK_MINUTES * 60 - minutesWaiting(o.ReadyAt) * 60)); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, '0')}`; })()})`}
                                       </button>
                                     </>
                                   )}
@@ -1147,7 +1150,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div className="info-row"><span>อีเมล</span><b>{noShowModal.CustomerEmail || '-'}</b></div>
               <div className="info-row"><span>รอมาแล้ว</span><b>{getElapsedLabel(noShowModal.ReadyAt)}</b></div>
             </div>
-            <p style={{ marginTop: 14, color: PALETTE.textSub, fontSize: 13 }}>สามารถเรียกคิวซ้ำได้ตลอดเวลา หากยังไม่แน่ใจว่าไม่มารับอาหาร ไม่จำเป็นต้องตัดคิวทันที</p>
+            <p style={{ marginTop: 14, color: PALETTE.textSub, fontSize: 13 }}>ระบบเตือนลูกค้าให้แล้ว แนะนำให้โทรยืนยันก่อนตัดคิว หากลูกค้าแจ้งว่าจะมารับช้า ไม่ต้องตัดคิว (ตัดคิวแล้วไม่คืนเงิน)</p>
             <div className="modal-footer-btns">
               <button onClick={() => setNoShowModal(null)} className="cv-btn btn-ghost">ยกเลิก</button>
               <button onClick={confirmNoShow} className="cv-btn btn-danger">ยืนยัน ลูกค้าไม่มารับ</button>
@@ -1632,6 +1635,9 @@ const CV_STYLES = `
 .cv-modal-head h3 { margin: 0; font-size: 18px; font-weight: 600; color: ${PALETTE.dark}; }
 .cv-modal-head .caption { font-size: 12px; color: ${PALETTE.textSub}; margin-top: 2px; }
 .cv-modal-close { background: none; border: none; font-size: 16px; cursor: pointer; color: ${PALETTE.textSub}; }
+.pickup-warning { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: #FFF4E5; border: 1px solid #F5B461; color: #8A4B00; font-size: 12px; font-weight: 600; line-height: 1.5; max-width: 260px; }
+.pickup-warning .pickup-phone { display: block; font-size: 18px; letter-spacing: .5px; color: #B45309; user-select: all; }
+.pickup-warning .pickup-sub { display: block; font-size: 11px; font-weight: 500; color: #9A6B2F; }
 .slip-history { margin-bottom: 16px; }
 .slip-history-item { display: inline-flex; align-items: center; gap: 8px; margin: 6px 12px 0 0; font-size: 12px; color: inherit; text-decoration: none; }
 .slip-history-item img { width: 42px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid ${PALETTE.border}; }

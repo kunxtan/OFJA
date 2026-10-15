@@ -62,6 +62,18 @@ def test_email_rules():
             utils.validate_email(bad)
 
 
+def test_mask_person_name():
+    assert utils.mask_person_name("คุณ ยูฟ่า (ลูกค้า VIP)") == "ยู***"
+    assert utils.mask_person_name("สมหมาย ใจดี") == "สม*** จ."
+    assert utils.mask_person_name("นางสาว มะลิ หอมกรุ่น") == "มะ*** ห."
+    assert utils.mask_person_name("John Smith") == "Jo*** S."
+    assert utils.mask_person_name("Al") == "A***"
+    for empty in (None, "", "   ", "คุณ", "(VIP)"):
+        assert utils.mask_person_name(empty) == "ลูกค้า"
+    full = "สมหมาย ใจดี"
+    assert "สมหมาย" not in utils.mask_person_name(full) and "ใจดี" not in utils.mask_person_name(full)
+
+
 def test_masking():
     assert utils.mask_email("user1001@example.test") == "u***@example.test"
     assert utils.mask_phone("0812345678") == "081****678"

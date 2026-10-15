@@ -118,7 +118,7 @@ def assert_role_can_set(role: str, new: str) -> None:
         raise DomainError(403, "บทบาทของคุณไม่มีสิทธิ์เปลี่ยนเป็นสถานะนี้")
 
 
-def assert_no_show_allowed(ready_at: Optional[datetime], now: datetime, minutes: int = 15) -> None:
+def assert_no_show_allowed(ready_at: Optional[datetime], now: datetime, minutes: int = 30) -> None:
     if ready_at is None or now - ready_at < timedelta(minutes=minutes):
         raise DomainError(400, f"ออเดอร์นี้ยังไม่ถึง {minutes} นาทีหลังเรียกคิว")
 
