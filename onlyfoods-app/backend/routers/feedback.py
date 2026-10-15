@@ -1,13 +1,18 @@
 """รีวิวร้าน + รายงานปัญหา"""
+import hashlib
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends
 
+import config
 import state
 from auth import STORE_SCOPED, assert_store_access, get_current_user, require_role
 from db import get_db, transaction
 from errors import DomainError
 from schemas import CreateIssueReportSchema, ReviewCreateSchema
 from services import is_duplicate_key, log_audit, send_notif
-from utils import clean_text, queue_label, save_image
+from shapes import in_clause
+from utils import bangkok_now, clean_text, mask_person_name, queue_label, save_image
 
 router = APIRouter(prefix="/api", tags=["feedback"])
 
@@ -50,16 +55,35 @@ _REVIEW_COLS = """
 """
 
 
+def _rating_summary(cur, store_id: int) -> dict:
+    cur.execute(
+        """
+        SELECT COUNT(*) AS total, AVG(r.Rating) AS avg_rating,
+               SUM(r.Rating = 5) AS star5, SUM(r.Rating = 4) AS star4, SUM(r.Rating = 3) AS star3,
+               SUM(r.Rating = 2) AS star2, SUM(r.Rating = 1) AS star1
+        FROM Review r JOIN `Order` o ON o.OrderId = r.OrderId WHERE o.StoreId = %s
+        """,
+        (store_id,),
+    )
+    agg = cur.fetchone() or {}
+    return {
+        "total": int(agg.get("total") or 0),
+        "average": round(float(agg["avg_rating"]), 2) if agg.get("avg_rating") is not None else 0.0,
+        "breakdown": {str(n): int(agg.get(f"star{n}") or 0) for n in (5, 4, 3, 2, 1)},
+    }
+
+
 @router.get("/stores/{store_id}/reviews")
 def get_store_reviews(store_id: int, db=Depends(get_db)):
-    """เปิดสาธารณะ (ลูกค้าดูรีวิวก่อนสั่ง)"""
+    """เปิดสาธารณะ (ลูกค้าดูรีวิวก่อนสั่ง) : ชื่อคนรีวิวแบบย่อ และไม่ส่งรหัสลูกค้า/เลขออเดอร์ออกไป
+    (เดิมส่งชื่อจริงเต็ม + UserId ให้ใครก็ได้โดยไม่ต้องล็อกอิน)"""
     with db.cursor() as cur:
         cur.execute("SELECT 1 FROM Store WHERE StoreId = %s", (store_id,))
         if not cur.fetchone():
             raise DomainError(404, "ไม่พบร้านค้านี้")
         cur.execute(
-            f"""
-            SELECT {_REVIEW_COLS}, u.FullName AS ReviewerName
+            """
+            SELECT r.ReviewId, o.StoreId, r.Rating, r.Comment, r.ImageUrl, r.CreatedAt, u.FullName
             FROM Review r JOIN `Order` o ON o.OrderId = r.OrderId
             LEFT JOIN `User` u ON u.UserId = o.CustomerId
             WHERE o.StoreId = %s ORDER BY r.CreatedAt DESC, r.ReviewId DESC
@@ -67,25 +91,99 @@ def get_store_reviews(store_id: int, db=Depends(get_db)):
             (store_id,),
         )
         reviews = cur.fetchall()
+        summary = _rating_summary(cur, store_id)
+    for r in reviews:
+        r["ReviewerName"] = mask_person_name(r.pop("FullName"))
+    return {"reviews": reviews, "summary": summary}
+
+
+def _reviewer_key(store_id: int, customer_id) -> str:
+    """รหัสนิรนามของลูกค้า (คงที่ภายในร้านเดียว) : รู้ว่ารีวิวหลายอันมาจากคนเดียวกันได้ โดยไม่เห็นตัวตน"""
+    raw = f"{config.JWT_SECRET}:{store_id}:{customer_id}".encode()
+    return hashlib.sha256(raw).hexdigest()[:8]
+
+
+@router.get("/stores/{store_id}/reviews/detail")
+def get_store_reviews_detail(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")),
+                             db=Depends(get_db)):
+    """รีวิวแบบละเอียดสำหรับเจ้าของร้าน: เมนูที่สั่ง, คิว, ยอด, ลูกค้าเคยสั่งร้านนี้กี่ครั้ง, สถิติ, คะแนนรายเมนู
+
+    ความเป็นส่วนตัวของคนรีวิว: ชื่อแบบย่อเท่านั้น, ไม่มีเบอร์/อีเมล/UserId ; ใช้รหัสนิรนาม (ReviewerKey) แทน
+    """
+    if user["RoleCode"] in STORE_SCOPED:
+        assert_store_access(user, store_id)
+    now = bangkok_now()
+    with db.cursor() as cur:
+        cur.execute("SELECT QueueCode FROM Store WHERE StoreId = %s", (store_id,))
+        store = cur.fetchone()
+        if not store:
+            raise DomainError(404, "ไม่พบร้านค้านี้")
         cur.execute(
             """
-            SELECT COUNT(*) AS total, AVG(r.Rating) AS avg_rating,
-                   SUM(r.Rating = 5) AS star5, SUM(r.Rating = 4) AS star4, SUM(r.Rating = 3) AS star3,
-                   SUM(r.Rating = 2) AS star2, SUM(r.Rating = 1) AS star1
-            FROM Review r JOIN `Order` o ON o.OrderId = r.OrderId WHERE o.StoreId = %s
+            SELECT r.ReviewId, r.Rating, r.Comment, r.ImageUrl, r.CreatedAt,
+                   o.OrderId, o.QueueNo, o.TotalAmount, o.CreatedAt AS OrderedAt, o.CustomerId, u.FullName,
+                   (SELECT COUNT(*) FROM `Order` o2 JOIN OrderStatus os2 ON os2.StatusId = o2.StatusId
+                     WHERE o2.StoreId = o.StoreId AND o2.CustomerId = o.CustomerId
+                       AND os2.StatusCode IN ('COMPLETED', 'NO_SHOW')) AS Visits
+            FROM Review r JOIN `Order` o ON o.OrderId = r.OrderId
+            LEFT JOIN `User` u ON u.UserId = o.CustomerId
+            WHERE o.StoreId = %s ORDER BY r.CreatedAt DESC, r.ReviewId DESC
             """,
             (store_id,),
         )
-        agg = cur.fetchone() or {}
-    avg = round(float(agg["avg_rating"]), 2) if agg.get("avg_rating") is not None else 0.0
-    return {
-        "reviews": reviews,
-        "summary": {
-            "total": int(agg.get("total") or 0),
-            "average": avg,
-            "breakdown": {str(n): int(agg.get(f"star{n}") or 0) for n in (5, 4, 3, 2, 1)},
-        },
-    }
+        rows = cur.fetchall()
+        items_by_order = {}
+        if rows:
+            ids = [r["OrderId"] for r in rows]
+            cur.execute(
+                f"""
+                SELECT oi.OrderId, oi.ProductId, p.ProductName, p.ImageUrl, oi.Qty
+                FROM OrderItem oi JOIN Product p ON p.ProductId = oi.ProductId
+                WHERE oi.OrderId IN ({in_clause(ids)}) AND oi.ItemStatus <> 'REPLACED'
+                ORDER BY oi.OrderItemId
+                """,
+                ids,
+            )
+            for it in cur.fetchall():
+                items_by_order.setdefault(it.pop("OrderId"), []).append(it)
+        summary = _rating_summary(cur, store_id)
+
+    reviews, per_reviewer, menu = [], {}, {}
+    for r in rows:
+        key = _reviewer_key(store_id, r["CustomerId"])
+        per_reviewer[key] = per_reviewer.get(key, 0) + 1
+        items = items_by_order.get(r["OrderId"], [])
+        for it in items:
+            m = menu.setdefault(it["ProductId"], {"ProductId": it["ProductId"], "ProductName": it["ProductName"],
+                                                  "ImageUrl": it["ImageUrl"], "count": 0, "sum": 0})
+            m["count"] += 1
+            m["sum"] += r["Rating"]
+        reviews.append({
+            "ReviewId": r["ReviewId"], "Rating": r["Rating"], "Comment": r["Comment"], "ImageUrl": r["ImageUrl"],
+            "CreatedAt": r["CreatedAt"], "ReviewerName": mask_person_name(r["FullName"]), "ReviewerKey": key,
+            "Visits": int(r["Visits"] or 0), "OrderId": r["OrderId"],
+            "QueueNo": queue_label(r["QueueNo"], store["QueueCode"]), "OrderedAt": r["OrderedAt"],
+            "TotalAmount": float(r["TotalAmount"] or 0), "items": items,
+        })
+    for rv in reviews:
+        rv["ReviewerReviewCount"] = per_reviewer[rv["ReviewerKey"]]
+
+    def window_avg(start_days: int, end_days: int):
+        hit = [rv["Rating"] for rv in reviews if now - timedelta(days=start_days) <= rv["CreatedAt"] < now - timedelta(days=end_days)]
+        return {"count": len(hit), "average": round(sum(hit) / len(hit), 2) if hit else None}
+
+    summary.update({
+        "with_comment": sum(1 for rv in reviews if (rv["Comment"] or "").strip()),
+        "with_photo": sum(1 for rv in reviews if rv["ImageUrl"]),
+        "positive": sum(1 for rv in reviews if rv["Rating"] >= 4),
+        "last30": window_avg(30, 0),
+        "prev30": window_avg(60, 30),
+    })
+    menu_rows = sorted(
+        ({**{k: v for k, v in m.items() if k != "sum"}, "average": round(m["sum"] / m["count"], 2)} for m in menu.values()),
+        key=lambda m: (-m["count"], -m["average"]),
+    )
+    return {"reviews": reviews, "summary": summary, "menu": menu_rows}
 
 
 @router.get("/executive/customers/{user_id}/reviews")

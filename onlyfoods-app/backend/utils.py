@@ -105,6 +105,25 @@ def validate_email(email: Optional[str]) -> Optional[str]:
     return email
 
 
+_NAME_TITLES = {"คุณ", "นาย", "นาง", "นางสาว", "น.ส.", "ด.ช.", "ด.ญ.", "mr", "mrs", "ms", "miss", "dr"}
+_THAI_LEADING_VOWELS = "เแโใไ"
+
+
+def mask_person_name(name: Optional[str]) -> str:
+    """ชื่อคนรีวิวแบบย่อ (ไม่ระบุตัวตน): 'คุณ สมหมาย ใจดี' -> 'สม*** จ.' ; 'ยูฟ่า (ลูกค้า VIP)' -> 'ยู***'
+    ตัดคำนำหน้า/ข้อความในวงเล็บ ; นามสกุลเหลือตัวอักษรแรก (ข้ามสระหน้า เ แ โ ใ ไ)"""
+    text = re.sub(r"\(.*?\)", " ", name or "")
+    parts = [p for p in text.split() if p.lower() not in _NAME_TITLES and p.lower().rstrip(".") not in _NAME_TITLES]
+    if not parts:
+        return "ลูกค้า"
+    first = parts[0]
+    masked = (first[:2] if len(first) > 2 else first[:1]) + "***"
+    if len(parts) > 1:
+        last = parts[-1].lstrip(_THAI_LEADING_VOWELS) or parts[-1]
+        masked += f" {last[0]}."
+    return masked
+
+
 def mask_email(email: Optional[str]) -> Optional[str]:
     if email and "@" in email:
         name, domain = email.split("@", 1)

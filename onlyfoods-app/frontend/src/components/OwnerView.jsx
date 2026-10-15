@@ -2268,6 +2268,97 @@ function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
   );
 }
 
+/* ============================================================
+   รีวิวจากลูกค้า (rv-*)
+   ============================================================ */
+const RATING_LABEL = { 5: 'ยอดเยี่ยม', 4: 'ดี', 3: 'พอใช้', 2: 'ควรปรับปรุง', 1: 'แย่' };
+const RATING_TONE = { 5: 'green', 4: 'green', 3: 'amber', 2: 'red', 1: 'red' };
+
+function Stars({ value, size = 16 }) {
+  const v = Math.max(0, Math.min(5, Number(value) || 0));
+  return (
+    <span className="rv-stars" style={{ fontSize: size }} aria-label={`${v.toFixed(1)} จาก 5 ดาว`}>
+      {[1, 2, 3, 4, 5].map(n => {
+        const fill = Math.max(0, Math.min(1, v - (n - 1)));
+        return (
+          <span key={n} className="rv-star">
+            ★<span className="rv-star-fill" style={{ width: `${fill * 100}%` }}>★</span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// รูปรีวิวขนาดเต็ม
+function ReviewPhotoLightbox({ src, onClose }) {
+  useEscapeToClose(onClose, false);
+  return (
+    <div className="rv-lightbox" onClick={onClose} role="dialog" aria-modal="true" aria-label="รูปจากรีวิว">
+      <img src={src} alt="รูปจากรีวิว" onClick={e => e.stopPropagation()} />
+      <button type="button" className="rv-lightbox-close" onClick={onClose} aria-label="ปิด"><Icon name="close" size={20} /></button>
+    </div>
+  );
+}
+
+function ReviewCard({ review, onPhoto }) {
+  const r = review;
+  const keyNum = parseInt(String(r.ReviewerKey || '0').slice(0, 6), 16) || 0;
+  const comment = (r.Comment || '').trim();
+  return (
+    <article className={`rv-card tone-${RATING_TONE[r.Rating]}`}>
+      <header className="rv-card-head">
+        <StaffAvatar name={r.ReviewerName} id={keyNum} size={42} />
+        <div className="rv-who">
+          <div className="rv-name">
+            {r.ReviewerName}
+            {r.Visits >= 3 && <span className="rv-regular" title={`สั่งร้านนี้สำเร็จ ${r.Visits} ครั้ง`}><Icon name="award" size={12} /> ลูกค้าประจำ</span>}
+          </div>
+          <div className="rv-sub">
+            สั่งร้านนี้ {fmtMoney(r.Visits)} ครั้ง
+            {r.ReviewerReviewCount > 1 && <> · รีวิว {r.ReviewerReviewCount} ครั้ง</>}
+          </div>
+        </div>
+        <div className="rv-rating">
+          <Stars value={r.Rating} size={15} />
+          <span className={`rv-rating-label tone-${RATING_TONE[r.Rating]}`}>{RATING_LABEL[r.Rating]}</span>
+        </div>
+      </header>
+
+      <div className="rv-body">
+        {comment
+          ? <p className="rv-comment">{comment}</p>
+          : <p className="rv-comment empty">ลูกค้าให้คะแนนโดยไม่ได้เขียนความเห็น</p>}
+        {r.ImageUrl && (
+          <button type="button" className="rv-photo" onClick={() => onPhoto(r.ImageUrl)} aria-label="ดูรูปขนาดเต็ม">
+            <img src={r.ImageUrl} alt="รูปจากรีวิว" />
+            <span><Icon name="photo" size={13} /> ดูรูป</span>
+          </button>
+        )}
+      </div>
+
+      <footer className="rv-order">
+        <div className="rv-order-meta">
+          <span className="rv-queue">คิว {r.QueueNo}</span>
+          <span>สั่งเมื่อ {thaiDateTime(r.OrderedAt)}</span>
+          <span>฿{fmtMoney(r.TotalAmount)}</span>
+          <span className="rv-time" title={thaiDateTime(r.CreatedAt, true)}>รีวิว {timeAgo(r.CreatedAt)}</span>
+        </div>
+        {r.items?.length > 0 && (
+          <div className="rv-items">
+            {r.items.map((it, i) => (
+              <span key={`${it.ProductId}-${i}`} className="rv-item">
+                <span className="rv-item-img">{it.ImageUrl ? <img src={it.ImageUrl} alt="" /> : <Icon name="photo" size={11} />}</span>
+                {it.ProductName} ×{it.Qty}
+              </span>
+            ))}
+          </div>
+        )}
+      </footer>
+    </article>
+  );
+}
+
 export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!document.getElementById('berry-font-link')) {
@@ -2290,7 +2381,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [foodCourtHours, setFoodCourtHours] = useState(null); // { open: '08:00', close: '20:00' }
   // โหลดข้อมูลครั้งแรกเสร็จหรือยัง (ใช้แสดง skeleton แทนเลข 0)
-  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false });
+  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false, reviews: false });
   const markLoaded = (key) => setLoaded(prev => (prev[key] ? prev : { ...prev, [key]: true }));
   // หน้าเมนู: การเรียง + โหมดเลือกหลายเมนู
   const [menuSort, setMenuSort] = useState('default');
@@ -2387,6 +2478,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   // --- Filter States ---
   const [reviewFilter, setReviewFilter] = useState('all');
+  const [reviewOnly, setReviewOnly] = useState(null); // null | comment | photo
+  const [reviewSort, setReviewSort] = useState('new'); // new | low | high
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [reviewPhoto, setReviewPhoto] = useState(null); // รูปที่เปิดดูขนาดเต็ม
   const [issueFilter, setIssueFilter] = useState('all');
 
   useEffect(() => {
@@ -2420,7 +2515,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         }
       })
       .catch(err => console.error(err));
-    fetch(`${apiBase}/api/stores/${storeId}/reviews`).then(r => r.json()).then(d => setReviewsData(d)).catch(err => console.error(err));
+    fetch(`${apiBase}/api/stores/${storeId}/reviews/detail`).then(r => r.json()).then(d => { if (d && Array.isArray(d.reviews)) { setReviewsData(d); markLoaded('reviews'); } }).catch(err => console.error(err));
     fetch(`${apiBase}/api/reports/issue/store/${storeId}`).then(r => r.json()).then(d => setIssues(Array.isArray(d) ? d : [])).catch(err => console.error(err));
     
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
@@ -2863,8 +2958,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     document.getElementById('owner-contract')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const getReviewCount = (star) => (reviewsData.reviews || []).filter(r => String(r.Rating) === String(star)).length;
-  const filteredReviews = reviewFilter === 'all' ? (reviewsData.reviews || []) : (reviewsData.reviews || []).filter(r => String(r.Rating) === reviewFilter);
   
   const issueTypes = [...new Set(issues.map(i => i.IssueType))].filter(Boolean);
   const getIssueCount = (type) => issues.filter(i => i.IssueType === type).length;
@@ -3979,62 +4072,147 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             );
           })()}
 
-          {page === 'reviews' && (
-            <>
-            <PageHeader title="รีวิวจากลูกค้า" subtitle="คะแนนและความคิดเห็นที่ลูกค้าให้ร้านของคุณ" icon="star">
-              <div className="op-rating-chip">
-                <span className="star">★</span>
-                <strong>{reviewsData.summary?.average?.toFixed(1) || '0.0'}</strong>
-                <span>/ 5 · {fmtMoney((reviewsData.reviews || []).length)} รีวิว</span>
-              </div>
-            </PageHeader>
-            <div className="berry-card">
-              {/* ปุ่มกรองคะแนน */}
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '0 0 16px', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', color: 'var(--berry-text-muted)', marginRight: '4px' }}>กรองคะแนน:</span>
-                <button 
-                  onClick={() => setReviewFilter('all')} 
-                  className={`berry-period-btn ${reviewFilter === 'all' ? 'active' : ''}`} 
-                  style={{ border: reviewFilter === 'all' ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                >
-                  ทั้งหมด ({(reviewsData.reviews || []).length})
-                </button>
-                {[5, 4, 3, 2, 1].map(star => (
-                  <button 
-                    key={star} 
-                    onClick={() => setReviewFilter(String(star))} 
-                    className={`berry-period-btn ${reviewFilter === String(star) ? 'active' : ''}`} 
-                    style={{ border: reviewFilter === String(star) ? '1px solid var(--berry-purple)' : '1px solid var(--berry-border)', borderRadius: '20px', padding: '6px 14px' }}
-                  >
-                    {star} ★ ({getReviewCount(star)})
-                  </button>
-                ))}
-              </div>
+          {page === 'reviews' && (() => {
+            const all = reviewsData.reviews || [];
+            const sm = reviewsData.summary || {};
+            const total = sm.total || 0;
+            const breakdown = sm.breakdown || {};
+            const last30 = sm.last30 || {};
+            const prev30 = sm.prev30 || {};
+            const trend = last30.average != null && prev30.average != null ? last30.average - prev30.average : null;
+            const q = reviewSearch.trim().toLowerCase();
+            const shown = all
+              .filter(r => reviewFilter === 'all' || String(r.Rating) === reviewFilter)
+              .filter(r => reviewOnly !== 'comment' || (r.Comment || '').trim())
+              .filter(r => reviewOnly !== 'photo' || r.ImageUrl)
+              .filter(r => !q || (r.Comment || '').toLowerCase().includes(q)
+                || (r.items || []).some(i => String(i.ProductName || '').toLowerCase().includes(q))
+                || String(r.QueueNo || '').toLowerCase().includes(q))
+              .sort((a, b) => (reviewSort === 'low' ? a.Rating - b.Rating : reviewSort === 'high' ? b.Rating - a.Rating : 0)
+                || (parseOrderDate(b.CreatedAt)?.getTime() || 0) - (parseOrderDate(a.CreatedAt)?.getTime() || 0));
+            const menu = reviewsData.menu || [];
+            const insights = [
+              {
+                icon: 'trend', tone: trend == null ? 'blue' : trend >= 0 ? 'green' : 'red',
+                value: last30.average != null ? last30.average.toFixed(1) : '—',
+                label: `เฉลี่ย 30 วันล่าสุด (${fmtMoney(last30.count || 0)} รีวิว)`,
+                sub: trend == null ? 'ยังไม่มีข้อมูลเทียบช่วงก่อน' : `${trend >= 0 ? '▲' : '▼'} ${Math.abs(trend).toFixed(1)} จาก 30 วันก่อนหน้า`,
+              },
+              { icon: 'award', tone: 'green', value: total ? `${Math.round(((sm.positive || 0) / total) * 100)}%` : '—', label: 'รีวิวดี (4–5 ดาว)' },
+              { icon: 'edit', tone: 'orange', value: fmtMoney(sm.with_comment || 0), label: 'รีวิวที่มีความเห็น' },
+              { icon: 'photo', tone: 'amber', value: fmtMoney(sm.with_photo || 0), label: 'รีวิวที่มีรูป' },
+            ];
+            return (
+              <>
+                <PageHeader title="รีวิวจากลูกค้า" subtitle="คะแนน ความเห็น และเมนูที่ลูกค้ารีวิว" icon="star">
+                  <div className="op-rating-chip">
+                    <span className="star">★</span>
+                    <strong>{(sm.average || 0).toFixed(1)}</strong>
+                    <span>/ 5 · {fmtMoney(total)} รีวิว</span>
+                  </div>
+                </PageHeader>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-                {filteredReviews.length === 0 ? (
-                  <div className="empty-state">ไม่มีรีวิวในหมวดหมู่นี้</div>
-                ) : (
-                  filteredReviews.map(r => (
-                    <div key={r.ReviewId} style={{ padding: '16px 0', borderBottom: '1px solid var(--berry-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontWeight: '600', fontSize: '14px', color: 'var(--berry-text-dark)' }}>
-                        {r.ReviewerName || "P'1"}
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมลของคนรีวิว</div>
+
+                <div className="rv-overview">
+                  <section className="rv-score">
+                    <div className="rv-score-big">{(sm.average || 0).toFixed(1)}</div>
+                    <Stars value={sm.average || 0} size={22} />
+                    <div className="rv-score-sub">จาก {fmtMoney(total)} รีวิว</div>
+                  </section>
+                  <section className="rv-bars" aria-label="จำนวนรีวิวแยกตามดาว">
+                    {[5, 4, 3, 2, 1].map(n => {
+                      const c = breakdown[String(n)] || 0;
+                      const pct = total ? Math.round((c / total) * 100) : 0;
+                      const active = reviewFilter === String(n);
+                      return (
+                        <button key={n} type="button" className={`rv-bar ${active ? 'active' : ''}`}
+                          onClick={() => setReviewFilter(active ? 'all' : String(n))} title={active ? 'แสดงทั้งหมด' : `กรองเฉพาะ ${n} ดาว`}>
+                          <span className="rv-bar-label">{n} ★</span>
+                          <span className="rv-bar-track"><span className={`rv-bar-fill tone-${RATING_TONE[n]}`} style={{ width: `${pct}%` }} /></span>
+                          <span className="rv-bar-count">{fmtMoney(c)}</span>
+                        </button>
+                      );
+                    })}
+                  </section>
+                  <section className="rv-insights">
+                    {insights.map(it => (
+                      <div key={it.label} className={`rv-insight tone-${it.tone}`}>
+                        <span className="icon"><Icon name={it.icon} size={17} /></span>
+                        <div style={{ minWidth: 0 }}>
+                          <strong>{it.value}</strong>
+                          <span>{it.label}</span>
+                          {it.sub && <em>{it.sub}</em>}
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ color: 'var(--berry-amber)', fontSize: '16px', letterSpacing: '2px' }}>
-                          {'★'.repeat(r.Rating)}{'☆'.repeat(5 - r.Rating)}
-                        </span>
-                        <span style={{ color: 'var(--berry-text-muted)', fontSize: '12px' }}>
-                          {new Date(r.CreatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })} · {new Date(r.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
+                    ))}
+                  </section>
+                </div>
+
+                {menu.length > 0 && (
+                  <section className="rv-menu-card">
+                    <h4 className="sf-section-title"><Icon name="menu" size={16} /> คะแนนตามเมนู <span className="rv-hint">คำนวณจากคะแนนของออเดอร์ที่มีเมนูนั้น</span></h4>
+                    <div className="rv-menu-list">
+                      {menu.slice(0, 8).map(m => (
+                        <button key={m.ProductId} type="button" className="rv-menu-item" onClick={() => setReviewSearch(m.ProductName)} title="ดูรีวิวของเมนูนี้">
+                          <span className="rv-item-img lg">{m.ImageUrl ? <img src={m.ImageUrl} alt="" /> : <Icon name="photo" size={16} />}</span>
+                          <span className="rv-menu-text">
+                            <strong>{m.ProductName}</strong>
+                            <span><Stars value={m.average} size={12} /> {m.average.toFixed(1)} · {fmtMoney(m.count)} รีวิว</span>
+                          </span>
+                        </button>
+                      ))}
                     </div>
-                  ))
+                  </section>
                 )}
-              </div>
-            </div>
-            </>
-          )}
+
+                <div className="mm-toolbar mm-wrap-tabs">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองตามคะแนน">
+                    {['all', '5', '4', '3', '2', '1'].map(f => (
+                      <button key={f} type="button" role="tab" aria-selected={reviewFilter === f}
+                        className={`mm-tab ${reviewFilter === f ? 'active' : ''}`} onClick={() => setReviewFilter(f)}>
+                        {f === 'all' ? 'ทั้งหมด' : `${f} ★`}
+                        <span className="count">{f === 'all' ? total : (breakdown[f] || 0)}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rv-chips">
+                    {[{ id: 'comment', label: 'มีความเห็น', icon: 'edit' }, { id: 'photo', label: 'มีรูป', icon: 'photo' }].map(c => (
+                      <button key={c.id} type="button" className={`rv-chip ${reviewOnly === c.id ? 'active' : ''}`}
+                        onClick={() => setReviewOnly(reviewOnly === c.id ? null : c.id)}>
+                        <Icon name={c.icon} size={13} /> {c.label}
+                      </button>
+                    ))}
+                    <select className="mm-select" value={reviewSort} onChange={e => setReviewSort(e.target.value)} aria-label="เรียงรีวิว">
+                      <option value="new">ล่าสุดก่อน</option>
+                      <option value="low">คะแนนต่ำก่อน</option>
+                      <option value="high">คะแนนสูงก่อน</option>
+                    </select>
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} placeholder="ค้นหาในความเห็น ชื่อเมนู หรือเลขคิว..." aria-label="ค้นหารีวิว" />
+                    {reviewSearch && <button type="button" onClick={() => setReviewSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>}
+                  </div>
+                </div>
+
+                {!loaded.reviews ? (
+                  <div className="rv-grid">{[0, 1, 2, 3].map(i => <Skeleton key={i} height={210} radius={16} />)}</div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name="star" size={28} /></span>
+                    <h3>{total === 0 ? 'ยังไม่มีรีวิว' : 'ไม่มีรีวิวที่ตรงกับตัวกรอง'}</h3>
+                    <p>{total === 0 ? 'เมื่อลูกค้ารับอาหารแล้วรีวิวร้าน คะแนนและความเห็นจะแสดงที่นี่' : 'ลองเปลี่ยนตัวกรองคะแนน หรือล้างคำค้นหา'}</p>
+                  </div>
+                ) : (
+                  <div className="rv-grid">
+                    {shown.map(r => <ReviewCard key={r.ReviewId} review={r} onPhoto={setReviewPhoto} />)}
+                  </div>
+                )}
+                {reviewPhoto && <ReviewPhotoLightbox src={reviewPhoto} onClose={() => setReviewPhoto(null)} />}
+              </>
+            );
+          })()}
 
           {page === 'issues' && (
             <>
@@ -5688,6 +5866,110 @@ body, html {
   .sh-pay { gap: 10px; }
   .sh-slip { width: 54px; height: 70px; min-width: 54px; }
   .sh-items li { gap: 8px; }
+}
+/* ===== รีวิวจากลูกค้า (rv-*) ===== */
+.rv-stars { display: inline-flex; gap: 1px; line-height: 1; letter-spacing: 0; }
+.rv-star { position: relative; color: #DADDE7; }
+.rv-star-fill { position: absolute; left: 0; top: 0; overflow: hidden; color: #F5B301; white-space: nowrap; }
+.rv-privacy { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding: 10px 14px; border-radius: 12px; background: var(--berry-blue-light); color: var(--berry-text-muted); font-size: 12.5px; }
+.rv-privacy svg { color: var(--berry-green); flex-shrink: 0; }
+
+.rv-overview { display: grid; grid-template-columns: 200px minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; padding: 20px; background: var(--berry-paper); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.rv-score { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding-right: 16px; border-right: 1px solid var(--berry-border); }
+.rv-score-big { font-size: 52px; font-weight: 800; line-height: 1; color: var(--berry-text-dark); }
+.rv-score-sub { font-size: 12.5px; color: var(--berry-text-muted); }
+.rv-bars { display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.rv-bar { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 10px; padding: 4px 8px; border: none; border-radius: 8px; background: transparent; font-family: inherit; cursor: pointer; transition: background 0.15s ease; }
+.rv-bar:hover, .rv-bar.active { background: var(--berry-bg); }
+.rv-bar.active .rv-bar-label { color: var(--berry-purple); }
+.rv-bar-label { font-size: 12.5px; font-weight: 700; color: var(--berry-text-dark); text-align: left; }
+.rv-bar-track { height: 9px; border-radius: 999px; background: var(--berry-blue-light); overflow: hidden; }
+.rv-bar-fill { display: block; height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+.rv-bar-fill.tone-green { background: var(--berry-green); }
+.rv-bar-fill.tone-amber { background: var(--berry-amber); }
+.rv-bar-fill.tone-red { background: var(--berry-red); }
+.rv-bar-count { font-size: 12px; font-weight: 600; color: var(--berry-text-muted); text-align: right; }
+.rv-insights { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rv-insight { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--berry-bg); }
+.rv-insight .icon { width: 32px; height: 32px; min-width: 32px; display: grid; place-items: center; border-radius: 9px; }
+.rv-insight.tone-green .icon { background: var(--berry-green-light); color: var(--berry-green); }
+.rv-insight.tone-red .icon { background: var(--berry-red-light); color: var(--berry-red); }
+.rv-insight.tone-blue .icon { background: var(--berry-blue-light); color: var(--berry-blue); }
+.rv-insight.tone-orange .icon { background: var(--berry-purple-light); color: var(--berry-purple); }
+.rv-insight.tone-amber .icon { background: var(--berry-amber-light); color: var(--berry-amber); }
+.rv-insight strong { display: block; font-size: 17px; color: var(--berry-text-dark); line-height: 1.2; }
+.rv-insight span { display: block; font-size: 11.5px; color: var(--berry-text-muted); }
+.rv-insight em { display: block; margin-top: 2px; font-size: 11px; font-style: normal; font-weight: 600; color: var(--berry-text-muted); }
+.rv-insight.tone-green em { color: var(--berry-green); }
+.rv-insight.tone-red em { color: var(--berry-red); }
+
+.rv-menu-card { margin-bottom: 16px; padding: 16px 18px; background: var(--berry-paper); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.rv-hint { margin-left: 4px; font-size: 11.5px; font-weight: 500; color: var(--berry-text-muted); }
+.rv-menu-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.rv-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--berry-border); border-radius: 12px; background: var(--berry-paper); font-family: inherit; text-align: left; cursor: pointer; transition: all 0.15s ease; }
+.rv-menu-item:hover { border-color: var(--berry-purple); background: #FFF8F5; }
+.rv-menu-text { min-width: 0; }
+.rv-menu-text strong { display: block; font-size: 13px; color: var(--berry-text-dark); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rv-menu-text > span { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--berry-text-muted); }
+
+.rv-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rv-chip { display: inline-flex; align-items: center; gap: 5px; height: 36px; padding: 0 12px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-muted); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.rv-chip.active { border-color: var(--berry-purple); background: var(--berry-purple-light); color: var(--berry-purple); }
+
+.rv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.rv-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 18px; background: var(--berry-paper); border: 1px solid var(--berry-border); border-radius: 16px; box-shadow: var(--shadow-sm); overflow: hidden; animation: berryFadeIn 0.25s ease-out; }
+.rv-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.rv-card.tone-green::before { background: var(--berry-green); }
+.rv-card.tone-amber::before { background: var(--berry-amber); }
+.rv-card.tone-red::before { background: var(--berry-red); }
+.rv-card-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.rv-card-head .sf-avatar { box-shadow: none; }
+.rv-who { flex: 1; min-width: 0; }
+.rv-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14.5px; font-weight: 700; color: var(--berry-text-dark); }
+.rv-regular { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 999px; background: var(--berry-amber-light); color: #B7791F; font-size: 11px; font-weight: 700; }
+.rv-sub { margin-top: 2px; font-size: 12px; color: var(--berry-text-muted); }
+.rv-rating { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.rv-rating-label { font-size: 11.5px; font-weight: 700; }
+.rv-rating-label.tone-green { color: var(--berry-green); }
+.rv-rating-label.tone-amber { color: #B7791F; }
+.rv-rating-label.tone-red { color: var(--berry-red); }
+.rv-body { display: flex; gap: 12px; align-items: flex-start; }
+.rv-comment { flex: 1; margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--berry-bg); font-size: 14px; line-height: 1.6; color: var(--berry-text-dark); white-space: pre-wrap; word-break: break-word; }
+.rv-comment.empty { background: transparent; padding: 4px 0; color: var(--berry-text-muted); font-size: 13px; font-style: italic; }
+.rv-photo { position: relative; width: 88px; height: 88px; min-width: 88px; padding: 0; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 12px; background: var(--berry-bg); cursor: zoom-in; }
+.rv-photo img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s ease; }
+.rv-photo:hover img { transform: scale(1.06); }
+.rv-photo span { position: absolute; left: 4px; bottom: 4px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 999px; background: rgba(29,31,47,0.65); color: #FFFFFF; font-size: 10.5px; font-weight: 600; }
+.rv-order { margin-top: auto; padding-top: 10px; border-top: 1px dashed var(--berry-border); }
+.rv-order-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--berry-text-muted); }
+.rv-queue { font-weight: 700; color: var(--berry-purple); }
+.rv-time { margin-left: auto; }
+.rv-items { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.rv-item { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 3px; border-radius: 999px; background: var(--berry-bg); font-size: 12px; color: var(--berry-text-dark); }
+.rv-item-img { width: 22px; height: 22px; min-width: 22px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: var(--berry-paper); color: var(--berry-text-muted); }
+.rv-item-img img { width: 100%; height: 100%; object-fit: cover; }
+.rv-item-img.lg { width: 40px; height: 40px; min-width: 40px; border-radius: 10px; background: var(--berry-bg); }
+
+.rv-lightbox { position: fixed; inset: 0; z-index: 10050; display: grid; place-items: center; padding: 24px; background: rgba(15,16,26,0.82); animation: berryFadeIn 0.18s ease-out; cursor: zoom-out; }
+.rv-lightbox img { max-width: min(92vw, 900px); max-height: 86vh; border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.45); cursor: default; }
+.rv-lightbox-close { position: absolute; top: 16px; right: 16px; width: 42px; height: 42px; display: grid; place-items: center; border: none; border-radius: 50%; background: rgba(255,255,255,0.15); color: #FFFFFF; cursor: pointer; }
+.rv-lightbox-close:hover { background: rgba(255,255,255,0.28); }
+
+@media (max-width: 1100px) {
+  .rv-overview { grid-template-columns: 170px minmax(0, 1fr); }
+  .rv-insights { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .rv-overview { grid-template-columns: 1fr; padding: 16px; }
+  .rv-score { padding: 0 0 12px; border-right: none; border-bottom: 1px solid var(--berry-border); }
+  .rv-score-big { font-size: 44px; }
+  .rv-insights { grid-template-columns: 1fr 1fr; }
+  .rv-grid { grid-template-columns: 1fr; }
+  .rv-card { padding: 14px; }
+  .rv-photo { width: 72px; height: 72px; min-width: 72px; }
+  .rv-chips { width: 100%; }
+  .rv-chips .mm-select { margin-left: auto; }
+  .rv-time { margin-left: 0; }
 }
 .mf-btn.danger { background: var(--berry-red); color: #FFFFFF; border: 1px solid var(--berry-red); box-shadow: 0 6px 16px rgba(226,69,47,0.28); }
 .mf-btn.danger:hover:not(:disabled) { background: #C93A26; }
