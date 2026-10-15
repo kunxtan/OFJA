@@ -11,6 +11,7 @@ onlyfoods-app/
 ├─ nginx.http-only.conf ใช้ชั่วคราวถ้ายังไม่มีใบรับรอง HTTPS
 ├─ .env.example         ตัวอย่างค่าลับ (คัดลอกเป็น .env)
 ├─ database/init.sql    schema ใหม่ 22 ตาราง 4 view + trigger กันแก้ log + ข้อมูล lookup
+│   ├─ migrations/      อัปเดต schema ของฐานที่มีข้อมูลแล้ว (deploy รันให้อัตโนมัติ)
 │   └─ optional/        02_seed_demo.sql (ข้อมูลทดลอง) · 03_migrate_from_old_db.sql (ย้ายข้อมูลจาก onlyfoods_db เดิม)
 ├─ backend/             FastAPI: main, config, db, auth, state, services, shapes, schemas, routers/, tools/, tests/
 └─ frontend/            React (แก้เฉพาะที่จำเป็น ดูหัวข้อ "สิ่งที่แก้ใน frontend")
@@ -40,6 +41,9 @@ sudo docker compose exec backend python -m tools.set_password --all-empty
 (ต้องสร้างโฟลเดอร์ `/var/www/certbot` ก่อน; ถ้าออกใบด้วย standalone ให้ใช้ `certbot renew` หลังหยุด proxy ชั่วคราว หรือออกใหม่ด้วย `--webroot`)
 
 ย้ายข้อมูลจากฐานเก่า: ดูหัวไฟล์ `database/optional/03_migrate_from_old_db.sql` (ใช้แทน 02 ไม่ใช่ทั้งคู่)
+
+**แก้ schema ของฐานที่มีข้อมูลแล้ว**: `init.sql` รันเฉพาะตอน volume ว่าง จึงต้องเพิ่มไฟล์ใน `database/migrations/` (ตั้งชื่อเรียงเลข `002_...sql`)
+ให้รันซ้ำได้และไม่ลบข้อมูล แล้วแก้ `init.sql` ให้ตรงกันด้วย ; workflow deploy รันทุกไฟล์ในโฟลเดอร์นี้ก่อนสตาร์ท backend ใหม่ทุกครั้ง
 
 ## ตัวแปรสภาพแวดล้อม (`.env`)
 | ตัวแปร | ความหมาย |
