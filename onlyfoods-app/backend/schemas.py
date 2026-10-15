@@ -186,6 +186,10 @@ class CustomerChangeItemSchema(BaseModel):
     new_product_id: int
 
 
+class PrintSkipSchema(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=200)
+
+
 class PrintRequestSchema(BaseModel):
     print_type: str = "FIRST_PRINT"
     printer: str = Field(default="MOCK_PRINTER_01", max_length=100)

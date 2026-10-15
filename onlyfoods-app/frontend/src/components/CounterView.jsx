@@ -77,8 +77,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
   // ===== Print / Recall / No-Show controls =====
   const [printerStatus, setPrinterStatus] = useState('READY'); // READY | OFFLINE (Mock)
   const [pendingPrintJobs, setPendingPrintJobs] = useState([]);
-  const [printConfirmOrder, setPrintConfirmOrder] = useState(null); // { order, type }
+  const [printConfirmOrder, setPrintConfirmOrder] = useState(null); // { order, type, job, error }
   const [printBusy, setPrintBusy] = useState(false);
+  const [stockModal, setStockModal] = useState(null); // { product, notifiable: [], silent: [] }
+  const [stockBusy, setStockBusy] = useState(false);
   const dateKey = (d) => {
     const x = new Date(d);
     if (isNaN(x)) return '';
@@ -112,7 +114,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     const order = orders.find(o => o.OrderID === job.OrderID);
     if (!order) return; // รอ orders โหลดก่อน
     autoPromptedJobsRef.current.add(job.PrintJobID);
-    openPrintConfirm(order, 'FIRST_PRINT');
+    openPrintConfirm(order, 'FIRST_PRINT', job);
   }, [pendingPrintJobs, orders, printConfirmOrder]);
 
   const showToast = (msg) => {
@@ -257,11 +259,13 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }).catch(() => showToast('เชื่อมต่อระบบออเดอร์ไม่สำเร็จ'));
   };
 
+  const printableItems = (order) => (order?.items || []).filter(i => !i.ItemStatus || i.ItemStatus === 'NORMAL');
+
   const buildPrintData = (order) => ({
     orderId: order.OrderID,
     queueNo: order.QueueNo,
     customerName: order.CustomerName || order.UserName || 'ลูกค้า Walk-in',
-    items: (order.items || []).map(item => ({
+    items: printableItems(order).map(item => ({
       productName: item.ProductName,
       qty: Number(item.Qty),
       unitPrice: Number(item.UnitPrice)
@@ -270,10 +274,14 @@ export default function CounterView({ user, apiBase, onLogout }) {
   });
 
   const validatePrintData = (order) => {
+    if (!order) return 'ไม่พบออเดอร์นี้ในรายการของร้าน (อาจจบไปแล้ว) — กด "ไม่ต้องพิมพ์ใบนี้" เพื่อปิดการแจ้งเตือน';
+    if (order.Status === 'Cancelled') return 'ออเดอร์นี้ถูกยกเลิกแล้ว';
+    if (order.Status === 'NoShow') return 'ออเดอร์นี้ถูกตัดเป็นลูกค้าไม่มารับแล้ว';
+    if (order.Status === 'Pending_Cancellation') return 'มีเมนูหมด กำลังรอลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิก';
     const data = buildPrintData(order);
     if (!data.orderId) return 'ไม่มี Order ID';
     if (!data.queueNo) return 'ไม่มีเลขคิว';
-    if (!data.items.length) return 'ไม่มีรายการอาหาร';
+    if (!data.items.length) return 'ไม่มีรายการอาหารที่พิมพ์ได้';
     if (data.items.some(i => !i.productName || i.qty <= 0 || i.unitPrice < 0)) return 'ข้อมูลเมนู จำนวน หรือราคาไม่ถูกต้อง';
     if (data.totalAmount < 0) return 'ราคารวมไม่ถูกต้อง';
     const sum = data.items.reduce((a, i) => a + i.qty * i.unitPrice, 0);
@@ -281,10 +289,36 @@ export default function CounterView({ user, apiBase, onLogout }) {
     return null;
   };
 
-  const openPrintConfirm = (order, type = 'FIRST_PRINT') => {
-    const error = validatePrintData(order);
-    if (error) return showToast(`ข้อมูลสำหรับพิมพ์ไม่ถูกต้อง: ${error}`);
-    setPrintConfirmOrder({ order, type });
+  const openPrintConfirm = (order, type = 'FIRST_PRINT', job = null) => {
+    const pj = job || (type === 'FIRST_PRINT' ? pendingPrintJobs.find(j => j.OrderID === order?.OrderID) : null);
+    setPrintConfirmOrder({ order, type, job: pj || null, error: validatePrintData(order) });
+  };
+  const setPrintError = (error) => setPrintConfirmOrder(prev => (prev ? { ...prev, error } : prev));
+
+  // หน้าร้านเลือกไม่พิมพ์ใบนี้ (เช่น ส่งมอบไปแล้ว/ข้อมูลผิด) : ปิดงานพิมพ์ แถบแจ้งเตือนหายไป ยังพิมพ์ซ้ำทีหลังได้
+  const skipPrintJob = async () => {
+    const job = printConfirmOrder?.job;
+    if (!job || printBusy) return;
+    setPrintBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/api/print-jobs/${job.PrintJobID}/skip`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: printConfirmOrder.error ? `ไม่พิมพ์: ${printConfirmOrder.error}`.slice(0, 200) : null })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 400) {
+        setPrintError(apiErr(res, data, 'ปิดงานพิมพ์ไม่สำเร็จ'));
+        return;
+      }
+      setPendingPrintJobs(prev => prev.filter(j => j.PrintJobID !== job.PrintJobID));
+      showToast(`ไม่พิมพ์ใบคิว ${job.QueueNo ?? ''} แล้ว`);
+      setPrintConfirmOrder(null);
+      fetchData();
+    } catch {
+      setPrintError('เชื่อมต่อระบบพิมพ์ไม่สำเร็จ');
+    } finally {
+      setPrintBusy(false);
+    }
   };
 
   const apiErr = (res, data, fallback) =>
@@ -296,12 +330,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
     if (!printConfirmOrder || printBusy) return;
     const { order, type } = printConfirmOrder;
     if (printerStatus !== 'READY') {
-      showToast('❌ เครื่องพิมพ์ไม่พร้อมใช้งาน');
+      setPrintError('เครื่องพิมพ์ OFFLINE — เปลี่ยนเป็น READY ที่แถบด้านบนก่อนพิมพ์');
       return;
     }
     const error = validatePrintData(order);
     if (error) {
-      showToast(`ข้อมูลสำหรับพิมพ์ไม่ถูกต้อง: ${error}`);
+      setPrintError(error);
       return;
     }
 
@@ -315,8 +349,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(apiErr(res, data, 'ไม่สามารถพิมพ์ใบสั่งซื้อได้'));
-        if (res.status === 409) { setPrintConfirmOrder(null); fetchData(); }
+        setPrintError(apiErr(res, data, 'ไม่สามารถพิมพ์ใบสั่งซื้อได้'));
+        fetchData();
         return;
       }
       const server = data.print_data;
@@ -341,7 +375,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
       setPrintConfirmOrder(null);
       fetchData();
     } catch {
-      showToast('ไม่สามารถเชื่อมต่อระบบพิมพ์ได้');
+      setPrintError('ไม่สามารถเชื่อมต่อระบบพิมพ์ได้ (เครือข่ายขัดข้อง) ลองใหม่อีกครั้ง');
     } finally {
       setPrintBusy(false);
     }
@@ -418,7 +452,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const markNoShow = openNoShowModal;
 
   const viewCustomerProfile = (order) => {
-    if (!order.UserId) return alert('ออเดอร์นี้เป็นลูกค้า Walk-in ไม่มีข้อมูลโปรไฟล์');
+    if (!order.UserId) return showToast('ออเดอร์นี้เป็นลูกค้า Walk-in ไม่มีข้อมูลโปรไฟล์');
     setViewingCustomer({ loading: true });
     fetch(`${apiBase}/api/customers/${order.UserId}`)
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
@@ -426,28 +460,55 @@ export default function CounterView({ user, apiBase, onLogout }) {
       .catch(() => setViewingCustomer({ error: true }));
   };
 
+  const setStockFlag = async (product) => {
+    const res = await fetch(`${apiBase}/api/products/${product.ProductId}/toggle-stock`, { method: 'PUT' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  };
+
   const toggleStock = (product) => {
     // การปิดเมนูเป็นการจัดการ stock ระดับเมนู ไม่ผูกกับออเดอร์ที่ทำเสร็จแล้ว
-
-    const turningOutOfStock = !product.IsOutOfStock;
-    if (turningOutOfStock) {
+    if (!product.IsOutOfStock) {
       const affected = orders.filter(o =>
-        o.Status !== 'Completed' && o.Status !== 'Cancelled' && o.Status !== 'NoShow' &&
-        o.items?.some(i => i.ProductId === product.ProductId)
+        !['Completed', 'Cancelled', 'NoShow'].includes(o.Status) &&
+        o.items?.some(i => i.ProductId === product.ProductId && (!i.ItemStatus || i.ItemStatus === 'NORMAL'))
       );
-      if (affected.length > 0) {
-        if (window.confirm(`เมนูนี้อยู่ใน ${affected.length} ออเดอร์ที่กำลังดำเนินงาน\nต้องการแจ้งเตือนลูกค้ากลุ่มนี้ด้วยหรือไม่?`)) {
-          fetch(`${apiBase}/api/products/${product.ProductId}/notify-out-of-stock`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ response_window_minutes: 30 })
-          }).catch(console.error);
-        }
-      }
+      // backend แจ้งเฉพาะออเดอร์ลูกค้าออนไลน์ที่ยังรอ/กำลังปรุง ; ที่เหลือแสดงให้พนักงานรู้เฉยๆ
+      const notifiable = affected.filter(o => ['Pending', 'Cooking'].includes(o.Status) && !isWalkInOrder(o));
+      const silent = affected.filter(o => !notifiable.includes(o));
+      setStockModal({ product, notifiable, silent });
+      return;
     }
-    fetch(`${apiBase}/api/products/${product.ProductId}/toggle-stock`, { method: 'PUT' }).then(() => {
-      showToast(`เปลี่ยนสถานะ "${product.ProductName}" แล้ว`);
+    setStockFlag(product)
+      .then(() => { showToast(`"${product.ProductName}" กลับมาขายแล้ว`); fetchData(); })
+      .catch(e => showToast(`เปลี่ยนสถานะไม่สำเร็จ: ${e.message}`));
+  };
+
+  const confirmOutOfStock = async (notify) => {
+    if (!stockModal || stockBusy) return;
+    const { product, notifiable } = stockModal;
+    setStockBusy(true);
+    try {
+      await setStockFlag(product);
+      let msg = `ปิดเมนู "${product.ProductName}" (ของหมด) แล้ว`;
+      if (notify && notifiable.length) {
+        const res = await fetch(`${apiBase}/api/products/${product.ProductId}/notify-out-of-stock`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ response_window_minutes: 30 })
+        });
+        const data = await res.json().catch(() => ({}));
+        msg = res.ok
+          ? `${msg} · แจ้งลูกค้า ${data.notified_count ?? 0} ออเดอร์ให้เปลี่ยนเมนูหรือยกเลิก`
+          : `${msg} แต่แจ้งลูกค้าไม่สำเร็จ: ${data.detail || `HTTP ${res.status}`}`;
+      }
+      showToast(msg);
+      setStockModal(null);
       fetchData();
-    });
+    } catch (e) {
+      showToast(`ปิดเมนูไม่สำเร็จ: ${e.message}`);
+    } finally {
+      setStockBusy(false);
+    }
   };
 
   const addToCart = (p) => setCart([...cart, { ...p, note: '' }]);
@@ -463,7 +524,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     if (!foodCourtOpen) return showToast('โรงอาหารปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้');
     if (currentStore?.IsSuspended) return showToast('ร้านถูกระงับการขายชั่วคราว');
     if (currentStore && !currentStore.IsOpen) return showToast('ร้านปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้');
-    if (cart.length === 0) return alert('กรุณาเลือกอาหารก่อนกดสั่งซื้อ');
+    if (cart.length === 0) return showToast('กรุณาเลือกอาหารก่อนกดสั่งซื้อ');
     fetch(`${apiBase}/api/orders`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -474,13 +535,13 @@ export default function CounterView({ user, apiBase, onLogout }) {
         note: orderNote || 'Walk-in'
       })
     }).then(async res => {
-      const data = await res.json();
-      if (!res.ok) alert(data.detail);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) showToast(`สั่งซื้อไม่สำเร็จ: ${data.detail || `HTTP ${res.status}`}`);
       else {
         showToast(`สั่งซื้อสำเร็จ! คิว: ${data.queue_no}`);
         setCart([]); setOrderNote(''); fetchData(); setActiveTab('orders');
       }
-    });
+    }).catch(() => showToast('เชื่อมต่อระบบสั่งซื้อไม่สำเร็จ'));
   };
 
   const getStatusBadgeTone = (status) => {
@@ -660,9 +721,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <small>อาหารปรุงเสร็จแล้วจากครัว กรุณาตรวจสอบข้อมูลบนตั๋วก่อนยืนยันการพิมพ์</small>
               </div>
               <button className="cv-btn btn-dark" onClick={() => {
-                const job = pendingPrintJobs[0];
-                const order = orders.find(o => o.OrderID === job.OrderID);
-                if (order) openPrintConfirm(order, 'FIRST_PRINT');
+                const job = pendingPrintJobs.find(j => orders.some(o => o.OrderID === j.OrderID)) || pendingPrintJobs[0];
+                openPrintConfirm(orders.find(o => o.OrderID === job.OrderID) || null, 'FIRST_PRINT', job);
               }}>ตรวจสอบและยืนยัน</button>
             </div>
           )}
@@ -1115,22 +1175,82 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div><h3>🖨️ ยืนยันการพิมพ์</h3><div className="caption">ตรวจข้อมูลสำคัญก่อนส่งไปยัง Mock Printer</div></div>
               <button onClick={() => setPrintConfirmOrder(null)} className="cv-modal-close">✖</button>
             </div>
-            <div className="print-ticket-preview">
-              <div><b>เลขคิว:</b> {printConfirmOrder.order.QueueNo}</div>
-              <div><b>ชื่อลูกค้า:</b> {printConfirmOrder.order.CustomerName || printConfirmOrder.order.UserName || 'ลูกค้า Walk-in'}</div>
-              <div className="receipt-divider" />
-              {(printConfirmOrder.order.items || []).map((i, idx) => (
-                <div className="receipt-item-row" key={idx}><span>{i.ProductName} × {i.Qty}</span><span>฿{fmtMoney(Number(i.UnitPrice) * Number(i.Qty))}</span></div>
-              ))}
-              <div className="receipt-divider" />
-              <div className="receipt-total-row"><span>รวม</span><span className="receipt-total-val">฿{fmtMoney(printConfirmOrder.order.TotalAmount)}</span></div>
-            </div>
+            {printConfirmOrder.order ? (
+              <div className="print-ticket-preview">
+                <div><b>เลขคิว:</b> {printConfirmOrder.order.QueueNo}</div>
+                <div><b>ชื่อลูกค้า:</b> {printConfirmOrder.order.CustomerName || printConfirmOrder.order.UserName || 'ลูกค้า Walk-in'}</div>
+                <div className="receipt-divider" />
+                {printableItems(printConfirmOrder.order).map((i, idx) => (
+                  <div className="receipt-item-row" key={idx}><span>{i.ProductName} × {i.Qty}</span><span>฿{fmtMoney(Number(i.UnitPrice) * Number(i.Qty))}</span></div>
+                ))}
+                <div className="receipt-divider" />
+                <div className="receipt-total-row"><span>รวม</span><span className="receipt-total-val">฿{fmtMoney(printConfirmOrder.order.TotalAmount)}</span></div>
+              </div>
+            ) : (
+              <div className="print-ticket-preview">
+                <div><b>เลขคิว:</b> {printConfirmOrder.job?.QueueNo}</div>
+                <div><b>ยอดรวม:</b> ฿{fmtMoney(printConfirmOrder.job?.TotalAmount)}</div>
+              </div>
+            )}
+            {printConfirmOrder.error && (
+              <div className="cv-print-error" role="alert">
+                <b>พิมพ์ไม่ได้</b>
+                <span>{printConfirmOrder.error}</span>
+              </div>
+            )}
             <div className={printerStatus === 'READY' ? 'cv-printer-ready' : 'cv-printer-offline'}>
               🖨️ สถานะเครื่องพิมพ์: <b>{printerStatus}</b>
+              {printerStatus !== 'READY' && <span> — เปลี่ยนเป็น READY ที่แถบ Mock Printer ด้านบนก่อนพิมพ์</span>}
             </div>
             <div className="modal-footer-btns">
-              <button onClick={() => setPrintConfirmOrder(null)} className="cv-btn btn-ghost">ยกเลิก</button>
-              <button onClick={confirmPrint} className="cv-btn btn-dark" disabled={printerStatus !== 'READY' || printBusy}>{printBusy ? 'กำลังพิมพ์...' : 'ยืนยันการพิมพ์'}</button>
+              {printConfirmOrder.job && (
+                <button onClick={skipPrintJob} className="cv-btn btn-ghost" disabled={printBusy}
+                  title="ปิดการแจ้งเตือนใบนี้ (พิมพ์ซ้ำทีหลังได้จากปุ่มเครื่องพิมพ์ในรายการออเดอร์)">
+                  ไม่ต้องพิมพ์ใบนี้
+                </button>
+              )}
+              <button onClick={() => setPrintConfirmOrder(null)} className="cv-btn btn-ghost">ปิด</button>
+              <button onClick={confirmPrint} className="cv-btn btn-dark"
+                disabled={!printConfirmOrder.order || printerStatus !== 'READY' || printBusy || Boolean(validatePrintData(printConfirmOrder.order))}>
+                {printBusy ? 'กำลังดำเนินการ...' : 'ยืนยันการพิมพ์'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {stockModal && (
+        <div className="cv-modal-overlay" onClick={() => !stockBusy && setStockModal(null)}>
+          <div className="cv-modal cv-stock-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-modal-head">
+              <div><h3>⚠️ ปิดเมนู "{stockModal.product.ProductName}" (ของหมด)</h3><div className="caption">ลูกค้าจะสั่งเมนูนี้ไม่ได้จนกว่าจะเปิดขายอีกครั้ง</div></div>
+              <button onClick={() => setStockModal(null)} className="cv-modal-close" disabled={stockBusy}>✖</button>
+            </div>
+            {stockModal.notifiable.length > 0 ? (
+              <div className="stock-affected">
+                <b>มี {stockModal.notifiable.length} ออเดอร์ที่ยังไม่ได้ปรุง/กำลังปรุงเมนูนี้</b>
+                <div className="stock-queue-list">
+                  {stockModal.notifiable.map(o => <span key={o.OrderID} className="stock-queue">{o.QueueNo}</span>)}
+                </div>
+                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที</small>
+              </div>
+            ) : (
+              <p className="stock-none">ไม่มีออเดอร์ลูกค้าออนไลน์ที่ต้องแจ้ง</p>
+            )}
+            {stockModal.silent.length > 0 && (
+              <p className="stock-silent">
+                ไม่แจ้งอัตโนมัติ {stockModal.silent.length} ออเดอร์ (Walk-in / ปรุงเสร็จแล้ว / รอตรวจสลิป):{' '}
+                <b>{stockModal.silent.map(o => o.QueueNo).join(', ')}</b> — คุยกับลูกค้าหน้าร้านเองหากจำเป็น
+              </p>
+            )}
+            <div className="modal-footer-btns">
+              <button onClick={() => setStockModal(null)} className="cv-btn btn-ghost" disabled={stockBusy}>ยกเลิก</button>
+              {stockModal.notifiable.length > 0 && (
+                <button onClick={() => confirmOutOfStock(false)} className="cv-btn btn-ghost" disabled={stockBusy}>ปิดเมนูอย่างเดียว</button>
+              )}
+              <button onClick={() => confirmOutOfStock(true)} className="cv-btn btn-danger" disabled={stockBusy}>
+                {stockBusy ? 'กำลังบันทึก...' : stockModal.notifiable.length > 0 ? `ปิดเมนู + แจ้งลูกค้า ${stockModal.notifiable.length} ออเดอร์` : 'ยืนยันปิดเมนู'}
+              </button>
             </div>
           </div>
         </div>
@@ -1622,6 +1742,17 @@ const CV_STYLES = `
 .cv-printer-control b { color:${PALETTE.dark}; }
 .cv-stale-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .cv-print-modal { width:500px; }
+.cv-print-error { margin-top:10px; padding:10px 12px; border-radius:var(--radius-md); background:${PALETTE.redLight}; color:${PALETTE.red}; font-size:13px; line-height:1.5; }
+.cv-print-error b { display:block; }
+.cv-stock-modal { width:560px; max-width:calc(100vw - 32px); }
+.cv-stock-modal .modal-footer-btns { flex-wrap:wrap; }
+.cv-stock-modal .modal-footer-btns .cv-btn { white-space:nowrap; }
+.stock-affected { padding:12px 14px; border-radius:var(--radius-md); background:${PALETTE.yellowLight}; border:1px solid ${PALETTE.yellow}; font-size:13px; line-height:1.5; }
+.stock-affected small { display:block; color:${PALETTE.textSub}; margin-top:6px; }
+.stock-queue-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.stock-queue { padding:2px 10px; border-radius:999px; background:#fff; border:1px solid ${PALETTE.yellow}; font-weight:700; }
+.stock-none { color:${PALETTE.textSub}; font-size:13px; }
+.stock-silent { margin-top:10px; color:${PALETTE.textSub}; font-size:12px; }
 .print-ticket-preview { background:#fff; border:1px dashed ${PALETTE.border}; border-radius:var(--radius-md); padding:16px; margin-bottom:12px; }
 .cv-printer-ready, .cv-printer-offline { padding:10px 12px; border-radius:var(--radius-md); margin-top:10px; font-size:13px; }
 .cv-printer-ready { background:${PALETTE.greenLight}; color:${PALETTE.green}; }
