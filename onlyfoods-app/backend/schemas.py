@@ -113,16 +113,9 @@ class StoreFullSchema(BaseModel):
     owner_password: Optional[str] = None
 
 
-class ContractEndUpdateSchema(BaseModel):
-    """แก้วันสิ้นสุดสัญญา (เฉพาะร้านที่สัญญายังไม่หมด) ต้องมีเหตุผลทุกครั้ง"""
+class RenewContractSchema(BaseModel):
+    contract_start_date: str
     contract_end_date: str
-    reason: str = Field(min_length=1, max_length=255)
-
-
-class ContractRestartSchema(BaseModel):
-    """ร้านหมดสัญญา/ยังไม่มีสัญญา -> เปิดสัญญารอบใหม่ เริ่มวันนี้ ไม่ส่งวันสิ้นสุด = 1 ปี"""
-    contract_end_date: Optional[str] = None
-    reason: str = Field(min_length=1, max_length=255)
 
 
 class ProductCreateSchema(BaseModel):
