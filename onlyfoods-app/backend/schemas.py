@@ -224,4 +224,4 @@ class FoodCourtScheduleSchema(BaseModel):
 
 
 class LatePickupSchema(BaseModel):
-    minutes: int = Field(ge=1, le=180)
+    minutes: int  # ต้องเป็นค่าใน config.LATE_PICKUP_CHOICES (ตรวจใน endpoint)

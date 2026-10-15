@@ -22,11 +22,11 @@ class FakeCursor:
             due_before, oldest = args
             self._rows = [dict(o) for o in self.db.orders
                           if o["status"] == "READY" and o["customer"] and o["reminded"] is None
-                          and oldest <= o["ReadyAt"] <= due_before]
+                          and o.get("eta") is None and oldest <= o["ReadyAt"] <= due_before]
         elif s.startswith("UPDATE `Order` SET PickupReminderAt"):
             now, oid = args
             o = next(x for x in self.db.orders if x["OrderId"] == oid)
-            if o["reminded"] is None and o["status"] == "READY":
+            if o["reminded"] is None and o["status"] == "READY" and o.get("eta") is None:
                 o["reminded"], self.rowcount = now, 1
             else:
                 self.rowcount = 0
@@ -104,3 +104,18 @@ def test_claim_loses_when_status_changed_meanwhile():
     finally:
         FakeCursor.execute = real_execute
     assert db.notifs == [] and o["reminded"] is None
+
+
+def test_no_reminder_when_customer_already_said_they_are_late():
+    db = FakeDB([order(1, 20, eta=NOW + timedelta(minutes=60)), order(2, 20)])
+    assert jobs.send_pickup_reminders(db, NOW) == 1
+    assert [o["OrderId"] for o in db.orders if o["reminded"]] == [2]
+
+
+def test_reminder_sql_excludes_orders_with_eta():
+    """ตัว SQL จริงต้องกรอง LatePickupArrivalTime ทั้งตอนเลือกและตอนจอง (FakeDB จำลองตามนี้)"""
+    db = FakeDB([order(1, 20)])
+    jobs.send_pickup_reminders(db, NOW)
+    select_sql = next(q for q in db.sql if q.startswith("SELECT o.OrderId"))
+    claim_sql = next(q for q in db.sql if q.startswith("UPDATE `Order` SET PickupReminderAt"))
+    assert "LatePickupArrivalTime IS NULL" in select_sql and "LatePickupArrivalTime IS NULL" in claim_sql

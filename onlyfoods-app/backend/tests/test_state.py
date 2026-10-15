@@ -136,6 +136,19 @@ def test_no_show_needs_30_minutes():
     state.assert_no_show_allowed(now - timedelta(minutes=30), now)
 
 
+def test_no_show_waits_for_customer_eta():
+    """ลูกค้าแจ้งว่าจะมาช้า: ครบ 30 นาทีแล้วก็ยังตัดคิวไม่ได้จนเลยเวลาที่แจ้ง"""
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    ready = now - timedelta(minutes=45)
+    with pytest.raises(DomainError) as e:
+        state.assert_no_show_allowed(ready, now, 30, customer_eta=now + timedelta(minutes=1))
+    assert "12:01" in e.value.detail
+    state.assert_no_show_allowed(ready, now, 30, customer_eta=now)                       # ถึงเวลาที่แจ้งพอดี
+    state.assert_no_show_allowed(ready, now, 30, customer_eta=now - timedelta(minutes=5))
+    with pytest.raises(DomainError):  # เลยเวลาที่แจ้งแล้ว แต่ยังไม่ครบ 30 นาทีหลังอาหารพร้อม
+        state.assert_no_show_allowed(now - timedelta(minutes=10), now, 30, customer_eta=now - timedelta(minutes=5))
+
+
 def test_reminder_comes_before_no_show_unlock():
     """ลูกค้าต้องได้รับเตือนก่อนที่พนักงานจะตัดคิวได้ (ไม่งั้นไม่มีเวลาตอบสนอง)"""
     import config
@@ -154,3 +167,18 @@ def test_role_names():
     assert state.role_code_from_input("KITCHEN_STAFF") == "KITCHEN_STAFF"
     with pytest.raises(DomainError):
         state.role_code_from_input("Admin")
+
+
+def test_late_pickup_latest_notice_replaces_previous():
+    """นัด 12:00: กด 15 -> 12:15 แล้วกด 30 -> 12:30 (แทนเวลาเดิม ไม่ใช่ 12:45)"""
+    pickup = datetime(2026, 1, 1, 12, 0)
+    now = datetime(2026, 1, 1, 11, 30)
+    assert state.late_pickup_arrival(now, pickup, 15) == datetime(2026, 1, 1, 12, 15)
+    assert state.late_pickup_arrival(now + timedelta(minutes=5), pickup, 30) == datetime(2026, 1, 1, 12, 30)
+
+
+def test_late_pickup_after_pickup_time_counts_from_now():
+    pickup = datetime(2026, 1, 1, 12, 0)
+    now = datetime(2026, 1, 1, 12, 20, 0, 500)
+    assert state.late_pickup_arrival(now, pickup, 15) == datetime(2026, 1, 1, 12, 35)
+    assert state.late_pickup_arrival(now, None, 30) == datetime(2026, 1, 1, 12, 50)  # รับทันที (ไม่ได้นัดเวลา)

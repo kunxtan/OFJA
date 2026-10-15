@@ -116,7 +116,9 @@ def insert_with_queue_retry(cur, store_id: int, insert_fn, attempts: int = 3):
 
 # ----------------------------------------------------------- order transitions
 _ORDER_LOCK_SQL = """
-SELECT o.OrderId, o.StoreId, o.CustomerId, o.QueueNo, o.TotalAmount, o.ReadyAt, o.IsWalkIn,
+SELECT o.OrderId, o.StoreId, o.CustomerId, o.QueueNo, o.TotalAmount, o.ReadyAt, o.PickupTime,
+       o.LatePickupArrivalTime, o.LatePickupCount,
+       o.IsWalkIn,
        o.CancelReason, o.CancelDeadline, os.StatusCode, s.StoreName, s.QueueCode
 FROM `Order` o
 JOIN OrderStatus os ON os.StatusId = o.StatusId

@@ -118,9 +118,20 @@ def assert_role_can_set(role: str, new: str) -> None:
         raise DomainError(403, "บทบาทของคุณไม่มีสิทธิ์เปลี่ยนเป็นสถานะนี้")
 
 
-def assert_no_show_allowed(ready_at: Optional[datetime], now: datetime, minutes: int = 30) -> None:
+def assert_no_show_allowed(ready_at: Optional[datetime], now: datetime, minutes: int = 30,
+                           customer_eta: Optional[datetime] = None) -> None:
+    """ตัดคิวได้เมื่อครบ `minutes` หลังอาหารพร้อม และ (ถ้าลูกค้าแจ้งว่าจะมาช้า) เลยเวลาที่ลูกค้าแจ้งแล้ว"""
     if ready_at is None or now - ready_at < timedelta(minutes=minutes):
         raise DomainError(400, f"ออเดอร์นี้ยังไม่ถึง {minutes} นาทีหลังเรียกคิว")
+    if customer_eta is not None and now < customer_eta:
+        raise DomainError(400, f"ลูกค้าแจ้งว่าจะมารับภายใน {customer_eta.strftime('%H:%M')} น. ยังตัดคิวไม่ได้")
+
+
+def late_pickup_arrival(now: datetime, pickup_time: Optional[datetime], minutes: int) -> datetime:
+    """ลูกค้าแจ้งมารับช้า N นาที: นับจากเวลานัดรับ (หรือเวลาตอนกด ถ้าเลยเวลานัดแล้ว/ไม่ได้นัด)
+    แจ้งใหม่ = แทนเวลาเดิม ไม่บวกต่อ : นัด 12:00 กด 15 -> 12:15 ; กด 30 อีกครั้ง -> 12:30"""
+    base = max(now, pickup_time) if pickup_time else now
+    return (base + timedelta(minutes=minutes)).replace(microsecond=0)
 
 
 # ---- แปลงคำขอเปลี่ยนสถานะ -> ลำดับขั้นที่ต้องเดินจริง ----
