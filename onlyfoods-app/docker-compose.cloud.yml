@@ -1,0 +1,81 @@
+# Only Foods - สำหรับ server มหาลัย (only-foods.cskmitl.com) : HTTPS พอร์ต 443, พอร์ต 80 ใช้แค่เด้งไป HTTPS + ขอใบรับรอง
+# ค่าลับทั้งหมดอ่านจาก onlyfoods-app/.env บน server (ไม่อยู่ใน git)
+# runner เรียกไฟล์นี้ให้เองตอน push ; รันมือ:  sudo docker compose -f docker-compose.cloud.yml up -d --build
+services:
+  db:
+    image: mysql:8.0.32
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?ตั้ง MYSQL_ROOT_PASSWORD ใน .env}
+      MYSQL_DATABASE: onlyfood
+      MYSQL_USER: ${MYSQL_USER:-onlyfood_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?ตั้ง MYSQL_PASSWORD ใน .env}
+      TZ: Asia/Bangkok
+    command: --default-time-zone=+07:00 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    # ไม่ publish 3306 : ฐานข้อมูลคุยได้เฉพาะ backend ในเครือข่าย docker
+    volumes:
+      # ชื่อ volume ใหม่ ไม่ชนกับ db_data ของระบบเก่า (ซึ่งเป็นฐาน onlyfoods_db คนละ schema)
+      - ofja_db_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  backend:
+    build: ./backend
+    restart: always
+    environment:
+      DB_HOST: db
+      DB_USER: ${MYSQL_USER:-onlyfood_app}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_NAME: onlyfood
+      JWT_SECRET: ${JWT_SECRET:?ตั้ง JWT_SECRET ใน .env (ยาว 32 ตัวขึ้นไป)}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      DISABLE_DOCS: ${DISABLE_DOCS:-1}
+      TZ: Asia/Bangkok
+    volumes:
+      - ofja_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    restart: always
+    depends_on:
+      - backend
+
+  # ทางเข้าเดียว: 80 -> เด้งไป 443 ; 443 -> /api, /uploads ไป backend ; อื่น ๆ ไป frontend
+  proxy:
+    image: nginx:1.27-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # runner ส่ง NGINX_CONF มาเอง (http-only เฉพาะตอนขอใบรับรองครั้งแรก)
+      - ${NGINX_CONF:-./nginx.conf}:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    # reload ทุก 12 ชม. เพื่อให้ nginx หยิบใบรับรองที่ certbot ต่ออายุแล้ว
+    command: ["/bin/sh", "-c", "while :; do sleep 12h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"]
+    depends_on:
+      - frontend
+      - backend
+
+  # ต่ออายุใบรับรอง Let's Encrypt อัตโนมัติ (เช็กทุก 12 ชม. ต่อจริงเมื่อเหลือ < 30 วัน)
+  certbot:
+    image: certbot/certbot:v2.11.0
+    restart: always
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/www/certbot:/var/www/certbot
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
+
+volumes:
+  ofja_db_data:
+  ofja_uploads:

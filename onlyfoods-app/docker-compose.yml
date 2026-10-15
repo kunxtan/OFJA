@@ -1,51 +1,66 @@
+# Only Foods - สำหรับรันบนเครื่องตัวเอง (localhost)  :  docker compose up -d --build  แล้วเปิด http://localhost
+# ค่ารหัสผ่านในไฟล์นี้ใช้ทดสอบในเครื่องเท่านั้น
+# ตอนขึ้น cloud ใช้ docker-compose.cloud.yml (อ่านค่าจาก .env + HTTPS) :  docker compose -f docker-compose.cloud.yml up -d --build
 services:
   db:
     image: mysql:8.0.32
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: onlyfoods_db
+      MYSQL_DATABASE: onlyfood
+      MYSQL_USER: onlyfood_app
+      MYSQL_PASSWORD: roots
       TZ: Asia/Bangkok
-    command: --default-time-zone=+07:00
-    ports:
-      - "3306:3306"
+    command: --default-time-zone=+07:00 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    # ไม่เปิดพอร์ต 3306 ออกนอก docker (ดูข้อมูลด้วย: docker compose exec db mysql -uroot -proot onlyfood)
     volumes:
       - db_data:/var/lib/mysql
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # รันเฉพาะตอนสร้างฐานข้อมูลครั้งแรก (volume ว่าง) ; อยากเริ่มใหม่ให้ docker compose down -v
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
 
   backend:
     build: ./backend
     restart: always
-    # ไม่ต้อง expose port 8080 ออกข้างนอกแล้ว ให้ Proxy จัดการให้
     environment:
-      - DB_HOST=db
-      - DB_USER=root
-      - DB_PASSWORD=root
-      - DB_NAME=onlyfoods_db
-      - TZ=Asia/Bangkok
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: onlyfood
+      JWT_SECRET: local-dev-secret-for-testing-0123456789-abcdef
+      GOOGLE_CLIENT_ID: ""
+      CORS_ORIGINS: ""
+      DISABLE_DOCS: "0"
+      TZ: Asia/Bangkok
+    volumes:
+      - uploads:/app/uploads
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
     restart: always
-    # ไม่ต้อง expose port 80 ออกข้างนอกแล้ว ให้ Proxy จัดการให้
     depends_on:
       - backend
 
-  # เพิ่ม Service ใหม่สำหรับรับ Request ทั้งหมดที่พอร์ต 80
+  # ทางเข้าเดียว: http://localhost  -> /api และ /uploads ไป backend ; อื่น ๆ ไป frontend
   proxy:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     restart: always
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./nginx.http-only.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend
       - backend
 
 volumes:
   db_data:
+  uploads:

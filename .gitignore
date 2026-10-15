@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# ความลับ / ข้อมูลที่อัปโหลด : ห้ามขึ้น git
+onlyfoods-app/.env
+onlyfoods-app/backend/.env
+onlyfoods-app/backend/uploads/
+*.pem
