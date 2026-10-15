@@ -481,18 +481,25 @@ function TopMenuList({ rows, products }) {
 // กราฟเส้นแนวโน้มยอดขาย (แบบเดียวกับหน้า Executive) ชี้ที่จุดเพื่อดูยอดขายของช่วงนั้น
 function SalesLineChart({ buckets }) {
   const [hover, setHover] = useState(null);
+  // จอแคบ: ใช้ผืนวาดเล็กลง ตัวหนังสือบนแกนจะได้ไม่เล็กเกินอ่าน
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 600);
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth <= 600);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const data = buckets || [];
   if (!data.length) {
     return <div style={{ minHeight: '300px', display: 'grid', placeItems: 'center', color: 'var(--berry-text-muted)' }}>ช่วงเวลานี้ยังไม่มีออเดอร์ที่สำเร็จ</div>;
   }
-  const W = 880, H = 320, L = 66, R = 22, TOP = 22, BOT = 46;
+  const W = narrow ? 380 : 880, H = narrow ? 240 : 320, L = narrow ? 40 : 66, R = narrow ? 12 : 22, TOP = 18, BOT = narrow ? 34 : 46;
   const gw = W - L - R, gh = H - TOP - BOT;
   const maxValue = Math.max(...data.map(b => b.sales), 1);
   const xAt = (i) => (data.length === 1 ? L + gw / 2 : L + (i / (data.length - 1)) * gw);
   const yAt = (v) => TOP + gh - (v / maxValue) * gh;
   const linePath = data.map((b, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(b.sales)}`).join(' ');
   const areaPath = `${linePath} L ${xAt(data.length - 1)} ${TOP + gh} L ${xAt(0)} ${TOP + gh} Z`;
-  const labelStep = Math.max(1, Math.ceil(data.length / 10));
+  const labelStep = Math.max(1, Math.ceil(data.length / (narrow ? 5 : 10)));
   const shortNumber = (n) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(Math.round(n));
   const hoverBucket = hover !== null ? data[hover] : null;
   const hoverRatio = hover !== null ? xAt(hover) / W : 0;
@@ -523,8 +530,8 @@ function SalesLineChart({ buckets }) {
 
         {data.map((b, i) => (
           <g key={b.key}>
-            {(i % labelStep === 0 || i === data.length - 1) && (
-              <text x={xAt(i)} y={H - 16} textAnchor="middle" fontSize="11" fill="var(--berry-text-muted)">{b.label}</text>
+            {(i === data.length - 1 || (i % labelStep === 0 && data.length - 1 - i >= labelStep / 2)) && (
+              <text x={xAt(i)} y={H - 16} textAnchor={data.length > 1 && i === 0 ? 'start' : data.length > 1 && i === data.length - 1 ? 'end' : 'middle'} fontSize="11" fill="var(--berry-text-muted)">{b.label}</text>
             )}
             <circle cx={xAt(i)} cy={yAt(b.sales)} r={hover === i ? 5.5 : 3} fill={hover === i ? 'var(--berry-purple)' : 'var(--berry-paper)'} stroke="var(--berry-purple)" strokeWidth="2" />
             <rect
@@ -1138,7 +1145,19 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   
   const [page, setPage] = useState('dashboard');
   
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // มือถือ (≤768px): ปิดแถบเมนูไว้ก่อน ; จอใหญ่: เปิดไว้
+  const isMobileWidth = () => typeof window !== 'undefined' && window.innerWidth <= 768;
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileWidth());
+  useEffect(() => {
+    let wasMobile = isMobileWidth();
+    const onResize = () => {
+      const mobile = isMobileWidth();
+      if (mobile !== wasMobile) setSidebarOpen(!mobile); // เปลี่ยนขนาดข้ามจุดตัด -> ปรับให้เหมาะกับจอใหม่
+      wasMobile = mobile;
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const [toast, setToast] = useState({ show: false, msg: '' });
 
   const [profileOpen, setProfileOpen] = useState(false);
@@ -1718,9 +1737,31 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         </div>
       </header>
 
+      {/* มือถือ: แถบสถานะศูนย์อาหาร + สวิตช์ร้าน (บน topbar ไม่พอที่) */}
+      <div className="op-mobile-status">
+        <span className={`op-ms-court ${foodCourtOpen ? 'open' : 'closed'}`}>
+          <span className="dot" />
+          {foodCourtOpen ? 'ศูนย์อาหารเปิด' : 'ศูนย์อาหารปิด'}
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={storeOpen}
+          className={`store-switch mobile ${storeOpen ? 'on' : 'off'}`}
+          onClick={requestToggleStore}
+          disabled={toggleDisabled}
+        >
+          <span className="label">{storeOpen ? 'ร้านเปิดรับออเดอร์' : 'ร้านปิดรับออเดอร์'}</span>
+          <span className="track"><span className="thumb" /></span>
+        </button>
+      </div>
+
       {/* ===== BODY (Sidebar + Main Content) ===== */}
       <div className="berry-body">
         
+        {/* ฉากหลังมืดตอนเปิดแถบเมนูบนมือถือ (แตะเพื่อปิด) */}
+        {sidebarOpen && <div className="berry-sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
+
         {/* ===== SIDEBAR ===== */}
         <aside className={`berry-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
           <nav className="berry-nav">
@@ -2306,15 +2347,15 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     {staffList.length === 0 && <tr><td colSpan="5" className="empty-state">ยังไม่มีบัญชีพนักงาน</td></tr>}
                     {staffList.map(s => (
                       <tr key={s.UserId}>
-                        <td className="mono muted">#{s.UserId}</td>
-                        <td className="bold">{s.Username}</td>
-                        <td>{s.FullName}</td>
-                        <td>
+                        <td className="mono muted" data-label="รหัส">#{s.UserId}</td>
+                        <td className="bold" data-label="ชื่อผู้ใช้">{s.Username}</td>
+                        <td data-label="ชื่อ-นามสกุล">{s.FullName}</td>
+                        <td data-label="ตำแหน่ง">
                           <Badge tone={s.Role === 'Front Staff' ? 'primary' : 'warning'}>
                             {s.Role === 'Front Staff' ? 'หน้าร้าน (Front)' : 'คนครัว (Kitchen)'}
                           </Badge>
                         </td>
-                        <td>
+                        <td data-label="จัดการ" className="op-td-actions">
                           <button 
                             className="berry-btn-icon btn-error-light" 
                             title="ลบพนักงาน"
@@ -2353,19 +2394,19 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     {history.length === 0 && <tr><td colSpan="5" className="empty-state">{loaded.history ? 'ยังไม่มีประวัติการขาย' : 'กำลังโหลดข้อมูล...'}</td></tr>}
                     {history.map(h => (
                       <tr key={h.OrderID}>
-                        <td className="mono muted">
+                        <td className="mono muted" data-label="วันที่ / เวลา">
                           {h.CreatedAt ? new Date(h.CreatedAt).toLocaleString('th-TH') : '-'}
                         </td>
-                        <td className="mono" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{h.QueueNo}</td>
-                        <td>
+                        <td className="mono" data-label="คิว" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{h.QueueNo}</td>
+                        <td data-label="รายการอาหาร" className="op-td-block">
                           {h.items?.map((item, idx) => (
                             <div key={idx} style={{ fontSize: '13px', marginBottom: '4px', color: 'var(--berry-text-dark)' }}>
                               • {item.ProductName} <span style={{ color: 'var(--berry-text-muted)' }}>(x{item.Qty})</span>
                             </div>
                           ))}
                         </td>
-                        <td className="mono bold">฿{fmtMoney(h.TotalAmount)}</td>
-                        <td>
+                        <td className="mono bold" data-label="ยอดรวม">฿{fmtMoney(h.TotalAmount)}</td>
+                        <td data-label="สถานะ">
                           <Badge tone={h.Status === 'Completed' ? 'success' : h.Status === 'Cancelled' ? 'danger' : 'warning'}>
                             {getStatusLabel(h.Status)}
                           </Badge>
@@ -2399,12 +2440,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     {cancels.length === 0 && <tr><td colSpan="4" className="empty-state">ยังไม่มีออเดอร์ที่ถูกยกเลิก</td></tr>}
                     {cancels.map(c => (
                       <tr key={c.OrderID}>
-                        <td className="mono muted">
+                        <td className="mono muted" data-label="วันที่ / เวลา">
                           {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
                         </td>
-                        <td className="mono" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{c.QueueNo}</td>
-                        <td className="mono bold">฿{fmtMoney(c.TotalAmount)}</td>
-                        <td style={{ color: 'var(--berry-red)', fontWeight: '500' }}>{c.CancelReason || '-'}</td>
+                        <td className="mono" data-label="คิว" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{c.QueueNo}</td>
+                        <td className="mono bold" data-label="ยอดรวม">฿{fmtMoney(c.TotalAmount)}</td>
+                        <td data-label="เหตุผล" style={{ color: 'var(--berry-red)', fontWeight: '500' }}>{c.CancelReason || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3955,5 +3996,134 @@ body, html {
 }
 .notif-item-hover:hover {
   background: var(--berry-purple-light);
+}
+
+/* ================================================================
+   มือถือ (ปรับให้อ่านง่ายบนจอเล็ก)
+   ================================================================ */
+.berry-sidebar-backdrop { display: none; }
+.op-mobile-status { display: none; }
+
+@media (max-width: 768px) {
+  .berry-sidebar-backdrop { display: block; position: fixed; inset: 0; top: 64px; z-index: 99; background: rgba(29,31,47,0.38); animation: berryFadeIn 0.2s ease-out; }
+  .berry-sidebar { z-index: 100; top: 64px !important; width: 280px !important; max-width: 85vw; border-radius: 0 18px 18px 0; transition: transform 0.25s ease, box-shadow 0.25s ease; }
+  .berry-topbar { height: 64px; padding: 0 14px; }
+  .berry-content { padding: 16px 14px; }
+}
+
+@media (max-width: 600px) {
+  /* topbar: เหลือ เมนู / โลโก้ / กระดิ่ง / รูปโปรไฟล์ */
+  .berry-topbar-left { gap: 10px; min-width: 0; }
+  .berry-topbar-right { gap: 8px; }
+  .berry-brand .brand-status, .berry-topbar .store-switch { display: none; }
+  .brand-logo { font-size: 21px; }
+  .berry-icon-btn { width: 38px; height: 38px; }
+
+  /* แถบสถานะใต้ topbar */
+  .op-mobile-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px; background: var(--berry-paper); border-bottom: 1px solid var(--berry-border); flex-shrink: 0; }
+  .op-ms-court { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .op-ms-court .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .op-ms-court.open { background: var(--berry-green-light); color: var(--berry-green); }
+  .op-ms-court.closed { background: var(--berry-red-light); color: var(--berry-red); }
+  .store-switch.mobile { display: inline-flex; padding: 4px 6px 4px 12px; font-size: 12px; }
+  .store-switch.mobile .label { display: inline !important; }
+
+  /* หัวหน้าเพจ */
+  .op-page-head { gap: 12px; margin-bottom: 14px; }
+  .op-page-title { gap: 10px; align-items: flex-start; }
+  .op-page-icon { width: 38px; height: 38px; min-width: 38px; border-radius: 11px; }
+  .op-page-icon svg { width: 19px; height: 19px; }
+  .op-page-head h1 { font-size: 19px; }
+  .op-page-head p { font-size: 12.5px; line-height: 1.5; }
+  .op-page-actions { width: 100%; }
+  .op-page-actions > .berry-btn { flex: 1; justify-content: center; }
+  .berry-dashboard-grid { gap: 14px; }
+  .berry-card { padding: 16px; border-radius: 14px; }
+
+  /* ตอนนี้ในร้าน: การ์ดแนวตั้งเล็ก ๆ อ่านง่าย */
+  .od-live { padding: 14px; }
+  .od-live-head { font-size: 13.5px; gap: 6px 8px; }
+  .od-live-head .muted { width: 100%; font-size: 12px; }
+  .od-live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+  .od-live-item { position: relative; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 12px; }
+  .od-live-item .icon { width: 30px; height: 30px; min-width: 30px; border-radius: 8px; }
+  .od-live-item .icon svg { width: 16px; height: 16px; }
+  .od-live-item > svg:last-child { position: absolute; top: 12px; right: 10px; opacity: 0.5; }
+  .od-live-item .text strong { font-size: 20px; }
+  .od-live-item .text span { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* แถบช่วงเวลา: ปุ่มเลื่อนแนวนอนได้ ไม่ตกบรรทัด */
+  .od-period-bar { position: static; margin: 0; padding: 12px; gap: 10px; }
+  .od-period-text { font-size: 12.5px; width: 100%; }
+  .berry-period-picker { width: 100%; flex-direction: column; align-items: stretch; }
+  .berry-period-group { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .berry-period-group::-webkit-scrollbar { display: none; }
+  .berry-period-group .berry-period-btn { flex: 1 0 auto; white-space: nowrap; text-align: center; }
+  .berry-date-wrap { justify-content: center; }
+  .berry-date-range { flex-direction: column; align-items: stretch; }
+  .berry-date-range label { justify-content: space-between; }
+
+  /* การ์ดสรุปยอดขาย */
+  .od-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px; min-height: 0; }
+  .od-summary-block { min-width: 0; }
+  .od-summary-value { font-size: 24px; }
+  .od-summary-value small { font-size: 12px; margin-left: 4px; }
+  .od-summary-label { font-size: 12.5px; }
+  .od-summary .od-delta, .od-summary .od-delta-empty { font-size: 11px; }
+  .od-summary .od-delta span { display: none; }
+  .od-summary-spark { grid-column: 1 / -1; min-width: 0; }
+  .od-spark, .od-spark-empty { height: 56px; }
+
+  /* การ์ดตัวเลขเล็ก: 2 คอลัมน์ */
+  .od-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .od-kpi { padding: 12px; min-height: 0; }
+  .od-kpi-main { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .od-kpi-icon { width: 34px; height: 34px; min-width: 34px; }
+  .od-kpi-icon svg { width: 17px; height: 17px; }
+  .od-kpi-value { font-size: 19px; }
+  .od-kpi-value small { font-size: 11.5px; }
+  .od-kpi-label { font-size: 11.5px; line-height: 1.4; }
+  .od-kpi .od-delta { margin-top: 8px; padding: 3px 8px; font-size: 11px; }
+  .od-kpi .od-delta span { display: none; }
+  .od-kpi .od-delta-empty { margin-top: 8px; font-size: 11px; }
+  .od-row { gap: 14px; }
+  .od-card-head { flex-direction: column; gap: 4px; }
+  .od-head-total { font-size: 18px; }
+  .od-donut-box { flex-basis: 180px; width: 180px; height: 180px; }
+  .od-legend { flex-basis: 100%; }
+  .od-top-row { padding: 10px; gap: 10px; }
+  .od-top-thumb { display: none; }
+  .od-top-meta span:nth-child(n+3) { display: none; }
+
+  /* ตาราง -> การ์ด (พนักงาน / ประวัติการขาย / ยกเลิก) */
+  .berry-table thead { display: none; }
+  .berry-table, .berry-table tbody, .berry-table tr, .berry-table td { display: block; width: 100%; box-sizing: border-box; }
+  .berry-table tr { margin-bottom: 10px; padding: 10px 14px; border: 1px solid var(--berry-border); border-radius: 12px; background: var(--berry-paper); }
+  .berry-table tr:last-child { margin-bottom: 0; }
+  .berry-table td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0 !important; border-bottom: none !important; font-size: 13.5px; text-align: right; }
+  .berry-table td::before { content: attr(data-label); flex-shrink: 0; font-size: 12px; font-weight: 500; color: var(--berry-text-muted); text-align: left; }
+  .berry-table td:not([data-label])::before { content: none; }
+  .berry-table td.empty-state { justify-content: center; text-align: center; padding: 24px 0 !important; }
+  .berry-table td.op-td-block { flex-direction: column; align-items: flex-start; text-align: left; }
+  .berry-table td.op-td-actions { justify-content: flex-end; }
+  .berry-table td.op-td-actions::before { margin-right: auto; }
+  .berry-card:has(> .berry-table-container) { padding: 12px; background: transparent; box-shadow: none; }
+
+  /* หน้าเมนู */
+  .mm-toolbar { padding: 10px; gap: 8px; }
+  .mm-tool-group { width: 100%; flex-wrap: nowrap; }
+  .mm-select { flex: 1; min-width: 0; }
+  .mm-select-btn { padding: 0 12px; }
+  .mm-card-title-row { flex-direction: column; gap: 2px; }
+  .mm-card-title-row h4 { font-size: 13.5px; }
+  .mm-price { font-size: 15px; }
+  .mm-card-media { height: 118px; }
+  .mm-card-body { padding: 10px 10px 12px; }
+  .mm-desc { min-height: 0; font-size: 11.5px; }
+  .mm-stock-btn { font-size: 12px; padding: 8px 6px; }
+  .mm-alert { font-size: 12.5px; }
+  .berry-bulk-bar { padding: 10px 12px; }
+  .berry-bulk-bar .actions { width: 100%; }
+  .berry-bulk-bar .actions .mm-stock-btn { flex: 1; }
 }
 `;
