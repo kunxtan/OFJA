@@ -25,6 +25,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [notifs, setNotifs] = useState([]);
   const [isFoodCourtOpen, setIsFoodCourtOpen] = useState(true);
 
+  // LATE PICKUP STATE
+  const [latePickupOrder, setLatePickupOrder] = useState({});
+  const [latePickupMinutes, setLatePickupMinutes] = useState({});
+
   // OUT OF STOCK & CHANGE ORDER STATE
   const [outOfStockOrder, setOutOfStockOrder] = useState(null);
   const [isChangeMenuMode, setIsChangeMenuMode] = useState(false);
@@ -863,6 +867,56 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setIsPaymentModalOpen(true);
   };
 
+  // LATE PICKUP HANDLER
+  const handleLatePickup = (orderId, minutes) => {
+    const currentData = latePickupOrder[orderId] || {
+      count: 0,
+      arrivalTime: "",
+    };
+
+    // แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์
+    if (currentData.count >= 3) {
+      customAlert(
+        "แจ้งครบจำนวนแล้ว",
+        "คุณแจ้งเวลามารับช้าออเดอร์นี้ครบ 3 ครั้งแล้ว",
+        "warning"
+      );
+      return;
+    }
+
+    // คำนวณเวลาที่คาดว่าจะมาถึง
+    const arrivalDate = new Date();
+    arrivalDate.setMinutes(
+      arrivalDate.getMinutes() + Number(minutes)
+    );
+
+    const arrivalTime = arrivalDate.toLocaleTimeString(
+      "th-TH",
+      {
+        timeZone: "Asia/Bangkok",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }
+    );
+
+    // บันทึกข้อมูลล่าสุดของออเดอร์นี้
+    setLatePickupOrder((prev) => ({
+      ...prev,
+      [orderId]: {
+        count: currentData.count + 1,
+        arrivalTime,
+        minutes: Number(minutes),
+      },
+    }));
+
+    customAlert(
+      "แจ้งเวลามารับเรียบร้อย",
+      `คุณแจ้งว่าจะมาถึงเวลา ${arrivalTime} น.`,
+      "success"
+    );
+  };
+
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
   // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
   const handleSlipChange = (e) => {
@@ -1686,6 +1740,115 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <span>ยอดรวม</span>
                   <span style={{ color: COLORS.orange, fontSize: "18px" }}>{Number(order.TotalAmount || 0).toFixed(2)} ฿</span>
                 </div>
+
+              
+                {/* แจ้งร้านว่าจะมารับช้า */}
+                {["Ready", "Preparing", "Pending"].includes(order.Status) && (
+                  <div
+                    style={{
+                      marginTop: "14px",
+                      padding: "12px",
+                      border: `1px solid ${COLORS.border}`,
+                      borderRadius: "12px",
+                      background: "#FFF9F5",
+                    }}
+                  >
+                    <div style={{ fontWeight: "800", color: COLORS.navy, fontSize: "14px" }}>
+                      แจ้งร้านว่าจะมารับช้า
+                    </div>
+
+                    {(() => {
+                      const orderId = order.OrderID;
+                      const lateInfo = latePickupOrder[orderId] || {
+                        count: 0,
+                        arrivalTime: "",
+                      };
+                      const selectedMinutes = latePickupMinutes[orderId] || "15";
+
+                      return (
+                        <>
+                          <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "5px" }}>
+                            แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์
+                          </div>
+
+                          {lateInfo.arrivalTime && (
+                            <div style={{ marginTop: "8px", fontSize: "13px", color: COLORS.orange, fontWeight: "700" }}>
+                              เวลามาถึงล่าสุด: {lateInfo.arrivalTime} น.
+                            </div>
+                          )}
+
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "10px" }}>
+                            {[
+                              { value: "15", label: "15 นาที" },
+                              { value: "30", label: "30 นาที" },
+                              { value: "60", label: "1 ชั่วโมง" },
+                              { value: "120", label: "2 ชั่วโมง" },
+                            ].map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                disabled={lateInfo.count >= 3}
+                                onClick={() =>
+                                  setLatePickupMinutes((prev) => ({
+                                    ...prev,
+                                    [orderId]: option.value,
+                                  }))
+                                }
+                                style={{
+                                  padding: "7px 10px",
+                                  borderRadius: "8px",
+                                  border: `1px solid ${
+                                    selectedMinutes === option.value
+                                      ? COLORS.orange
+                                      : COLORS.border
+                                  }`,
+                                  background:
+                                    selectedMinutes === option.value
+                                      ? "#FFF0EB"
+                                      : "#FFFFFF",
+                                  color: COLORS.navy,
+                                  fontSize: "12px",
+                                  cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
+                                  opacity: lateInfo.count >= 3 ? 0.5 : 1,
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={lateInfo.count >= 3}
+                            onClick={() => handleLatePickup(orderId, selectedMinutes)}
+                            style={{
+                              width: "100%",
+                              marginTop: "10px",
+                              padding: "10px",
+                              border: "none",
+                              borderRadius: "9px",
+                              background: lateInfo.count >= 3 ? "#CBD5E1" : COLORS.orange,
+                              color: "#FFFFFF",
+                              fontWeight: "800",
+                              fontSize: "13px",
+                              cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            {lateInfo.count >= 3
+                              ? "แจ้งครบ 3 ครั้งแล้ว"
+                              : "ยืนยันแจ้งเวลามารับช้า"}
+                          </button>
+
+                          <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "6px" }}>
+                            แจ้งแล้ว {lateInfo.count}/3 ครั้ง
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+
+
 
                 {order.Status === "Completed" && (
                   <div style={{ display: "flex", gap: "10px", marginTop: "15px", width: "100%" }}>
