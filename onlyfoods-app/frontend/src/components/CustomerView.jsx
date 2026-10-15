@@ -56,6 +56,28 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [orderNote, setOrderNote] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("PromptPay");
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const now = new Date();
+  const currentTime =
+    `${String(now.getHours()).padStart(2, "0")}:` +
+    `${String(now.getMinutes()).padStart(2, "0")}`;
+
+  const pickupTimeOptions = Array.from({ length: 1440 }, (_, i) => {
+    const hour = String(Math.floor(i / 60)).padStart(2, "0");
+    const minute = String(i % 60).padStart(2, "0");
+    return `${hour}:${minute}`;
+  }).filter((time) => {
+    if (time < currentTime) return false;
+
+    if (foodCourtOpenTime && time < foodCourtOpenTime) {
+      return false;
+    }
+
+    if (foodCourtCloseTime && time > foodCourtCloseTime) {
+      return false;
+    }
+
+    return true;
+  });
 
   // PAYMENT MODAL & SLIP
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -2053,52 +2075,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> เวลารับอาหาร</label>
-                  <input
-                    type="time"
+                  <select
                     value={pickupTime}
-                    min={foodCourtOpenTime || undefined}
-                    max={foodCourtCloseTime || undefined}
-                    onChange={(e) => {
-                      const selectedTime = e.target.value;
-                      if (!selectedTime) {
-                        setPickupTime(selectedTime);
-                        return;
-                      }
-                      const now = new Date();
-                      const currentTime =
-                        `${String(now.getHours()).padStart(2, "0")}:` +
-                        `${String(now.getMinutes()).padStart(2, "0")}`;
-                      if (selectedTime < currentTime) {
-                        customAlert(
-                          "เวลาไม่ถูกต้อง",
-                          "กรุณาเลือกเวลารับอาหารตั้งแต่เวลาปัจจุบันเป็นต้นไป",
-                          "warning"
-                        );
-                        return;
-                      }
+                    onChange={(e) => setPickupTime(e.target.value)}
+                  >
+                    <option value="">เลือกเวลารับอาหาร</option>
 
-                      if (foodCourtOpenTime && selectedTime < foodCourtOpenTime) {
-                        customAlert(
-                          "เวลาไม่ถูกต้อง",
-                          `กรุณาเลือกเวลารับอาหารตั้งแต่ ${foodCourtOpenTime} น. เป็นต้นไป`,
-                          "warning"
-                        );
-                        return;
-                      }
-
-                      if (foodCourtCloseTime && selectedTime > foodCourtCloseTime) {
-                        customAlert(
-                          "เวลาไม่ถูกต้อง",
-                          `กรุณาเลือกเวลารับอาหารไม่เกิน ${foodCourtCloseTime} น.`,
-                          "warning"
-                        );
-                        return;
-                      }
-
-                      setPickupTime(selectedTime);
-                    }}
-                  />
-
+                    {pickupTimeOptions.map((time) => (
+                      <option key={time} value={time}>
+                        {time} น.
+                      </option>
+                    ))}
+                  </select>
                   <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
                 </div>
 
