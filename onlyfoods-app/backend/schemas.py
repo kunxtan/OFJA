@@ -72,6 +72,10 @@ class StaffActiveSchema(BaseModel):
     is_active: bool
 
 
+class StaffEraseSchema(BaseModel):
+    confirm_username: str = Field(max_length=50)  # ต้องพิมพ์ชื่อผู้ใช้ของพนักงานให้ตรง กันกดลบผิดคน
+
+
 class AccountCreateSchema(BaseModel):
     username: str
     password: str

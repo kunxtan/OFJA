@@ -25,6 +25,24 @@ def test_username_rules():
             utils.validate_username(bad)
 
 
+def test_delete_upload_only_touches_saved_images(tmp_path):
+    path = utils.save_image("data:image/png;base64," + PNG, "profiles", upload_dir=str(tmp_path))
+    assert utils.delete_upload(path, upload_dir=str(tmp_path)) is True
+    assert not os.listdir(tmp_path / "profiles")
+    assert utils.delete_upload(path, upload_dir=str(tmp_path)) is False  # ลบซ้ำ = ไม่ error
+    (tmp_path / "secret.txt").write_text("x")
+    for bad in (None, "", "https://lh3.googleusercontent.com/a.png", "/uploads/../secret.txt",
+                "/uploads/profiles/../../secret.txt", "/etc/passwd"):
+        assert utils.delete_upload(bad, upload_dir=str(tmp_path)) is False
+    assert (tmp_path / "secret.txt").exists()
+
+
+def test_erased_username_prefix_can_never_be_registered():
+    # routers.users.ERASED_USERNAME_PREFIX = "deleted-" อาศัยว่าชื่อผู้ใช้จริงมีขีดไม่ได้
+    with pytest.raises(DomainError):
+        utils.validate_username("deleted-15-ab12cd34")
+
+
 def test_phone_rules():
     assert utils.validate_phone("081-234-5678") == "0812345678"
     assert utils.validate_phone(" 02 123 4567 ") == "021234567"

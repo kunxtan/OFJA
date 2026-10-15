@@ -144,6 +144,19 @@ def save_image(value: Optional[str], folder: str, upload_dir: Optional[str] = No
     return f"/uploads/{folder}/{name}"
 
 
+def delete_upload(path: Optional[str], upload_dir: Optional[str] = None) -> bool:
+    """ลบไฟล์ที่ save_image เขียนไว้ (เฉพาะ path รูปแบบ /uploads/<folder>/<uuid>.<ext> เท่านั้น
+    URL ภายนอกหรือ path แปลก ๆ ไม่แตะ) ; คืน True ถ้าลบไฟล์ได้จริง"""
+    if not path or not _UPLOAD_PATH_RE.match(path):
+        return False
+    _, _, folder, name = path.split("/")
+    try:
+        os.remove(os.path.join(upload_dir or config.UPLOAD_DIR, folder, name))
+        return True
+    except FileNotFoundError:
+        return False
+
+
 # ----------------------------------------------------------------- pickup time
 def parse_pickup_time(value: Optional[str], now: Optional[datetime] = None) -> Optional[datetime]:
     """frontend ส่ง '14:30 น.' หรือ 'YYYY-MM-DD HH:MM[:SS]' -> DATETIME (วันนี้ถ้าเป็นเวลาล้วน)"""

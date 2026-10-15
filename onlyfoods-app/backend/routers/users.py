@@ -1,4 +1,5 @@
 """โปรไฟล์ผู้ใช้, ค้นหาลูกค้า, บัญชีพนักงานร้าน / บัญชีร้านค้า"""
+import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -7,13 +8,13 @@ from auth import assert_store_access, get_current_user, hash_password, require_r
 from db import get_db, transaction
 from errors import DomainError
 from schemas import (AccountCreateSchema, AccountUpdateSchema, AdminResetPasswordSchema,
-                     CompleteProfileSchema, StaffActiveSchema, StaffCreateSchema, StaffUpdateSchema,
-                     UpdateProfileSchema)
+                     CompleteProfileSchema, StaffActiveSchema, StaffCreateSchema, StaffEraseSchema,
+                     StaffUpdateSchema, UpdateProfileSchema)
 from services import is_duplicate_key, log_audit
 from shapes import USER_SELECT, shape_user
 from state import STORE_ROLES, legacy_role, role_code_from_input
-from utils import (bangkok_now, mask_email, mask_phone, save_image, validate_email, validate_password,
-                   validate_phone, validate_username)
+from utils import (bangkok_now, delete_upload, mask_email, mask_phone, save_image, validate_email,
+                   validate_password, validate_phone, validate_username)
 
 router = APIRouter(prefix="/api", tags=["users"])
 
@@ -162,6 +163,10 @@ def executive_reset_password(user_id: int, data: AdminResetPasswordSchema,
 
 
 # ------------------------------------------------------- staff (owner scope)
+# บัญชีที่ถูก "ลบถาวร" (ลบข้อมูลส่วนตัว แต่เก็บแถวไว้ให้ Order/Log อ้างถึง) จะถูกเปลี่ยน Username เป็น
+# deleted-<id>-<สุ่ม> ; ขีด (-) ไม่ผ่าน validate_username จึงไม่มีทางชนกับชื่อผู้ใช้จริง และใช้แยกบัญชีที่ถูกลบได้
+ERASED_USERNAME_PREFIX = "deleted-"
+
 _STAFF_SELECT = """
     SELECT u.UserId, u.Username, u.FullName, u.Phone, u.Email, u.ProfileImageUrl, u.IsActive,
            u.CreatedAt, u.LockedUntil, r.RoleCode, creator.FullName AS CreatedByName,
@@ -196,7 +201,7 @@ def _lock_staff(cur, user: dict, user_id: int) -> dict:
     """พนักงานหน้าร้าน/ครัวที่ผู้เรียกมีสิทธิ์จัดการ (เจ้าของร้าน = เฉพาะร้านตัวเอง)"""
     cur.execute(
         """
-        SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive, r.RoleCode,
+        SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive, u.ProfileImageUrl, r.RoleCode,
                COALESCE(s.IsDeleted, 0) AS StoreIsDeleted
         FROM `User` u JOIN Role r ON r.RoleId = u.RoleId LEFT JOIN Store s ON s.StoreId = u.StoreId
         WHERE u.UserId = %s FOR UPDATE OF u
@@ -204,7 +209,7 @@ def _lock_staff(cur, user: dict, user_id: int) -> dict:
         (user_id,),
     )
     target = cur.fetchone()
-    if not target or target["RoleCode"] not in STAFF_ROLES:
+    if not target or target["RoleCode"] not in STAFF_ROLES or target["Username"].startswith(ERASED_USERNAME_PREFIX):
         raise DomainError(404, "ไม่พบพนักงานนี้")
     assert_store_access(user, target["StoreId"])
     return target
@@ -215,7 +220,8 @@ def get_store_staff(store_id: int, include_inactive: bool = False,
                     user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
     """รายชื่อพนักงานร้าน + ข้อมูลติดต่อ, สถานะบัญชี, วันที่สร้าง, งานที่ทำวันนี้ (จาก OrderStatusLog)"""
     assert_store_access(user, store_id)
-    sql = _STAFF_SELECT + " WHERE u.StoreId = %s AND r.RoleCode IN ('FRONT_STAFF', 'KITCHEN_STAFF')"
+    sql = (_STAFF_SELECT + " WHERE u.StoreId = %s AND r.RoleCode IN ('FRONT_STAFF', 'KITCHEN_STAFF')"
+           f" AND u.Username NOT LIKE '{ERASED_USERNAME_PREFIX}%%'")
     if not include_inactive:
         sql += " AND u.IsActive = TRUE"
     sql += " ORDER BY u.IsActive DESC, u.UserId"
@@ -376,6 +382,35 @@ def delete_staff(user_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTI
     return {"success": True, "message": "ลบพนักงานสำเร็จ"}
 
 
+@router.post("/staff/{user_id}/erase")
+def erase_staff(user_id: int, data: StaffEraseSchema,
+                user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """ลบถาวร = ลบข้อมูลส่วนตัวทิ้ง (ชื่อ/เบอร์/อีเมล/รูป/รหัสผ่าน) แต่เก็บแถว User ไว้
+    เพราะ Order, OrderStatusLog, Payment, AuditLog ฯลฯ อ้างถึง UserId นี้ (ลบแถวจริงจะผิด FK และประวัติหาย)
+    ต้องปิดใช้งานก่อน และพิมพ์ชื่อผู้ใช้ยืนยันให้ตรง ; ทำแล้วย้อนกลับไม่ได้"""
+    with transaction(db):
+        with db.cursor() as cur:
+            target = _lock_staff(cur, user, user_id)
+            if target["IsActive"]:
+                raise DomainError(400, "กรุณาปิดใช้งานบัญชีนี้ก่อนลบถาวร")
+            if data.confirm_username.strip() != target["Username"]:
+                raise DomainError(400, "ชื่อผู้ใช้ที่พิมพ์ยืนยันไม่ตรงกับบัญชีนี้")
+            cur.execute(
+                """
+                UPDATE `User`
+                SET Username = %s, FullName = %s, Phone = NULL, Email = NULL, ProfileImageUrl = NULL,
+                    PasswordHash = NULL, GoogleId = NULL, FailedLoginCount = 0, LockedUntil = NULL, IsActive = FALSE
+                WHERE UserId = %s
+                """,
+                (f"{ERASED_USERNAME_PREFIX}{user_id}-{secrets.token_hex(4)}", f"พนักงานที่ถูกลบ #{user_id}", user_id),
+            )
+        log_audit(db, user["UserId"], "ERASE_STAFF", "User", user_id, {"username": target["Username"]},
+                  {"erased": True})
+    # ลบไฟล์รูปหลัง commit แล้วเท่านั้น (ถ้า transaction ล้มจะไม่เสียรูปไปฟรี ๆ)
+    delete_upload(target["ProfileImageUrl"])
+    return {"success": True, "message": f"ลบข้อมูลพนักงาน {target['FullName']} ถาวรเรียบร้อยแล้ว"}
+
+
 # ---------------------------------------------- store accounts (executive only)
 @router.get("/store-accounts")
 def list_store_accounts(user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
@@ -429,7 +464,7 @@ def update_store_account(user_id: int, data: AccountUpdateSchema,
                 (user_id,),
             )
             acc = cur.fetchone()
-            if not acc or acc["RoleCode"] not in STORE_ROLES:
+            if not acc or acc["RoleCode"] not in STORE_ROLES or acc["Username"].startswith(ERASED_USERNAME_PREFIX):
                 raise DomainError(404, "ไม่พบบัญชีผู้ใช้นี้")
             if acc["StoreIsDeleted"]:
                 raise DomainError(403, "ไม่สามารถแก้ไขบัญชีของร้านที่ถูกลบแล้ว")
