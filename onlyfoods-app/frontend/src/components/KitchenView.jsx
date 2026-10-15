@@ -153,6 +153,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const isUpdatingRef = useRef(false);
+  const pendingUndoRef = useRef(new Set()); // ล็อก ID ฝั่ง Frontend ป้องกันอาการเด้งกระพริบ
+
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [storeOpen, setStoreOpen] = useState(true);
   const [isSuspended, setIsSuspended] = useState(false);
@@ -204,14 +206,22 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   };
 
   const fetchData = useCallback(() => {
-    if (isUpdatingRef.current) return;
     const storeId = user?.StoreId || user?.storeId || 1;
 
     fetch(`${apiBase}/api/orders?store_id=${storeId}`)
       .then(r => r.json())
       .then(data => {
-        if (!isUpdatingRef.current) {
-          setAllOrders(Array.isArray(data) ? data : []);
+        if (Array.isArray(data)) {
+          setAllOrders(prev => {
+            // ยกเว้นรายการที่กำลังกด Undo / เปลี่ยนสถานะอยู่ ไม่ให้โดนทับ
+            return data.map(newOrder => {
+              if (pendingUndoRef.current.has(newOrder.OrderID)) {
+                const localOrder = prev.find(o => o.OrderID === newOrder.OrderID);
+                return localOrder || newOrder;
+              }
+              return newOrder;
+            });
+          });
         }
       })
       .catch(err => console.error("Error fetching kitchen orders:", err));
@@ -245,7 +255,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // --- Logic ตรวจสอบเวลานัดรับอัจฉริยะ ---
+  // --- Logic ใหม่: คำนวณเวลานัดรับจาก "จำนวนจานรวม" ทั้งหมดในคิว ---
   const getCalculatedTargetDate = (order, orderList) => {
     const created = parseDate(order.CreatedAt) || new Date();
     const pickupStr = order.PickupTime ? String(order.PickupTime).trim() : '';
@@ -253,7 +263,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     const createdFormatted = created.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
     const createdShort = created.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-    // เช็คว่าถ้า PickupTime เท่ากับเวลาสั่งซื้อ (เช่น 17:31) หรือเป็นคำว่า "รับทันที" ให้ถือว่าเปน "ออเดอร์รับทันที"
+    // เช็คว่าถ้า PickupTime เท่ากับเวลาสั่ง หรือระบุรับทันที ให้ถือว่าเป็น "ออเดอร์รับทันที"
     const isImmediate = !pickupStr || 
                         pickupStr.includes('รับทันที') || 
                         pickupStr === createdFormatted || 
@@ -264,14 +274,23 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       if (pDate) return { targetDate: pDate, isImmediate: false };
     }
 
-    // สำหรับออเดอร์รับทันที: คำนวณคิวก่อนหน้าที่ยังรอปรุงอยู่
-    const pendingBefore = orderList.filter(o => 
+    // 1. หาออเดอร์ค้างปรุงก่อนหน้านี้ทั้งหมด
+    const pendingBeforeOrders = orderList.filter(o => 
       (o.Status === 'Pending' || o.Status === 'Cooking') && 
       (o.OrderID < order.OrderID)
     );
 
-    // สูตร: เวลาสั่ง + (คิวก่อนหน้า * 5 นาที) + 5 นาที (เวลาปรุง)
-    const minutesToWait = (pendingBefore.length * 5) + 5;
+    // 2. คำนวณจำนวนจานรวมก่อนหน้า
+    const prevTotalItems = pendingBeforeOrders.reduce((sum, o) => {
+      const orderQty = o.items?.reduce((iSum, item) => iSum + (Number(item.Qty) || 1), 0) || 1;
+      return sum + orderQty;
+    }, 0);
+
+    // 3. คำนวณจำนวนจานของออเดอร์ปัจจุบัน
+    const currentOrderQty = order.items?.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0) || 1;
+
+    // 4. คิดอัตรา 1 จาน = 3 นาที (และมีเวลาทำอย่างน้อย 3 นาที)
+    const minutesToWait = Math.max(5, (prevTotalItems + currentOrderQty) * 4);
     const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
 
     return {
@@ -281,7 +300,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     };
   };
 
-  // Sort Orders: เรียงจากซ้ายไปขวา บนลงล่าง ตามเวลา Target Time
+  // Sort Orders: เรียงตาม Target Time
   const sortedOrders = [...allOrders].sort((a, b) => {
     const targetA = getCalculatedTargetDate(a, allOrders).targetDate;
     const targetB = getCalculatedTargetDate(b, allOrders).targetDate;
@@ -312,11 +331,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
   const updateOrderStatus = async (id, targetStatus = 'Ready', e) => {
     if (e) e.stopPropagation();
-    
-    // สั่งล็อกการ Sync ชั่วคราวเพื่อป้องกันอาการเด้งกระพริบ
-    isUpdatingRef.current = true;
 
-    // อัปเดต State ทันที (Optimistic UI)
+    // 1. ล็อก ID ไว้เพื่อไม่ให้ fetchData ดึงข้อมูลเก่ามาทับ
+    pendingUndoRef.current.add(id);
+
+    // 2. อัปเดต State ทันที
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
     if (targetStatus === 'Pending') {
@@ -336,15 +355,14 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     } catch (err) {
       console.error("Update status error:", err);
     } finally {
-      // หน่วงเวลา 1.5 วินาทีให้ Backend ประมวลผลเสร็จแล้วค่อยปลดล็อกการ Sync
+      // 3. ปลดล็อกหลังจากผ่านไป 3.5 วินาที
       setTimeout(() => {
-        isUpdatingRef.current = false;
-        fetchData();
-      }, 1500);
+        pendingUndoRef.current.delete(id);
+      }, 3500);
     }
   };
 
-  // ตรวจสอบการแจ้งเตือนด่วน (Urgent Alert Logic)
+  // ตรวจสอบการแจ้งเตือนด่วน
   const getPickupAlert = (order) => {
     try {
       const { targetDate, isImmediate } = getCalculatedTargetDate(order, allOrders);
@@ -353,7 +371,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       const now = new Date();
       const diffMins = Math.floor((targetDate - now) / 60000);
 
-      // แจ้งเตือนกระพริบแดงเมื่อเหลือเวลา <= 5 นาที หรือเลยเวลานัดรับไปแล้ว
       if (diffMins <= 5 && diffMins >= -120) {
         if (isImmediate) {
           return {
@@ -440,6 +457,9 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         button:active {
           transform: scale(0.98);
         }
+        .summary-scroll-container::-webkit-scrollbar {
+          display: none;
+        }
         @keyframes urgentFlash {
           0% { background-color: rgba(239, 68, 68, 0.12); border-color: #EF4444; }
           50% { background-color: rgba(239, 68, 68, 0.3); border-color: #DC2626; }
@@ -456,7 +476,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       <header style={{
         background: theme.navBg,
         borderBottom: `1px solid ${theme.border}`,
-        padding: '14px 28px',
+        padding: '12px 24px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -464,11 +484,13 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         boxSizing: 'border-box',
         boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.04)',
         flexShrink: 0,
-        zIndex: 100
+        zIndex: 100,
+        gap: '16px'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        {/* โลโก้ และ สถานะร้าน */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
           <div style={{
-            fontSize: "25px",
+            fontSize: "24px",
             fontWeight: "900",
             color: PALETTE.navy,
             whiteSpace: "nowrap",
@@ -480,11 +502,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             <span style={{ color: PALETTE.coral }}>Foods</span>
           </div>
 
-          <div style={{ width: '1px', height: '24px', background: theme.border, margin: '0 4px' }} />
+          <div style={{ width: '1px', height: '24px', background: theme.border }} />
 
           <div style={{
-            width: '42px',
-            height: '42px',
+            width: '38px',
+            height: '38px',
             borderRadius: '12px',
             background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED',
             color: PALETTE.coral,
@@ -495,11 +517,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           </div>
 
           <div>
-            <div style={{ fontSize: '20px', fontWeight: '800', color: theme.textMain, lineHeight: '1.2', letterSpacing: '-0.3px' }}>
+            <div style={{ fontSize: '18px', fontWeight: '800', color: theme.textMain, lineHeight: '1.2', letterSpacing: '-0.3px', whiteSpace: 'nowrap' }}>
               ส่วนงานครัว
             </div>
-            <div style={{ fontSize: '13px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-              <span>สถานะศูนย์อาหาร:</span>
+            <div style={{ fontSize: '12px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', whiteSpace: 'nowrap' }}>
+              <span>สถานะ:</span>
               <span style={{
                 color: isStoreActive ? PALETTE.emerald : '#EF4444',
                 fontWeight: '700',
@@ -508,8 +530,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                 gap: '5px'
               }}>
                 <span style={{
-                  width: '8px',
-                  height: '8px',
+                  width: '7px',
+                  height: '7px',
                   borderRadius: '50%',
                   background: isStoreActive ? PALETTE.emerald : '#EF4444',
                   animation: isStoreActive ? 'statusPulse 2s infinite' : 'none'
@@ -520,50 +542,84 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+        {/* ส่วนแสดงเวลารวม สรุปคิว และสรุปรายการเมนูที่ปรับปรุงใหม่ (Responsive Scroll) */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '10px', 
+          flex: 1, 
+          justifyContent: 'flex-end', 
+          minWidth: 0,
+          overflow: 'hidden'
+        }}>
+          {/* เวลา Real-time */}
           <div style={{
             background: theme.cardInner,
             border: `1px solid ${theme.border}`,
-            padding: '8px 16px',
+            padding: '7px 14px',
             borderRadius: '99px',
-            fontSize: '14px',
+            fontSize: '13.5px',
             fontWeight: '700',
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
-            color: theme.textMain
+            color: theme.textMain,
+            flexShrink: 0
           }}>
             <ClockIcon />
             <span>{currentTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} น.</span>
           </div>
 
+          {/* จำนวนคิวรอปรุง */}
           <div style={{
             background: theme.cardInner,
             border: `1px solid ${theme.border}`,
-            padding: '8px 16px',
+            padding: '7px 14px',
             borderRadius: '99px',
-            fontSize: '14px',
-            fontWeight: '600'
+            fontSize: '13.5px',
+            fontWeight: '600',
+            flexShrink: 0,
+            whiteSpace: 'nowrap'
           }}>
-            คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '16px', marginLeft: '4px' }}>{pendingOrders.length}</span>
+            คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '4px' }}>{pendingOrders.length}</span>
           </div>
 
-          {summary.slice(0, 3).map((s, i) => (
-            <div key={i} style={{
-              background: theme.cardInner,
-              border: `1px solid ${theme.border}`,
-              padding: '8px 16px',
-              borderRadius: '99px',
-              fontSize: '13px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}>
-              <span>{s.ProductName}</span>
-              <span style={{ background: PALETTE.coral, color: '#FFF', borderRadius: '99px', padding: '2px 8px', fontSize: '12px', fontWeight: '800' }}>{s.TotalQty}</span>
+          {/* สรุปรายการอาหาร ( Scroll ซ้าย-ขวา ไม่ดันส่วนอื่นจนพัง) */}
+          {summary.length > 0 && (
+            <div 
+              className="summary-scroll-container"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                overflowX: 'auto',
+                maxWidth: '400px',
+                padding: '2px 0',
+                msOverflowStyle: 'none',
+                scrollbarWidth: 'none'
+              }}
+            >
+              {summary.map((s, i) => (
+                <div key={i} style={{
+                  background: theme.cardInner,
+                  border: `1px solid ${theme.border}`,
+                  padding: '6px 12px',
+                  borderRadius: '99px',
+                  fontSize: '12.5px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}>
+                  <span style={{ fontWeight: '600' }}>{s.ProductName}</span>
+                  <span style={{ background: PALETTE.coral, color: '#FFF', borderRadius: '99px', padding: '1px 7px', fontSize: '11.5px', fontWeight: '800' }}>{s.TotalQty}</span>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
 
+          {/* ปุ่มสลับ Theme */}
           <button
             onClick={() => setIsDark(!isDark)}
             style={{
@@ -571,19 +627,21 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               color: theme.textMain,
               border: `1px solid ${theme.border}`,
               borderRadius: '12px',
-              padding: '9px 16px',
-              fontSize: '13.5px',
+              padding: '8px 14px',
+              fontSize: '13px',
               fontWeight: '700',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px'
+              gap: '6px',
+              flexShrink: 0
             }}
           >
             {isDark ? <SunIcon /> : <MoonIcon />}
             {isDark ? 'Light' : 'Dark'}
           </button>
 
+          {/* ปุ่ม Profile User */}
           <button
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
             style={{
@@ -591,18 +649,19 @@ export default function KitchenView({ user, apiBase, onLogout }) {
               color: theme.textMain,
               border: `1px solid ${theme.border}`,
               borderRadius: '99px',
-              padding: '5px 16px 5px 6px',
-              fontSize: '14px',
+              padding: '4px 14px 4px 5px',
+              fontSize: '13.5px',
               fontWeight: '700',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px'
+              gap: '8px',
+              flexShrink: 0
             }}
           >
             <div style={{
-              width: '34px',
-              height: '34px',
+              width: '32px',
+              height: '32px',
               borderRadius: '50%',
               background: PALETTE.yellow,
               display: 'flex',
@@ -617,14 +676,14 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                 <UserIcon />
               )}
             </div>
-            <span>{displayName}</span>
+            <span style={{ whiteSpace: 'nowrap' }}>{displayName}</span>
           </button>
 
           {isDropdownOpen && (
             <div style={{
               position: 'absolute',
               top: 'calc(100% + 10px)',
-              right: 0,
+              right: 24,
               background: theme.cardBg,
               border: `1px solid ${theme.border}`,
               borderRadius: '16px',
@@ -1074,7 +1133,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณคิว):' : 'เวลานัดรับ:'}
+                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณจากจำนวนจาน):' : 'เวลานัดรับ:'}
                   </span>
                   <strong style={{ color: PALETTE.coral }}>{formatTime(calculatedInfo.targetDate)}</strong>
                 </div>
