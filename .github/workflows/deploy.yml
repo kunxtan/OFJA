@@ -13,8 +13,6 @@ concurrency:
 
 env:
   DOMAIN: only-foods.cskmitl.com
-  # อีเมลสำหรับ Let's Encrypt แจ้งเตือนใบรับรองใกล้หมดอายุ (เว้นว่างได้)
-  CERTBOT_EMAIL: ""
   APP_DIR: /home/ubuntu/OFJA
   COMPOSE_FILE_NAME: docker-compose.cloud.yml
 
@@ -34,11 +32,9 @@ jobs:
 
       - name: Check server config
         run: |
-          set -e
           cd "$APP_DIR/onlyfoods-app"
           # .env อยู่บน server เท่านั้น ไม่อยู่ใน git
           test -f .env || { echo "ไม่พบ onlyfoods-app/.env บน server (คัดลอกจาก .env.example แล้วแก้ค่า)"; exit 1; }
-          sudo mkdir -p /var/www/certbot /etc/letsencrypt
 
       - name: Pull images (retry on network errors)
         run: |
@@ -53,45 +49,29 @@ jobs:
             return 1
           }
           # image ที่ compose ใช้ตรง ๆ
-          retry sudo docker compose -f "$COMPOSE_FILE_NAME" pull db proxy certbot || exit 1
+          retry sudo docker compose -f "$COMPOSE_FILE_NAME" pull db proxy || exit 1
           # base image ที่ Dockerfile ของ backend/frontend ใช้ตอน build
           for img in python:3.12-slim node:20-alpine nginx:alpine; do
             retry sudo docker pull "$img" || exit 1
           done
 
-      - name: Get HTTPS certificate (first time only)
-        run: |
-          set -e
-          cd "$APP_DIR/onlyfoods-app"
-          if sudo test -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem"; then
-            echo "มีใบรับรองของ $DOMAIN แล้ว ข้ามขั้นนี้"
-            exit 0
-          fi
-
-          echo "ยังไม่มีใบรับรอง: เปิดเว็บแบบ HTTP ชั่วคราวเพื่อให้ Let's Encrypt ตรวจโดเมนผ่านพอร์ต 80"
-          sudo env NGINX_CONF=./nginx.http-only.conf docker compose -f "$COMPOSE_FILE_NAME" up -d --build --remove-orphans
-
-          if [ -n "$CERTBOT_EMAIL" ]; then EMAIL_ARG="--email $CERTBOT_EMAIL"; else EMAIL_ARG="--register-unsafely-without-email"; fi
-          sudo docker compose -f "$COMPOSE_FILE_NAME" run --rm --entrypoint certbot certbot \
-            certonly --webroot -w /var/www/certbot -d "$DOMAIN" \
-            $EMAIL_ARG --agree-tos --non-interactive
-
-      - name: Build and start (HTTPS)
+      - name: Build and start
         run: |
           set -e
           cd "$APP_DIR/onlyfoods-app"
           # ไม่ใช้ 'docker compose down' : down จะหยุดทุก service (เว็บล่มทั้งหมด) ทุกครั้งที่ push
           # up -d --build จะสร้างใหม่เฉพาะ service ที่เปลี่ยน และไม่แตะ volume ข้อมูล
-          sudo env NGINX_CONF=./nginx.conf docker compose -f "$COMPOSE_FILE_NAME" up -d --build --remove-orphans
+          # --remove-orphans : ลบ container ที่ไม่มีในไฟล์แล้ว (เช่น certbot จากรอบก่อน)
+          sudo docker compose -f "$COMPOSE_FILE_NAME" up -d --build --remove-orphans
           sudo docker compose -f "$COMPOSE_FILE_NAME" ps
           sudo docker image prune -f
 
-      - name: Health check (HTTPS)
+      - name: Health check
         run: |
-          # ยิงเข้า 443 ของเครื่องตัวเองด้วยชื่อโดเมนจริง: ตรวจทั้งใบรับรองและ backend ในครั้งเดียว
+          # ยิงเข้าพอร์ต 80 ของเครื่องตัวเองแบบเดียวกับที่ Cloudflare ส่งมา
           for i in $(seq 1 30); do
-            if curl -fsS --max-time 5 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/food-court/status" > /dev/null; then
-              echo "OK: https://$DOMAIN พร้อมใช้งาน"
+            if curl -fsS --max-time 5 -H "Host: $DOMAIN" "http://127.0.0.1/api/food-court/status" > /dev/null; then
+              echo "OK: เว็บพร้อมใช้งานที่ https://$DOMAIN"
               exit 0
             fi
             echo "รอ backend/db สตาร์ท... ($i/30)"

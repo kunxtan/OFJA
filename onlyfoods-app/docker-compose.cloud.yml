@@ -1,4 +1,5 @@
-# Only Foods - สำหรับ server มหาลัย (only-foods.cskmitl.com) : HTTPS พอร์ต 443, พอร์ต 80 ใช้แค่เด้งไป HTTPS + ขอใบรับรอง
+# Only Foods - สำหรับ server มหาลัย (only-foods.cskmitl.com)
+# เว็บอยู่หลัง Cloudflare: HTTPS จัดการที่ Cloudflare แล้วส่งต่อมาที่พอร์ต 80 ของเครื่องนี้
 # ค่าลับทั้งหมดอ่านจาก onlyfoods-app/.env บน server (ไม่อยู่ใน git)
 # runner เรียกไฟล์นี้ให้เองตอน push ; รันมือ:  sudo docker compose -f docker-compose.cloud.yml up -d --build
 services:
@@ -49,32 +50,17 @@ services:
     depends_on:
       - backend
 
-  # ทางเข้าเดียว: 80 -> เด้งไป 443 ; 443 -> /api, /uploads ไป backend ; อื่น ๆ ไป frontend
+  # ทางเข้าเดียว (พอร์ต 80 รับจาก Cloudflare): /api และ /uploads ไป backend ; อื่น ๆ ไป frontend
   proxy:
     image: nginx:1.27-alpine
     restart: always
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      # runner ส่ง NGINX_CONF มาเอง (http-only เฉพาะตอนขอใบรับรองครั้งแรก)
-      - ${NGINX_CONF:-./nginx.conf}:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /var/www/certbot:/var/www/certbot:ro
-    # reload ทุก 12 ชม. เพื่อให้ nginx หยิบใบรับรองที่ certbot ต่ออายุแล้ว
-    command: ["/bin/sh", "-c", "while :; do sleep 12h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"]
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend
       - backend
-
-  # ต่ออายุใบรับรอง Let's Encrypt อัตโนมัติ (เช็กทุก 12 ชม. ต่อจริงเมื่อเหลือ < 30 วัน)
-  certbot:
-    image: certbot/certbot:v2.11.0
-    restart: always
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt
-      - /var/www/certbot:/var/www/certbot
-    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
 
 volumes:
   ofja_db_data:
