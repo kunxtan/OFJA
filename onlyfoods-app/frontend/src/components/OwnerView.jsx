@@ -48,9 +48,22 @@ function orderIs(order, status) {
   return String(order.Status || '').toLowerCase() === status.toLowerCase();
 }
 
+// ---- ยอดขาย: นิยามเดียวกับ backend (reports.dashboard / v_order_net) ใช้ทุกหน้า ----
+// ออเดอร์ที่นับเป็นยอดขาย = สำเร็จ + ไม่มารับ (ลูกค้าจ่ายแล้ว ร้านทำแล้ว ไม่มีการคืนเงิน) ; ยกเลิกไม่นับ
+const isNoShowOrder = (o) => o.StatusCode === 'NO_SHOW' || orderIs(o, 'NoShow');
+const isRevenueOrder = (o) => o.StatusCode === 'COMPLETED' || o.StatusCode === 'NO_SHOW' || orderIs(o, 'Completed') || orderIs(o, 'NoShow');
+// เงินที่รับจริง = การชำระที่ยืนยันแล้วทุกใบ (ค่าอาหาร + ส่วนต่างที่โอนเพิ่ม) ; ไม่มีข้อมูลการชำระ -> TotalAmount
+// (ไม่ใช้ TotalAmount ตรง ๆ เพราะเปลี่ยนเมนูถูกลงแล้ว TotalAmount ลดทันที ทั้งที่ยังไม่ได้คืนเงินจริง)
+function orderReceived(o) {
+  const paid = (o.Payments || []).filter(p => p.PaymentStatus === 'VERIFIED');
+  return paid.length ? paid.reduce((acc, p) => acc + Number(p.Amount || 0), 0) : Number(o.TotalAmount || 0);
+}
+// ยอดสุทธิของออเดอร์ = เงินที่รับจริง − เงินที่ฝ่ายบัญชีคืนแล้ว (refundedByOrder: { OrderId: ยอดคืนที่ DONE })
+const orderNet = (o, refundedByOrder) => orderReceived(o) - Number(refundedByOrder?.[o.OrderID] || 0);
+
 // วันเดียว = รายชั่วโมง 24 จุด ; หลายวัน = รายวัน
 // วันเดียว = รายชั่วโมง (เฉพาะช่วงเวลาทำการของศูนย์อาหาร) ; หลายวัน = รายวัน
-function buildBuckets(completedOrders, period, hourRange) {
+function buildBuckets(completedOrders, period, hourRange, valueOf = (o) => Number(o.TotalAmount || 0)) {
   const buckets = [];
   const indexByKey = {};
   if (period.days === 1) {
@@ -81,7 +94,7 @@ function buildBuckets(completedOrders, period, hourRange) {
     const key = period.days === 1 ? `h${at.getHours()}` : toISODate(at);
     const bucket = buckets[indexByKey[key]];
     if (!bucket) return;
-    bucket.sales += Number(order.TotalAmount || 0);
+    bucket.sales += valueOf(order);
     bucket.count += 1;
   });
   return buckets;
@@ -127,20 +140,27 @@ function changePct(current, previous) {
 }
 
 // สรุปตัวเลขหลักของชุดออเดอร์ (สูตรเดียวกับหน้า Executive)
-function summarizeOrders(orders) {
-  const completed = orders.filter(o => orderIs(o, 'Completed'));
+function summarizeOrders(orders, refundedByOrder) {
+  const revenue = orders.filter(isRevenueOrder);           // สำเร็จ + ไม่มารับ
+  const noShow = revenue.filter(isNoShowOrder);
   const cancelled = orders.filter(o => orderIs(o, 'Cancelled'));
-  const sum = (list) => list.reduce((acc, o) => acc + Number(o.TotalAmount || 0), 0);
-  const sales = sum(completed);
-  const finished = completed.length + cancelled.length;
+  const received = revenue.reduce((acc, o) => acc + orderReceived(o), 0);
+  const refunded = revenue.reduce((acc, o) => acc + Number(refundedByOrder?.[o.OrderID] || 0), 0);
+  const sales = received - refunded;
+  const finished = revenue.length + cancelled.length;
   return {
-    sales,                                           // ยอดขายสุทธิ (เฉพาะออเดอร์สำเร็จ)
-    grossSales: sales + sum(cancelled),              // มูลค่าออเดอร์รวมก่อนหักยกเลิก
-    completedCount: completed.length,
+    sales,                                                   // ยอดขายสุทธิ = รับจริง − คืนแล้ว (สำเร็จ + ไม่มารับ)
+    received,                                                // เงินที่รับจริงก่อนหักคืน
+    refunded,                                                // เงินที่ฝ่ายบัญชีคืนแล้ว (ของออเดอร์ที่นับยอด)
+    noShowCount: noShow.length,
+    noShowSales: noShow.reduce((acc, o) => acc + orderNet(o, refundedByOrder), 0),
+    grossSales: revenue.concat(cancelled).reduce((acc, o) => acc + Number(o.TotalAmount || 0), 0), // มูลค่าออเดอร์รวมก่อนหักยกเลิก
+    completedCount: revenue.length - noShow.length,
+    revenueCount: revenue.length,
     cancelledCount: cancelled.length,
-    cancelRate: finished ? (cancelled.length / finished) * 100 : null, // ยกเลิก / (สำเร็จ + ยกเลิก)
-    avgOrder: completed.length ? sales / completed.length : 0,
-    completed,
+    cancelRate: finished ? (cancelled.length / finished) * 100 : null, // ยกเลิก / ออเดอร์ที่จบแล้ว
+    avgOrder: revenue.length ? sales / revenue.length : 0,
+    completed: revenue,
   };
 }
 
@@ -164,7 +184,7 @@ function summarizeMenus(completedOrders) {
 }
 
 // คำนวณจากออเดอร์ของร้านตัวเองเท่านั้น (กรอง StoreId ซ้ำอีกชั้น แม้ API จะส่งมาเฉพาะร้านนี้อยู่แล้ว)
-function buildStoreReport(orders, storeId, period, hourRange) {
+function buildStoreReport(orders, storeId, period, hourRange, refundedByOrder) {
   const inRange = (start, end) => (orders || []).filter(order => {
     const createdAt = parseOrderDate(order.CreatedAt);
     return createdAt && createdAt >= start && createdAt < end && String(order.StoreId) === String(storeId);
@@ -173,14 +193,14 @@ function buildStoreReport(orders, storeId, period, hourRange) {
   prevStart.setDate(prevStart.getDate() - period.days);
   const currentOrders = inRange(period.start, period.end);
   const previousOrders = inRange(prevStart, period.start);
-  const now = summarizeOrders(currentOrders);
-  const before = summarizeOrders(previousOrders);
+  const now = summarizeOrders(currentOrders, refundedByOrder);
+  const before = summarizeOrders(previousOrders, refundedByOrder);
   return {
     now,
     before,
     hasPreviousData: previousOrders.length > 0,
     menus: summarizeMenus(now.completed),
-    buckets: buildBuckets(now.completed, period, hourRange),
+    buckets: buildBuckets(now.completed, period, hourRange, (o) => orderNet(o, refundedByOrder)),
   };
 }
 
@@ -1932,9 +1952,6 @@ const ORDER_STATUS_META = {
   NO_SHOW: { label: 'ไม่มารับ', tone: 'neutral' },
 };
 const orderStatusMeta = (code) => ORDER_STATUS_META[code] || { label: code || '-', tone: 'neutral' };
-const TERMINAL_STATUSES = ['COMPLETED', 'CANCELLED', 'NO_SHOW'];
-// ยอดขาย = ออเดอร์ที่จบแบบ COMPLETED / NO_SHOW (เหมือนแดชบอร์ด: ไม่มารับยังนับเป็นรายได้ ยกเลิกไม่นับ)
-const REVENUE_STATUSES = ['COMPLETED', 'NO_SHOW'];
 
 const ROLE_TH = {
   CUSTOMER: 'ลูกค้า',
@@ -2586,6 +2603,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [reviewsData, setReviewsData] = useState({ reviews: [], summary: {} });
+  const [refunds, setRefunds] = useState([]); // รายการคืนเงินของร้าน (ใช้หักยอดขายสุทธิ)
+  // { OrderId: ยอดที่ฝ่ายบัญชีคืนแล้ว } ; คืนเงินที่ยังรอโอน (PENDING) ยังไม่หัก เพราะเงินยังอยู่กับร้าน
+  const refundedByOrder = useMemo(() => refunds.reduce((acc, r) => {
+    if (r.RefundStatus === 'DONE') acc[r.OrderId] = (acc[r.OrderId] || 0) + Number(r.Amount || 0);
+    return acc;
+  }, {}), [refunds]);
   const [issues, setIssues] = useState([]);
   
   const [storeDays, setStoreDays] = useState(1);
@@ -2711,6 +2734,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         }
       })
       .catch(err => console.error(err));
+    fetch(`${apiBase}/api/refunds?limit=1000`).then(r => r.json()).then(d => { if (Array.isArray(d)) setRefunds(d); }).catch(err => console.error(err));
     fetch(`${apiBase}/api/stores/${storeId}/reviews/detail`).then(r => r.json()).then(d => { if (d && Array.isArray(d.reviews)) { setReviewsData(d); markLoaded('reviews'); } }).catch(err => console.error(err));
     // รายงานปัญหาแบบละเอียด (ชื่อผู้แจ้งแบบย่อ ไม่มีข้อมูลติดต่อ)
     fetch(`${apiBase}/api/stores/${storeId}/issues/detail`).then(r => r.json()).then(d => {
@@ -2751,9 +2775,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (history) {
       const hourRange = foodCourtHours ? hoursFromSchedule(foodCourtHours.open, foodCourtHours.close) : null;
-      setStoreReport(buildStoreReport(history, storeId, storePeriod, hourRange));
+      setStoreReport(buildStoreReport(history, storeId, storePeriod, hourRange, refundedByOrder));
     }
-  }, [history, storeId, storeDays, storeAnchor, customRange, customStart, customEnd, foodCourtHours]);
+  }, [history, storeId, storeDays, storeAnchor, customRange, customStart, customEnd, foodCourtHours, refundedByOrder]);
 
   useEffect(() => {
     if (page !== 'menu') { setSelectMode(false); setSelectedIds([]); }
@@ -3517,13 +3541,22 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     <div className="od-summary-block">
                       <div className="od-summary-label"><Icon name="trend" size={16} /> ยอดขายสุทธิ</div>
                       <div className="od-summary-value">{fmtMoney(now.sales)}<small>บาท</small></div>
+                      {(now.noShowCount > 0 || now.refunded > 0) && (
+                        <div className="od-summary-note">
+                          {now.noShowCount > 0 && <span>รวมไม่มารับ {fmtMoney(now.noShowCount)} ออเดอร์ ฿{fmtMoney(now.noShowSales)}</span>}
+                          {now.refunded > 0 && <span>หักคืนเงินแล้ว ฿{fmtMoney(now.refunded)}</span>}
+                        </div>
+                      )}
                       <DeltaChip solid delta={changePct(now.sales, before.sales)} label={compareLabel} hasPreviousData={hasPrev} />
                     </div>
                     <div className="od-summary-divider" />
                     <div className="od-summary-block">
-                      <div className="od-summary-label"><Icon name="check" size={16} /> ออเดอร์สำเร็จ</div>
-                      <div className="od-summary-value">{fmtMoney(now.completedCount)}<small>ออเดอร์</small></div>
-                      <DeltaChip solid delta={changePct(now.completedCount, before.completedCount)} label={compareLabel} hasPreviousData={hasPrev} />
+                      <div className="od-summary-label"><Icon name="check" size={16} /> ออเดอร์ที่ขายได้</div>
+                      <div className="od-summary-value">{fmtMoney(now.revenueCount)}<small>ออเดอร์</small></div>
+                      {now.noShowCount > 0 && (
+                        <div className="od-summary-note"><span>สำเร็จ {fmtMoney(now.completedCount)} · ไม่มารับ {fmtMoney(now.noShowCount)}</span></div>
+                      )}
+                      <DeltaChip solid delta={changePct(now.revenueCount, before.revenueCount)} label={compareLabel} hasPreviousData={hasPrev} />
                     </div>
                     <div className="od-summary-spark">
                       <Sparkline buckets={storeReport?.buckets} />
@@ -4119,14 +4152,19 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 || y.OrderID - x.OrderID);
 
             // ---- สรุปยอดของช่วงที่เลือก ----
-            const revenueOrders = inRange.filter(o => REVENUE_STATUSES.includes(o.StatusCode));
-            const revenue = revenueOrders.reduce((s, o) => s + Number(o.TotalAmount || 0), 0);
-            const cancelRate = inRange.length ? Math.round((counts.cancelled / inRange.length) * 100) : 0;
+            const revenueOrders = inRange.filter(isRevenueOrder);
+            const revenue = revenueOrders.reduce((s, o) => s + orderNet(o, refundedByOrder), 0);
+            const noShowSales = revenueOrders.filter(isNoShowOrder).reduce((s, o) => s + orderNet(o, refundedByOrder), 0);
+            const refundedSum = revenueOrders.reduce((s, o) => s + Number(refundedByOrder[o.OrderID] || 0), 0);
+            // อัตรายกเลิก = ยกเลิก ÷ ออเดอร์ที่จบแล้ว (สำเร็จ + ไม่มารับ + ยกเลิก) เหมือนแดชบอร์ด
+            const finishedCount = revenueOrders.length + counts.cancelled;
+            const cancelRate = finishedCount ? Math.round((counts.cancelled / finishedCount) * 100) : 0;
             const kpis = [
               { tone: 'orange', icon: 'receipt', value: fmtMoney(inRange.length), label: 'ออเดอร์ทั้งหมด', sub: counts.active ? `กำลังดำเนินการ ${counts.active}` : null },
-              { tone: 'green', icon: 'coin', value: `฿${fmtMoney(revenue)}`, label: 'ยอดขาย (สำเร็จ + ไม่มารับ)' },
+              { tone: 'green', icon: 'coin', value: `฿${fmtMoney(revenue)}`, label: 'ยอดขายสุทธิ (สำเร็จ + ไม่มารับ)',
+                sub: [counts.noshow ? `รวมไม่มารับ ฿${fmtMoney(noShowSales)}` : null, refundedSum ? `หักคืนเงิน ฿${fmtMoney(refundedSum)}` : null].filter(Boolean).join(' · ') || null },
               { tone: 'blue', icon: 'trend', value: `฿${fmtMoney(revenueOrders.length ? revenue / revenueOrders.length : 0)}`, label: 'เฉลี่ยต่อออเดอร์' },
-              { tone: 'amber', icon: 'soldout', value: fmtMoney(counts.cancelled), label: 'ยกเลิก', sub: inRange.length ? `${cancelRate}% ของออเดอร์` : null },
+              { tone: 'amber', icon: 'soldout', value: fmtMoney(counts.cancelled), label: 'ยกเลิก', sub: finishedCount ? `${cancelRate}% ของออเดอร์ที่จบแล้ว` : null },
             ];
             const statusTabs = [
               { id: 'all', label: 'ทั้งหมด', count: inRange.length },
@@ -4152,7 +4190,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             });
             const daySummary = (key) => {
               const list = shown.filter(o => { const d = parseOrderDate(o.CreatedAt); return (d ? toISODate(d) : 'unknown') === key; });
-              return { count: list.length, sales: list.filter(o => REVENUE_STATUSES.includes(o.StatusCode)).reduce((s, o) => s + Number(o.TotalAmount || 0), 0) };
+              return { count: list.length, sales: list.filter(isRevenueOrder).reduce((s, o) => s + orderNet(o, refundedByOrder), 0) };
             };
 
             return (
@@ -5466,6 +5504,7 @@ body, html {
 .od-summary-block { position: relative; z-index: 1; display: flex; flex-direction: column; min-width: 170px; }
 .od-summary-label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; opacity: 0.9; }
 .od-summary-value { margin-top: 4px; font-size: 34px; font-weight: 700; line-height: 1.15; }
+.od-summary-note { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 2px 0 4px; font-size: 12px; font-weight: 600; opacity: 0.92; }
 .od-summary-value small { margin-left: 6px; font-size: 14px; font-weight: 500; opacity: 0.85; }
 .od-summary-divider { position: relative; z-index: 1; width: 1px; align-self: stretch; background: rgba(255,255,255,0.25); }
 .od-summary-spark { position: relative; z-index: 1; flex: 1 1 240px; min-width: 200px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
