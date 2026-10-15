@@ -2,6 +2,8 @@ fastapi==0.115.6
 uvicorn[standard]==0.32.1
 pydantic==2.10.3
 pymysql==1.1.1
+# MySQL 8 ใช้ caching_sha2_password : pymysql ต้องมี cryptography ถึงจะ login ด้วย user ที่ไม่ใช่ root ได้
+cryptography==43.0.3
 DBUtils==3.1.0
 bcrypt==4.2.1
 PyJWT==2.10.1
