@@ -10,7 +10,8 @@ onlyfoods-app/
 ├─ nginx.conf           80→443, /api และ /uploads → backend, อื่น ๆ → frontend
 ├─ nginx.http-only.conf ใช้ชั่วคราวถ้ายังไม่มีใบรับรอง HTTPS
 ├─ .env.example         ตัวอย่างค่าลับ (คัดลอกเป็น .env)
-├─ database/init.sql    schema ใหม่ 22 ตาราง 4 view + ข้อมูล lookup
+├─ database/init.sql    schema ใหม่ 22 ตาราง 4 view + trigger กันแก้ log + ข้อมูล lookup
+│   ├─ migrations/      อัปเดต schema ของฐานที่มีข้อมูลแล้ว (deploy รันให้อัตโนมัติ)
 │   └─ optional/        02_seed_demo.sql (ข้อมูลทดลอง) · 03_migrate_from_old_db.sql (ย้ายข้อมูลจาก onlyfoods_db เดิม)
 ├─ backend/             FastAPI: main, config, db, auth, state, services, shapes, schemas, routers/, tools/, tests/
 └─ frontend/            React (แก้เฉพาะที่จำเป็น ดูหัวข้อ "สิ่งที่แก้ใน frontend")
@@ -41,6 +42,9 @@ sudo docker compose exec backend python -m tools.set_password --all-empty
 
 ย้ายข้อมูลจากฐานเก่า: ดูหัวไฟล์ `database/optional/03_migrate_from_old_db.sql` (ใช้แทน 02 ไม่ใช่ทั้งคู่)
 
+**แก้ schema ของฐานที่มีข้อมูลแล้ว**: `init.sql` รันเฉพาะตอน volume ว่าง จึงต้องเพิ่มไฟล์ใน `database/migrations/` (ตั้งชื่อเรียงเลข `002_...sql`)
+ให้รันซ้ำได้และไม่ลบข้อมูล แล้วแก้ `init.sql` ให้ตรงกันด้วย ; workflow deploy รันทุกไฟล์ในโฟลเดอร์นี้ก่อนสตาร์ท backend ใหม่ทุกครั้ง
+
 ## ตัวแปรสภาพแวดล้อม (`.env`)
 | ตัวแปร | ความหมาย |
 |---|---|
@@ -56,10 +60,14 @@ sudo docker compose exec backend python -m tools.set_password --all-empty
 - **สิทธิ์**: ลูกค้าเห็นเฉพาะออเดอร์ตัวเอง; เจ้าของ/พนักงานเห็นเฉพาะร้านตัวเอง; endpoint ผู้บริหารเฉพาะ `EXECUTIVE`; `/api/stores`, `/api/products`, `/api/food-court/status`, รีวิวร้าน เปิดสาธารณะ
 - **ลืมรหัสผ่าน**: `POST /api/reset-password` เดิมถูกปิด (ใครก็รีเซ็ตของใครได้) → ผู้ใช้เปลี่ยนเองที่ `POST /api/users/change-password`, ผู้บริหารรีเซ็ตให้ที่ `PUT /api/executive/users/{id}/reset-password`
 - **Order**: state machine อยู่ที่ `state.py` ที่เดียว, เปลี่ยนสถานะภายใต้ `SELECT … FOR UPDATE` + บันทึก `OrderStatusLog` ใน transaction เดียวกัน, เลขคิว = MAX+1 ต่อ (ร้าน, วัน) พร้อม retry เมื่อชน, ราคาอ่านจาก DB เสมอ
-- **เงิน**: ทุกออเดอร์ออนไลน์มีแถว `Payment` (สลิปถูกปฏิเสธเก็บไว้), ยกเลิกหลังจ่ายสร้าง `Refund` อัตโนมัติ, เปลี่ยนเมนูถูกลงสร้าง `PRICE_DIFF` (แพงขึ้นไม่ได้), ฝ่ายบัญชีกดยืนยันคืนเงินที่ `/api/refunds`
+- **เงิน** (จำลอง ไม่ได้ต่อธนาคารจริง): ทุกออเดอร์ออนไลน์มีแถว `Payment` (สลิปถูกปฏิเสธเก็บไว้ทุกใบ), ยกเลิกหลังจ่ายสร้าง `Refund` อัตโนมัติ (คืนทั้งค่าอาหารและส่วนต่างที่โอนเพิ่ม), ฝ่ายบัญชีกดยืนยันคืนเงินที่ `/api/refunds` แล้วระบบแจ้งเจ้าของร้านและลูกค้า ; เจ้าของร้านดูรายการคืนเงินของร้านตัวเองได้ (ดูอย่างเดียว)
+- **เปลี่ยนเมนูตอนของหมด**: ถูกลง -> `Refund` แบบ `PRICE_DIFF` ; แพงขึ้น -> ออเดอร์เป็น `AWAITING_TOP_UP` (รอโอนส่วนต่าง) ลูกค้าแนบสลิปที่ `PUT /api/orders/{id}/top-up-slip`, หน้าร้านตรวจด้วยปุ่มเดิม (`verify-slip`) ผ่านแล้วถึงเข้าครัว ไม่ผ่านแนบใหม่ได้ ; ระหว่างรอตรวจสลิปส่วนต่างยกเลิกไม่ได้ (กันคืนเงินผิดยอด)
+- **ยอดขาย**: `gross_sales` = เงินที่รับจริง, `net_sales` = gross - เงินที่คืนแล้ว (ไม่มีค่าเช่า)
+- **เลขคิว**: แยกตามร้าน รีเซ็ตทุกวัน แสดงเป็นตัวอักษรประจำร้าน + 3 หลัก (`Store.QueueCode`: A001, B001) ผู้บริหารเลือกตัวอักษรตอนสร้างร้านหรือให้ระบบเลือกตัวที่ว่าง
+- **Audit**: login สำเร็จ/ล้มเหลว และทุกการเปลี่ยนแปลงสำคัญอยู่ใน `AuditLog` ; `AuditLog` กับ `OrderStatusLog` มี trigger ห้าม UPDATE/DELETE
 - **รูปภาพ**: frontend ส่ง base64 → backend ตรวจชนิด/ขนาด (≤5 MB) แล้วเก็บไฟล์ใน volume `uploads`, DB เก็บเฉพาะ path (`/uploads/...`)
 - **ไม่มีข้อมูลบัตรเครดิต/แต้ม** ใน ER ใหม่: การชำระด้วยบัตรถูกปฏิเสธ (รองรับ PromptPay / TrueMoney→`MOBILE_BANKING`), `Cards` ในโปรไฟล์คืนค่าว่าง
-- **ชื่อฟิลด์เก่ายังอยู่** (`OrderID`, `Status`='Pending'/'Ready'…, `Role`='Shop Owner'…, `QueueNo`='007', `img`, `LogID`…) เพื่อให้ frontend เดิมอ่านได้ พร้อมฟิลด์ใหม่ (`StatusCode`, `RoleCode`)
+- **ชื่อฟิลด์เก่ายังอยู่** (`OrderID`, `Status`='Pending'/'Ready'…, `Role`='Shop Owner'…, `QueueNo`='A007', `img`, `LogID`…) เพื่อให้ frontend เดิมอ่านได้ พร้อมฟิลด์ใหม่ (`StatusCode`, `RoleCode`)
 - **สถานะ legacy**: frontend เดิมส่ง `Ready` ครั้งเดียวจากครัว → backend เดิน `COOKING→COOKED→READY` และ log ทุกขั้น; `Cancelled` จากหน้าร้านขณะ PENDING/COOKING → `PENDING_CANCELLATION→CANCELLED` (ชื่อสถานะแบบใหม่ เช่น `COOKED` ใช้ตาม state machine เป๊ะ)
 
 ## สิ่งที่แก้ใน frontend (เฉพาะที่จำเป็น)

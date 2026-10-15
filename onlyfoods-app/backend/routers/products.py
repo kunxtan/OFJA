@@ -197,8 +197,8 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema,
                 )
                 do_transition(cur, order, state.PENDING_CANCELLATION, actor_id=user["UserId"], reason=reason,
                               cancel_reason=reason, cancel_deadline=deadline, now=now)
-                send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {queue_label(order['QueueNo'])} เมนูหมด",
-                           f"⚠️ คิว {queue_label(order['QueueNo'])} สินค้า {prod['ProductName']} หมด! "
+                send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {queue_label(order['QueueNo'], order['QueueCode'])} เมนูหมด",
+                           f"⚠️ คิว {queue_label(order['QueueNo'], order['QueueCode'])} สินค้า {prod['ProductName']} หมด! "
                            f"กรุณาเปลี่ยนเมนูหรือกดยกเลิกรับเงินคืนภายใน {payload.response_window_minutes} นาที", oid)
         log_audit(db, user["UserId"], "OUT_OF_STOCK_NOTIFY", "Product", product_id, None,
                   {"orders": len(ids), "name": prod["ProductName"]})

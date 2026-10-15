@@ -55,6 +55,27 @@ jobs:
             retry sudo docker pull "$img" || exit 1
           done
 
+      - name: Apply database migrations
+        run: |
+          set -e
+          cd "$APP_DIR/onlyfoods-app"
+          # init.sql รันเฉพาะตอนฐานข้อมูลว่าง : ฐานที่มีข้อมูลอยู่แล้วต้องอัปเดต schema ด้วยไฟล์ใน database/migrations/
+          # ทุกไฟล์รันซ้ำได้ (เช็คก่อนแก้ ไม่ลบข้อมูล) ; รันก่อน backend ใหม่สตาร์ท
+          # ยังไม่มี db (ติดตั้งครั้งแรก) = ข้าม เพราะ init.sql สร้างให้ครบแล้ว
+          sudo docker compose -f "$COMPOSE_FILE_NAME" up -d db
+          for i in $(seq 1 30); do
+            sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent' && break
+            echo "รอ db... ($i/30)"; sleep 5
+          done
+          if ! sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "USE onlyfood; SELECT 1 FROM Store LIMIT 1"' > /dev/null 2>&1; then
+            echo "ยังไม่มีฐาน onlyfood (init.sql กำลังสร้าง) - ข้าม migration"; exit 0
+          fi
+          for f in database/migrations/*.sql; do
+            [ -f "$f" ] || continue
+            echo "== $f"
+            sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" onlyfood' < "$f"
+          done
+
       - name: Build and start
         run: |
           set -e

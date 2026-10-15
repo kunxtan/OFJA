@@ -113,6 +113,7 @@ CREATE TABLE Store (
   IsOpen          BOOLEAN           NOT NULL DEFAULT FALSE COMMENT 'set by the store itself',
   IsSuspended     BOOLEAN           NOT NULL DEFAULT FALSE COMMENT 'set by admin, overrides IsOpen',
   AvgPrepMinutes  SMALLINT UNSIGNED NOT NULL DEFAULT 15,
+  QueueCode       VARCHAR(2)        NOT NULL COMMENT 'queue prefix shown to customers: A -> A001, A002 ...',
   ContactName     VARCHAR(100)      NULL,
   ContactPhone    VARCHAR(20)       NULL,
   ContactLine     VARCHAR(50)       NULL,
@@ -122,11 +123,13 @@ CREATE TABLE Store (
   CreatedAt       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (StoreId),
   UNIQUE KEY uk_store_name (StoreName),
+  UNIQUE KEY uk_store_queuecode (QueueCode),
   KEY ix_store_category (StoreCategoryId),
   KEY ix_store_foodcourt (FoodCourtId),
   KEY ix_store_active (IsDeleted, IsSuspended),
   CONSTRAINT fk_store_category   FOREIGN KEY (StoreCategoryId) REFERENCES StoreCategory (StoreCategoryId) ON UPDATE CASCADE,
-  CONSTRAINT fk_store_foodcourt  FOREIGN KEY (FoodCourtId)     REFERENCES FoodCourt (FoodCourtId)         ON UPDATE CASCADE
+  CONSTRAINT fk_store_foodcourt  FOREIGN KEY (FoodCourtId)     REFERENCES FoodCourt (FoodCourtId)         ON UPDATE CASCADE,
+  CONSTRAINT ck_store_queuecode CHECK (REGEXP_LIKE(QueueCode, '^[A-Z]{1,2}$', 'c'))
 ) ENGINE=InnoDB;
 
 -- StoreId is NULL for CUSTOMER / ACCOUNTANT / EXECUTIVE,
@@ -165,7 +168,6 @@ CREATE TABLE StoreContract (
   StoreId        INT UNSIGNED  NOT NULL,
   StartDate      DATE          NOT NULL,
   EndDate        DATE          NOT NULL,
-  MonthlyRent    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   ContractStatus ENUM('ACTIVE','EXPIRING','EXPIRED','TERMINATED') NOT NULL DEFAULT 'ACTIVE',
   CreatedBy      INT UNSIGNED  NOT NULL,
   CreatedAt      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -175,8 +177,7 @@ CREATE TABLE StoreContract (
   KEY ix_contract_createdby (CreatedBy),
   CONSTRAINT fk_contract_store     FOREIGN KEY (StoreId)   REFERENCES Store (StoreId) ON UPDATE CASCADE,
   CONSTRAINT fk_contract_createdby FOREIGN KEY (CreatedBy) REFERENCES `User` (UserId) ON UPDATE CASCADE,
-  CONSTRAINT ck_contract_dates CHECK (EndDate > StartDate),
-  CONSTRAINT ck_contract_rent  CHECK (MonthlyRent >= 0)
+  CONSTRAINT ck_contract_dates CHECK (EndDate > StartDate)
 ) ENGINE=InnoDB;
 
 CREATE TABLE ProductCategory (
@@ -221,7 +222,9 @@ CREATE TABLE Product (
 --   COOKING              -> COOKED  | PENDING_CANCELLATION
 --   COOKED               -> READY
 --   READY                -> COMPLETED | NO_SHOW   (NO_SHOW >= 15 min after ReadyAt)
---   PENDING_CANCELLATION -> PENDING | CANCELLED
+--   PENDING_CANCELLATION -> PENDING | AWAITING_TOP_UP | CANCELLED
+--   AWAITING_TOP_UP      -> PENDING | CANCELLED   (swapped to a pricier item: the
+--                           kitchen waits until the top-up slip is verified)
 -- Walk-in (cash) orders start at PENDING.
 CREATE TABLE `Order` (
   OrderId           BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT,
@@ -278,12 +281,16 @@ CREATE TABLE OrderItem (
   CONSTRAINT ck_orderitem_price CHECK (UnitPrice >= 0)
 ) ENGINE=InnoDB;
 
--- ActiveFlag + uk_payment_active = at most ONE non-rejected payment per order.
+-- PaymentType ORDER  = the first payment for the food (one active per order:
+--                      ActiveFlag + uk_payment_active).
+-- PaymentType TOP_UP = extra transfer after swapping to a pricier item; an order
+--                      can have many (each with its own slip).
 -- A rejected slip leaves its row in place (ActiveFlag = NULL) and the customer
--- can upload a new one, so the rejection history survives.
+-- uploads a new one, so every slip and every rejection stays on record.
 CREATE TABLE Payment (
   PaymentId     BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
   OrderId       BIGINT UNSIGNED  NOT NULL,
+  PaymentType   ENUM('ORDER','TOP_UP') NOT NULL DEFAULT 'ORDER',
   MethodId      TINYINT UNSIGNED NOT NULL,
   Amount        DECIMAL(10,2)    NOT NULL COMMENT 'amount actually paid (stored, not derived)',
   PaymentStatus ENUM('PENDING','VERIFIED','REJECTED') NOT NULL DEFAULT 'PENDING',
@@ -292,12 +299,13 @@ CREATE TABLE Payment (
   VerifiedBy    INT UNSIGNED     NULL,
   PaidAt        DATETIME         NULL,
   CreatedAt     DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  ActiveFlag    TINYINT UNSIGNED AS (IF(PaymentStatus = 'REJECTED', NULL, 1)) STORED,
+  ActiveFlag    TINYINT UNSIGNED AS (IF(PaymentType = 'ORDER' AND PaymentStatus <> 'REJECTED', 1, NULL)) STORED,
   PRIMARY KEY (PaymentId),
   UNIQUE KEY uk_payment_active (OrderId, ActiveFlag),
   KEY ix_payment_method (MethodId),
   KEY ix_payment_verifiedby (VerifiedBy),
   KEY ix_payment_status (PaymentStatus),
+  KEY ix_payment_order_type (OrderId, PaymentType, PaymentStatus),
   CONSTRAINT fk_payment_order      FOREIGN KEY (OrderId)    REFERENCES `Order` (OrderId)             ON UPDATE CASCADE,
   CONSTRAINT fk_payment_method     FOREIGN KEY (MethodId)   REFERENCES PaymentMethod (MethodId)      ON UPDATE CASCADE,
   CONSTRAINT fk_payment_verifiedby FOREIGN KEY (VerifiedBy) REFERENCES `User` (UserId)               ON UPDATE CASCADE,
@@ -463,6 +471,18 @@ CREATE TABLE AuditLog (
 ) ENGINE=InnoDB;
 
 
+-- Append-only for real: even the app's own DB user cannot rewrite history.
+-- (Single-statement trigger bodies, so no DELIMITER is needed.)
+CREATE TRIGGER trg_auditlog_no_update BEFORE UPDATE ON AuditLog FOR EACH ROW
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AuditLog is append-only';
+CREATE TRIGGER trg_auditlog_no_delete BEFORE DELETE ON AuditLog FOR EACH ROW
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AuditLog is append-only';
+CREATE TRIGGER trg_oslog_no_update BEFORE UPDATE ON OrderStatusLog FOR EACH ROW
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'OrderStatusLog is append-only';
+CREATE TRIGGER trg_oslog_no_delete BEFORE DELETE ON OrderStatusLog FOR EACH ROW
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'OrderStatusLog is append-only';
+
+
 -- =====================================================================
 -- 5) SUMMARY TABLE  (pre-computed monthly figures, all values STORED)
 -- =====================================================================
@@ -527,8 +547,9 @@ INSERT INTO OrderStatus (StatusCode, StatusNameTh, IsTerminal, SortOrder) VALUES
   ('READY',                'เรียกคิวแล้ว',       FALSE, 5),
   ('COMPLETED',            'รับอาหารแล้ว',       TRUE,  6),
   ('PENDING_CANCELLATION', 'รออนุมัติยกเลิก',    FALSE, 7),
-  ('CANCELLED',            'ยกเลิก',            TRUE,  8),
-  ('NO_SHOW',              'ไม่มารับอาหาร',      TRUE,  9);
+  ('AWAITING_TOP_UP',      'รอโอนส่วนต่าง',      FALSE, 8),
+  ('CANCELLED',            'ยกเลิก',            TRUE,  9),
+  ('NO_SHOW',              'ไม่มารับอาหาร',      TRUE,  10);
 
 INSERT INTO PaymentMethod (MethodCode, MethodNameTh, RequiresSlip, IsActive) VALUES
   ('QR_PROMPTPAY',   'โอนผ่าน QR PromptPay',  TRUE,  TRUE),
@@ -584,20 +605,24 @@ FROM Review r
 JOIN `Order` o ON o.OrderId = r.OrderId
 GROUP BY o.StoreId;
 
--- Money actually kept per order = paid - refunded.
+-- Money actually kept per order = everything verified (food + top-ups)
+-- minus refunds already paid back. One row per order: the refund sums are
+-- grouped per payment first so a join never multiplies the totals.
 CREATE OR REPLACE VIEW v_order_net AS
 SELECT
   p.OrderId,
-  p.PaymentId,
-  p.Amount                                   AS PaidAmount,
-  COALESCE(SUM(rf.Amount), 0)                AS RefundedAmount,
-  p.Amount - COALESCE(SUM(rf.Amount), 0)     AS NetAmount
+  SUM(p.Amount)                                  AS PaidAmount,
+  COALESCE(SUM(rf.Refunded), 0)                  AS RefundedAmount,
+  SUM(p.Amount) - COALESCE(SUM(rf.Refunded), 0)  AS NetAmount
 FROM Payment p
-LEFT JOIN Refund rf
-       ON rf.PaymentId = p.PaymentId
-      AND rf.RefundStatus = 'DONE'
+LEFT JOIN (
+  SELECT PaymentId, SUM(Amount) AS Refunded
+  FROM Refund
+  WHERE RefundStatus = 'DONE'
+  GROUP BY PaymentId
+) rf ON rf.PaymentId = p.PaymentId
 WHERE p.PaymentStatus = 'VERIFIED'
-GROUP BY p.OrderId, p.PaymentId, p.Amount;
+GROUP BY p.OrderId;
 
 -- Contracts within 30 days of expiry (FR-33).
 CREATE OR REPLACE VIEW v_contract_expiring AS
@@ -617,10 +642,13 @@ WHERE sc.ContractStatus IN ('ACTIVE', 'EXPIRING')
 --  Rules that must live in application code (not expressible in DDL):
 --   1. Order status transitions (see the comment above `Order`).
 --   2. SUM(Refund.Amount) per PaymentId <= Payment.Amount.
---   3. QueueNo = next number per (StoreId, OrderDate); on duplicate-key
---      error, retry. Never COUNT(*) + 1.
+--   3. QueueNo = next number per (StoreId, OrderDate), taken while holding
+--      a lock on the Store row; shown as Store.QueueCode + 3 digits (A001).
+--      Never COUNT(*) + 1.
 --   4. `User`.StoreId must be NOT NULL when Role.RequiresStore = TRUE.
 --   5. OrderItem.UnitPrice is copied from Product at insert time.
---   6. A substitute item may not cost more than the item it replaces.
+--   6. A substitute item that costs more creates a PENDING TOP_UP payment and
+--      the order waits in AWAITING_TOP_UP until that slip is verified;
+--      a cheaper one creates a PRICE_DIFF refund.
 --   7. NO_SHOW only from READY and only >= 15 minutes after ReadyAt.
 -- =====================================================================

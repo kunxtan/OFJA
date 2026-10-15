@@ -21,7 +21,7 @@ def shape_user(row: dict) -> dict:
 
 STORE_SELECT = """
 SELECT s.StoreId, s.StoreName, sc.CategoryName AS Category, s.StoreCategoryId, s.FoodCourtId,
-       s.Description, s.ImageUrl, s.IsOpen, s.IsSuspended, s.AvgPrepMinutes,
+       s.Description, s.ImageUrl, s.IsOpen, s.IsSuspended, s.AvgPrepMinutes, s.QueueCode,
        s.ContactName, s.ContactPhone, s.ContactLine, s.ContactEmail,
        s.IsDeleted, s.DeletedAt, s.CreatedAt,
        c.StartDate AS ContractStartDate, c.StartDate AS CurrentContractStartDate,
@@ -35,24 +35,31 @@ ORDER_SELECT = """
 SELECT o.OrderId AS OrderID, o.OrderId, o.StoreId, o.CustomerId AS UserId, o.CustomerId,
        o.CreatedByStaffId, o.QueueNo, o.TotalAmount, os.StatusCode, os.StatusNameTh,
        o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.CancelReason, o.CancelDeadline,
-       s.StoreName, u.FullName AS CustomerName, u.Username AS UserName,
+       s.StoreName, s.QueueCode, u.FullName AS CustomerName, u.Username AS UserName,
        u.Phone AS CustomerPhone, u.Email AS CustomerEmail,
        pm.MethodCode AS PaymentMethodCode, pm.MethodNameTh AS PaymentMethod,
        p.PaymentStatus, p.SlipImageUrl AS SlipUrl,
+       tu.PaymentId AS TopUpPaymentId, tu.Amount AS TopUpAmount, tu.SlipImageUrl AS TopUpSlipUrl,
        EXISTS(SELECT 1 FROM Review rv WHERE rv.OrderId = o.OrderId) AS IsReviewed
 FROM `Order` o
 JOIN OrderStatus os ON os.StatusId = o.StatusId
 JOIN Store s ON s.StoreId = o.StoreId
 LEFT JOIN `User` u ON u.UserId = o.CustomerId
-LEFT JOIN Payment p ON p.PaymentId = (SELECT MAX(p2.PaymentId) FROM Payment p2 WHERE p2.OrderId = o.OrderId)
+-- p = การชำระค่าอาหาร (ใบล่าสุด) ; tu = ส่วนต่างที่ยังรอโอน/รอตรวจ (มีได้ทีละ 1)
+LEFT JOIN Payment p ON p.PaymentId = (SELECT MAX(p2.PaymentId) FROM Payment p2
+                                      WHERE p2.OrderId = o.OrderId AND p2.PaymentType = 'ORDER')
+LEFT JOIN Payment tu ON tu.PaymentId = (SELECT MAX(p3.PaymentId) FROM Payment p3
+                                        WHERE p3.OrderId = o.OrderId AND p3.PaymentType = 'TOP_UP'
+                                          AND p3.PaymentStatus = 'PENDING')
 LEFT JOIN PaymentMethod pm ON pm.MethodId = p.MethodId
 """
 
 
 def shape_order(row: dict) -> dict:
     row = dict(row)
-    row["QueueNo"] = queue_label(row["QueueNo"])
+    row["QueueNo"] = queue_label(row["QueueNo"], row.get("QueueCode"))
     row["Status"] = legacy_status(row["StatusCode"])
+    row["TopUpAmount"] = float(row["TopUpAmount"]) if row.get("TopUpAmount") is not None else None
     created = row.get("CreatedAt")
     row["OrderTime"] = created.strftime("%Y-%m-%d %H:%M:%S") if created else None
     pickup = row.get("PickupTime")
@@ -84,7 +91,26 @@ def attach_items(cur, orders: List[Dict]) -> List[Dict]:
         by_order.setdefault(it["OrderId"], []).append(it)
     for o in orders:
         o["items"] = by_order.get(o["OrderID"], [])
+    _attach_payments(cur, orders, ids, placeholders)
     return orders
+
+
+def _attach_payments(cur, orders: List[Dict], ids: List[int], placeholders: str) -> None:
+    """ทุกการชำระของออเดอร์ (ค่าอาหาร + ส่วนต่าง รวมใบที่ถูกปฏิเสธ) ให้ร้าน/ลูกค้าดูสลิปย้อนหลังได้ทุกใบ"""
+    cur.execute(
+        f"""
+        SELECT OrderId, PaymentId, PaymentType, Amount, PaymentStatus, SlipImageUrl AS SlipUrl,
+               RejectReason, PaidAt, CreatedAt
+        FROM Payment WHERE OrderId IN ({placeholders}) ORDER BY PaymentId
+        """,
+        ids,
+    )
+    by_order: Dict[int, List[Dict]] = {}
+    for p in cur.fetchall():
+        p["Amount"] = float(p["Amount"])
+        by_order.setdefault(p.pop("OrderId"), []).append(p)
+    for o in orders:
+        o["Payments"] = by_order.get(o["OrderID"], [])
 
 
 def in_clause(values: Iterable) -> str:

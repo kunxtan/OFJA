@@ -11,13 +11,13 @@ from auth import STORE_SCOPED, assert_store_access, get_current_user, require_ro
 from db import get_db, transaction
 from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
-                     RecallRequestSchema, StatusUpdateSchema)
-from services import (apply_status_effects, create_refund, do_transition, get_foodcourt,
-                      insert_with_queue_retry, lock_order, log_audit, log_first_status, send_notif,
-                      status_id, verified_payment)
+                     RecallRequestSchema, StatusUpdateSchema, TopUpSlipSchema)
+from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
+                      lock_order, log_audit, log_first_status, pending_top_up, refund_price_diff, send_notif,
+                      status_id)
 from shapes import ORDER_SELECT, attach_items, shape_order
 from utils import (bangkok_now, clean_text, contract_active, foodcourt_is_open, parse_pickup_time,
-                   queue_label, save_image)
+                   parse_queue_no, queue_label, save_image)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -58,7 +58,7 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
 
             cur.execute(
                 """
-                SELECT s.StoreName, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate, c.ContractStatus
+                SELECT s.StoreName, s.QueueCode, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate, c.ContractStatus
                 FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId WHERE s.StoreId = %s
                 """,
                 (data.store_id,),
@@ -140,7 +140,7 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
                 )
             log_first_status(cur, order_id, initial, user["UserId"])
 
-        q = queue_label(queue_no)
+        q = queue_label(queue_no, store["QueueCode"])
         if customer_id:
             send_notif(db, customer_id, "ORDER_STATUS", f"คิว {q}", f"สั่งซื้อคิว {q} สำเร็จ!", order_id)
         log_audit(db, user["UserId"], "CREATE_ORDER", "Order", order_id, None,
@@ -260,7 +260,7 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
                 raise DomainError(400, "ออเดอร์ Walk-in ไม่มีลูกค้าในระบบให้เลือกเมนูใหม่ กรุณาใช้ปุ่มยกเลิกแทน")
             do_transition(cur, order, state.PENDING_CANCELLATION, actor_id=user["UserId"], reason=reason,
                           cancel_reason=reason, cancel_deadline=deadline, now=now)
-            q = queue_label(order["QueueNo"])
+            q = queue_label(order["QueueNo"], order["QueueCode"])
             send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} มีปัญหา",
                        f"คิว {q} มีปัญหา: {reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)", order_id)
         log_audit(db, user["UserId"], "CANCEL_REQUEST", "Order", order_id, None,
@@ -269,11 +269,19 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
 
 
 # --------------------------------------------------- customer: change / cancel
-def _customer_pending_cancellation_order(cur, order_id: int, user: dict, now, enforce_deadline: bool = True) -> dict:
+def _customer_own_order(cur, order_id: int, user: dict) -> dict:
     order = lock_order(cur, order_id)
     if order["CustomerId"] is None or int(order["CustomerId"]) != int(user["UserId"]):
         raise DomainError(403, "คุณไม่มีสิทธิ์ดำเนินการกับคำสั่งซื้อนี้")
-    if order["StatusCode"] != state.PENDING_CANCELLATION:
+    return order
+
+
+def _customer_pending_cancellation_order(cur, order_id: int, user: dict, now, enforce_deadline: bool = True,
+                                         allow_top_up: bool = False) -> dict:
+    """allow_top_up: ตอนรอโอนส่วนต่าง ลูกค้ายังกดยกเลิกได้ (แต่เปลี่ยนเมนูซ้ำไม่ได้)"""
+    order = _customer_own_order(cur, order_id, user)
+    allowed = {state.PENDING_CANCELLATION} | ({state.AWAITING_TOP_UP} if allow_top_up else set())
+    if order["StatusCode"] not in allowed:
         raise DomainError(400, "ออเดอร์นี้ไม่ได้อยู่ในสถานะรอยืนยัน (เปลี่ยนเมนู/ยกเลิก)")
     if enforce_deadline and order["CancelDeadline"] and now > order["CancelDeadline"]:
         raise DomainError(400, "หมดเวลาเปลี่ยนเมนูแล้ว กรุณากดยกเลิกออเดอร์เพื่อรับเงินคืน")
@@ -319,8 +327,6 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             if int(new["ProductId"]) == int(old["ProductId"]):
                 raise DomainError(400, "กรุณาเลือกเมนูที่แตกต่างจากเมนูเดิม")
             old_price, new_price = Decimal(old["UnitPrice"]), Decimal(new["UnitPrice"])
-            if new_price > old_price:
-                raise DomainError(400, "เมนูใหม่ราคาสูงกว่าเมนูเดิม กรุณาเลือกเมนูที่ราคาเท่ากันหรือถูกกว่า")
 
             # ประวัติไม่หาย: รายการเดิม -> REPLACED, เพิ่มรายการใหม่ที่ชี้กลับด้วย ReplacesItemId
             cur.execute("UPDATE OrderItem SET ItemStatus = 'REPLACED' WHERE OrderItemId = %s", (old["OrderItemId"],))
@@ -329,11 +335,12 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
                 (order_id, new["ProductId"], old["OrderItemId"], old["Qty"], new_price, old["ItemNote"]),
             )
             diff = (old_price - new_price) * int(old["Qty"])
-            if diff > 0:
-                pay = verified_payment(cur, order_id, lock=True)
-                if pay:
-                    create_refund(cur, pay["PaymentId"], "PRICE_DIFF", diff,
+            top_up_due = Decimal(0)
+            if diff > 0:  # ถูกลง -> คืนส่วนต่าง
+                refund_price_diff(cur, order_id, diff,
                                   f"ส่วนต่างราคา {old['ProductName']} -> {new['ProductName']}", old["OrderItemId"])
+            elif diff < 0:  # แพงขึ้น -> ลูกค้าต้องโอนเพิ่ม (รวมกับส่วนต่างที่ยังไม่โอนของรายการอื่น)
+                top_up_due = add_top_up(cur, order_id, -diff)
 
             cur.execute(
                 "SELECT COALESCE(SUM(Qty * UnitPrice), 0) AS t FROM OrderItem "
@@ -344,15 +351,24 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             cur.execute("UPDATE `Order` SET TotalAmount = %s WHERE OrderId = %s", (new_total, order_id))
             cur.execute("SELECT COUNT(*) AS n FROM OrderItem WHERE OrderId = %s AND ItemStatus = 'OUT_OF_STOCK'", (order_id,))
             still_out = cur.fetchone()["n"]
+            pending = pending_top_up(cur, order_id)
+            if pending:
+                top_up_due = Decimal(pending["Amount"])
             if still_out == 0:
-                do_transition(cur, order, state.PENDING, actor_id=user["UserId"], reason="ลูกค้าเปลี่ยนเมนูแล้ว",
+                # มีส่วนต่างต้องโอน -> รอสลิปก่อนเข้าครัว ; ไม่มี -> กลับเข้าคิวครัวเลย
+                nxt, why = ((state.AWAITING_TOP_UP, f"รอโอนส่วนต่าง {top_up_due:.2f} บาท") if pending
+                            else (state.PENDING, "ลูกค้าเปลี่ยนเมนูแล้ว"))
+                do_transition(cur, order, nxt, actor_id=user["UserId"], reason=why,
                               cancel_reason=None, cancel_deadline=None, now=now)
-            q = queue_label(order["QueueNo"])
-            send_notif(db, user["UserId"], "ORDER_STATUS", f"คิว {q} เปลี่ยนเมนู",
-                       f"คิว {q} เปลี่ยนเมนูจาก '{old['ProductName']}' เป็น '{new['ProductName']}' เรียบร้อยแล้ว", order_id)
+            q = queue_label(order["QueueNo"], order["QueueCode"])
+            msg = f"คิว {q} เปลี่ยนเมนูจาก '{old['ProductName']}' เป็น '{new['ProductName']}' เรียบร้อยแล้ว"
+            if pending:
+                msg += f" กรุณาโอนส่วนต่าง {top_up_due:.2f} บาท และแนบสลิป"
+            send_notif(db, user["UserId"], "ORDER_STATUS", f"คิว {q} เปลี่ยนเมนู", msg, order_id)
         log_audit(db, user["UserId"], "CUSTOMER_CHANGE_ITEM", "Order", order_id,
                   {"product": old["ProductName"], "price": old_price},
-                  {"product": new["ProductName"], "price": new_price, "refund_diff": diff if diff > 0 else 0})
+                  {"product": new["ProductName"], "price": new_price, "refund_diff": diff if diff > 0 else 0,
+                   "top_up_due": top_up_due})
     return {
         "success": True,
         "message": f"เปลี่ยนเมนูเป็น {new['ProductName']} เรียบร้อยแล้ว",
@@ -360,7 +376,30 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
         "new_product_id": new["ProductId"],
         "new_product_name": new["ProductName"],
         "new_total": float(new_total),
+        "top_up_due": float(top_up_due),
+        "status": state.legacy_status(order["StatusCode"]),
     }
+
+
+@router.put("/{order_id}/top-up-slip")
+def upload_top_up_slip(order_id: int, payload: TopUpSlipSchema,
+                       user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
+    """ลูกค้าแนบสลิปโอนส่วนต่าง (แนบใหม่ทับได้จนกว่าร้านจะตรวจ ; ใบที่ถูกปฏิเสธยังเก็บไว้ทุกใบ)"""
+    with transaction(db):
+        with db.cursor() as cur:
+            order = _customer_own_order(cur, order_id, user)
+            if order["StatusCode"] != state.AWAITING_TOP_UP:
+                raise DomainError(400, "ออเดอร์นี้ไม่ได้รอโอนส่วนต่าง")
+            pay = pending_top_up(cur, order_id)
+            if not pay:
+                raise DomainError(400, "ไม่พบยอดส่วนต่างที่ต้องโอน")
+            slip = save_image(payload.slip_url, "slips")
+            if not slip:
+                raise DomainError(400, "กรุณาแนบรูปสลิป")
+            cur.execute("UPDATE Payment SET SlipImageUrl = %s WHERE PaymentId = %s", (slip, pay["PaymentId"]))
+        log_audit(db, user["UserId"], "UPLOAD_TOP_UP_SLIP", "Payment", pay["PaymentId"], None,
+                  {"order_id": order_id, "amount": pay["Amount"], "store_id": order["StoreId"]})
+    return {"success": True, "amount": float(pay["Amount"])}
 
 
 def _customer_cancel(order_id: int, payload: CustomerCancelSchema, user: dict, db):
@@ -368,7 +407,8 @@ def _customer_cancel(order_id: int, payload: CustomerCancelSchema, user: dict, d
     reason = (payload.reason or "ลูกค้ายืนยันยกเลิก เนื่องจากเมนูหมด").strip()
     with transaction(db):
         with db.cursor() as cur:
-            order = _customer_pending_cancellation_order(cur, order_id, user, now, enforce_deadline=False)
+            order = _customer_pending_cancellation_order(cur, order_id, user, now, enforce_deadline=False,
+                                                         allow_top_up=True)
             do_transition(cur, order, state.CANCELLED, actor_id=user["UserId"], reason=reason,
                           cancel_reason=reason, cancel_deadline=None, now=now)
             apply_status_effects(db, cur, order, state.CANCELLED, user["UserId"], reason)
@@ -396,13 +436,9 @@ def recall_order(order_id: int, payload: RecallRequestSchema,
             assert_store_access(user, order["StoreId"])
             if order["StatusCode"] != state.READY:
                 raise DomainError(400, "เรียกคิวซ้ำได้เฉพาะออเดอร์ที่พร้อมรับ")
-            try:
-                same = int(payload.queue_no) == int(order["QueueNo"])
-            except ValueError:
-                same = False
-            if not same:
+            if parse_queue_no(payload.queue_no) != int(order["QueueNo"]):
                 raise DomainError(400, "เลขคิวไม่ตรงกับออเดอร์")
-            q = queue_label(order["QueueNo"])
+            q = queue_label(order["QueueNo"], order["QueueCode"])
             send_notif(db, order["CustomerId"], "QUEUE_CALLED", f"เรียกคิว {q}",
                        f"📢 เรียกคิว {q} อีกครั้ง กรุณามารับอาหาร", order_id)
         log_audit(db, user["UserId"], "RECALL_QUEUE", "Order", order_id, None, {"queue": q})

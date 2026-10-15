@@ -26,8 +26,35 @@ def clean_text(value: Optional[str]) -> Optional[str]:
     return value or None
 
 
-def queue_label(n) -> str:
-    return f"{int(n):03d}"
+def queue_label(n, code: Optional[str] = "") -> str:
+    """เลขคิวที่แสดงให้ลูกค้าเห็น = ตัวอักษรประจำร้าน + เลข 3 หลัก (A001) ; QueueNo ใน DB เป็นตัวเลขล้วน"""
+    return f"{code or ''}{int(n):03d}"
+
+
+def parse_queue_no(value) -> Optional[int]:
+    """'A007' / '007' / 7 -> 7 (ตัดตัวอักษรนำหน้าออก) ; อ่านไม่ได้ -> None"""
+    digits = str(value or "").strip().lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#")
+    return int(digits) if digits.isdigit() else None
+
+
+_QUEUE_CODE_RE = re.compile(r"^[A-Z]{1,2}$")
+
+
+def validate_queue_code(value: str) -> str:
+    code = (value or "").strip().upper()
+    if not _QUEUE_CODE_RE.match(code):
+        raise DomainError(400, "ตัวอักษรคิวต้องเป็นภาษาอังกฤษ A-Z 1-2 ตัว (เช่น A หรือ AB)")
+    return code
+
+
+def next_free_queue_code(used) -> str:
+    """ตัวอักษรคิวที่ยังว่างตัวแรก: A..Z แล้ว AA, AB, ..."""
+    used = set(used)
+    letters = [chr(c) for c in range(ord("A"), ord("Z") + 1)]
+    for code in letters + [a + b for a in letters for b in letters]:
+        if code not in used:
+            return code
+    raise DomainError(400, "ตัวอักษรคิวเต็มแล้ว")
 
 
 # ---------------------------------------------------------------- validation

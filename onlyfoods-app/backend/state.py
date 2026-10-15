@@ -14,12 +14,13 @@ COOKED = "COOKED"
 READY = "READY"
 COMPLETED = "COMPLETED"
 PENDING_CANCELLATION = "PENDING_CANCELLATION"
+AWAITING_TOP_UP = "AWAITING_TOP_UP"  # เปลี่ยนเป็นเมนูที่แพงกว่า: รอลูกค้าโอนส่วนต่าง + ร้านตรวจสลิป ก่อนเข้าครัว
 CANCELLED = "CANCELLED"
 NO_SHOW = "NO_SHOW"
 
 ALL_STATUSES = {
     VERIFYING_SLIP, PENDING, COOKING, COOKED, READY,
-    COMPLETED, PENDING_CANCELLATION, CANCELLED, NO_SHOW,
+    COMPLETED, PENDING_CANCELLATION, AWAITING_TOP_UP, CANCELLED, NO_SHOW,
 }
 TERMINAL = {COMPLETED, CANCELLED, NO_SHOW}
 
@@ -29,14 +30,16 @@ TRANSITIONS = {
     COOKING: {COOKED, PENDING_CANCELLATION},
     COOKED: {READY},
     READY: {COMPLETED, NO_SHOW},
-    PENDING_CANCELLATION: {PENDING, CANCELLED},
+    PENDING_CANCELLATION: {PENDING, AWAITING_TOP_UP, CANCELLED},
+    AWAITING_TOP_UP: {PENDING, CANCELLED},
     COMPLETED: set(),
     CANCELLED: set(),
     NO_SHOW: set(),
 }
 
 # สถานะที่แต่ละบทบาท "ตั้งให้ออเดอร์ได้" ผ่าน PUT /orders/{id}/status
-# (PENDING_CANCELLATION ใช้ผ่าน cancel-request / notify-out-of-stock เท่านั้น)
+# (PENDING_CANCELLATION ใช้ผ่าน cancel-request / notify-out-of-stock เท่านั้น ;
+#  AWAITING_TOP_UP เกิดจาก change-item และออกได้ด้วย verify-slip หรือการยกเลิก)
 _FRONT = {PENDING, READY, COMPLETED, NO_SHOW, CANCELLED}
 ROLE_CAN_SET = {
     "KITCHEN_STAFF": {COOKING, COOKED},
@@ -54,6 +57,7 @@ LEGACY_TO_CODE = {
     "Ready": READY,
     "Completed": COMPLETED,
     "Pending_Cancellation": PENDING_CANCELLATION,
+    "Awaiting_Top_Up": AWAITING_TOP_UP,
     "Cancelled": CANCELLED,
     "NoShow": NO_SHOW,
 }
@@ -65,6 +69,7 @@ CODE_TO_LEGACY = {
     READY: "Ready",
     COMPLETED: "Completed",
     PENDING_CANCELLATION: "Pending_Cancellation",
+    AWAITING_TOP_UP: "Awaiting_Top_Up",
     CANCELLED: "Cancelled",
     NO_SHOW: "NoShow",
 }

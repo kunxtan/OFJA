@@ -153,3 +153,28 @@ def test_parse_date_rejects_buddhist_era_year():
         utils.parse_date("2569-10-10", "วันสิ้นสุดสัญญา")
     assert "2026" in err.value.detail
     assert utils.parse_date("2399-12-31") == date(2399, 12, 31)
+
+
+def test_queue_label_with_store_code():
+    assert utils.queue_label(7, "A") == "A007"
+    assert utils.queue_label(12, "AB") == "AB012"
+    assert utils.queue_label(7, None) == "007"
+
+
+def test_parse_queue_no_accepts_prefixed_and_plain():
+    assert utils.parse_queue_no("A007") == 7
+    assert utils.parse_queue_no("ab012") == 12
+    assert utils.parse_queue_no("007") == 7
+    assert utils.parse_queue_no(7) == 7
+    assert utils.parse_queue_no("A") is None
+    assert utils.parse_queue_no("") is None
+
+
+def test_queue_code_validation_and_next_free():
+    assert utils.validate_queue_code(" b ") == "B"
+    for bad in ("", "1", "ABC", "ก", "A1"):
+        with pytest.raises(DomainError):
+            utils.validate_queue_code(bad)
+    assert utils.next_free_queue_code([]) == "A"
+    assert utils.next_free_queue_code(["A", "B", "D"]) == "C"
+    assert utils.next_free_queue_code([chr(c) for c in range(65, 91)]) == "AA"

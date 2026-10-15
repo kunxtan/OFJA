@@ -116,3 +116,17 @@ def test_is_duplicate_key():
     assert is_duplicate_key(DupKey())
     assert not is_duplicate_key(Exception(1452, "fk"))
     assert not is_duplicate_key(Exception())
+
+
+def test_locks_store_row_before_reading_max():
+    """ต้องล็อกแถว Store ก่อนอ่าน MAX ไม่งั้นออเดอร์พร้อมกันได้เลขเดียวกันจน retry หมด (503)"""
+    seen = []
+
+    class RecordingCursor(FakeCursor):
+        def execute(self, sql, args=()):
+            seen.append(" ".join(sql.split()))
+            super().execute(sql, args)
+
+    next_queue_no(RecordingCursor(FakeDB()), 7)
+    assert seen[0].startswith("SELECT StoreId FROM Store WHERE StoreId = %s FOR UPDATE")
+    assert "MAX(QueueNo)" in seen[1]
