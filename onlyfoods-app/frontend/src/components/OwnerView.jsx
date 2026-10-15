@@ -1761,7 +1761,7 @@ const NOTIF_KIND_LABEL = {
   system: 'ประกาศจากระบบ',
 };
 const NOTIF_GO = {
-  cancel: { page: 'cancel', label: 'ดูประวัติการยกเลิก' },
+  cancel: { page: 'history', label: 'ดูรายละเอียดในประวัติการขาย' },
   issue: { page: 'issues', label: 'ไปที่รายงานปัญหา' },
   stock: { page: 'menu', label: 'ไปที่จัดการเมนู' },
 };
@@ -2375,6 +2375,15 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [salesSearch, setSalesSearch] = useState('');
   const [salesLimit, setSalesLimit] = useState(60);
   const [salesDetailId, setSalesDetailId] = useState(null); // ออเดอร์ที่เปิดดูรายละเอียด
+  // ไปหน้าประวัติการขายพร้อมตั้งตัวกรอง (ใช้จากการแจ้งเตือน / แดชบอร์ด) ; orderId = เปิดรายละเอียดออเดอร์นั้นเลย
+  const openSalesHistory = ({ status = 'all', range = '7', orderId = null } = {}) => {
+    setSalesStatus(status);
+    setSalesRange(range);
+    setSalesSearch('');
+    setSalesLimit(60);
+    setPage('history');
+    if (orderId) setSalesDetailId(orderId);
+  };
 
   // --- Filter States ---
   const [reviewFilter, setReviewFilter] = useState('all');
@@ -2491,7 +2500,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   useEffect(() => {
     if (!isFirstFetch.current && cancels.length > knownCancelsCount) {
-      if (page !== 'cancel') {
+      if (page !== 'history') {
         setUnreadCancels(cancels.length - knownCancelsCount);
       } else {
         setKnownCancelsCount(cancels.length);
@@ -2500,7 +2509,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   }, [cancels.length, page, knownCancelsCount]);
 
   useEffect(() => {
-    if (page === 'cancel') {
+    if (page === 'history') {
       setUnreadCancels(0);
       setKnownCancelsCount(cancels.length);
     }
@@ -2808,8 +2817,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมร้านค้า', icon: 'dashboard' },
     { id: 'menu', label: 'Manage Menu', caption: 'จัดการเมนู/สต็อก', icon: 'menu' },
     { id: 'staff', label: 'Manage Staff', caption: 'จัดการพนักงาน', icon: 'users' },
-    { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history' },
-    { id: 'cancel', label: 'Cancellations', caption: 'ประวัติยกเลิกออเดอร์', icon: 'cancel', badge: unreadCancels > 0 ? unreadCancels : null },
+    // ออเดอร์ที่ยกเลิกรวมอยู่ในประวัติการขายแล้ว (แท็บ "ยกเลิก") : badge ยกเลิกใหม่จึงย้ายมาอยู่ที่นี่
+    { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history', badge: unreadCancels > 0 ? unreadCancels : null },
     { id: 'reviews', label: 'Customer Reviews', caption: 'รีวิวจากลูกค้า', icon: 'star' },
     { id: 'issues', label: 'Issue Reports', caption: 'ประวัติการแจ้งปัญหา', icon: 'alert' },
   ];
@@ -2817,7 +2826,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const navGroups = [
     { label: 'ภาพรวม', items: ['dashboard'] },
     { label: 'จัดการร้าน', items: ['menu', 'staff'] },
-    { label: 'ประวัติและความคิดเห็น', items: ['history', 'cancel', 'reviews', 'issues'] },
+    { label: 'ประวัติและความคิดเห็น', items: ['history', 'reviews', 'issues'] },
   ].map(g => ({ ...g, items: g.items.map(id => navById[id]) }));
 
   const isSuspended = Boolean(storeDetail?.IsSuspended);
@@ -3026,8 +3035,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                       ))}
                     </div>
 
-                    <button type="button" className="op-notif-foot" onClick={() => { setPage('cancel'); setNotifOpen(false); }}>
-                      ดูประวัติการยกเลิกทั้งหมด <Icon name="arrowRight" size={15} />
+                    <button type="button" className="op-notif-foot" onClick={() => { openSalesHistory({ status: 'cancelled', range: 'all' }); setNotifOpen(false); }}>
+                      ดูออเดอร์ที่ยกเลิกทั้งหมดในประวัติการขาย <Icon name="arrowRight" size={15} />
                     </button>
                   </div>
                 </>
@@ -3163,8 +3172,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 <div className="od-live-grid">
                   {live.map(item => (
                     <button key={item.key} type="button" className={`od-live-item tone-${item.tone} ${item.value > 0 ? 'has' : ''}`} onClick={() => {
-                      if (item.go === 'menu') setMenuFilter(item.key === 'out' ? 'out' : 'all');
-                      setPage(item.go);
+                      if (item.go === 'menu') { setMenuFilter(item.key === 'out' ? 'out' : 'all'); setPage('menu'); }
+                      else openSalesHistory({ status: 'active', range: 'today' });
                     }}>
                       <span className="icon"><Icon name={item.icon} size={18} /></span>
                       <span className="text">
@@ -3970,41 +3979,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             );
           })()}
 
-          {page === 'cancel' && (
-            <>
-            <PageHeader title="ประวัติการยกเลิกออเดอร์" subtitle="ออเดอร์ที่ถูกยกเลิกพร้อมเหตุผล" icon="cancel">
-              <span className="op-count-chip danger">{fmtMoney(cancels.length)} ออเดอร์</span>
-            </PageHeader>
-            <div className="berry-card">
-              <div className="berry-table-container">
-                <table className="berry-table">
-                  <thead>
-                    <tr>
-                      <th>วันที่ / เวลา</th>
-                      <th>คิว</th>
-                      <th>ยอดรวม</th>
-                      <th>เหตุผลที่ยกเลิก</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cancels.length === 0 && <tr><td colSpan="4" className="empty-state">ยังไม่มีออเดอร์ที่ถูกยกเลิก</td></tr>}
-                    {cancels.map(c => (
-                      <tr key={c.OrderID}>
-                        <td className="mono muted" data-label="วันที่ / เวลา">
-                          {c.CreatedAt ? new Date(c.CreatedAt).toLocaleString('th-TH') : '-'}
-                        </td>
-                        <td className="mono" data-label="คิว" style={{ color: 'var(--berry-purple)', fontWeight: '600' }}>{c.QueueNo}</td>
-                        <td className="mono bold" data-label="ยอดรวม">฿{fmtMoney(c.TotalAmount)}</td>
-                        <td data-label="เหตุผล" style={{ color: 'var(--berry-red)', fontWeight: '500' }}>{c.CancelReason || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            </>
-          )}
-
           {page === 'reviews' && (
             <>
             <PageHeader title="รีวิวจากลูกค้า" subtitle="คะแนนและความคิดเห็นที่ลูกค้าให้ร้านของคุณ" icon="star">
@@ -4158,7 +4132,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           item={notifDetail}
           {...resolveNotifContext(notifDetail)}
           onClose={() => setNotifDetail(null)}
-          onGo={(target) => { setNotifDetail(null); setPage(target); }}
+          onGo={(target) => {
+            const it = notifDetail;
+            setNotifDetail(null);
+            if (target === 'history') openSalesHistory({ status: 'all', range: 'all', orderId: it.orderId });
+            else setPage(target);
+          }}
         />
       )}
 
