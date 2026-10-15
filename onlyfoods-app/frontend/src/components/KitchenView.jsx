@@ -14,7 +14,7 @@ const PALETTE = {
   yellow: '#FDBF50'
 };
 
-// --- SVG Icons (ไม่ใช้อีโมจิ) ---
+// --- SVG Icons ---
 const KitchenIcon = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/>
@@ -116,12 +116,11 @@ const getRoleLabel = (role) => {
   return roleMap[role] || role || 'ผู้ใช้งาน';
 };
 
-// --- Helper ฟังก์ชันจัดการเวลาแบบปลอดภัย (Safe Date Parser) ---
+// --- Helper แปลงเวลาแบบปลอดภัย ---
 const parseDate = (timeStr) => {
   if (!timeStr) return null;
   if (timeStr instanceof Date) return isNaN(timeStr.getTime()) ? null : timeStr;
 
-  // รองรับกรณีส่งเป็น HH:mm หรือ HH:mm น.
   if (typeof timeStr === 'string' && !timeStr.includes('-') && !timeStr.includes('/') && timeStr.includes(':')) {
     const cleanTime = timeStr.replace('น.', '').replace('น', '').trim();
     const parts = cleanTime.split(':').map(Number);
@@ -132,7 +131,6 @@ const parseDate = (timeStr) => {
     }
   }
 
-  // แปลง SQL datetime format "YYYY-MM-DD HH:mm:ss" ให้ Safari/iOS parse ได้ถูกต้อง
   const formattedStr = typeof timeStr === 'string' ? timeStr.replace(' ', 'T') : timeStr;
   const parsed = new Date(formattedStr);
   return isNaN(parsed.getTime()) ? null : parsed;
@@ -145,31 +143,25 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [filterTab, setFilterTab] = useState('Pending');
 
-  // USER & PROFILE STATE (ดึงโปรไฟล์จากฐานข้อมูล)
+  // USER & PROFILE STATE
   const userId = user?.UserId || user?.id || user?.user_id;
   const [fullName, setFullName] = useState(user?.FullName || user?.Username || 'พนักงานครัว');
   const [profileImage, setProfileImage] = useState(user?.ProfileImg || user?.ProfileImage || user?.avatar || user?.ProfileImageUrl || null);
   
-  // State เวลาปัจจุบัน (Live Clock)
   const [currentTime, setCurrentTime] = useState(new Date());
-
-  // State ป๊อบอัพรายละเอียดออเดอร์ & ป๊อบอัพยืนยันออกจากระบบ
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const isUpdatingRef = useRef(false);
-
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [storeOpen, setStoreOpen] = useState(true);
   const [isSuspended, setIsSuspended] = useState(false);
 
-  // นาฬิกา Real-time แสดงเวลาปัจจุบันบน Header
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // โหลดข้อมูลโปรไฟล์ล่าสุดของผู้ใช้จาก Database
   useEffect(() => {
     const loadUserProfile = async () => {
       if (!userId) return;
@@ -249,17 +241,38 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [user, fetchData]);
 
-  // เรียงลำดับออเดอร์: เรียงตามเวลานัดรับก่อน (PickupTime) หากไม่มีเวลานัดรับให้เรียงตาม OrderID/QueueNo
-  const sortedOrders = [...allOrders].sort((a, b) => {
-    const timeA = parseDate(a.PickupTime);
-    const timeB = parseDate(b.PickupTime);
-
-    if (timeA && timeB) {
-      const diff = timeA.getTime() - timeB.getTime();
-      if (diff !== 0) return diff;
+  // --- Helper คำนวณ Target Time อัจฉริยะสำหรับออเดอร์รับทันที ---
+  const getCalculatedTargetDate = (order, orderList) => {
+    // 1. ถ้ามี PickupTime ล่วงหน้าระบุมา ชัดเจน ให้ใช้เวลานั้น
+    if (order.PickupTime && !order.PickupTime.includes('รับทันที')) {
+      const pDate = parseDate(order.PickupTime);
+      if (pDate) return { targetDate: pDate, isImmediate: false };
     }
-    if (timeA && !timeB) return -1;
-    if (!timeA && timeB) return 1;
+
+    // 2. ถ้าไม่มีเวลา / ระบุรับทันที ให้คำนวณจาก CreatedAt + (คิวก่อนหน้า * 5 นาที) + 5 นาทีทำ
+    const created = parseDate(order.CreatedAt) || new Date();
+    const pendingBefore = orderList.filter(o => 
+      (o.Status === 'Pending' || o.Status === 'Cooking') && 
+      (o.OrderID < order.OrderID)
+    );
+
+    const minutesToWait = (pendingBefore.length * 5) + 5; // 1 คิว = 5 นาที + 5 นาทีทำ
+    const estimatedTarget = new Date(created.getTime() + minutesToWait * 60000);
+
+    return {
+      targetDate: estimatedTarget,
+      isImmediate: true,
+      minutesToWait
+    };
+  };
+
+  // Sort Orders: เรียงตาม Target Time (เวลานัดรับจริง หรือ เวลานัดรับคำนวณ) จากใกล้นัดรับไปไกลสุด
+  const sortedOrders = [...allOrders].sort((a, b) => {
+    const targetA = getCalculatedTargetDate(a, allOrders).targetDate;
+    const targetB = getCalculatedTargetDate(b, allOrders).targetDate;
+
+    const diff = targetA.getTime() - targetB.getTime();
+    if (diff !== 0) return diff;
 
     return (a.OrderID || 0) - (b.OrderID || 0);
   });
@@ -286,10 +299,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     if (e) e.stopPropagation();
     isUpdatingRef.current = true;
 
-    // อัปเดต Local State ทันที
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
-    // เมื่อกด Undo ให้สลับหน้าจอไป Tab คิวรอปรุงทันที
     if (targetStatus === 'Pending') {
       setFilterTab('Pending');
     }
@@ -308,18 +319,16 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       if (!res.ok) throw new Error('Backend อัปเดตสถานะไม่สำเร็จ');
     } catch (err) {
       console.error("Update status error:", err);
-      // หาก API ล้มเหลว ให้ดึงข้อมูลจริงกลับมาจาก Backend
       fetchData();
     } finally {
       isUpdatingRef.current = false;
     }
   };
 
-  // ตรวจสอบออเดอร์ด่วน (เวลานัดรับเหลือ <= 5 นาที)
-  const getPickupAlert = (pickupTimeStr) => {
-    if (!pickupTimeStr) return null;
+  // ตรวจสอบการแจ้งเตือนด่วน (เหลือเวลา <= 5 นาที หรือเลยเวลาคำนวณแล้ว)
+  const getPickupAlert = (order) => {
     try {
-      const targetDate = parseDate(pickupTimeStr);
+      const { targetDate, isImmediate } = getCalculatedTargetDate(order, allOrders);
       if (!targetDate) return null;
 
       const now = new Date();
@@ -329,29 +338,15 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         return {
           isAlert: true,
           diffMins,
-          label: diffMins <= 0 ? 'ถึงเวลานัดรับแล้ว!' : `ออเดอร์ด่วน! เหลือเวลานัดรับอีก ${diffMins} นาที`
+          label: diffMins <= 0 
+            ? (isImmediate ? 'เลยกำหนดเวลาทำตามคิวแล้ว!' : 'ถึงเวลานัดรับแล้ว!') 
+            : (isImmediate ? `ออเดอร์รับทันที! ควรเสร็จในอีก ${diffMins} นาที` : `ออเดอร์ด่วน! เหลือเวลานัดรับอีก ${diffMins} นาที`)
         };
       }
     } catch (e) {
       return null;
     }
     return null;
-  };
-
-  // ฟังก์ชันคำนวณช่วงเวลารอสำหรับออเดอร์ "รับทันที" (1 คิว = 5 นาที)
-  const getImmediateWaitTime = (currentOrderId) => {
-    const queueIndex = pendingOrders.findIndex(o => o.OrderID === currentOrderId);
-    const prevQueueCount = queueIndex >= 0 ? queueIndex : 0;
-    
-    // คำนวณเวลารอโดยคิด 1 คิว = 5 นาที
-    const baseMinutes = prevQueueCount * 5;
-    const minWait = Math.max(5, baseMinutes);
-    const maxWait = minWait + 5;
-
-    return {
-      queueAhead: prevQueueCount,
-      rangeLabel: `รอประมาณ ${minWait}-${maxWait} นาที`
-    };
   };
 
   const getElapsedInfo = (timeStr) => {
@@ -368,7 +363,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   const formatTime = (timeStr) => {
     if (!timeStr) return new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
     
-    // ถ้าเป็นข้อความเวลาสั้นๆ เช่น "12:30" หรือ "12:30 น." ให้คืนค่าได้เลย
     if (typeof timeStr === 'string' && /^\d{1,2}:\d{2}(\s*น\.)?$/.test(timeStr.trim())) {
       return timeStr.includes('น') ? timeStr.trim() : `${timeStr.trim()} น.`;
     }
@@ -379,7 +373,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' น.';
   };
 
-  // จัดรูปแบบเลขคิวให้ชัดเจน (รันคิวรายวันตาม order)
   const formatQueueNo = (queueNo) => {
     if (!queueNo) return 'คิว #--';
     return typeof queueNo === 'number' ? `คิว #${String(queueNo).padStart(3, '0')}` : `คิว #${queueNo}`;
@@ -429,7 +422,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         }
       `}</style>
 
-      {/* Top Header Bar */}
+      {/* Header Bar */}
       <header style={{
         background: theme.navBg,
         borderBottom: `1px solid ${theme.border}`,
@@ -457,12 +450,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             <span style={{ color: PALETTE.coral }}>Foods</span>
           </div>
 
-          <div style={{
-            width: '1px',
-            height: '24px',
-            background: theme.border,
-            margin: '0 4px'
-          }} />
+          <div style={{ width: '1px', height: '24px', background: theme.border, margin: '0 4px' }} />
 
           <div style={{
             width: '42px',
@@ -503,7 +491,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
-          {/* นาฬิกาแสดงเวลาปัจจุบัน Real-time */}
           <div style={{
             background: theme.cardInner,
             border: `1px solid ${theme.border}`,
@@ -567,7 +554,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             {isDark ? 'Light' : 'Dark'}
           </button>
 
-          {/* Profile User Component (ดึงรูปและชื่อจาก Database เหมือน CustomerView) */}
           <button
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
             style={{
@@ -764,10 +750,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           ) : (
             displayedOrders.map(o => {
               const timeInfo = getElapsedInfo(o.CreatedAt);
-              const pickupAlert = getPickupAlert(o.PickupTime);
+              const pickupAlert = getPickupAlert(o);
               const isCompleted = o.Status === 'Completed';
-              const isImmediatePickup = !o.PickupTime || o.PickupTime.includes('รับทันที') || o.PickupTime === formatTime(o.CreatedAt);
-              const waitEstimate = isImmediatePickup ? getImmediateWaitTime(o.OrderID) : null;
+
+              const calculatedInfo = getCalculatedTargetDate(o, allOrders);
+              const targetTimeString = formatTime(calculatedInfo.targetDate);
 
               return (
                 <div 
@@ -801,43 +788,23 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                         </div>
                       </div>
 
-                      {/* แสดงเวลานัดรับ หรือคำนวณเวลารอรับสำหรับคิวรับทันที */}
-                      {!isImmediatePickup ? (
-                        <div style={{
-                          background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : theme.cardInner,
-                          border: `1px solid ${pickupAlert ? '#EF4444' : theme.border}`,
-                          color: pickupAlert ? '#EF4444' : theme.textMain,
-                          padding: '8px 14px',
-                          borderRadius: '12px',
-                          fontSize: '12px',
-                          fontWeight: '700',
-                          textAlign: 'right'
-                        }}>
-                          <div>เวลานัดรับ</div>
-                          <div style={{ fontSize: '14px', fontWeight: '800' }}>{o.PickupTime}</div>
-                        </div>
-                      ) : (
-                        <div style={{
-                          background: isDark ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5',
-                          border: `1px solid ${PALETTE.emerald}`,
-                          color: PALETTE.emerald,
-                          padding: '8px 14px',
-                          borderRadius: '12px',
-                          fontSize: '12px',
-                          fontWeight: '700',
-                          textAlign: 'right'
-                        }}>
-                          <div>รับทันที</div>
-                          {filterTab === 'Pending' && waitEstimate && (
-                            <div style={{ fontSize: '13px', fontWeight: '800', marginTop: '2px' }}>
-                              {waitEstimate.rangeLabel}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      {/* ป้ายเวลานัดรับ / คำนวณเวลารับทันที */}
+                      <div style={{
+                        background: pickupAlert ? 'rgba(239, 68, 68, 0.12)' : (calculatedInfo.isImmediate ? (isDark ? 'rgba(16,185,129,0.12)' : '#ECFDF5') : theme.cardInner),
+                        border: `1px solid ${pickupAlert ? '#EF4444' : (calculatedInfo.isImmediate ? PALETTE.emerald : theme.border)}`,
+                        color: pickupAlert ? '#EF4444' : (calculatedInfo.isImmediate ? PALETTE.emerald : theme.textMain),
+                        padding: '8px 14px',
+                        borderRadius: '12px',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        textAlign: 'right'
+                      }}>
+                        <div>{calculatedInfo.isImmediate ? 'รับทันที (คำนวณคิว)' : 'เวลานัดรับ'}</div>
+                        <div style={{ fontSize: '14px', fontWeight: '800' }}>{targetTimeString}</div>
+                      </div>
                     </div>
 
-                    {/* แจ้งเตือนออเดอร์ด่วน (เหลือเวลานัดรับ <= 5 นาที) */}
+                    {/* แจ้งเตือนด่วน (เหลือเวลา <= 5 นาที หรือเลยเวลานัดรับ/คำนวณคิวแล้ว) */}
                     {pickupAlert && (
                       <div style={{
                         animation: 'urgentFlash 1.5s infinite',
@@ -904,7 +871,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                     )}
                   </div>
 
-                  {/* ส่วนปุ่มสถานะและปุ่ม Undo */}
+                  {/* ปุ่มเปลี่ยนสถานะ */}
                   <div style={{ marginTop: '12px' }}>
                     {filterTab === 'Pending' ? (
                       <button
@@ -969,7 +936,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
                               พร้อมรับอาหาร (รอหน้าร้านส่งมอบ)
                             </div>
                             
-                            {/* ปุ่ม Undo ย้อนกลับสถานะ */}
                             <button
                               onClick={(e) => updateOrderStatus(o.OrderID, 'Pending', e)}
                               style={{
@@ -1006,158 +972,156 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
       </main>
 
-      {/* Pop-up: รายละเอียดออเดอร์ (Order Detail Popup) */}
-      {selectedOrder && (
-        <div
-          onClick={() => setSelectedOrder(null)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 2000,
-            padding: '20px'
-          }}
-        >
+      {/* Pop-up รายละเอียดออเดอร์ */}
+      {selectedOrder && (() => {
+        const calculatedInfo = getCalculatedTargetDate(selectedOrder, allOrders);
+        return (
           <div
-            onClick={(e) => e.stopPropagation()}
+            onClick={() => setSelectedOrder(null)}
             style={{
-              background: theme.cardBg,
-              border: `1px solid ${theme.border}`,
-              borderRadius: '24px',
-              width: '100%',
-              maxWidth: '540px',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-              padding: '28px',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
-              color: theme.textMain
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.65)',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 2000,
+              padding: '20px'
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '14px' }}>
-              <div>
-                <div style={{ fontSize: '28px', fontWeight: '900', color: PALETTE.coral }}>
-                  {formatQueueNo(selectedOrder.QueueNo)}
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: theme.cardBg,
+                border: `1px solid ${theme.border}`,
+                borderRadius: '24px',
+                width: '100%',
+                maxWidth: '540px',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                padding: '28px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+                color: theme.textMain
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '14px' }}>
+                <div>
+                  <div style={{ fontSize: '28px', fontWeight: '900', color: PALETTE.coral }}>
+                    {formatQueueNo(selectedOrder.QueueNo)}
+                  </div>
+                  <div style={{ fontSize: '13.5px', color: theme.textMuted, marginTop: '2px' }}>
+                    รหัสออเดอร์: #{selectedOrder.OrderID}
+                  </div>
                 </div>
-                <div style={{ fontSize: '13.5px', color: theme.textMuted, marginTop: '2px' }}>
-                  รหัสออเดอร์: #{selectedOrder.OrderID}
-                </div>
+                <button
+                  onClick={() => setSelectedOrder(null)}
+                  style={{
+                    background: theme.cardInner,
+                    border: `1px solid ${theme.border}`,
+                    color: theme.textMain,
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '50%',
+                    cursor: 'pointer',
+                    display: 'grid',
+                    placeItems: 'center'
+                  }}
+                >
+                  <CloseIcon />
+                </button>
               </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลาที่สั่ง:</span>
+                  <strong>{formatTime(selectedOrder.CreatedAt)}</strong>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <ClockIcon /> {calculatedInfo.isImmediate ? 'ประมาณเวลานัดรับ (คำนวณคิว):' : 'เวลานัดรับ:'}
+                  </span>
+                  <strong style={{ color: PALETTE.coral }}>{formatTime(calculatedInfo.targetDate)}</strong>
+                </div>
+
+                <div>
+                  <h4 style={{ margin: '16px 0 12px', fontSize: '16px', color: theme.textMain }}>รายการอาหารทั้งหมด</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {selectedOrder.items?.map((item, idx) => (
+                      <div key={idx} style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        background: theme.cardInner,
+                        padding: '14px',
+                        borderRadius: '14px',
+                        border: `1px solid ${theme.border}`
+                      }}>
+                        <div>
+                          <div style={{ fontSize: '16px', fontWeight: '700' }}>{item.ProductName}</div>
+                          {item.ItemNote && (
+                            <div style={{ fontSize: '13px', color: PALETTE.coral, marginTop: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <NoteIcon />
+                              <span>Note: {item.ItemNote}</span>
+                            </div>
+                          )}
+                        </div>
+                        <span style={{
+                          background: PALETTE.coral,
+                          color: '#FFF',
+                          padding: '3px 12px',
+                          borderRadius: '10px',
+                          fontSize: '15px',
+                          fontWeight: '800'
+                        }}>
+                          x{item.Qty}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {selectedOrder.Note && (
+                  <div style={{
+                    background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED',
+                    borderLeft: `4px solid ${PALETTE.coral}`,
+                    padding: '14px',
+                    borderRadius: '10px',
+                    fontSize: '13.5px'
+                  }}>
+                    <strong>หมายเหตุเพิ่มเติมจากลูกค้า:</strong>
+                    <div style={{ marginTop: '4px' }}>{selectedOrder.Note}</div>
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={() => setSelectedOrder(null)}
                 style={{
+                  width: '100%',
+                  minHeight: '48px',
+                  padding: '12px',
+                  borderRadius: '14px',
+                  border: 'none',
                   background: theme.cardInner,
-                  border: `1px solid ${theme.border}`,
                   color: theme.textMain,
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: '50%',
-                  cursor: 'pointer',
-                  display: 'grid',
-                  placeItems: 'center'
+                  fontWeight: '700',
+                  fontSize: '15px',
+                  cursor: 'pointer'
                 }}
               >
-                <CloseIcon />
+                ปิดหน้าต่าง
               </button>
             </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลาที่สั่ง:</span>
-                <strong>{formatTime(selectedOrder.CreatedAt)}</strong>
-              </div>
-
-              {selectedOrder.PickupTime ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> เวลานัดรับ:</span>
-                  <strong style={{ color: PALETTE.coral }}>{selectedOrder.PickupTime}</strong>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', background: theme.cardInner, padding: '12px 16px', borderRadius: '12px' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ClockIcon /> ประเมินเวลารอ (รับทันที):</span>
-                  <strong style={{ color: PALETTE.emerald }}>{getImmediateWaitTime(selectedOrder.OrderID).rangeLabel}</strong>
-                </div>
-              )}
-
-              <div>
-                <h4 style={{ margin: '16px 0 12px', fontSize: '16px', color: theme.textMain }}>รายการอาหารทั้งหมด</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {selectedOrder.items?.map((item, idx) => (
-                    <div key={idx} style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      background: theme.cardInner,
-                      padding: '14px',
-                      borderRadius: '14px',
-                      border: `1px solid ${theme.border}`
-                    }}>
-                      <div>
-                        <div style={{ fontSize: '16px', fontWeight: '700' }}>{item.ProductName}</div>
-                        {item.ItemNote && (
-                          <div style={{ fontSize: '13px', color: PALETTE.coral, marginTop: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <NoteIcon />
-                            <span>Note: {item.ItemNote}</span>
-                          </div>
-                        )}
-                      </div>
-                      <span style={{
-                        background: PALETTE.coral,
-                        color: '#FFF',
-                        padding: '3px 12px',
-                        borderRadius: '10px',
-                        fontSize: '15px',
-                        fontWeight: '800'
-                      }}>
-                        x{item.Qty}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {selectedOrder.Note && (
-                <div style={{
-                  background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED',
-                  borderLeft: `4px solid ${PALETTE.coral}`,
-                  padding: '14px',
-                  borderRadius: '10px',
-                  fontSize: '13.5px'
-                }}>
-                  <strong>หมายเหตุเพิ่มเติมจากลูกค้า:</strong>
-                  <div style={{ marginTop: '4px' }}>{selectedOrder.Note}</div>
-                </div>
-              )}
-            </div>
-
-            <button
-              onClick={() => setSelectedOrder(null)}
-              style={{
-                width: '100%',
-                minHeight: '48px',
-                padding: '12px',
-                borderRadius: '14px',
-                border: 'none',
-                background: theme.cardInner,
-                color: theme.textMain,
-                fontWeight: '700',
-                fontSize: '15px',
-                cursor: 'pointer'
-              }}
-            >
-              ปิดหน้าต่าง
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      {/* Pop-up: แจ้งเตือนยืนยันออกจากระบบ (Logout Alert Modal) */}
+      {/* Pop-up ยืนยันออกจากระบบ */}
       {showLogoutModal && (
         <div
           onClick={() => setShowLogoutModal(false)}
