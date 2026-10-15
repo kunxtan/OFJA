@@ -1737,9 +1737,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               ? myIssueReports.find((rep) => Number(rep.order_id || rep.OrderID) === Number(order.OrderID))
               : null;
             const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
-            const canNotifyLatePickup = ["ready", "preparing"].includes(
-              String(order.Status || "").trim().toLowerCase()
-            );
+            const canNotifyLatePickup = ["pending", "ready", "preparing"].includes(String(order.Status || "").trim().toLowerCase());
+            
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
