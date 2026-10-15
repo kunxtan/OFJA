@@ -8,7 +8,7 @@ node_modules/
 dist/
 
 # ความลับ / ข้อมูลที่อัปโหลด : ห้ามขึ้น git
-onlyfoods-app/.env
-onlyfoods-app/backend/.env
+# .env ทุกโฟลเดอร์ (รวม frontend/.env) ; ไฟล์ตัวอย่าง .env.example ยังขึ้น git ได้ตามปกติ
+.env
 onlyfoods-app/backend/uploads/
 *.pem

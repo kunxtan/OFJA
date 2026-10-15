@@ -72,24 +72,46 @@ def get_customer_profile(
     user=Depends(require_role("FRONT_STAFF", "KITCHEN_STAFF", "STORE_OWNER", "EXECUTIVE")),
     db=Depends(get_db),
 ):
-    """ข้อมูลลูกค้าสำหรับหน้าร้าน (ชื่อ/เบอร์/จำนวนออเดอร์ที่จบแล้ว)"""
+    """ข้อมูลลูกค้าสำหรับหน้าร้าน (ชื่อ/เบอร์/จำนวนออเดอร์ที่จบแล้ว)
+
+    พนักงาน/เจ้าของร้านดูได้เฉพาะลูกค้า (CUSTOMER) ที่เคยสั่งกับร้านตัวเอง และนับออเดอร์เฉพาะร้านตัวเอง ;
+    ไม่ผ่านเงื่อนไข = 404 ข้อความเดียวกับไม่พบ (ไล่ UserId เพื่อดูว่ามีบัญชีไหนอยู่บ้างไม่ได้)
+    เบอร์โทรไม่ปิดบังเพราะหน้าร้านต้องโทรหาลูกค้า ; อีเมลปิดบังสำหรับฝั่งร้าน
+    """
+    store_id = None
+    if user["RoleCode"] != "EXECUTIVE":
+        if user["StoreId"] is None:
+            raise DomainError(403, "บัญชีนี้ยังไม่ได้ผูกกับร้านค้า")
+        store_id = int(user["StoreId"])
     with db.cursor() as cur:
         cur.execute(
-            "SELECT FullName AS CustomerName, Phone, Email FROM `User` WHERE UserId = %s",
-            (user_id,),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise DomainError(404, "ไม่พบข้อมูลลูกค้า")
-        cur.execute(
             """
-            SELECT COUNT(*) AS TotalOrders FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
-            WHERE o.CustomerId = %s AND os.StatusCode IN ('COMPLETED', 'NO_SHOW')
+            SELECT u.FullName AS CustomerName, u.Phone, u.Email
+            FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
+            WHERE u.UserId = %s AND r.RoleCode = 'CUSTOMER'
             """,
             (user_id,),
         )
+        row = cur.fetchone()
+        if row and store_id is not None:
+            cur.execute("SELECT 1 FROM `Order` WHERE CustomerId = %s AND StoreId = %s LIMIT 1", (user_id, store_id))
+            if not cur.fetchone():
+                row = None
+        if not row:
+            raise DomainError(404, "ไม่พบข้อมูลลูกค้า")
+        sql = """
+            SELECT COUNT(*) AS TotalOrders FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
+            WHERE o.CustomerId = %s AND os.StatusCode IN ('COMPLETED', 'NO_SHOW')
+        """
+        params = [user_id]
+        if store_id is not None:
+            sql += " AND o.StoreId = %s"
+            params.append(store_id)
+        cur.execute(sql, params)
         row["TotalOrders"] = cur.fetchone()["TotalOrders"]
-        return row
+    if store_id is not None:
+        row["Email"] = mask_email(row["Email"])
+    return row
 
 
 @router.get("/executive/customers")

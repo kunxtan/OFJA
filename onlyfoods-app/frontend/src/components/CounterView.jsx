@@ -443,7 +443,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     if (!order.UserId) return alert('ออเดอร์นี้เป็นลูกค้า Walk-in ไม่มีข้อมูลโปรไฟล์');
     setViewingCustomer({ loading: true });
     fetch(`${apiBase}/api/customers/${order.UserId}`)
-      .then(r => r.json())
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(data => setViewingCustomer(data))
       .catch(() => setViewingCustomer({ error: true }));
   };

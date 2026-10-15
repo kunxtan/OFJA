@@ -46,7 +46,7 @@ sudo docker compose exec backend python -m tools.set_password --all-empty
 |---|---|
 | `MYSQL_ROOT_PASSWORD`, `MYSQL_USER`, `MYSQL_PASSWORD` | รหัสผ่าน root และ user ที่ backend ใช้ (สิทธิ์เฉพาะฐาน `onlyfood`) |
 | `JWT_SECRET` | บังคับ ≥ 32 ตัวอักษร ไม่ตั้ง = backend ไม่ยอมสตาร์ท |
-| `GOOGLE_CLIENT_ID` | เปิด Google Login (ตั้ง `VITE_GOOGLE_CLIENT_ID` ใน `frontend/.env` เป็นค่าเดียวกันแล้ว build ใหม่) |
+| `GOOGLE_CLIENT_ID` | เปิด Google Login (ตั้ง `VITE_GOOGLE_CLIENT_ID` ใน `frontend/.env` (คัดลอกจาก `frontend/.env.example`, ไม่ขึ้น git) เป็นค่าเดียวกันแล้ว build ใหม่) |
 | `CORS_ORIGINS` | ปกติว่าง; ใส่เฉพาะตอนพัฒนาด้วย vite dev |
 | `DISABLE_DOCS` | `1` = ปิด `/api/docs` |
 | `NGINX_CONF` | ไฟล์ nginx ที่ใช้ |
@@ -66,7 +66,7 @@ sudo docker compose exec backend python -m tools.set_password --all-empty
 1. `src/authFetch.js` (ใหม่) + import ใน `main.jsx` — แนบ `Authorization: Bearer` ให้ทุก request ไป `/api` โดยไม่ต้องแก้ fetch ทีละจุด
 2. `App.jsx`: `API_BASE` จากค่าตายตัว `http://only-foods.cskmitl.com` → `VITE_API_URL || window.location.origin`
 3. `App.jsx`: ส่ง `id_token` ของ Google ไปให้ server ตรวจ; `GOOGLE_CLIENT_ID` อ่านจาก `VITE_GOOGLE_CLIENT_ID`
-4. `frontend/.env`: ล้างค่า `onrender.com` เดิม
+4. `frontend/.env`: ล้างค่า `onrender.com` เดิม และไม่เก็บใน git แล้ว (ใช้ `frontend/.env.example` เป็นตัวอย่าง ใส่ได้เฉพาะ `VITE_*`)
 
 ที่ยังไม่ได้แก้ (ตั้งใจ): token อยู่ในหน่วยความจำ — refresh หน้าแล้วต้อง login ใหม่ (เหมือนเดิม), ปุ่ม Undo ของครัว (Ready→Pending) ถูก state machine ปฏิเสธ, ตัวเลือก "บัตรเครดิต" ในหน้าสั่งอาหารจะได้ข้อความปฏิเสธจาก backend, ฟอร์ม "ลืมรหัสผ่าน" จะแสดงข้อความให้ติดต่อผู้ดูแล, polling ทุก 2–5 วินาทีเหมือนเดิม
 
