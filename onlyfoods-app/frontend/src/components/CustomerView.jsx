@@ -1116,8 +1116,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     const currentOrderTime = getCurrentDateTimeForBackend();
     const displayOrderTime = getCurrentTimeFormatted();
-    const finalPickupTime = pickupTime ? `${pickupTime} น.` : displayOrderTime;
-
+    const finalPickupTime = pickupTime? `${pickupTime} น.`: getCustomerPickupRange();
     const orderItems = cart.map((item) => ({
       product_id: Number(item.ProductId),
       qty: 1,
@@ -1876,7 +1875,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       padding: "14px 16px",
                       borderRadius: "14px",
                       background: "#FFF7ED",
-                      border: "1px solid #FED7AA",
                     }}
                   >
                     {/* ฝั่งซ้าย: ข้อมูลคิว */}
