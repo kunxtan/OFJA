@@ -140,14 +140,80 @@ def test_next_transition():
 
 def test_contract_rules():
     today = date(2026, 6, 15)
-    assert utils.contract_active(None, None, None, today)  # ไม่มีสัญญา = ใช้ได้ (พฤติกรรมเดิม)
-    assert utils.contract_active(date(2026, 1, 1), date(2026, 6, 15), "ACTIVE", today)  # วันสุดท้ายยังใช้ได้
-    assert not utils.contract_active(date(2026, 1, 1), date(2026, 6, 14), "EXPIRED", today)
-    assert not utils.contract_active(date(2026, 6, 16), date(2026, 12, 1), "ACTIVE", today)
-    assert not utils.contract_active(date(2026, 1, 1), date(2026, 12, 1), "TERMINATED", today)
+    assert not utils.contract_active(None, None, None, today)  # ไม่มีสัญญา = ขาย/เปิดร้านไม่ได้
+    assert utils.contract_active(date(2026, 1, 1), date(2026, 6, 15), None, today)  # วันสุดท้าย (ถึง 23:59:59) ยังใช้ได้
+    assert not utils.contract_active(date(2026, 1, 1), date(2026, 6, 14), None, today)
+    assert not utils.contract_active(date(2026, 6, 16), date(2026, 12, 1), None, today)
+    assert utils.contract_state(None, None, today) == utils.CONTRACT_NONE
+    assert utils.contract_state(date(2026, 6, 16), date(2027, 6, 15), today) == utils.CONTRACT_UPCOMING
+    assert utils.contract_state(date(2026, 6, 15), date(2027, 6, 14), today) == utils.CONTRACT_ACTIVE
+    assert utils.contract_state(date(2025, 6, 15), date(2026, 6, 14), today) == utils.CONTRACT_EXPIRED
     assert utils.contract_status_for(date(2026, 6, 14), today) == "EXPIRED"
-    assert utils.contract_status_for(date(2026, 6, 22), today) == "EXPIRING"
-    assert utils.contract_status_for(date(2026, 6, 23), today) == "ACTIVE"
+    assert utils.contract_status_for(date(2026, 7, 15), today) == "EXPIRING"
+    assert utils.contract_status_for(date(2026, 7, 16), today) == "ACTIVE"
+
+
+def test_contract_one_year_and_reason():
+    assert utils.add_years_minus_one_day(date(2026, 10, 15)) == date(2027, 10, 14)
+    assert utils.add_years_minus_one_day(date(2026, 1, 1)) == date(2026, 12, 31)
+    assert utils.add_years_minus_one_day(date(2028, 2, 29)) == date(2029, 2, 28)
+    assert utils.clean_reason("  ชนะประมูล   รอบ 2/2569 ") == "ชนะประมูล รอบ 2/2569"
+    with pytest.raises(DomainError):
+        utils.clean_reason("ok")
+    with pytest.raises(DomainError):
+        utils.clean_reason("x" * 256)
+
+
+def test_store_account_access_after_expiry():
+    end = date(2026, 6, 14)  # หมด 23:59:59 ของวันที่ 14
+    acc = lambda today, role="FRONT_STAFF", open_orders=False: utils.store_account_access(  # noqa: E731
+        end, role, open_orders, 30, today)
+    assert acc(date(2026, 6, 14)) == utils.ACCESS_FULL                       # วันสุดท้ายยังใช้ได้
+    assert acc(date(2026, 6, 15)) == utils.ACCESS_LOCKED                     # พนักงานล็อกทันที
+    assert acc(date(2026, 6, 15), open_orders=True) == utils.ACCESS_FULL     # ยังมีออเดอร์ค้าง = เคลียร์ได้
+    assert acc(date(2026, 6, 16), open_orders=True) == utils.ACCESS_LOCKED   # เพดานช่วงเคลียร์ 1 วัน
+    assert acc(date(2026, 6, 15), "STORE_OWNER") == utils.ACCESS_READ_ONLY   # เจ้าของดูได้อย่างเดียว
+    assert acc(date(2026, 7, 14), "STORE_OWNER") == utils.ACCESS_READ_ONLY   # ครบ 30 วันพอดี
+    assert acc(date(2026, 7, 15), "STORE_OWNER") == utils.ACCESS_LOCKED
+    assert utils.store_account_access(None, "FRONT_STAFF", False, 30, date(2026, 6, 15)) == utils.ACCESS_FULL
+
+
+def test_shape_store_effective_open():
+    from shapes import shape_store
+    today = date(2026, 6, 15)
+    base = {"IsOpen": 1, "ContractStartDate": date(2026, 1, 1)}
+    live = shape_store({**base, "ContractEndDate": date(2026, 6, 15)}, today)
+    assert live["IsOpen"] is True and live["ContractState"] == "ACTIVE" and live["ContractDaysLeft"] == 0
+    dead = shape_store({**base, "ContractEndDate": date(2026, 6, 14)}, today)
+    assert dead["IsOpen"] is False and dead["ContractState"] == "EXPIRED"
+    none = shape_store({"IsOpen": 1, "ContractStartDate": None, "ContractEndDate": None}, today)
+    assert none["IsOpen"] is False and none["ContractDaysLeft"] is None
+
+
+def test_shape_store_day_counts():
+    """จำนวนวันที่แสดงต้องตรงกับที่ระบบล็อก/ลบจริง"""
+    from shapes import shape_store
+    today = date(2026, 10, 16)
+    row = lambda start, end, opened=0: shape_store(  # noqa: E731
+        {"IsOpen": 1, "ContractStartDate": start, "ContractEndDate": end, "OpenOrderCount": opened}, today)
+    one_year = row(date(2026, 10, 16), utils.add_years_minus_one_day(date(2026, 10, 16)))
+    assert one_year["ContractEndDate"] == date(2027, 10, 15) and one_year["ContractDaysLeft"] == 364
+    tomorrow = row(date(2026, 1, 1), date(2026, 10, 17))
+    assert tomorrow["ContractState"] == "ACTIVE" and tomorrow["ContractDaysLeft"] == 1
+    upcoming = row(date(2026, 11, 1), date(2027, 10, 31))  # เริ่มตามวันที่เลือก ไม่ใช่วันที่กด
+    assert upcoming["ContractState"] == "UPCOMING" and upcoming["IsOpen"] is False
+    yday = row(date(2026, 1, 1), date(2026, 10, 15), opened=2)
+    assert yday["ContractDaysLeft"] == -1 and yday["IsClearingOrders"] is True
+    assert yday["AutoDeleteInDays"] == config.CONTRACT_PURGE_AFTER_DAYS
+    two_days = row(date(2026, 1, 1), date(2026, 10, 14), opened=2)
+    assert two_days["IsClearingOrders"] is False  # เพดานช่วงเคลียร์ออเดอร์คือสิ้นวันถัดไป
+    # purge ลบเมื่อ EndDate < วันนี้ - 90 วัน : วันที่ AutoDeleteInDays ถึง 0 คือวันที่ถูกลบ
+    due = row(date(2025, 1, 1), today - timedelta(days=config.CONTRACT_PURGE_AFTER_DAYS + 1))
+    assert due["AutoDeleteInDays"] == 0
+    assert due["ContractEndDate"] < today - timedelta(days=config.CONTRACT_PURGE_AFTER_DAYS)
+    not_yet = row(date(2025, 1, 1), today - timedelta(days=config.CONTRACT_PURGE_AFTER_DAYS))
+    assert not_yet["AutoDeleteInDays"] == 1
+    assert not not_yet["ContractEndDate"] < today - timedelta(days=config.CONTRACT_PURGE_AFTER_DAYS)
 
 
 def test_queue_label_and_date_parse():

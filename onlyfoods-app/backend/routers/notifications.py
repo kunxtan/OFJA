@@ -1,4 +1,6 @@
 """การแจ้งเตือนของผู้ใช้ + แจ้งเตือนสัญญาใกล้หมดอายุของผู้บริหาร"""
+import config
+
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user, require_role
@@ -73,12 +75,17 @@ def get_executive_contract_notifications(user_id: int, user=Depends(require_role
                 if cur.fetchone():
                     continue
                 days = c["DaysLeft"]
+                name, end = c["StoreName"], c["EndDate"]
                 if days < 0:
-                    msg = f"สัญญาร้าน {c['StoreName']} หมดอายุแล้ว"
+                    msg = (f"สัญญาร้าน {name} หมดแล้วเมื่อ {end} 23:59 น. ร้านปิดและพนักงานเข้าระบบไม่ได้ "
+                    "ถ้าร้านต่อสัญญา กดปุ่ม \"หมดสัญญา\" เพื่อเปิดรอบใหม่ "
+                    f"ถ้าไม่เปิดรอบใหม่ ร้านจะถูกลบอัตโนมัติเมื่อหมดเกิน {config.CONTRACT_PURGE_AFTER_DAYS} วัน")
                 elif days == 0:
-                    msg = f"สัญญาร้าน {c['StoreName']} หมดอายุวันนี้"
+                    msg = (f"สัญญาร้าน {name} หมดคืนนี้ 23:59 น. หลังจากนั้นร้านจะปิดและพนักงานเข้าระบบไม่ได้ "
+                    "ถ้าร้านต่อสัญญาแล้ว ให้กด \"แก้วันสิ้นสุด\" ก่อนเวลานี้")
                 else:
-                    msg = f"สัญญาร้าน {c['StoreName']} ใกล้หมดอายุ (เหลือ {days} วัน)"
+                    msg = (f"สัญญาร้าน {name} ใกล้หมด เหลืออีก {days} วัน (สิ้นสุด {end} 23:59 น.) "
+                    "ถ้าร้านต่อสัญญาแล้ว ให้กด \"แก้วันสิ้นสุด\" ในหน้าติดตามสัญญา")
                 cur.execute(
                     "INSERT INTO Notification (UserId, NotificationType, Title, Message) VALUES (%s, 'CONTRACT', %s, %s)",
                     (user_id, title, msg),
