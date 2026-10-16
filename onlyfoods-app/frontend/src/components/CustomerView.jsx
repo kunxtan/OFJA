@@ -1916,12 +1916,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   >
                     <div>เวลารับอาหาร</div>
                     <div>
-                      {order.PickupTime ||
+                      {getCustomerPickupRange() ||
+                        order.PickupTime ||
                         order.pickup_time ||
                         pickupTime ||
-                        getCustomerPickupRange() ||
                         "กำลังคำนวณเวลา..."}
-                  </div>
+                    </div>
 
                       {!order.PickupTime && !order.pickup_time && !pickupTime && (
                         <div style={{ fontSize: "10px", marginTop: "4px", opacity: 0.8 }}>
