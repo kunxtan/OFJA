@@ -5004,6 +5004,46 @@ function AuditHistoryPage({ ctx }) {
             || String(action || '-').replaceAll('_', ' ');
     };
 
+const formatAuditDetails = (log) => {
+    const action = String(log.Action || '').toUpperCase();
+    const store = log.StoreId != null ? `${log.StoreName ? `ร้าน${log.StoreName} ` : 'ร้านค้า '}(รหัสร้าน #${log.StoreId})` : '';
+    const order = log.OrderId != null ? `ออเดอร์ #${log.OrderId}` : '';
+    const queue = log.QueueLabel ? `คิว ${log.QueueLabel}` : '';
+    const context = [order, queue, store].filter(Boolean).join(' · ');
+    const verbs = {
+        CREATE_ORDER: 'สร้างออเดอร์',
+        CANCEL_ORDER: 'ยกเลิกออเดอร์',
+        CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
+        CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
+        UPDATE_STATUS: 'เปลี่ยนสถานะออเดอร์',
+        RECALL_QUEUE: 'เรียกคิวซ้ำ',
+        PRINT_ORDER: 'พิมพ์ใบคิว',
+        REPRINT_ORDER: 'พิมพ์ใบคิวซ้ำ',
+        VERIFY_SLIP_APPROVE: 'อนุมัติสลิปชำระเงิน',
+        VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปชำระเงิน',
+        CREATE_STORE: 'เพิ่มร้านค้า',
+        UPDATE_STORE: 'แก้ไขข้อมูลร้าน',
+        DELETE_STORE: 'ลบร้านค้า',
+        OPEN_STORE: 'เปิดร้าน',
+        CLOSE_STORE: 'ปิดร้าน',
+        SUSPEND_STORE: 'ระงับร้าน',
+        UNSUSPEND_STORE: 'ปลดระงับร้าน',
+        LOGIN: 'เข้าสู่ระบบ',
+        LOGIN_FAIL: 'เข้าสู่ระบบไม่สำเร็จ',
+        UPDATE_FOOD_COURT_SCHEDULE: 'เปลี่ยนเวลาเปิด–ปิดศูนย์อาหาร'
+    };
+    const raw = String(log.Details || '').trim();
+    if (action === 'UPDATE_FOOD_COURT_SCHEDULE') {
+        const open = raw.match(/["]open["]\s*:\s*["]([^"]+)["]/i);
+        const close = raw.match(/["]close["]\s*:\s*["]([^"]+)["]/i);
+        if (open && close) return `ตั้งเวลาเปิด ${open[1]} น. และปิด ${close[1]} น.`;
+    }
+    if (action === 'LOGIN') return 'เข้าสู่ระบบ';
+    if (verbs[action] && context) return `${verbs[action]}: ${context}`;
+    return raw || (verbs[action] || '—');
+};
+
+
 
     const filtered = logs.filter((log) => {
         const meta = actionMeta(log.Action);
@@ -5012,9 +5052,9 @@ function AuditHistoryPage({ ctx }) {
         const q = query.trim().toLowerCase();
         if (!q)
             return true;
-        return `${actionName(log.Action)} ${log.Action || ''} ${log.PerformedBy || ''} ${log.PerformerRole || ''} ${log.Details || ''}`
-            .toLowerCase()
-            .includes(q);
+        return `${actionName(log.Action)} ${log.Action || ''} ${log.PerformedBy || ''} ${log.PerformerRole || ''} ${formatAuditDetails(log)} ${log.Details || ''}`
+    .toLowerCase()
+    .includes(q);
     });
 
     const filters = [
@@ -5103,7 +5143,7 @@ function AuditHistoryPage({ ctx }) {
                         <span style={{ fontWeight: 500, color: T.text }}>{log.PerformerRole || log.PerformedBy || '—'}</span>
                       </div>
                     </td>
-                    <td style={{ ...tdStyle, lineHeight: 1.55 }}>{log.Details || '—'}</td>
+                    <td style={{ ...tdStyle, lineHeight: 1.55 }}>{formatAuditDetails(log)}</td>
                     <td style={tdStyle}>
                       <span style={{display: 'inline-flex',alignItems: 'center',padding: '6px 10px',borderRadius: '999px',background:meta.bg,color:meta.color,fontSize: '11.5px',fontWeight:600,whiteSpace: 'nowrap'}}>{meta.label}</span>
                     </td>

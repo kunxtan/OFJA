@@ -107,6 +107,81 @@ def get_logs(
     with db.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
+    # Enrich audit history without changing the original append-only AuditLog.
+    order_ids, payment_ids, store_ids = set(), set(), set()
     for r in rows:
-        r["Details"] = _details(r["EntityType"], r["EntityId"], r.pop("NewValue"), r.pop("OldValue"))
+        payload = {}
+        for field in ("NewValue", "OldValue"):
+            raw = r.get(field)
+            try:
+                value = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+            except (ValueError, TypeError):
+                value = None
+            if isinstance(value, dict):
+                payload.update(value)
+        r["AuditPayload"] = payload
+        kind, entity_id = str(r.get("EntityType") or "").lower(), r.get("EntityId")
+        if str(entity_id or "").isdigit():
+            if kind == "order": order_ids.add(int(entity_id))
+            elif kind == "payment": payment_ids.add(int(entity_id))
+            elif kind == "store": store_ids.add(int(entity_id))
+        for key in ("order_id", "OrderId", "OrderID"):
+            if str(payload.get(key) or "").isdigit(): order_ids.add(int(payload[key]))
+        for key in ("store_id", "StoreId"):
+            if str(payload.get(key) or "").isdigit(): store_ids.add(int(payload[key]))
+
+    with db.cursor() as cur:
+        payment_orders = {}
+        if payment_ids:
+            ids = sorted(payment_ids)
+            cur.execute(f"SELECT PaymentId, OrderId FROM Payment WHERE PaymentId IN ({','.join(['%s'] * len(ids))})", ids)
+            payment_orders = {int(x["PaymentId"]): int(x["OrderId"]) for x in cur.fetchall()}
+            order_ids.update(payment_orders.values())
+
+        orders = {}
+        if order_ids:
+            ids = sorted(order_ids)
+            cur.execute(f"""SELECT o.OrderId, o.StoreId, o.QueueNo, s.StoreName, s.QueueCode
+                            FROM `Order` o LEFT JOIN Store s ON s.StoreId = o.StoreId
+                            WHERE o.OrderId IN ({','.join(['%s'] * len(ids))})""", ids)
+            orders = {int(x["OrderId"]): x for x in cur.fetchall()}
+
+        store_ids.update(int(o["StoreId"]) for o in orders.values() if o.get("StoreId") is not None)
+        stores = {}
+        if store_ids:
+            ids = sorted(store_ids)
+            cur.execute(f"""SELECT StoreId, StoreName, QueueCode FROM Store
+                            WHERE StoreId IN ({','.join(['%s'] * len(ids))})""", ids)
+            stores = {int(x["StoreId"]): x for x in cur.fetchall()}
+
+    for r in rows:
+        payload = r.pop("AuditPayload")
+        kind, entity_id = str(r.get("EntityType") or "").lower(), r.get("EntityId")
+        oid = int(entity_id) if kind == "order" and str(entity_id or "").isdigit() else None
+        if kind == "payment" and str(entity_id or "").isdigit():
+            oid = payment_orders.get(int(entity_id))
+        if oid is None:
+            for key in ("order_id", "OrderId", "OrderID"):
+                if str(payload.get(key) or "").isdigit():
+                    oid = int(payload[key])
+                    break
+
+        order = orders.get(oid) if oid is not None else None
+        sid = order.get("StoreId") if order else None
+        if sid is None and kind == "store" and str(entity_id or "").isdigit():
+            sid = int(entity_id)
+        if sid is None:
+            for key in ("store_id", "StoreId"):
+                if str(payload.get(key) or "").isdigit():
+                    sid = int(payload[key])
+                    break
+
+        store = stores.get(int(sid)) if sid is not None else None
+        r["OrderId"], r["StoreId"] = oid, sid
+        r["StoreName"] = store.get("StoreName") if store else (order.get("StoreName") if order else None)
+        queue = order.get("QueueNo") if order else None
+        prefix = (store or order or {}).get("QueueCode")
+        r["QueueLabel"] = f"{prefix}{int(queue):03d}" if prefix and queue is not None else (str(queue) if queue is not None else payload.get("queue"))
+        r["Details"] = _details(r["EntityType"], entity_id, r.pop("NewValue"), r.pop("OldValue"))
+
     return rows
