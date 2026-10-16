@@ -1507,11 +1507,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="info-row"><span>เบอร์โทร:</span> <b style={{ color: PALETTE.coral }}>{viewingCustomer.Phone || '-'}</b></div>
                 <div className="info-row"><span>อีเมล:</span> <b>{viewingCustomer.Email || '-'}</b></div>
                 <div className="info-row"><span>เคยสั่งซื้อสำเร็จ:</span> <b>{viewingCustomer.TotalOrders ?? 0} ออเดอร์</b></div>
-                {viewingCustomer.Phone && (
-                  <a href={`tel:${viewingCustomer.Phone}`} className="cv-btn btn-coral" style={{ marginTop: '16px', display: 'flex', justifyContent: 'center', textDecoration: 'none' }}>
-                    กดเพื่อโทรหาลูกค้า
-                  </a>
-                )}
               </div>
             )}
             <button onClick={() => setViewingCustomer(null)} className="cv-btn btn-dark" style={{ width: '100%', marginTop: '14px' }}>ปิดหน้าต่าง</button>
