@@ -20,6 +20,8 @@ jobs:
   deploy:
     # self-hosted runner บนเครื่อง server (only-foods.cskmitl.com)
     runs-on: self-hosted
+    # ค่าเริ่มต้น 6 ชม. : deploy ปกติใช้ไม่กี่นาที ค้างเกินนี้ให้หยุดและแจ้ง fail
+    timeout-minutes: 30
 
     steps:
       - name: Pull latest code
@@ -70,11 +72,8 @@ jobs:
           if ! sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "USE onlyfood; SELECT 1 FROM Store LIMIT 1"' > /dev/null 2>&1; then
             echo "ยังไม่มีฐาน onlyfood (init.sql กำลังสร้าง) - ข้าม migration"; exit 0
           fi
-          for f in database/migrations/*.sql; do
-            [ -f "$f" ] || continue
-            echo "== $f"
-            sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" onlyfood' < "$f"
-          done
+          # กันค้าง: รอล็อกตารางได้ไม่เกิน 60 วิ, ปิด migration ค้างจากรอบก่อน และ connection ที่ถือตารางค้าง (ดูในไฟล์)
+          DC="sudo docker compose -f $COMPOSE_FILE_NAME" bash database/apply_migrations.sh
 
       - name: Build and start
         run: |
