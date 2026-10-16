@@ -1875,71 +1875,53 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     marginBottom: "14px",
                   }}
                 >
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    width: "100%",
+                    marginBottom: "14px",
+                    alignItems: "stretch",
+                  }}
+                >
+                  {/* ฝั่งซ้าย: ข้อมูลคิว */}
                   <div
                     style={{
-                      display: "flex",
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "12px",
-                      width: "100%",
+                      flex: 1,
+                      minWidth: 0,
+                      background: "#FF8A00",
+                      color: "#FFFFFF",
+                      padding: "12px",
+                      borderRadius: "14px",
                       boxSizing: "border-box",
                     }}
                   >
-                    {/* ฝั่งซ้าย: คิว */}
-                    <div
-                      style={{
-                        flex: "1 1 50%",
-                        minWidth: 0,
-                        textAlign: "left",
-                      }}
-                    >
-                      <div style={{ fontSize: "10px", opacity: 0.85 }}>
-                        คิวของคุณ
-                      </div>
-                      <div style={{ fontSize: "20px", fontWeight: "900" }}>
-                        #{order.QueueNo}
-                      </div>
+                    <div>คิวของคุณ</div>
+                    <div>#{order.QueueNo}</div>
+                    <div>{order.StoreName}</div>
+                  </div>
 
-                      <div style={{ fontSize: "13px", fontWeight: "700", marginTop: "2px" }}>
-                        {order.StoreName}
-                      </div>
-                    </div>
-
-                    {/* เส้นแบ่ง */}
-                    <div
-                      style={{
-                        width: "1px",
-                        alignSelf: "stretch",
-                        background: "rgba(30, 41, 59, 0.2)",
-                        flexShrink: 0,
-                      }}
-                    />
-
-                    {/* ฝั่งขวา: เวลารับอาหาร */}
-                    <div
-                      style={{
-                        flex: "1 1 50%",
-                        minWidth: 0,
-                        textAlign: "right",
-                        overflowWrap: "anywhere",
-                      }}
-                    >
-                      <div style={{ fontSize: "10px", opacity: 0.85 }}>
-                        เวลารับอาหาร
-                      </div>
-
-                      <div
-                        style={{
-                          fontSize: "14px",
-                          fontWeight: "900",
-                          marginTop: "5px",
-                        }}
-                      >
-                        {order.PickupTime || order.pickup_time || (
-                          pickupTime || getCustomerPickupRange() || "กำลังคำนวณเวลา..."
-                        )}
-                      </div>
+                  {/* ฝั่งขวา: เวลารับอาหาร */}
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      background: "#FFEBD9",
+                      color: "#1E293B",
+                      padding: "12px",
+                      borderRadius: "14px",
+                      boxSizing: "border-box",
+                      textAlign: "right",
+                    }}
+                  >
+                    <div>เวลารับอาหาร</div>
+                    <div>
+                      {order.PickupTime ||
+                        order.pickup_time ||
+                        pickupTime ||
+                        getCustomerPickupRange() ||
+                        "กำลังคำนวณเวลา..."}
+                  </div>
 
                       {!order.PickupTime && !order.pickup_time && !pickupTime && (
                         <div style={{ fontSize: "10px", marginTop: "4px", opacity: 0.8 }}>
