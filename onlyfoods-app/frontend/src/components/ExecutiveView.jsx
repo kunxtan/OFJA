@@ -1181,14 +1181,26 @@ const returnFoodCourtToAuto = async () => {
     const [contractAlerts, setContractAlerts] = useState([]);
 
     const displayNotifications = useMemo(() => {
-        return [...issueAlerts, ...contractAlerts, ...notifications]
-            .sort((a, b) => {
-                const ad = parseOrderDate(a.CreatedAt);
-                const bd = parseOrderDate(b.CreatedAt);
-                return (bd?.getTime() || 0) - (ad?.getTime() || 0);
-            })
-            .slice(0, 30);
-    }, [issueAlerts, contractAlerts, notifications]);
+    const seen = new Set();
+    // ใช้ notifications ก่อน เพื่อให้ข้อมูล IsRead เป็นค่าล่าสุด
+    const all = [...notifications, ...contractAlerts, ...issueAlerts];
+    const unique = all.filter((notif) => {
+        const id = notif.NotificationId ?? notif.NotifId;
+        // ถ้าไม่มี ID จะไม่สุ่มจับรวมกับรายการอื่น
+        if (id == null) return true;
+        const key = `${notif.Synthetic ? 'synthetic' : 'database'}:${id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+    return unique
+        .sort((a, b) => {
+            const ad = parseOrderDate(a.CreatedAt);
+            const bd = parseOrderDate(b.CreatedAt);
+            return (bd?.getTime() || 0) - (ad?.getTime() || 0);
+        })
+        .slice(0, 30);
+}, [issueAlerts, contractAlerts, notifications]);
 
     const unreadCount = displayNotifications.filter((n) => !isRead(n)).length;
 
