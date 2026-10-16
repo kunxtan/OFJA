@@ -1090,18 +1090,21 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // แสดงช่วงเวลารับโดยประมาณ เริ่มจากเวลาปัจจุบันไปจนถึงเวลารอที่คำนวณได้
   const getCustomerPickupRange = () => {
-    const waitMinutes = getCustomerWaitEstimate();
-    if (!waitMinutes) return "";
-
+    const waitMinutes = Number(getCustomerWaitEstimate());
+    if (!Number.isFinite(waitMinutes) || waitMinutes < 0) {
+      return "กำลังคำนวณเวลา...";
+    }
     const start = new Date();
     start.setSeconds(0, 0);
-    const end = new Date(start.getTime() + waitMinutes * 60 * 1000);
+    const end = new Date(
+      start.getTime() + waitMinutes * 60 * 1000
+    );
     const formatTime = (date) =>
-      `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-
+      `${String(date.getHours()).padStart(2, "0")}:${String(
+        date.getMinutes()
+      ).padStart(2, "0")}`;
     return `${formatTime(start)}–${formatTime(end)} น.`;
   };
-
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
     if (!checkFoodCourtOrderTime()) return;
@@ -2124,65 +2127,92 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   </div>
                 ))}
               </div>
-
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}> เวลารับอาหาร</label>
-                  <select
-                    value={pickupTime}
-                    onChange={(e) => setPickupTime(e.target.value)}
-                  >
-                    <option value="">เลือกเวลารับอาหาร</option>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "12px",
+                    fontWeight: "800",
+                    marginBottom: "5px",
+                  }}
+                >
+                  เวลารับอาหาร
+                </label>
 
-                    {pickupTimeOptions.map((time) => (
-                      <option key={time} value={time}>
-                        {time} น.
-                      </option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: "10px", color: COLORS.gray, marginTop: "5px" }}>หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง</div>
-                  {pickupTime ? (
-                    <div
-                      style={{
-                        marginTop: "8px",
-                        padding: "10px 12px",
-                        borderRadius: "10px",
-                        background: "#FFFFFF",
-                        color: "#F97316",
-                        fontSize: "12px",
-                        fontWeight: "700",
-                        border: "1px solid #FED7AA",
-                      }}
-                    >
-                      เวลารับตามที่เลือก: {pickupTime} น.
-                    </div>
-                  ) : cart.length > 0 ? (
-                    <div
-                      style={{
-                        marginTop: "8px",
-                        padding: "10px 12px",
-                        borderRadius: "10px",
-                        background: "#FFFFFF",
-                        color: "#F97316",
-                        fontSize: "12px",
-                        fontWeight: "700",
-                        border: "1px solid #FED7AA",
-                      }}
-                    >
-                      เวลารับอาหารโดยประมาณ {getCustomerPickupRange()}
-                      <div
-                        style={{
-                          marginTop: "3px",
-                          fontSize: "10px",
-                          fontWeight: "400",
-                          color: "#9A3412",
-                        }}
-                      >
-                        เป็นช่วงเวลาโดยประมาณ อาจเปลี่ยนตามจำนวนออเดอร์ที่ครัวกำลังทำ
-                      </div>
-                    </div>
-                  ) : null}
+                <select
+                  value={pickupTime}
+                  onChange={(e) => setPickupTime(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "11px",
+                    borderRadius: "10px",
+                    border: `1px solid ${COLORS.border}`,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <option value="">เลือกเวลารับอาหาร</option>
+
+                  {pickupTimeOptions.map((time) => (
+                    <option key={time} value={time}>
+                      {time} น.
+                    </option>
+                  ))}
+                </select>
+
+                <div
+                  style={{
+                    fontSize: "10px",
+                    color: COLORS.gray,
+                    marginTop: "5px",
+                  }}
+                >
+                  หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง
+                </div>
+
+                {pickupTime ? (
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      padding: "10px 12px",
+                      borderRadius: "10px",
+                      background: "#FFFFFF",
+                      color: "#F97316",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      border: "1px solid #FED7AA",
+                    }}
+                  >
+                    เวลารับตามที่เลือก: {pickupTime} น.
                   </div>
+                ) : cart.length > 0 ? (
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      padding: "10px 12px",
+                      borderRadius: "10px",
+                      background: "#FFFFFF",
+                      color: "#F97316",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      border: "1px solid #FED7AA",
+                    }}
+                  >
+                    เวลารับอาหารโดยประมาณ {getCustomerPickupRange()}
+
+                    <div
+                      style={{
+                        marginTop: "3px",
+                        fontSize: "10px",
+                        fontWeight: "400",
+                        color: "#9A3412",
+                      }}
+                    >
+                      เป็นช่วงเวลาโดยประมาณ อาจเปลี่ยนตามจำนวนออเดอร์ที่ครัวกำลังทำ
+                    </div>
+                  </div>
+                ) : null}
+              </div>
                 <div style={{ marginBottom: "15px" }}>
                   <label style={{ display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px" }}>รายละเอียดเพิ่มเติมของออเดอร์</label>
                   <textarea value={orderNote} onChange={e => setOrderNote(e.target.value)} placeholder="หมายเหตุเพิ่มเติมสำหรับทั้งออเดอร์" rows={2} style={{ width: "100%", boxSizing: "border-box", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit", resize: "vertical" }} />
