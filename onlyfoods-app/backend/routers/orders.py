@@ -11,13 +11,13 @@ from auth import STORE_SCOPED, assert_store_access, get_current_user, require_ro
 from db import get_db, transaction
 from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
-                     LatePickupSchema, RecallRequestSchema, StatusUpdateSchema, TopUpSlipSchema)
+                     LatePickupSchema, StatusUpdateSchema, TopUpSlipSchema)
 from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
                       lock_order, log_audit, log_first_status, pending_top_up, refund_price_diff, send_notif,
                       status_id)
 from shapes import ORDER_SELECT, attach_items, order_people, shape_order
 from utils import (bangkok_now, clean_text, contract_active, foodcourt_is_open, parse_pickup_time,
-                   parse_queue_no, queue_label, save_image)
+                   queue_label, save_image)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -584,21 +584,3 @@ def report_late_pickup(order_id: int, payload: LatePickupSchema,
     return {"success": True, "order_id": order_id, "minutes": payload.minutes,
             "arrival_time": arrival.isoformat(), "count": used + 1,
             "remaining": config.MAX_LATE_PICKUP_UPDATES - used - 1}
-
-
-@router.post("/{order_id}/recall")
-def recall_order(order_id: int, payload: RecallRequestSchema,
-                 user=Depends(require_role("FRONT_STAFF", "KITCHEN_STAFF", "STORE_OWNER")), db=Depends(get_db)):
-    with transaction(db):
-        with db.cursor() as cur:
-            order = lock_order(cur, order_id)
-            assert_store_access(user, order["StoreId"])
-            if order["StatusCode"] != state.READY:
-                raise DomainError(400, "เรียกคิวซ้ำได้เฉพาะออเดอร์ที่พร้อมรับ")
-            if parse_queue_no(payload.queue_no) != int(order["QueueNo"]):
-                raise DomainError(400, "เลขคิวไม่ตรงกับออเดอร์")
-            q = queue_label(order["QueueNo"], order["QueueCode"])
-            send_notif(db, order["CustomerId"], "QUEUE_CALLED", f"เรียกคิว {q}",
-                       f"📢 เรียกคิว {q} อีกครั้ง กรุณามารับอาหาร", order_id)
-        log_audit(db, user["UserId"], "RECALL_QUEUE", "Order", order_id, None, {"queue": q})
-    return {"success": True, "order_id": order_id, "queue_no": q}

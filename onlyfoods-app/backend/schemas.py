@@ -195,10 +195,6 @@ class PrintRequestSchema(BaseModel):
     printer: str = Field(default="MOCK_PRINTER_01", max_length=100)
 
 
-class RecallRequestSchema(BaseModel):
-    queue_no: str
-
-
 class ReviewCreateSchema(BaseModel):
     order_id: int
     rating: int = Field(ge=1, le=5)
