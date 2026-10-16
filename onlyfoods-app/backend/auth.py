@@ -5,15 +5,33 @@ from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 import config
 from db import get_db
 from errors import DomainError
+from utils import ACCESS_LOCKED, ACCESS_READ_ONLY, store_account_access
 
 logger = logging.getLogger("onlyfood")
 _bearer = HTTPBearer(auto_error=False)
+
+# สัญญาร้าน : ใช้ทั้งตอน login และทุก request (ต้อง LEFT JOIN StoreContract c ON c.StoreId = u.StoreId)
+STORE_CONTRACT_COLUMNS = """c.EndDate AS ContractEndDate,
+                   (u.StoreId IS NOT NULL AND c.EndDate < CURDATE() AND EXISTS (
+                       SELECT 1 FROM `Order` ox JOIN OrderStatus osx ON osx.StatusId = ox.StatusId
+                       WHERE ox.StoreId = u.StoreId AND osx.IsTerminal = FALSE)) AS StoreHasOpenOrders"""
+CONTRACT_EXPIRED_MESSAGE = "สัญญาร้านค้าหมดอายุแล้ว บัญชีของร้านนี้ใช้งานไม่ได้ กรุณาติดต่อผู้บริหารศูนย์อาหาร"
+CONTRACT_READ_ONLY_MESSAGE = "สัญญาร้านหมดแล้ว ดูข้อมูลได้อย่างเดียว แก้ไขหรือเปิดร้านไม่ได้"
+
+
+def contract_access(row: dict) -> str:
+    """FULL / READ_ONLY / LOCKED ของบัญชีนี้ (บัญชีที่ไม่ผูกร้าน = FULL เสมอ)"""
+    if row.get("StoreId") is None:
+        return "FULL"
+    return store_account_access(row.get("ContractEndDate"), row["RoleCode"], bool(row.get("StoreHasOpenOrders")),
+                                config.CONTRACT_OWNER_READONLY_DAYS)
+
 
 _dummy_hash: Optional[str] = None
 
@@ -53,6 +71,7 @@ def _unauthorized(detail: str = "กรุณาเข้าสู่ระบ�
 
 
 def get_current_user(
+    request: Request,
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     db=Depends(get_db),
 ) -> dict:
@@ -72,10 +91,12 @@ def get_current_user(
         cur.execute(
             """
             SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive,
-                   r.RoleCode, COALESCE(s.IsDeleted, 0) AS StoreIsDeleted
+                                      r.RoleCode, COALESCE(s.IsDeleted, 0) AS StoreIsDeleted,
+                   """ + STORE_CONTRACT_COLUMNS + """
             FROM `User` u
             JOIN Role r ON r.RoleId = u.RoleId
             LEFT JOIN Store s ON s.StoreId = u.StoreId
+            LEFT JOIN StoreContract c ON c.StoreId = u.StoreId
             WHERE u.UserId = %s
             """,
             (user_id,),
@@ -83,6 +104,12 @@ def get_current_user(
         user = cur.fetchone()
     if not user or not user["IsActive"] or user["StoreIsDeleted"]:
         raise _unauthorized("บัญชีนี้ใช้งานไม่ได้")
+    access = contract_access(user)
+    if access == ACCESS_LOCKED:
+        # หมดสัญญา = token ที่ล็อกอินค้างไว้ใช้ไม่ได้ทันที
+        raise _unauthorized(CONTRACT_EXPIRED_MESSAGE)
+    if access == ACCESS_READ_ONLY and request.method not in ("GET", "HEAD", "OPTIONS"):
+        raise HTTPException(status_code=403, detail=CONTRACT_READ_ONLY_MESSAGE)
     return user
 
 

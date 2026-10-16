@@ -113,9 +113,17 @@ class StoreFullSchema(BaseModel):
     owner_password: Optional[str] = None
 
 
-class RenewContractSchema(BaseModel):
-    contract_start_date: str
+class ContractEndUpdateSchema(BaseModel):
+    """แก้วันสิ้นสุดสัญญา (เฉพาะร้านที่สัญญายังไม่หมด) ต้องมีเหตุผลทุกครั้ง"""
     contract_end_date: str
+    reason: str = Field(min_length=1, max_length=255)
+
+
+class ContractRestartSchema(BaseModel):
+    """ร้านหมดสัญญา/ยังไม่มีสัญญา -> เปิดสัญญารอบใหม่ ; ไม่ส่งวันเริ่ม = วันนี้ ; ไม่ส่งวันสิ้นสุด = 1 ปี"""
+    contract_start_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
+    reason: str = Field(min_length=1, max_length=255)
 
 
 class ProductCreateSchema(BaseModel):
@@ -193,10 +201,6 @@ class PrintSkipSchema(BaseModel):
 class PrintRequestSchema(BaseModel):
     print_type: str = "FIRST_PRINT"
     printer: str = Field(default="MOCK_PRINTER_01", max_length=100)
-
-
-class RecallRequestSchema(BaseModel):
-    queue_no: str
 
 
 class ReviewCreateSchema(BaseModel):

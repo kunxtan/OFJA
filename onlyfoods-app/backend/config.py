@@ -48,6 +48,11 @@ LATE_PICKUP_CHOICES = (15, 30, 60, 120)
 MAX_LATE_PICKUP_UPDATES = 3
 
 
+# ร้านที่หมดสัญญาแล้วไม่ถูกกด "หมดสัญญา" เพื่อเปิดสัญญารอบใหม่ภายในกี่วัน จะถูกลบ (soft delete) อัตโนมัติ
+CONTRACT_PURGE_AFTER_DAYS = _int("CONTRACT_PURGE_AFTER_DAYS", 90)
+# หมดสัญญาแล้ว เจ้าของร้านยังล็อกอินเข้ามา "ดูอย่างเดียว" (ยอดขาย/ประวัติ) ได้อีกกี่วัน ; พนักงานล็อกทันที
+CONTRACT_OWNER_READONLY_DAYS = _int("CONTRACT_OWNER_READONLY_DAYS", 30)
+
 def require_secrets() -> None:
     """เรียกตอนสตาร์ท: ไม่มี JWT_SECRET ที่แข็งแรงพอ = ไม่ยอมเปิด server"""
     if len(JWT_SECRET) < 32:

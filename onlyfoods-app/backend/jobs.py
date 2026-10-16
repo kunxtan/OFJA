@@ -14,7 +14,7 @@ from typing import Optional
 
 import config
 from db import _get_pool
-from services import log_audit, send_notif
+from services import log_audit, purge_expired_stores, send_notif
 from utils import bangkok_now, queue_label
 
 logger = logging.getLogger("onlyfood")
@@ -90,6 +90,28 @@ def _run_once() -> int:
             pass
         conn.close()
 
+_last_purge_at: Optional[datetime] = None
+
+
+def _purge_if_due() -> int:
+    """ร้านหมดสัญญาเกิน CONTRACT_PURGE_AFTER_DAYS วันโดยไม่ถูกเปิดสัญญาใหม่ -> ลบอัตโนมัติ (เช็คชั่วโมงละครั้ง)"""
+    global _last_purge_at
+    now = bangkok_now()
+    if _last_purge_at is not None and now - _last_purge_at < timedelta(hours=1):
+        return 0
+    _last_purge_at = now
+    conn = _get_pool().connection()
+    try:
+        purged = purge_expired_stores(conn, config.CONTRACT_PURGE_AFTER_DAYS)
+        conn.commit()
+        return purged
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 
 async def reminder_loop() -> None:
     """เช็คทุก REMINDER_LOOP_SECONDS วินาที ; error ใดๆ ไม่ทำให้ลูปตาย"""
@@ -99,6 +121,9 @@ async def reminder_loop() -> None:
             sent = await asyncio.to_thread(_run_once)
             if sent:
                 logger.info("pickup reminders sent: %s", sent)
+            purged = await asyncio.to_thread(_purge_if_due)
+            if purged:
+                logger.info("expired stores auto-deleted: %s", purged)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

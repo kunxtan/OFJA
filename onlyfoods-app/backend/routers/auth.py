@@ -6,7 +6,8 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException
 
 import config
-from auth import create_token, get_current_user, hash_password, verify_password
+from auth import (CONTRACT_EXPIRED_MESSAGE, STORE_CONTRACT_COLUMNS, contract_access, create_token,
+                  get_current_user, hash_password, verify_password)
 from db import get_db, transaction
 from errors import DomainError
 from schemas import ChangePasswordSchema, GoogleAuthSchema, LoginSchema, RegisterSchema
@@ -30,9 +31,12 @@ def login(data: LoginSchema, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT u.UserId, u.PasswordHash, u.IsActive, u.FailedLoginCount, u.LockedUntil,
-                   COALESCE(s.IsDeleted, 0) AS StoreIsDeleted
-            FROM `User` u LEFT JOIN Store s ON s.StoreId = u.StoreId
+            SELECT u.UserId, u.PasswordHash, u.IsActive, u.FailedLoginCount, u.LockedUntil, u.StoreId,
+            r.RoleCode, COALESCE(s.IsDeleted, 0) AS StoreIsDeleted,
+            """ + STORE_CONTRACT_COLUMNS + """
+            FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
+            LEFT JOIN Store s ON s.StoreId = u.StoreId
+            LEFT JOIN StoreContract c ON c.StoreId = u.StoreId
             WHERE u.Username = %s
             """,
             (username,),
@@ -71,7 +75,9 @@ def login(data: LoginSchema, db=Depends(get_db)):
         raise HTTPException(status_code=403, detail="บัญชีนี้ถูกปิดใช้งาน")
     if row["StoreIsDeleted"]:
         raise HTTPException(status_code=403, detail="ร้านค้านี้ถูกลบแล้ว ไม่สามารถเข้าสู่ระบบได้")
-
+    if contract_access(row) == "LOCKED":
+        raise HTTPException(status_code=403, detail=CONTRACT_EXPIRED_MESSAGE)
+    
     with transaction(db):
         if row["FailedLoginCount"] or row["LockedUntil"]:
             with db.cursor() as cur:

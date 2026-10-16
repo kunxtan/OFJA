@@ -366,6 +366,50 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
     log_audit(db, actor_id, action, "Order", oid, None,
               {"status": final_code, "store_id": order["StoreId"], "reason": reason})
 
+# -------------------------------------------------------------------- contract
+def open_order_count(cur, store_id: int) -> int:
+    """ออเดอร์ของร้านที่ยังไม่จบ (ใช้กันไม่ให้ตัดสัญญา/ลบร้านทั้งที่ลูกค้ายังรออาหารหรือรอเงินคืน)"""
+    cur.execute(
+        """
+        SELECT COUNT(*) AS n FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
+        WHERE o.StoreId = %s AND os.IsTerminal = FALSE
+        """,
+        (store_id,),
+    )
+    return int(cur.fetchone()["n"])
+
+
+def purge_expired_stores(db, purge_after_days: int) -> int:
+    """ร้านที่หมดสัญญาเกิน N วันและไม่ถูกเปิดสัญญารอบใหม่ -> soft delete (ข้อมูล/ยอดขาย/AuditLog ยังอยู่ครบ)
+
+    ข้ามร้านที่ยังมีออเดอร์ค้าง ; ผู้กระทำ = ระบบ (PerformedBy NULL) ; เรียกซ้ำได้ไม่เกิดผลซ้ำ
+    """
+    if purge_after_days <= 0:
+        return 0
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT s.StoreId, s.StoreName, c.EndDate
+            FROM Store s JOIN StoreContract c ON c.StoreId = s.StoreId
+            WHERE s.IsDeleted = FALSE AND c.EndDate < DATE_SUB(CURDATE(), INTERVAL %s DAY)
+            FOR UPDATE OF s
+            """,
+            (purge_after_days,),
+        )
+        targets = cur.fetchall()
+        purged = 0
+        for st in targets:
+            if open_order_count(cur, st["StoreId"]):
+                continue
+            cur.execute("UPDATE Store SET IsDeleted = TRUE, DeletedAt = %s, IsOpen = FALSE WHERE StoreId = %s",
+                        (bangkok_now(), st["StoreId"]))
+            log_audit(db, None, "AUTO_DELETE_STORE", "Store", st["StoreId"], {"end": st["EndDate"]},
+                      {"name": st["StoreName"], "reason": f"หมดสัญญาเกิน {purge_after_days} วันโดยไม่มีการเปิดสัญญาใหม่"})
+            purged += 1
+    return purged
+
+
+
 
 # ------------------------------------------------------------------ food court
 def get_foodcourt(cur) -> dict:
