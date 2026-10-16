@@ -51,6 +51,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [pickupTime, setPickupTime] = useState("");
+  const [queueEstimateOrders, setQueueEstimateOrders] = useState([]);
   const [foodCourtOpenTime, setFoodCourtOpenTime] = useState("");
   const [foodCourtCloseTime, setFoodCourtCloseTime] = useState("");
   const [orderNote, setOrderNote] = useState("");
@@ -1045,6 +1046,60 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
     reader.onerror = () => customAlert("อ่านไฟล์สลิปไม่สำเร็จ", "กรุณาเลือกรูปใหม่อีกครั้ง", "error");
     reader.readAsDataURL(file);
+  };
+
+  // โหลดเฉพาะข้อมูลคิวที่จำเป็นสำหรับประเมินเวลารอให้ลูกค้า
+  useEffect(() => {
+    if (!selectedStore || !isCartOpen || pickupTime) {
+      setQueueEstimateOrders([]);
+        ;
+    }
+  
+    let cancelled = false;
+    const loadQueueEstimate = async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/orders/queue-estimate?store_id=${selectedStore}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setQueueEstimateOrders(Array.isArray(data.orders) ? data.orders : []);
+      } catch (error) {
+        // การประเมินเวลาเป็นข้อมูลเสริม จึงไม่ขัดขวางการสั่งอาหารหากโหลดไม่สำเร็จ
+      }
+    };
+  
+    loadQueueEstimate();
+    const interval = setInterval(loadQueueEstimate, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [apiBase, selectedStore, isCartOpen, pickupTime]);
+
+  const getCustomerWaitEstimate = () => {
+    const cartDishCount = cart.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0);
+    if (!cartDishCount) return 0;
+
+    const activeOrders = queueEstimateOrders
+      .filter(order => ["PENDING", "COOKING"].includes(String(order.status || "").toUpperCase()))
+      .sort((a, b) => Number(a.order_id) - Number(b.order_id));
+    const waitingDishes = activeOrders.reduce((sum, order) => sum + (Number(order.dish_count) || 0), 0) + cartDishCount;
+    const buffer = waitingDishes > 15 ? 1.2 : waitingDishes >= 5 ? 1.1 : 1;
+    const waitingMinutes = activeOrders.reduce((sum, order) => sum + (Number(order.dish_count) || 0) * 4, 0);
+    return Math.max(1, Math.ceil(waitingMinutes + cartDishCount * 4 * buffer));
+  };
+
+  // แสดงช่วงเวลารับโดยประมาณ เริ่มจากเวลาปัจจุบันไปจนถึงเวลารอที่คำนวณได้
+  const getCustomerPickupRange = () => {
+    const waitMinutes = getCustomerWaitEstimate();
+    if (!waitMinutes) return "";
+
+    const start = new Date();
+    start.setSeconds(0, 0);
+    const end = new Date(start.getTime() + waitMinutes * 60 * 1000);
+    const formatTime = (date) =>
+      `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+
+    return `${formatTime(start)}–${formatTime(end)} น.`;
   };
 
   const submitOrder = async () => {

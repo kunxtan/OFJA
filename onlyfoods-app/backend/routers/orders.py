@@ -193,6 +193,44 @@ def get_orders(
         return attach_items(cur, orders)
 
 
+@router.get("/queue-estimate")
+def get_queue_estimate(store_id: int = Query(..., ge=1),
+                       user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
+    """ข้อมูลคิวแบบย่อสำหรับให้ลูกค้าประเมินเวลารอรับทันที โดยไม่เปิดเผยข้อมูลลูกค้าคนอื่น"""
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.OrderId AS OrderID, o.CreatedAt, o.ReadyAt, o.PickupTime,
+                   os.StatusCode AS Status,
+                   COALESCE(SUM(CASE WHEN oi.ItemStatus = 'NORMAL' THEN oi.Qty ELSE 0 END), 0) AS DishCount
+            FROM `Order` o
+            JOIN OrderStatus os ON os.StatusId = o.StatusId
+            LEFT JOIN OrderItem oi ON oi.OrderId = o.OrderId
+            WHERE o.StoreId = %s
+              AND os.StatusCode IN ('PENDING', 'COOKING', 'READY', 'COMPLETED')
+              AND DATE(o.CreatedAt) = CURDATE()
+            GROUP BY o.OrderId, o.CreatedAt, o.ReadyAt, o.PickupTime, os.StatusCode
+            ORDER BY o.OrderId ASC
+            """,
+            (store_id,),
+        )
+        rows = cur.fetchall()
+    # ส่งเฉพาะข้อมูลที่จำเป็นต่อการประมาณเวลา ไม่มีชื่อลูกค้าหรือรายละเอียดออเดอร์
+    return {
+        "orders": [
+            {
+                "order_id": row["OrderID"],
+                "created_at": row["CreatedAt"].isoformat(sep=" ") if row.get("CreatedAt") else None,
+                "ready_at": row["ReadyAt"].isoformat(sep=" ") if row.get("ReadyAt") else None,
+                "pickup_time": row["PickupTime"].strftime("%H:%M") if row.get("PickupTime") else None,
+                "status": row["Status"],
+                "dish_count": int(row["DishCount"] or 0),
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.get("/kitchen-summary")
 def get_kitchen_summary(user=Depends(require_role("KITCHEN_STAFF", "FRONT_STAFF", "STORE_OWNER")),
                         store_id: Optional[int] = None, db=Depends(get_db)):
