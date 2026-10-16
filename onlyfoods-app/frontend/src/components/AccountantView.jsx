@@ -11,6 +11,10 @@ const SERVER_TZ = '+07:00';
 
 const RATE_WARN = 5;    // % -> เฝ้าระวัง (ตั้งแต่ค่านี้ขึ้นไป)
 const RATE_ALERT = 10;  // % -> แจ้งเตือน (Alert) เมื่อ Cancel Rate มากกว่าค่านี้
+const ALERT_WINDOW_DAYS = 30;   // การแจ้งเตือน Cancel Rate คำนวณจากข้อมูลย้อนหลังกี่วัน
+
+const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+const THAI_WEEKDAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
 
 // นักบัญชีบันทึกยอด/จำนวนออเดอร์ เฉพาะออเดอร์ที่ "จบ/กึ่งจบ" หรือ "ถูกยกเลิก" เท่านั้น
 const SETTLED_STATUSES = ['Completed', 'NoShow'];               // ส่งมอบสำเร็จ / กึ่งจบ (ลูกค้าไม่มารับ ร้านได้เงินแล้ว)
@@ -24,7 +28,8 @@ const normStatus = (st) => {
 const isSettled = (o) => SETTLED_STATUSES.includes(normStatus(o.Status));
 
 // โทนสีสำหรับแต่ละร้านค้า (ใช้เนกทีฟ/ส้ม/เหลือง/เทา ไม่แย่งซีนสีแจ้งเตือน)
-const STORE_COLORS = ['#FF724C', '#2A2C41', '#FDBF50', '#697586', '#E0532E', '#4A4D6B', '#8C91A4'];
+// สีประจำร้าน/กราฟโดนัท: เลือกให้แต่ละสีต่างกันชัดเจน (ส้ม / กรมท่า / เหลือง / เขียว / ฟ้า / ม่วง / ชมพู / เขียวมิ้นต์)
+const STORE_COLORS = ['#FF724C', '#2A2C41', '#FDBF50', '#16A679', '#4C8DF6', '#9B5DE5', '#E5487A', '#2EC4B6'];
 
 /* ---------------- Pure helpers ---------------- */
 const fmtMoney = (n) => {
@@ -47,6 +52,10 @@ function auditTone(action, details) {
   return 'neutral';
 }
 
+const ROLE_LABELS = {
+  'Staff/Owner': 'พนักงานร้าน / เจ้าของร้าน', 'Front Staff': 'พนักงานหน้าร้าน', 'Kitchen Staff': 'พนักงานครัว',
+  'Shop Owner': 'เจ้าของร้าน', 'Executive': 'ผู้บริหาร', 'Accountant': 'เจ้าหน้าที่บัญชี', 'Customer': 'ลูกค้า',
+};
 const AUDIT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;   // แสดง log ย้อนหลังไม่เกิน 1 ปี
 const ORDER_ID_RE = /Order(?:\s*ID)?\s*[:#]?\s*(\d+)/i;
 
@@ -66,15 +75,17 @@ function buildAuditRows(logs, orders) {
     orderById[String(o.OrderID)] = o;
     if (o.UserId && (o.CustomerName || o.UserName)) userNameById[String(o.UserId)] = o.CustomerName || o.UserName;
   });
-  // แปลงค่า PerformedBy / PerformerRole ให้เป็นข้อความที่คนอ่านรู้เรื่อง
-  const performerOf = (l) => {
+  // แปลงค่า PerformedBy / PerformerRole ให้เป็นข้อความที่คนอ่านรู้เรื่อง (ชื่อลูกค้า / ตำแหน่งภาษาไทย + ร้าน)
+  const performerOf = (l, order) => {
     if (l.PerformerLabel) return l.PerformerLabel;
-    const role = String(l.PerformerRole || '').trim();
-    const idText = l.PerformedBy != null ? String(l.PerformedBy) : (role.match(/^User:(\d+)$/) || [])[1];
-    if (idText && userNameById[idText]) return userNameById[idText];
-    if (role === 'User:WalkIn') return 'ลูกค้า Walk-in';
-    if (role) return role;
-    return idText ? `User #${idText}` : 'ระบบ';
+    const raw = String(l.PerformerRole || l.PerformedBy || '').trim();
+    if (!raw) return 'ระบบ';
+    if (/^User:WalkIn$/i.test(raw)) return 'ลูกค้าหน้าร้าน (Walk-in)';
+    const idMatch = raw.match(/^User:(\d+)$/) || (/^\d+$/.test(raw) ? [raw, raw] : null);
+    if (idMatch) return userNameById[idMatch[1]] || `ลูกค้า #${idMatch[1]}`;
+    const base = ROLE_LABELS[raw] || raw;
+    const staffRole = ['Staff/Owner', 'Front Staff', 'Kitchen Staff', 'Shop Owner'].includes(raw);
+    return staffRole && order && order.StoreName ? `${base} · ${order.StoreName}` : base;
   };
   const coveredCancels = new Set();
   const rows = [];
@@ -95,7 +106,12 @@ function buildAuditRows(logs, orders) {
       if (q && sid) loggedCreate.add(`${sid[1]}|${q[1]}|${dateOnly(logTime)}`);
     }
     const m = details.match(ORDER_ID_RE);
-    const order = m ? orderById[m[1]] : null;
+    let order = m ? orderById[m[1]] : null;
+    // log สร้างออเดอร์ไม่มีเลข Order -> จับคู่จากร้าน + คิว + วันที่
+    if (!order && String(l.Action) === 'CREATE_ORDER') {
+      const q = details.match(/คิว\s*(\d+)/), sid = details.match(/ID:(\d+)/);
+      if (q && sid) order = (orders || []).find(o => String(o.StoreId) === sid[1] && String(o.QueueNo) === q[1] && dateOnly(o.CreatedAt) === dateOnly(logTime));
+    }
 
     let action = l.Action || l.Event || l.Type || '-';
     // backend เดิมบันทึกการยกเลิกของร้านเป็น UPDATE_STATUS ... -> Cancelled
@@ -114,7 +130,7 @@ function buildAuditRows(logs, orders) {
     if (m && tone === 'bad') coveredCancels.add(m[1]);
     if (m && /APPROVE/i.test(String(action))) loggedApprove.add(m[1]);
 
-    rows.push({ key: `log-${l.LogID ?? l.LogId ?? l.logId ?? idx}`, time: logTime, action, by: performerOf(l), details, tone, derived: false });
+    rows.push({ key: `log-${l.LogID ?? l.LogId ?? l.logId ?? idx}`, orderId: order ? String(order.OrderID) : (m ? m[1] : null), time: logTime, action, by: performerOf(l, order), details, tone, derived: false });
   });
 
   // เติมจากข้อมูลออเดอร์: ออเดอร์ที่ถูกยกเลิกแต่ไม่มี log รองรับ (เช่น log เก่าถูกตัดออกจากรายการ 50 ล่าสุด)
@@ -129,12 +145,12 @@ function buildAuditRows(logs, orders) {
     if (normStatus(o.Status) === 'Cancelled' && !coveredCancels.has(String(o.OrderID))) {
       const action = classifyCancelledOrder(o);
       const label = action === 'VERIFY_SLIP_REJECT' ? 'ปฏิเสธสลิป' : action === 'CUSTOMER_CANCEL_ORDER' ? 'ลูกค้ายกเลิก' : 'ร้านค้ายกเลิก';
-      rows.push({ key: `drv-c-${o.OrderID}`, time: o.CreatedAt, action, by: action === 'CUSTOMER_CANCEL_ORDER' ? customer : storeStaff,
+      rows.push({ key: `drv-c-${o.OrderID}`, orderId: String(o.OrderID), time: o.CreatedAt, action, by: action === 'CUSTOMER_CANCEL_ORDER' ? customer : storeStaff,
         details: `${label} ${head} เหตุผล: ${reason || '-'}`, tone: 'bad', derived: true });
     }
     if (!loggedCreate.has(`${o.StoreId}|${o.QueueNo}|${dateOnly(o.CreatedAt)}`)) {
       const who = Number(o.IsWalkIn) === 1 ? 'ออเดอร์หน้าร้าน (Walk-in)' : `ลูกค้า ${o.CustomerName || o.UserName || ''}`.trim();
-      rows.push({ key: `drv-n-${o.OrderID}`, time: o.CreatedAt, action: 'CREATE_ORDER', by: o.CustomerName || o.UserName || (Number(o.IsWalkIn) === 1 ? 'ลูกค้า Walk-in' : 'ลูกค้า'),
+      rows.push({ key: `drv-n-${o.OrderID}`, orderId: String(o.OrderID), time: o.CreatedAt, action: 'CREATE_ORDER', by: o.CustomerName || o.UserName || (Number(o.IsWalkIn) === 1 ? 'ลูกค้า Walk-in' : 'ลูกค้า'),
         details: `สร้างออเดอร์ ${head} — ${who}`, tone: 'neutral', derived: true });
     }
     const st = normStatus(o.Status);
@@ -143,29 +159,114 @@ function buildAuditRows(logs, orders) {
       ['Pending', 'Cooking', 'Cooked', 'Ready', 'Completed', 'NoShow', 'Pending_Cancellation'].includes(st)
       || (st === 'Cancelled' && (reason.includes('ลูกค้า') || reason.includes('หมด'))));   // ถูกยกเลิกหลังอนุมัติสลิปแล้ว (ไม่ใช่โดนปฏิเสธสลิป)
     if (slipOk) {
-      rows.push({ key: `drv-a-${o.OrderID}`, time: o.CreatedAt, action: 'VERIFY_SLIP_APPROVE', by: storeStaff,
+      rows.push({ key: `drv-a-${o.OrderID}`, orderId: String(o.OrderID), time: o.CreatedAt, action: 'VERIFY_SLIP_APPROVE', by: storeStaff,
         details: `อนุมัติสลิป ${head} (ชำระเงินแล้ว — เวลาโดยประมาณ)`, tone: 'neutral', derived: true });
     }
     // ออเดอร์ที่ถูกยกเลิกเพราะของหมดหลังอนุมัติสลิป -> เป็นการยกเลิก จึงเป็นสีแดง
     if (st === 'Cancelled' && (reason.includes('เมนูหมด') || reason.startsWith('วัตถุดิบหมด'))) {
-      rows.push({ key: `drv-sc-${o.OrderID}`, time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: customer,
+      rows.push({ key: `drv-sc-${o.OrderID}`, orderId: String(o.OrderID), time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: customer,
         details: `${isWalkIn ? 'ออเดอร์หน้าร้าน' : 'อนุมัติสลิปแล้ว'} ${head} แต่สินค้าหมด — ลูกค้ายกเลิก`, tone: 'bad', derived: true });
     }
     if (['Cooking', 'Ready', 'Completed', 'NoShow'].includes(st) && !loggedStatus.has(`${o.OrderID}|${st}`)) {
       const when = st === 'Ready' || st === 'NoShow' ? (o.ReadyAt || o.CreatedAt) : st === 'Completed' ? (o.CompletedAt || o.ReadyAt || o.CreatedAt) : o.CreatedAt;
-      rows.push({ key: `drv-st-${o.OrderID}-${st}`, time: when, action: 'UPDATE_STATUS', by: storeStaff,
+      rows.push({ key: `drv-st-${o.OrderID}-${st}`, orderId: String(o.OrderID), time: when, action: 'UPDATE_STATUS', by: storeStaff,
         details: `Order ${o.OrderID} -> ${st} ${head}`, tone: st === 'Completed' ? 'green' : 'neutral', derived: true });
     }
     if (o.Status === 'Pending_Cancellation' && reason.startsWith('วัตถุดิบหมด')) {
       const paid = Number(o.IsWalkIn) === 1 ? 'ออเดอร์หน้าร้าน' : 'อนุมัติสลิปแล้ว';
-      rows.push({ key: `drv-s-${o.OrderID}`, time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: storeStaff,
+      rows.push({ key: `drv-s-${o.OrderID}`, orderId: String(o.OrderID), time: o.CreatedAt, action: 'OUT_OF_STOCK_NOTIFY', by: storeStaff,
         details: `${paid} ${head} แต่${reason.replace('วัตถุดิบหมด:', '').trim() ? ` '${reason.replace('วัตถุดิบหมด:', '').trim()}'` : 'สินค้า'} หมด — รอลูกค้าตัดสินใจ`,
         tone: 'neutral', derived: true });
     }
   });
 
   const ts = (r) => { const d = parseOrderDate(r.time); return d ? d.getTime() : 0; };
-  return rows.sort((x, y) => ts(y) - ts(x));
+  return rows
+    .map(r => {
+      const order = r.orderId ? orderById[r.orderId] : null;
+      const meta = auditMeta(r);
+      return {
+        ...r,
+        label: meta.label,
+        cat: r.tone === 'bad' ? 'cancel' : r.tone === 'green' ? 'done' : meta.cat,
+        summary: auditSummary(r, order),
+        queue: order ? order.QueueNo : null,
+        storeName: order ? order.StoreName : null,
+        amount: order ? Number(order.TotalAmount || 0) : null,
+      };
+    })
+    .sort((x, y) => ts(y) - ts(x));
+}
+
+// ชื่อเหตุการณ์ภาษาไทย + หมวด (ใช้กรองใน Audit Log)
+const AUDIT_ACTION_META = {
+  CREATE_ORDER: { label: 'สร้างออเดอร์', cat: 'order' },
+  VERIFY_SLIP_APPROVE: { label: 'อนุมัติสลิป', cat: 'slip' },
+  VERIFY_SLIP_REJECT: { label: 'ปฏิเสธสลิป', cat: 'cancel' },
+  STORE_CANCEL_ORDER: { label: 'ร้านค้ายกเลิก', cat: 'cancel' },
+  CUSTOMER_CANCEL_ORDER: { label: 'ลูกค้ายกเลิก', cat: 'cancel' },
+  OUT_OF_STOCK_NOTIFY: { label: 'แจ้งสินค้าหมด', cat: 'order' },
+  CANCEL_REQUEST: { label: 'ขอยกเลิก (รอลูกค้า)', cat: 'order' },
+  CUSTOMER_CHANGE_ITEM: { label: 'ลูกค้าเปลี่ยนเมนู', cat: 'order' },
+  CREATE_STORE: { label: 'เพิ่มร้านค้า', cat: 'store' },
+  UPDATE_STORE: { label: 'แก้ไขร้านค้า', cat: 'store' },
+  DELETE_STORE: { label: 'ลบร้านค้า', cat: 'store' },
+  SUSPEND_STORE: { label: 'ระงับ/เปิดสิทธิ์ร้านค้า', cat: 'store' },
+  CREATE_STORE_ACCOUNT: { label: 'สร้างบัญชีร้าน', cat: 'store' },
+  UPDATE_STORE_ACCOUNT: { label: 'แก้ไขบัญชีร้าน', cat: 'store' },
+  DELETE_STORE_ACCOUNT: { label: 'ลบบัญชีร้าน', cat: 'store' },
+};
+const STATUS_ACTION_LABEL = {
+  Cooking: 'เริ่มปรุงอาหาร', Ready: 'อาหารพร้อมรับ', Completed: 'ส่งมอบสำเร็จ',
+  NoShow: 'ลูกค้าไม่มารับ', Cancelled: 'ยกเลิกออเดอร์', Pending: 'รับออเดอร์',
+};
+const AUDIT_CATS = [['all', 'ทั้งหมด'], ['cancel', 'ยกเลิก'], ['done', 'สำเร็จ'], ['slip', 'สลิป'], ['order', 'ออเดอร์'], ['store', 'ร้านค้า/บัญชี']];
+
+function auditMeta(r) {
+  const a = String(r.action || '');
+  if (a === 'UPDATE_STATUS') {
+    const st = normStatus((String(r.details || '').match(/->\s*([A-Za-z_]+)/) || [])[1]);
+    return { label: STATUS_ACTION_LABEL[st] || 'เปลี่ยนสถานะออเดอร์', cat: st === 'Cancelled' ? 'cancel' : st === 'Completed' ? 'done' : 'order' };
+  }
+  return AUDIT_ACTION_META[a] || { label: a, cat: 'other' };
+}
+
+const orderItemsOf = (o) => (o && (o.items || o.OrderItems || o.Items || o.orderItems)) || [];
+function itemsText(order, max = 3) {
+  const items = orderItemsOf(order);
+  if (!items.length) return '';
+  const txt = items.slice(0, max).map(it => `${it.ProductName || it.MenuName || '-'} ×${it.Qty ?? it.Quantity ?? 1}`).join(', ');
+  return items.length > max ? `${txt} และอีก ${items.length - max} รายการ` : txt;
+}
+
+// ข้อความอธิบายแบบอ่านง่าย (ส่วนคิว/ร้าน/ยอดแยกไปแสดงเป็นคอลัมน์เอง)
+function auditSummary(r, order) {
+  const a = String(r.action || '');
+  const d = String(r.details || '');
+  const parsedReason = (d.match(/เหตุผล:\s*([^|]+)/) || d.match(/ยืนยันยกเลิก:\s*([^|]+)/) || [])[1];
+  const reason = String((order && order.CancelReason) || parsedReason || '').trim();
+  const plain = d.replace(/\s*\|.*$/, '').trim();
+  switch (a) {
+    case 'CREATE_ORDER': {
+      const it = itemsText(order);
+      return order ? `สั่งอาหาร${it ? `: ${it}` : ''}${Number(order.IsWalkIn) === 1 ? ' (สั่งหน้าร้าน)' : ''}` : plain;
+    }
+    case 'VERIFY_SLIP_APPROVE': return 'ตรวจสลิปผ่าน ชำระเงินแล้ว เริ่มดำเนินการออเดอร์';
+    case 'VERIFY_SLIP_REJECT': return reason && !/^สลิป/.test(reason) ? `สลิปไม่ถูกต้อง — ${reason}` : (reason || 'สลิปไม่ถูกต้อง');
+    case 'STORE_CANCEL_ORDER': return `ร้านยกเลิกออเดอร์${reason ? ` — ${reason}` : ''}`;
+    case 'CUSTOMER_CANCEL_ORDER': return `ลูกค้ายืนยันยกเลิก${reason ? ` — ${reason}` : ''}`;
+    case 'CANCEL_REQUEST': return `ร้านขอยกเลิกเพราะสินค้าหมด รอลูกค้าตัดสินใจ${reason ? ` — ${reason.replace('วัตถุดิบหมด:', '').trim()}` : ''}`;
+    case 'OUT_OF_STOCK_NOTIFY': return order ? `สินค้าในออเดอร์หมด${reason ? ` — ${reason.replace('วัตถุดิบหมด:', '').trim()}` : ''}` : plain;
+    case 'UPDATE_STATUS': {
+      const st = normStatus((d.match(/->\s*([A-Za-z_]+)/) || [])[1]);
+      const msg = {
+        Cooking: 'ร้านรับออเดอร์และเริ่มปรุงอาหาร', Ready: 'อาหารพร้อมให้ลูกค้ามารับ', Completed: 'ลูกค้ารับอาหารเรียบร้อย',
+        NoShow: 'ลูกค้าไม่มารับอาหารเกินเวลา', Pending: 'ออเดอร์เข้าคิวรอปรุง',
+      }[st];
+      return msg || plain;
+    }
+    default: return plain;
+  }
 }
 const AUDIT_ROW_BG = { bad: '#FFF7F7', green: '#F1FBF5' };
 
@@ -196,6 +297,29 @@ const fmtDateTime = (d) => {
   const ss = String(dt.getSeconds()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
 };
+
+// วันที่/เวลาแบบอ่านง่าย (ใช้ใน Audit Log และ popup ออเดอร์ยกเลิก)
+const fmtTimeOnly = (d) => {
+  const dt = parseOrderDate(d);
+  if (!dt) return '-';
+  return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}:${String(dt.getSeconds()).padStart(2, '0')}`;
+};
+const fmtDateTh = (d) => {
+  const dt = parseOrderDate(d);
+  if (!dt) return '-';
+  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
+};
+const fmtMoney2 = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const dayLabel = (key) => {
+  if (!key) return 'ไม่ทราบวันที่';
+  const [Y, M, D] = key.split('-');
+  const base = `วัน${THAI_WEEKDAYS[new Date(+Y, +M - 1, +D).getDay()]}ที่ ${D}/${M}/${Y}`;
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  if (key === dateOnly(new Date())) return `วันนี้ · ${base}`;
+  if (key === dateOnly(y)) return `เมื่อวาน · ${base}`;
+  return base;
+};
+const customerNameOf = (o) => o.CustomerName || o.UserName || (Number(o.IsWalkIn) === 1 ? 'ลูกค้าหน้าร้าน (Walk-in)' : (o.UserId ? `ลูกค้า #${o.UserId}` : 'ไม่ระบุ'));
 
 const dateOnly = (d) => {
   const dt = parseOrderDate(d);
@@ -352,6 +476,141 @@ function buildRangeTrend(orders, start, end) {
     if (b) b.value += Number(o.TotalAmount || 0);
   });
   return buckets;
+}
+
+/* ---------------- XLSX export: สร้างไฟล์ .xlsx จริง (ZIP + OOXML) ไม่ต้องติดตั้งไลบรารีเพิ่ม ---------------- */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+const crc32 = (bytes) => {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+};
+
+function zipStore(files) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  files.forEach(f => {
+    const name = enc.encode(f.name);
+    const data = enc.encode(f.text);
+    const crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true);
+    ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + data.length;
+  });
+  const centralSize = central.reduce((a, c) => a + c.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, centralSize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+const xmlEsc = (v) => String(v)
+  .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const xlsxCol = (i) => { let n = i + 1, s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+
+// สไตล์ (cellXfs): 0 ปกติ, 1 หัวเรื่อง, 2 หัวตาราง, 3 ข้อความ, 4 เงิน, 5 %, 6 ข้อความแถวรวม, 7 เงินแถวรวม, 8 หมายเหตุ, 9 จำนวนเต็ม, 10 จำนวนเต็มแถวรวม, 11 % แถวรวม
+const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0&quot;%&quot;"/></numFmts>
+<fonts count="5">
+<font><sz val="11"/><name val="Calibri"/></font>
+<font><b/><sz val="14"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><name val="Calibri"/></font>
+<font><i/><sz val="10"/><color rgb="FF697586"/><name val="Calibri"/></font>
+</fonts>
+<fills count="4">
+<fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFF724C"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFFF0EC"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="2">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left style="thin"><color rgb="FFD9DEE3"/></left><right style="thin"><color rgb="FFD9DEE3"/></right><top style="thin"><color rgb="FFD9DEE3"/></top><bottom style="thin"><color rgb="FFD9DEE3"/></bottom><diagonal/></border>
+</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="12">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>
+<xf numFmtId="4" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
+<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+<xf numFmtId="4" fontId="3" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="3" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
+<xf numFmtId="3" fontId="3" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
+<xf numFmtId="164" fontId="3" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+// columns: [{label, kind: 'text'|'int'|'money'|'percent', width}] / rows, totalRow: อาร์เรย์ของค่า
+function buildXlsxBlob({ sheetName, title, infoLines = [], columns, rows, totalRow }) {
+  const cell = (c, r, v, style, kind) => {
+    const ref = `${xlsxCol(c)}${r}`;
+    if (kind !== 'text' && typeof v === 'number' && Number.isFinite(v)) return `<c r="${ref}" s="${style}"><v>${v}</v></c>`;
+    if (v === null || v === undefined || v === '') return `<c r="${ref}" s="${style}"/>`;
+    return `<c r="${ref}" t="inlineStr" s="${style === 4 || style === 5 || style === 9 ? 3 : style === 7 || style === 10 || style === 11 ? 6 : style}"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
+  };
+  const dataStyle = { text: 3, int: 9, money: 4, percent: 5 };
+  const totalStyle = { text: 6, int: 10, money: 7, percent: 11 };
+  const out = [];
+  let r = 1;
+  out.push(`<row r="${r}"><c r="A${r}" t="inlineStr" s="1"><is><t>${xmlEsc(title)}</t></is></c></row>`); r++;
+  infoLines.forEach(line => { out.push(`<row r="${r}"><c r="A${r}" t="inlineStr" s="8"><is><t xml:space="preserve">${xmlEsc(line)}</t></is></c></row>`); r++; });
+  r++;
+  out.push(`<row r="${r}" ht="22" customHeight="1">${columns.map((c, i) => cell(i, r, c.label, 2, 'text')).join('')}</row>`); r++;
+  rows.forEach(row => { out.push(`<row r="${r}">${columns.map((c, i) => cell(i, r, row[i], dataStyle[c.kind] || 3, c.kind)).join('')}</row>`); r++; });
+  if (totalRow) { out.push(`<row r="${r}">${columns.map((c, i) => cell(i, r, totalRow[i], totalStyle[c.kind] || 6, c.kind)).join('')}</row>`); r++; }
+  const cols = columns.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c.width || 18}" customWidth="1"/>`).join('');
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols>${cols}</cols><sheetData>${out.join('')}</sheetData></worksheet>`;
+  const safeName = String(sheetName || 'Report').replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 31) || 'Report';
+  return zipStore([
+    { name: '[Content_Types].xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
+    { name: '_rels/.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: 'xl/workbook.xml', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xmlEsc(safeName)}" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+    { name: 'xl/_rels/workbook.xml.rels', text: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    { name: 'xl/styles.xml', text: XLSX_STYLES },
+    { name: 'xl/worksheets/sheet1.xml', text: sheet },
+  ]);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* ---------------- Report Config ---------------- */
@@ -637,17 +896,16 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
   );
 }
 
-function BerryDonutChart({ data, valueFormat, height = 240 }) {
+function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ยอดสุทธิรวม' }) {
   const [hoverIndex, setHoverIndex] = useState(null);
 
-  if (!data || data.length === 0) {
-    return <div className="berry-empty-note" style={{ height }}>ยังไม่มีข้อมูล</div>;
+  const clean = (data || []).filter(d => Number(d.value || 0) > 0);
+  if (clean.length === 0) {
+    return <div className="berry-empty-note" style={{ height }}>ยังไม่มียอดขายในช่วงเวลานี้</div>;
   }
 
-  const total = data.reduce((sum, d) => sum + Math.max(0, Number(d.value || 0)), 0);
-  if (total === 0) {
-    return <div className="berry-empty-note" style={{ height }}>ไม่มียอดขายสุทธิ</div>;
-  }
+  const fmt = (v) => (valueFormat ? valueFormat(v) : v);
+  const total = clean.reduce((sum, d) => sum + Number(d.value || 0), 0);
 
   const size = 190;
   const center = size / 2;
@@ -655,32 +913,26 @@ function BerryDonutChart({ data, valueFormat, height = 240 }) {
   const strokeWidth = 22;
   const circumference = 2 * Math.PI * radius;
 
-  let accumulatedAngle = 0;
-
-  const slices = data.map((d, i) => {
-    const val = Math.max(0, Number(d.value || 0));
-    const pctRatio = val / total;
-    const strokeLength = pctRatio * circumference;
-    const gap = 0;
-    const adjustedLength = Math.max(0, strokeLength - gap);
-    
-    const strokeDashoffset = -accumulatedAngle * circumference;
-    accumulatedAngle += pctRatio;
-
-    return {
+  let accumulated = 0;
+  const slices = clean.map((d, i) => {
+    const val = Number(d.value || 0);
+    const ratio = val / total;
+    const len = ratio * circumference;
+    const slice = {
       ...d,
-      pct: (pctRatio * 100).toFixed(1),
-      dashArray: `${adjustedLength} ${circumference - adjustedLength}`,
-      strokeDashoffset,
-      color: d.color || STORE_COLORS[i % STORE_COLORS.length]
+      pct: (ratio * 100).toFixed(1),
+      dashArray: `${len} ${circumference - len}`,
+      strokeDashoffset: -accumulated * circumference,
+      color: d.color || STORE_COLORS[i % STORE_COLORS.length],
     };
+    accumulated += ratio;
+    return slice;
   });
 
   const activeSlice = hoverIndex !== null ? slices[hoverIndex] : null;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '24px', flexWrap: 'wrap', minHeight: height, padding: '10px 0' }}>
-      {/* Donut SVG */}
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '28px', flexWrap: 'wrap', minHeight: height, padding: '10px 0' }}>
       <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
           <g transform={`rotate(-90 ${center} ${center})`}>
@@ -696,11 +948,7 @@ function BerryDonutChart({ data, valueFormat, height = 240 }) {
                 strokeDasharray={slice.dashArray}
                 strokeDashoffset={slice.strokeDashoffset}
                 strokeLinecap="butt"
-                style={{
-                  transition: 'all 0.2s ease',
-                  cursor: 'pointer',
-                  opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.4
-                }}
+                style={{ transition: 'all 0.2s ease', cursor: 'pointer', opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.4 }}
                 onMouseEnter={() => setHoverIndex(i)}
                 onMouseLeave={() => setHoverIndex(null)}
               />
@@ -708,84 +956,37 @@ function BerryDonutChart({ data, valueFormat, height = 240 }) {
           </g>
         </svg>
 
-        {/* ข้อความกลางวงโดนัท */}
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          pointerEvents: 'none',
-          textAlign: 'center',
-          padding: '12px'
-        }}>
-          <span style={{ fontSize: '11px', color: 'var(--berry-text-muted)', fontWeight: '500', whiteSpace: 'nowrap' }}>
-            {activeSlice ? 'ยอดสุทธิ' : 'ยอดสุทธิรวม'}
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', textAlign: 'center', padding: '12px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--berry-text-muted)', fontWeight: 500, whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {activeSlice ? activeSlice.label : centerLabel}
           </span>
-          
-          <span style={{ fontSize: '15px', fontWeight: '700', color: 'var(--berry-text-dark)', marginTop: '2px' }}>
-            {activeSlice 
-              ? (valueFormat ? valueFormat(activeSlice.value) : activeSlice.value)
-              : (valueFormat ? valueFormat(total) : total)
-            }
+          <span style={{ fontSize: '17px', fontWeight: 700, color: 'var(--berry-text-dark)', marginTop: '2px' }}>
+            {fmt(activeSlice ? activeSlice.value : total)}
           </span>
-          
           {activeSlice && (
-            <span style={{ fontSize: '12px', color: activeSlice.color, fontWeight: '700', marginTop: '2px' }}>
-              {activeSlice.pct}%
-            </span>
+            <span style={{ fontSize: '12px', color: activeSlice.color, fontWeight: 700, marginTop: '2px' }}>{activeSlice.pct}%</span>
           )}
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '150px', maxWidth: '220px' }}>
+      {/* Legend: ชื่อร้าน | ยอดขาย | % */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: '1 1 260px', maxWidth: 420, minWidth: 240 }}>
         {slices.map((slice, i) => (
           <div
             key={i}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '12px',
-              cursor: 'pointer',
-              opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.45,
-              transition: 'opacity 0.2s'
-            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', cursor: 'pointer', opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.45, transition: 'opacity 0.2s' }}
             onMouseEnter={() => setHoverIndex(i)}
             onMouseLeave={() => setHoverIndex(null)}
           >
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: slice.color, flexShrink: 0 }} />
-            <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: hoverIndex === i ? '700' : '400', color: 'var(--berry-text-dark)' }}>
+            <span style={{ width: 11, height: 11, borderRadius: '50%', backgroundColor: slice.color, flexShrink: 0 }} />
+            <span title={slice.label} style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: hoverIndex === i ? 700 : 500, color: 'var(--berry-text-dark)' }}>
               {slice.label}
             </span>
-            <span style={{ fontWeight: '700', color: 'var(--berry-text-dark)' }}>{slice.pct}%</span>
+            <span style={{ color: 'var(--berry-text-muted)', whiteSpace: 'nowrap', textAlign: 'right' }}>{fmt(slice.value)}</span>
+            <span style={{ fontWeight: 700, color: 'var(--berry-text-dark)', width: 52, textAlign: 'right', flexShrink: 0 }}>{slice.pct}%</span>
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-/* Horizontal bar chart */
-function BerryHBarChart({ data, colorFor, valueFormat }) {
-  const max = Math.max(1, ...data.map(d => d.value));
-  return (
-    <div className="berry-hbar-list">
-      {data.length === 0 ? (
-        <div className="berry-empty-note">ยังไม่มีข้อมูล</div>
-      ) : data.map((d, i) => (
-        <div className="berry-hbar-row" key={i}>
-          <div className="berry-hbar-label" title={d.label}>{d.label}</div>
-          <div className="berry-hbar-track">
-            <div
-              className="berry-hbar-fill"
-              style={{ width: `${(d.value / max) * 100}%`, background: colorFor ? colorFor(d, i) : 'var(--berry-purple)' }}
-            />
-          </div>
-          <div className="berry-hbar-value">{valueFormat ? valueFormat(d.value) : d.value}</div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -850,19 +1051,29 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [dropdown, setDropdown] = useState('');
 
   const [trendDays, setTrendDays] = useState(7);
-  const [netChartType, setNetChartType] = useState('bar'); 
   const [salesStoreFilter, setSalesStoreFilter] = useState('all');
   const [detailStoreId, setDetailStoreId] = useState(null);
   const [auditSearch, setAuditSearch] = useState('');
   const [cancelStoreFilter, setCancelStoreFilter] = useState('all');
+  const [cancelReasonFilter, setCancelReasonFilter] = useState('');
+  const [cancelDetailId, setCancelDetailId] = useState(null);
+  const [cancelShowAll, setCancelShowAll] = useState(false);
+  const [auditCat, setAuditCat] = useState('all');
+  const [auditLimit, setAuditLimit] = useState(100);
   const [cancelRange, setCancelRange] = useState('all');   // 'all' | 'today' | 7 | 14 | 30 | 'custom' — ค่าเริ่มต้น: ทั้งหมด
   
+  const todayStr = dateOnly(new Date());
+  const curYear = Number(todayStr.slice(0, 4));
+  const curMonth = Number(todayStr.slice(5, 7));
   const [reportType, setReportType] = useState('store');
   const [reportFormat, setReportFormat] = useState('csv');
-  const [reportEnd] = useState(() => new Date().toISOString().slice(0, 10));
-  const [reportStart] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10); });
-  const [rangeStart, setRangeStart] = useState(reportStart);
-  const [rangeEnd, setRangeEnd] = useState(reportEnd);
+  const [reportEnd] = useState(() => dateOnly(new Date()));
+  const [reportStart] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 29); return dateOnly(d); });
+  const [reportMode, setReportMode] = useState('month');   // 'month' รายเดือน | 'year' รายปี | 'custom' กำหนดเอง
+  const [reportMonth, setReportMonth] = useState(curMonth);
+  const [reportYear, setReportYear] = useState(curYear);
+  const [customStart, setCustomStart] = useState(reportStart);
+  const [customEnd, setCustomEnd] = useState(reportEnd);
   const [reportStoreFilter, setReportStoreFilter] = useState('all');
   const [lastUpdated, setLastUpdated] = useState(null);
   const [salesRange, setSalesRange] = useState(7);   // 'today' | 7 | 14 | 30 | 'custom' — ค่าเริ่มต้น: 7 วัน
@@ -967,6 +1178,19 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     return { totalGross, totalOrders, totalCancelled, rate, abnormalStores: storeSummary.filter(s => s.status === 'bad' && !s.isDeleted) };
   }, [storeSummary]);
 
+  // แจ้งเตือน Cancellation Rate: คำนวณจากข้อมูลย้อนหลัง ALERT_WINDOW_DAYS วัน (ไม่ขึ้นกับตัวกรองของหน้าใด ๆ)
+  const alertSummary = useMemo(() => {
+    const { currStart, currEnd } = getPeriodBounds(ALERT_WINDOW_DAYS);
+    return buildStoreSummary(stores, filterOrdersByRange(orders, currStart, currEnd, 'all'), currStart);
+  }, [stores, orders]);
+  const alertStores = useMemo(
+    () => alertSummary.filter(s => s.status === 'bad' && !s.isDeleted).sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0)),
+    [alertSummary]
+  );
+  // มีร้านใหม่เกินเกณฑ์ -> ให้ตัวเลขบนกระดิ่งขึ้นอีกครั้ง
+  const alertKey = alertStores.map(x => x.storeId).join(',');
+  useEffect(() => { setNotificationsRead(false); }, [alertKey]);
+
   // ช่วงเวลาของหน้า Cancellation (ทั้งหมด = ไม่จำกัดวันที่)
   const cancelBounds = useMemo(() => {
     if (cancelRange === 'all') return { start: '', end: '' };
@@ -991,9 +1215,19 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     () => [...cancelStoreSummary].sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.cancelledOrders - a.cancelledOrders || b.totalOrders - a.totalOrders),
     [cancelStoreSummary]
   );
+  // เลือกร้านใดร้านหนึ่ง -> กราฟ/ตัวเลข/รายงานแสดงเฉพาะร้านนั้น, เลือกทุกร้านค้า -> แสดงทุกร้าน
   const cancelTableRows = cancelStoreFilter === 'all'
     ? cancelSummary
     : cancelSummary.filter(s => String(s.storeId) === String(cancelStoreFilter));
+  const cancelScope = (() => {
+    const totalOrders = cancelTableRows.reduce((a, s) => a + s.totalOrders, 0);
+    const totalCancelled = cancelTableRows.reduce((a, s) => a + s.cancelledOrders, 0);
+    return { totalOrders, totalCancelled, rate: totalOrders > 0 ? +((totalCancelled / totalOrders) * 100).toFixed(1) : null };
+  })();
+  const cancelledOrdersList = useMemo(
+    () => cancelOrders.filter(o => normStatus(o.Status) === 'Cancelled' && (cancelStoreFilter === 'all' || String(o.StoreId) === String(cancelStoreFilter))),
+    [cancelOrders, cancelStoreFilter]
+  );
 
   // ช่วงวันที่ของ Sales Summary: ตามปุ่มที่เลือก หรือกำหนดเอง
   const { salesStart, salesEnd } = useMemo(() => {
@@ -1078,12 +1312,76 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   );
 
   const auditRows = useMemo(() => buildAuditRows(logs, orders), [logs, orders]);
-  const filteredLogs = auditRows.filter(r => {
-    if (!auditSearch.trim()) return true;
-    const q = auditSearch.toLowerCase();
-    return (r.action || '').toLowerCase().includes(q) || (r.by || '').toLowerCase().includes(q)
-      || (r.details || '').toLowerCase().includes(q) || fmtDateTime(r.time).includes(q);
-  });
+  const auditTs = (r) => { const d = parseOrderDate(r.time); return d ? d.getTime() : 0; };
+
+  // ข้อมูลการยกเลิกของแต่ละออเดอร์ (ใครกดยกเลิก / เวลา) จาก Audit Log — ใช้บันทึกจริงก่อนแถวที่สร้างจากข้อมูลออเดอร์
+  const cancelInfoByOrder = useMemo(() => {
+    const map = {};
+    auditRows.forEach(r => {
+      if (!r.orderId || r.tone !== 'bad') return;
+      const cur = map[r.orderId];
+      if (!cur || (cur.derived && !r.derived) || (cur.derived === r.derived && auditTs(r) > auditTs(cur))) map[r.orderId] = r;
+    });
+    return map;
+  }, [auditRows]);
+  const cancelInfoOf = (o) => {
+    const hit = cancelInfoByOrder[String(o.OrderID)];
+    if (hit) return { by: hit.by, time: hit.time, known: !hit.derived, label: hit.label };
+    const act = classifyCancelledOrder(o);
+    return {
+      by: act === 'CUSTOMER_CANCEL_ORDER' ? customerNameOf(o) : `พนักงานร้าน ${o.StoreName || '-'}`,
+      time: o.CreatedAt, known: false, label: AUDIT_ACTION_META[act].label,
+    };
+  };
+
+  const auditSearched = useMemo(() => {
+    const q = auditSearch.trim().toLowerCase();
+    if (!q) return auditRows;
+    return auditRows.filter(r =>
+      [r.action, r.label, r.by, r.details, r.summary, r.queue, r.storeName, fmtDateTime(r.time)]
+        .some(v => String(v || '').toLowerCase().includes(q)));
+  }, [auditRows, auditSearch]);
+  const auditCatCounts = useMemo(() => {
+    const c = { all: auditSearched.length };
+    auditSearched.forEach(r => { c[r.cat] = (c[r.cat] || 0) + 1; });
+    return c;
+  }, [auditSearched]);
+  const auditFiltered = useMemo(
+    () => (auditCat === 'all' ? auditSearched : auditSearched.filter(r => r.cat === auditCat)),
+    [auditSearched, auditCat]
+  );
+  const auditGroups = useMemo(() => {
+    const groups = [];
+    auditFiltered.slice(0, auditLimit).forEach(r => {
+      const key = dateOnly(r.time);
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.rows.push(r);
+      else groups.push({ key, rows: [r] });
+    });
+    return groups;
+  }, [auditFiltered, auditLimit]);
+
+  // ช่วงเวลาของรายงานการเงิน: รายเดือน / รายปี / กำหนดเอง (เลือกได้ถึงวันที่ล่าสุด = วันนี้)
+  const reportYearOptions = useMemo(() => {
+    let first = curYear - 1;
+    orders.forEach(o => { const y = Number(dateOnly(o.CreatedAt).slice(0, 4)); if (y && y < first) first = y; });
+    return Array.from({ length: curYear - first + 1 }, (_, i) => curYear - i);
+  }, [orders, curYear]);
+  const reportMaxMonth = reportYear >= curYear ? curMonth : 12;
+  const reportMonthEff = Math.min(reportMonth, reportMaxMonth);
+  const { rangeStart, rangeEnd, reportPeriodLabel } = useMemo(() => {
+    const cap = (d) => (d > todayStr ? todayStr : d);
+    if (reportMode === 'year') {
+      return { rangeStart: `${reportYear}-01-01`, rangeEnd: cap(`${reportYear}-12-31`), reportPeriodLabel: `รายปี ${reportYear} (พ.ศ. ${reportYear + 543})` };
+    }
+    if (reportMode === 'month') {
+      const mm = String(reportMonthEff).padStart(2, '0');
+      const last = String(new Date(reportYear, reportMonthEff, 0).getDate()).padStart(2, '0');
+      return { rangeStart: `${reportYear}-${mm}-01`, rangeEnd: cap(`${reportYear}-${mm}-${last}`), reportPeriodLabel: `รายเดือน ${THAI_MONTHS[reportMonthEff - 1]} ${reportYear} (พ.ศ. ${reportYear + 543})` };
+    }
+    const st = customStart || todayStr, en = customEnd || todayStr;
+    return { rangeStart: st <= en ? st : en, rangeEnd: cap(st <= en ? en : st), reportPeriodLabel: 'กำหนดเอง' };
+  }, [reportMode, reportYear, reportMonthEff, customStart, customEnd, todayStr]);
 
   const reportOrders = useMemo(() => filterOrdersByRange(orders, rangeStart, rangeEnd, reportStoreFilter), [orders, rangeStart, rangeEnd, reportStoreFilter]);
   const reportSummary = useMemo(() => {
@@ -1108,35 +1406,62 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const reportColumns = REPORT_COLUMNS[reportType] || REPORT_COLUMNS.store;
 
   const exportReport = () => {
+    if (reportSummary.length === 0) { showToast('ไม่มีข้อมูลให้ส่งออกในช่วงเวลาที่เลือก'); return; }
     const header = reportColumns.map(c => c.label);
     const rows = reportSummary.map(s => reportColumns.map(c => s[c.key]));
+    const storeLabel = reportStoreFilter === 'all' ? 'ทุกร้านค้า' : (reportSummary[0] ? reportSummary[0].storeName : '-');
+    const typeInfo = REPORT_TYPES.find(t => t.id === reportType) || REPORT_TYPES[0];
+    const fileBase = `FinancialReport-${reportType}-${rangeStart}_${rangeEnd}`;
 
     if (reportFormat === 'xlsx') {
-      const tableHtml = `<table border="1"><thead><tr>${header.map(h => `<th>${h}</th>`).join('')}</tr></thead>` +
-        `<tbody>${rows.map(r => `<tr>${r.map(v => `<td>${v}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-      const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body>${tableHtml}</body></html>`;
-      const url = URL.createObjectURL(new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' }));
-      const a = document.createElement('a');
-      a.href = url; a.download = `FinancialReport-${reportType}-${rangeStart}_${rangeEnd}.xls`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToast('ส่งออกรายงานเป็นไฟล์ Excel สำเร็จ');
+      const columns = reportColumns.map(c => ({
+        label: c.label,
+        kind: c.money ? 'money' : c.percent ? 'percent' : c.key === 'storeName' ? 'text' : 'int',
+        width: c.key === 'storeName' ? 34 : 16,
+      }));
+      // แถวรวม: ผลรวมของตัวเลข, อัตรายกเลิกรวมคำนวณจากยอดรวม (ไม่ใช่ค่าเฉลี่ยของ %)
+      const sum = (key) => reportSummary.reduce((a, s) => a + Number(s[key] || 0), 0);
+      const totalRow = reportColumns.map((c, i) => {
+        if (i === 0) return 'รวม';
+        if (c.percent) return sum('totalOrders') > 0 ? +((sum('cancelledOrders') / sum('totalOrders')) * 100).toFixed(1) : 'N/A';
+        return sum(c.key);
+      });
+      const blob = buildXlsxBlob({
+        sheetName: typeInfo.title,
+        title: `${typeInfo.title} — ${typeInfo.sub}`,
+        infoLines: [
+          `ช่วงข้อมูล: ${reportPeriodLabel} (${rangeStart} ถึง ${rangeEnd})`,
+          `ร้านค้า: ${storeLabel}`,
+          `ออกรายงานเมื่อ: ${fmtDateTime(new Date())}`,
+        ],
+        columns,
+        rows: rows.map(r => r.map((v, i) => (columns[i].kind === 'percent' && (v === null || v === undefined) ? 'N/A' : v))),
+        totalRow,
+      });
+      downloadBlob(blob, `${fileBase}.xlsx`);
+      showToast('ส่งออกรายงานเป็นไฟล์ Excel (.xlsx) สำเร็จ');
       return;
     }
 
-    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
-    const a = document.createElement('a');
-    a.href = url; a.download = `FinancialReport-${reportType}-${rangeStart}_${rangeEnd}.csv`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast(`ส่งออกรายงานเป็นไฟล์ CSV สำเร็จ`);
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    downloadBlob(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }), `${fileBase}.csv`);
+    showToast('ส่งออกรายงานเป็นไฟล์ CSV สำเร็จ');
+  };
+
+  // กดจากการแจ้งเตือน -> ไปหน้า Cancellation ของร้านนั้นในช่วง 30 วัน
+  const openStoreCancel = (storeId) => {
+    setCancelStoreFilter(String(storeId));
+    setCancelRange(ALERT_WINDOW_DAYS);
+    setCancelReasonFilter('');
+    setCancelShowAll(false);
+    setPage('cancel');
+    setDropdown('');
   };
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมบัญชี', icon: 'dashboard' },
     { id: 'sales', label: 'Sales Summary', caption: 'สรุปยอดขาย', icon: 'sales' },
-    { id: 'cancel', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก', icon: 'cancel', badge: overview.abnormalStores.length || null },
+    { id: 'cancel', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก', icon: 'cancel', badge: alertStores.length || null },
     { id: 'audit', label: 'Audit Log', caption: 'ประวัติการเปลี่ยนแปลง', icon: 'audit' },
     { id: 'report', label: 'Financial Report', caption: 'ออกรายงานการเงิน', icon: 'report' },
   ];
@@ -1170,23 +1495,24 @@ export default function AccountantView({ apiBase, user, onLogout }) {
           <div style={{ position: 'relative' }}>
             <button className="berry-icon-btn amber-light" onClick={() => { setNotificationsRead(true); toggleDropdown('notif');}}>
               <Icon name="bell" size={20} color="var(--berry-amber)" />
-              {!notificationsRead && overview.abnormalStores.length > 0 && (
-                <span className="berry-nav-badge" style={{ position: 'absolute', top: -5, right: -5 }}>{overview.abnormalStores.length}</span>
+              {!notificationsRead && alertStores.length > 0 && (
+                <span className="berry-nav-badge" style={{ position: 'absolute', top: -5, right: -5 }}>{alertStores.length}</span>
               )}
             </button>
             {dropdown === 'notif' && (
               <div className="berry-profile-dropdown" style={{ right: 0, width: '300px' }}>
                 <div className="dropdown-header">
-                  <h4>Notifications <span>({overview.abnormalStores.length})</span></h4>
+                  <h4>Notifications <span>({alertStores.length})</span></h4>
+                  <p>อัตรายกเลิกเกิน {RATE_ALERT}% ในช่วง {ALERT_WINDOW_DAYS} วันล่าสุด</p>
                 </div>
                 <hr className="berry-divider" />
-                {overview.abnormalStores.length === 0 ? (
+                {alertStores.length === 0 ? (
                   <div style={{ padding: '16px', textAlign: 'center', color: 'var(--berry-text-muted)' }}>ไม่มีการแจ้งเตือน</div>
-                ) : overview.abnormalStores.map(s => (
-                  <div key={s.storeId} className="dropdown-item" onClick={() => { setPage('cancel'); setDropdown(''); }}>
+                ) : alertStores.map(s => (
+                  <div key={s.storeId} className="dropdown-item" onClick={() => openStoreCancel(s.storeId)}>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontWeight: 600 }}>{s.storeName}</span>
-                      <span style={{ fontSize: '12px', color: 'var(--berry-text-muted)' }}>อัตรายกเลิก {s.rate}% ({s.status})</span>
+                      <span style={{ fontSize: '12px', color: 'var(--berry-text-muted)' }}>อัตรายกเลิก {s.rate}% ({s.cancelledOrders}/{s.totalOrders} ออเดอร์)</span>
                     </div>
                   </div>
                 ))}
@@ -1326,45 +1652,21 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                   <BerryLineChart data={hourlyTrend} height={290} valueFormat={(v) => `฿${fmtMoney(v)}`} axisFormat={(v) => (v >= 1000 ? `฿${(v / 1000).toFixed(1)}k` : `฿${Math.round(v)}`)} />
                 </div>
-                <div className="berry-panel" style={{ flex: '1 1 380px' }}>
+                <div className="berry-panel" style={{ flex: '1 1 420px' }}>
                   <div className="berry-panel-header">
                     <div>
                       <div className="berry-growth-title">รายได้สุทธิแยกร้าน</div>
-                      <div className="berry-panel-caption">สัดส่วนและรายได้สุทธิของแต่ละร้าน</div>
-                    </div>
-                    
-                    <div className="berry-toggle-pills">
-                      <button
-                        className={netChartType === 'bar' ? 'active' : ''}
-                        onClick={() => setNetChartType('bar')}
-                      >
-                        Bar
-                      </button>
-                      <button
-                        className={netChartType === 'donut' ? 'active' : ''}
-                        onClick={() => setNetChartType('donut')}
-                      >
-                        Donut
-                      </button>
+                      <div className="berry-panel-caption">สัดส่วน (%) และยอดขายสุทธิของแต่ละร้าน</div>
                     </div>
                   </div>
 
-                  {netChartType === 'bar' ? (
-                    <BerryHBarChart
-                      data={periodStats.curr.storesData.map(s => ({ label: s.storeName, value: s.netSales }))}
-                      colorFor={(d, i) => periodStats.curr.storesData[i]?.color || 'var(--berry-purple)'}
-                      valueFormat={(v) => `฿${fmtMoney(v)}`}
-                    />
-                  ) : (
-                    <BerryDonutChart
-                      data={periodStats.curr.storesData.map(s => ({
-                        label: s.storeName,
-                        value: s.netSales,
-                        color: s.color
-                      }))}
-                      valueFormat={(v) => `฿${fmtMoney(v)}`}
-                    />
-                  )}
+                  <BerryDonutChart
+                    data={[...periodStats.curr.storesData]
+                      .filter(s => s.netSales > 0)
+                      .sort((x, y) => y.netSales - x.netSales)
+                      .map(s => ({ label: s.storeName, value: s.netSales }))}
+                    valueFormat={(v) => `฿${fmtMoney(v)}`}
+                  />
                 </div>
               </div>
 
@@ -1628,16 +1930,44 @@ export default function AccountantView({ apiBase, user, onLogout }) {
             </div>
           )}
 
-          {page === 'cancel' && (
+          {page === 'cancel' && (() => {
+            const cancelPeriodLabel = cancelRange === 'all' ? 'ทุกช่วงเวลา'
+              : cancelRange === 'today' ? 'วันนี้'
+              : cancelRange === 'custom' ? `${cancelCustomStart || '...'} ถึง ${cancelCustomEnd || '...'}`
+              : `${cancelRange} วันล่าสุด`;
+            const cancelStoreName = cancelStoreFilter === 'all' ? 'ทุกร้านค้า' : (cancelSummary.find(x => String(x.storeId) === String(cancelStoreFilter))?.storeName || '-');
+
+            const rowsAll = cancelledOrdersList.map(o => ({ o, info: cancelInfoOf(o), reason: String(o.CancelReason || '').trim() || 'ไม่ระบุเหตุผล' }))
+              .sort((x, y) => (parseOrderDate(y.info.time)?.getTime() || 0) - (parseOrderDate(x.info.time)?.getTime() || 0));
+            const reasonCount = {};
+            rowsAll.forEach(r => { reasonCount[r.reason] = (reasonCount[r.reason] || 0) + 1; });
+            const reasons = Object.entries(reasonCount).sort((x, y) => y[1] - x[1]);
+            const activeReason = reasons.some(([k]) => k === cancelReasonFilter) ? cancelReasonFilter : '';
+            const rowsFiltered = activeReason ? rowsAll.filter(r => r.reason === activeReason) : rowsAll;
+            const rowsShown = cancelShowAll ? rowsFiltered : rowsFiltered.slice(0, 8);
+            const lostAmount = rowsAll.reduce((a, r) => a + Number(r.o.TotalAmount || 0), 0);
+            const showStoreCol = cancelStoreFilter === 'all';
+
+            const detailOrder = cancelDetailId ? orders.find(o => String(o.OrderID) === String(cancelDetailId)) : null;
+            const detailInfo = detailOrder ? cancelInfoOf(detailOrder) : null;
+            const detailItems = detailOrder ? orderItemsOf(detailOrder) : [];
+
+            return (
             <div className="berry-dashboard-grid">
               <div className="berry-panel berry-filter-row" style={{ flexWrap: 'wrap' }}>
+                <label>ร้านค้า:</label>
+                <select className="berry-input" value={cancelStoreFilter} onChange={e => { setCancelStoreFilter(e.target.value); setCancelReasonFilter(''); setCancelShowAll(false); }}>
+                  <option value="all">ทุกร้านค้า</option>
+                  {cancelSummary.map(x => <option key={x.storeId} value={x.storeId}>{x.storeName}</option>)}
+                </select>
+
                 <label>ช่วงเวลา:</label>
                 <div className="berry-toggle-pills">
                   {[['all', 'ทั้งหมด'], ['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['custom', 'กำหนดเอง']].map(([val, label]) => (
                     <button
                       key={val}
                       className={cancelRange === val ? 'active' : ''}
-                      onClick={() => setCancelRange(val)}
+                      onClick={() => { setCancelRange(val); setCancelShowAll(false); }}
                     >
                       {label}
                     </button>
@@ -1654,13 +1984,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               </div>
 
               <div className="berry-stats-row-4">
-                <BerryStatCard bgTone="orange" label="Order ทั้งหมด" value={fmtMoney(cancelOverview.totalOrders)} />
-                <BerryStatCard bgTone="dark" label="Cancelled" value={fmtMoney(cancelOverview.totalCancelled)} />
-                <BerryStatCard label="Cancellation Rate เฉลี่ย" value={fmtRate(cancelOverview.rate)} />
+                <BerryStatCard bgTone="orange" label="Order ทั้งหมด" value={fmtMoney(cancelScope.totalOrders)} />
+                <BerryStatCard bgTone="dark" label="Cancelled" value={fmtMoney(cancelScope.totalCancelled)} />
+                <BerryStatCard label={showStoreCol ? 'Cancellation Rate เฉลี่ย' : 'Cancellation Rate'} value={fmtRate(cancelScope.rate)} />
                 <BerryStatCard
-                  label="ร้านที่ผิดปกติ"
-                  value={`${cancelOverview.abnormalStores.length} ร้าน`}
-                  tone={cancelOverview.abnormalStores.length ? 'red' : 'green'}
+                  label={`ร้านที่เกินเกณฑ์ (${ALERT_WINDOW_DAYS} วัน)`}
+                  value={`${alertStores.length} ร้าน`}
+                  tone={alertStores.length ? 'red' : 'green'}
                 />
               </div>
 
@@ -1669,11 +1999,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <div className="berry-panel-header">
                     <div>
                       <h3 style={{ margin: 0 }}>Cancellation Rate by Store</h3>
-                      <div className="berry-panel-caption">แถบสีอ่อนคือช่วงเกณฑ์ (ปกติ/เฝ้าระวัง/สูงผิดปกติ) เส้นดำคือเกณฑ์แจ้งเตือนที่ {RATE_ALERT}%</div>
+                      <div className="berry-panel-caption">
+                        {showStoreCol ? 'ทุกร้านค้า' : `เฉพาะร้าน ${cancelStoreName}`} · {cancelPeriodLabel} · แถบสีอ่อนคือช่วงเกณฑ์ เส้นดำคือเกณฑ์แจ้งเตือนที่ {RATE_ALERT}%
+                      </div>
                     </div>
                   </div>
                   <BerryBulletChart
-                    data={cancelSummary.map(s => ({ label: s.storeName, value: s.rate, status: s.status }))}
+                    data={cancelTableRows.map(x => ({ label: x.storeName, value: x.rate, status: x.status }))}
                   />
                   <div className="berry-legend">
                     <span><i style={{ background: '#e3f9e5' }}></i>ปกติ &lt; {RATE_WARN}%</span>
@@ -1682,17 +2014,22 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                 </div>
                 <div className="berry-panel" style={{ flex: '1 1 320px' }}>
-                  <div className="berry-panel-header"><h3>Cancellation Alert</h3></div>
-                  {cancelOverview.abnormalStores.length === 0 ? (
-                    <div className="berry-empty-note">ไม่มีร้านที่ผิดปกติในช่วงเวลานี้</div>
-                  ) : cancelOverview.abnormalStores.map(s => (
-                    <div className="berry-alert-item" key={s.storeId}>
+                  <div className="berry-panel-header">
+                    <div>
+                      <h3 style={{ margin: 0 }}>Cancellation Alert</h3>
+                      <div className="berry-panel-caption">อิงข้อมูล {ALERT_WINDOW_DAYS} วันย้อนหลัง · แจ้งเมื่อเกิน {RATE_ALERT}%</div>
+                    </div>
+                  </div>
+                  {alertStores.length === 0 ? (
+                    <div className="berry-empty-note">ไม่มีร้านที่เกินเกณฑ์ใน {ALERT_WINDOW_DAYS} วันล่าสุด</div>
+                  ) : alertStores.map(x => (
+                    <div className="berry-alert-item" key={x.storeId}>
                       <Icon name="cancel" size={20} color="#FF4D4F" />
                       <div>
-                        <div className="alert-title">{s.storeName}</div>
-                        <div className="alert-sub">อัตราการยกเลิก {s.rate}% สูงกว่าเกณฑ์ {RATE_ALERT}%</div>
-                        <div className="alert-link" onClick={() => { setSalesStoreFilter(String(s.storeId)); setPage('sales'); }}>
-                          ดูรายละเอียดร้าน →
+                        <div className="alert-title">{x.storeName}</div>
+                        <div className="alert-sub">อัตราการยกเลิก {x.rate}% ({x.cancelledOrders}/{x.totalOrders} ออเดอร์) สูงกว่าเกณฑ์ {RATE_ALERT}%</div>
+                        <div className="alert-link" onClick={() => openStoreCancel(x.storeId)}>
+                          ดูออเดอร์ที่ยกเลิก →
                         </div>
                       </div>
                     </div>
@@ -1703,36 +2040,124 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               <div className="berry-panel">
                 <div className="berry-panel-header">
                   <div>
-                    <h3 style={{ margin: 0 }}>ตารางอัตราการยกเลิกรายร้าน</h3>
-                    <div className="berry-panel-caption">เรียงจากอัตราการยกเลิกมากไปน้อย</div>
+                    <h3 style={{ margin: 0 }}>รายงานออเดอร์ยกเลิก</h3>
+                    <div className="berry-panel-caption">{cancelStoreName} · {cancelPeriodLabel} · กดที่แถวเพื่อดูรายละเอียดออเดอร์</div>
                   </div>
-                  <select className="berry-input" value={cancelStoreFilter} onChange={e => setCancelStoreFilter(e.target.value)}>
-                    <option value="all">ทุกร้านค้า</option>
-                    {cancelSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
-                  </select>
+                  <Badge tone={rowsAll.length ? 'bad' : 'ok'}>{fmtMoney(rowsAll.length)} ออเดอร์</Badge>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="berry-table">
-                    <thead><tr><th>ร้าน</th><th>Orders</th><th>Cancelled</th><th>Rate</th><th>สถานะ</th></tr></thead>
-                    <tbody>
-                      {cancelTableRows.length === 0 && (
-                        <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--berry-text-muted)' }}>ไม่พบข้อมูล</td></tr>
-                      )}
-                      {cancelTableRows.map(s => (
-                        <tr key={s.storeId}>
-                          <td><b>{s.storeName}</b></td>
-                          <td>{fmtMoney(s.totalOrders)}</td>
-                          <td>{fmtMoney(s.cancelledOrders)}</td>
-                          <td>{fmtRate(s.rate)}</td>
-                          <td><Badge tone={s.status === 'na' ? 'neutral' : s.status}>{statusLabel(s.status)}</Badge></td>
-                        </tr>
+
+                {rowsAll.length === 0 ? (
+                  <div className="berry-empty-note">ช่วงเวลานี้ไม่มีออเดอร์ที่ถูกยกเลิก</div>
+                ) : (
+                  <>
+                    <div className="berry-mini-stats">
+                      <div className="berry-mini-stat"><span className="lbl">ออเดอร์ที่ยกเลิก</span><span className="val">{fmtMoney(rowsAll.length)}</span></div>
+                      <div className="berry-mini-stat"><span className="lbl">มูลค่าที่เสียไป</span><span className="val">฿{fmtMoney(lostAmount)}</span></div>
+                      <div className="berry-mini-stat"><span className="lbl">เหตุผลที่พบบ่อยสุด</span><span className="val" style={{ fontSize: 14 }}>{reasons[0][0]} ({reasons[0][1]})</span></div>
+                    </div>
+
+                    <div className="berry-chip-row">
+                      <button className={`berry-chip ${activeReason === '' ? 'active' : ''}`} onClick={() => { setCancelReasonFilter(''); setCancelShowAll(false); }}>
+                        ทุกเหตุผล ({rowsAll.length})
+                      </button>
+                      {reasons.map(([reason, n]) => (
+                        <button key={reason} className={`berry-chip ${activeReason === reason ? 'active' : ''}`} onClick={() => { setCancelReasonFilter(reason); setCancelShowAll(false); }}>
+                          {reason} ({n})
+                        </button>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="berry-table">
+                        <thead>
+                          <tr>
+                            <th>วันที่ / เวลา</th><th>คิว</th>{showStoreCol && <th>ร้านค้า</th>}<th>ลูกค้า</th><th>ยอดออเดอร์</th><th>เหตุผลการยกเลิก</th><th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rowsShown.map(({ o, info, reason }) => (
+                            <tr key={o.OrderID} className="berry-row-click" onClick={() => setCancelDetailId(o.OrderID)}>
+                              <td title={info.known ? 'เวลาที่ยกเลิก' : 'ไม่พบบันทึกเวลายกเลิก แสดงเวลาที่สั่งแทน'} style={{ whiteSpace: 'nowrap', color: info.known ? undefined : 'var(--berry-text-muted)' }}>
+                                {fmtDateTime(info.time)}
+                              </td>
+                              <td><b>{o.QueueNo}</b></td>
+                              {showStoreCol && <td>{o.StoreName}</td>}
+                              <td>{customerNameOf(o)}</td>
+                              <td>฿{fmtMoney2(o.TotalAmount)}</td>
+                              <td>{reason}</td>
+                              <td style={{ color: 'var(--berry-purple)', whiteSpace: 'nowrap', fontWeight: 600 }}>รายละเอียด →</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {rowsFiltered.length > 8 && (
+                      <button className="berry-btn" style={{ width: '100%', marginTop: 12 }} onClick={() => setCancelShowAll(v => !v)}>
+                        {cancelShowAll ? 'แสดงน้อยลง' : `ดูทั้งหมด (${rowsFiltered.length} ออเดอร์)`}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
+
+              {detailOrder && (
+                <div className="berry-modal-overlay" onClick={() => setCancelDetailId(null)}>
+                  <div className="berry-modal-content wide" onClick={e => e.stopPropagation()}>
+                    <div className="berry-modal-header">
+                      <h3 style={{ margin: 0 }}>ออเดอร์ที่ยกเลิก · คิว {detailOrder.QueueNo}</h3>
+                      <button className="berry-icon-btn" onClick={() => setCancelDetailId(null)}>
+                        <Icon name="close" size={20} />
+                      </button>
+                    </div>
+                    <div className="berry-modal-body">
+                      <div className="berry-info-grid">
+                        <div><div className="k">ร้านค้า</div><div className="v">{detailOrder.StoreName || '-'}</div></div>
+                        <div><div className="k">ลูกค้า</div><div className="v">{customerNameOf(detailOrder)}</div></div>
+                        <div><div className="k">ผู้กดยกเลิก</div><div className="v">{detailInfo.by} <span className="berry-subtle">· {detailInfo.label}</span></div></div>
+                        <div><div className="k">ช่องทางชำระเงิน</div><div className="v">{detailOrder.PaymentMethod || '-'}</div></div>
+                        <div><div className="k">วันที่ / เวลาที่สั่ง</div><div className="v">{fmtDateTh(detailOrder.CreatedAt)} เวลา {fmtTimeOnly(detailOrder.CreatedAt)} น.</div></div>
+                        <div>
+                          <div className="k">วันที่ / เวลาที่ยกเลิก</div>
+                          <div className="v">
+                            {detailInfo.known ? `${fmtDateTh(detailInfo.time)} เวลา ${fmtTimeOnly(detailInfo.time)} น.` : <span style={{ color: 'var(--berry-text-muted)', fontWeight: 500 }}>ไม่พบบันทึกเวลายกเลิกในระบบ</span>}
+                          </div>
+                        </div>
+                        <div className="full"><div className="k">เหตุผลการยกเลิก</div><div className="v">{String(detailOrder.CancelReason || '').trim() || 'ไม่ระบุเหตุผล'}</div></div>
+                        {detailOrder.Note && <div className="full"><div className="k">หมายเหตุจากลูกค้า</div><div className="v">{detailOrder.Note}</div></div>}
+                      </div>
+
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="berry-table">
+                          <thead><tr><th>เมนู</th><th style={{ textAlign: 'right' }}>จำนวน</th><th style={{ textAlign: 'right' }}>ราคา/หน่วย</th><th style={{ textAlign: 'right' }}>รวม</th></tr></thead>
+                          <tbody>
+                            {detailItems.length === 0 && (
+                              <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--berry-text-muted)' }}>ไม่พบรายการเมนูของออเดอร์นี้</td></tr>
+                            )}
+                            {detailItems.map((it, i) => {
+                              const qty = Number(it.Qty ?? it.Quantity ?? 1);
+                              const unit = Number(it.UnitPrice ?? it.Price ?? 0);
+                              return (
+                                <tr key={i}>
+                                  <td>{it.ProductName || it.MenuName || '-'}</td>
+                                  <td style={{ textAlign: 'right' }}>{qty}</td>
+                                  <td style={{ textAlign: 'right' }}>฿{fmtMoney2(unit)}</td>
+                                  <td style={{ textAlign: 'right' }}>฿{fmtMoney2(qty * unit)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr><td colSpan={3} style={{ textAlign: 'right', fontWeight: 700 }}>ยอดรวมออเดอร์</td><td style={{ textAlign: 'right', fontWeight: 700 }}>฿{fmtMoney2(detailOrder.TotalAmount)}</td></tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
+            );
+          })()}
 
           {page === 'audit' && (
             <div className="berry-dashboard-grid">
@@ -1748,42 +2173,72 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <input
                   className="berry-input"
                   style={{ width: '100%' }}
-                  placeholder="การกระทำ, ผู้ทำรายการ, รายละเอียด หรือวันที่..."
+                  placeholder="ค้นหา: เหตุการณ์, ผู้ทำรายการ, คิว, ร้านค้า, รายละเอียด หรือวันที่..."
                   value={auditSearch}
-                  onChange={e => setAuditSearch(e.target.value)}
+                  onChange={e => { setAuditSearch(e.target.value); setAuditLimit(100); }}
                 />
+                <div className="berry-chip-row" style={{ marginTop: 12, marginBottom: 0 }}>
+                  {AUDIT_CATS.map(([id, label]) => (
+                    <button key={id} className={`berry-chip ${auditCat === id ? 'active' : ''}`} onClick={() => { setAuditCat(id); setAuditLimit(100); }}>
+                      {label} ({auditCatCounts[id] || 0})
+                    </button>
+                  ))}
+                </div>
                 <div className="berry-legend" style={{ marginTop: 12 }}>
-                  <span><i style={{ background: '#FF4D4F' }}></i>แดง: ยกเลิกออเดอร์</span>
-                  <span><i style={{ background: '#00C853' }}></i>เขียว: ออเดอร์สำเร็จ (Completed)</span>
+                  <span><i style={{ background: '#FF4D4F' }}></i>แถวสีแดง: ยกเลิกออเดอร์</span>
+                  <span><i style={{ background: '#00C853' }}></i>แถวสีเขียว: ออเดอร์สำเร็จ (Completed)</span>
                 </div>
               </div>
 
               <div className="berry-panel">
-                <div className="berry-panel-header"><h3>ประวัติการทำรายการในระบบ</h3></div>
+                <div className="berry-panel-header">
+                  <div>
+                    <h3 style={{ margin: 0 }}>ประวัติการทำรายการในระบบ</h3>
+                    <div className="berry-panel-caption">แสดง {fmtMoney(Math.min(auditLimit, auditFiltered.length))} จาก {fmtMoney(auditFiltered.length)} รายการ · เรียงจากล่าสุด</div>
+                  </div>
+                </div>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="berry-table">
-                    <thead><tr><th>เวลา</th><th>การกระทำ</th><th>ผู้ทำรายการ</th><th>รายละเอียดเพิ่มเติม</th></tr></thead>
+                  <table className="berry-table audit-table">
+                    <thead><tr><th>เวลา</th><th>เหตุการณ์</th><th>ออเดอร์</th><th>ผู้ทำรายการ</th><th>รายละเอียด</th></tr></thead>
                     <tbody>
-                      {filteredLogs.map(r => (
-                        <tr key={r.key} style={{ background: AUDIT_ROW_BG[r.tone] }}>
-                          <td>
-                            {fmtDateTime(r.time)}
-                          </td>
-                          <td><Badge tone={r.tone}>{r.action}</Badge></td>
-                          <td>{r.by}</td>
-                          <td>{r.details}</td>
-                        </tr>
+                      {auditGroups.map(g => (
+                        <React.Fragment key={g.key || 'unknown'}>
+                          <tr className="audit-day"><td colSpan={5}>{dayLabel(g.key)} <span>· {g.rows.length} รายการ</span></td></tr>
+                          {g.rows.map(r => (
+                            <tr key={r.key} style={{ background: AUDIT_ROW_BG[r.tone] }}>
+                              <td className="audit-time">{fmtTimeOnly(r.time)}</td>
+                              <td><Badge tone={r.tone}>{r.label}</Badge></td>
+                              <td>
+                                {r.queue ? (
+                                  <div>
+                                    <b>คิว {r.queue}</b>{r.amount != null && <span className="audit-sub"> · ฿{fmtMoney2(r.amount)}</span>}
+                                    <div className="audit-sub">{r.storeName}</div>
+                                  </div>
+                                ) : <span className="audit-sub">—</span>}
+                              </td>
+                              <td>{r.by}</td>
+                              <td title={r.details}>{r.summary || <span className="audit-sub">—</span>}</td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
                       ))}
-                      {filteredLogs.length === 0 && (
-                        <tr><td colSpan={4} style={{ textAlign: 'center', padding: 24, color: 'var(--berry-text-muted)' }}>
-                          {auditSearch.trim()
-                            ? 'ไม่พบรายการที่ตรงกับคำค้นหา'
+                      {auditFiltered.length === 0 && (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: 24, color: 'var(--berry-text-muted)' }}>
+                          {auditSearch.trim() || auditCat !== 'all'
+                            ? 'ไม่พบรายการที่ตรงกับเงื่อนไข'
                             : loadError ? 'ยังโหลดข้อมูลไม่สำเร็จ (ดูข้อความแจ้งเตือนด้านบน)' : 'ยังไม่มีประวัติการทำรายการในฐานข้อมูล'}
                         </td></tr>
                       )}
                     </tbody>
                   </table>
                 </div>
+                {auditFiltered.length > auditLimit && (
+                  <div style={{ padding: '12px 16px 0' }}>
+                    <button className="berry-btn" style={{ width: '100%' }} onClick={() => setAuditLimit(l => l + 100)}>
+                      แสดงเพิ่ม (เหลืออีก {fmtMoney(auditFiltered.length - auditLimit)} รายการ)
+                    </button>
+                  </div>
+                )}
                 {auditRows.some(r => r.derived) && (
                   <div style={{ padding: '8px 16px 14px', fontSize: 12, color: 'var(--berry-text-muted)' }}>
                     หมายเหตุ: บางแถวสร้างจากข้อมูลออเดอร์จริงในฐานข้อมูล เนื่องจากไม่พบบันทึกในตาราง AuditLog ของรายการนั้น จึงระบุผู้ทำรายการได้เพียงร้านหรือลูกค้า ไม่ระบุตัวพนักงาน
@@ -1813,13 +2268,51 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
               <div className="berry-panel berry-filter-row">
                 <div>
-                  <label style={{ display: 'block', marginBottom: 4 }}>ตั้งแต่วันที่</label>
-                  <input type="date" className="berry-input" value={rangeStart} onChange={e => setRangeStart(e.target.value)} />
+                  <label style={{ display: 'block', marginBottom: 4 }}>ช่วงเวลา</label>
+                  <div className="berry-toggle-pills">
+                    {[['month', 'รายเดือน'], ['year', 'รายปี'], ['custom', 'กำหนดเอง']].map(([val, label]) => (
+                      <button key={val} className={reportMode === val ? 'active' : ''} onClick={() => setReportMode(val)}>{label}</button>
+                    ))}
+                  </div>
                 </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: 4 }}>ถึงวันที่</label>
-                  <input type="date" className="berry-input" value={rangeEnd} onChange={e => setRangeEnd(e.target.value)} />
-                </div>
+                {reportMode === 'month' && (
+                  <>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: 4 }}>เดือน</label>
+                      <select className="berry-input" value={reportMonthEff} onChange={e => setReportMonth(Number(e.target.value))}>
+                        {THAI_MONTHS.map((m, i) => (i + 1 <= reportMaxMonth ? <option key={m} value={i + 1}>{m}</option> : null))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: 4 }}>ปี</label>
+                      <select className="berry-input" value={reportYear} onChange={e => setReportYear(Number(e.target.value))}>
+                        {reportYearOptions.map(y => <option key={y} value={y}>{y} (พ.ศ. {y + 543})</option>)}
+                      </select>
+                    </div>
+                  </>
+                )}
+                {reportMode === 'year' && (
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 4 }}>ปี</label>
+                    <select className="berry-input" value={reportYear} onChange={e => setReportYear(Number(e.target.value))}>
+                      {reportYearOptions.map(y => <option key={y} value={y}>{y} (พ.ศ. {y + 543})</option>)}
+                    </select>
+                  </div>
+                )}
+                {reportMode === 'custom' && (
+                  <>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: 4 }}>ตั้งแต่วันที่</label>
+                      <input type="date" className="berry-input" value={customStart} max={customEnd || todayStr}
+                        onChange={e => { const v = e.target.value; if (!v) return; const nv = v > todayStr ? todayStr : v; setCustomStart(nv); if (nv > customEnd) setCustomEnd(nv); }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: 4 }}>ถึงวันที่ (ล่าสุดได้ถึงวันนี้)</label>
+                      <input type="date" className="berry-input" value={customEnd} min={customStart || undefined} max={todayStr}
+                        onChange={e => { const v = e.target.value; if (!v) return; const nv = v > todayStr ? todayStr : v; setCustomEnd(nv); if (nv < customStart) setCustomStart(nv); }} />
+                    </div>
+                  </>
+                )}
                 <div>
                   <label style={{ display: 'block', marginBottom: 4 }}>ร้านค้า</label>
                   <select className="berry-input" value={reportStoreFilter} onChange={e => setReportStoreFilter(e.target.value)}>
@@ -1832,12 +2325,15 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               <div className="berry-panel">
                 <div className="berry-panel-header">
                   <h3>2. ตัวอย่างรายงานก่อน Export</h3>
-                  <span style={{ fontSize: 12, color: 'var(--berry-text-muted)' }}>{rangeStart} ถึง {rangeEnd}</span>
+                  <span style={{ fontSize: 12, color: 'var(--berry-text-muted)' }}>{reportPeriodLabel} · {rangeStart} ถึง {rangeEnd}</span>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table className="berry-table">
                     <thead><tr>{reportColumns.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
                     <tbody>
+                      {reportSummary.length === 0 && (
+                        <tr><td colSpan={reportColumns.length} style={{ textAlign: 'center', color: 'var(--berry-text-muted)' }}>ไม่พบข้อมูลในช่วงเวลาที่เลือก</td></tr>
+                      )}
                       {reportSummary.map(s => (
                         <tr key={s.storeId}>
                           {reportColumns.map(c => (
@@ -1868,8 +2364,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     style={{ textAlign: 'center' }}
                     onClick={() => setReportFormat('xlsx')}
                   >
-                    <div className="sc-title">Excel (.xls)</div>
-                    <div className="sc-sub">เปิดตรงใน Microsoft Excel</div>
+                    <div className="sc-title">Excel (.xlsx)</div>
+                    <div className="sc-sub">ไฟล์ Excel จริง เปิดได้ใน Excel / Google Sheets</div>
                   </div>
                 </div>
                 <button className="berry-btn primary" style={{ width: '100%', marginTop: 20, padding: '12px' }} onClick={exportReport}>
@@ -2126,6 +2622,28 @@ const STYLES = `
 /* ============================================================
    MODAL STYLES (NEW)
    ============================================================ */
+.berry-chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px; }
+        .berry-chip { border: 1px solid var(--berry-border); background: #fff; color: var(--berry-text-dark); padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+        .berry-chip:hover { border-color: var(--berry-purple); }
+        .berry-chip.active { background: var(--berry-purple); border-color: var(--berry-purple); color: #fff; }
+        .berry-mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+        .berry-mini-stat { background: var(--berry-bg); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+        .berry-mini-stat .lbl { font-size: 12px; color: var(--berry-text-muted); }
+        .berry-mini-stat .val { font-size: 20px; font-weight: 700; color: var(--berry-text-dark); }
+        @media (max-width: 700px) { .berry-mini-stats { grid-template-columns: 1fr; } }
+        .berry-row-click { cursor: pointer; }
+        .berry-row-click:hover { background: var(--berry-purple-light); }
+        .berry-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; margin-bottom: 18px; }
+        .berry-info-grid .k { font-size: 12px; color: var(--berry-text-muted); margin-bottom: 2px; }
+        .berry-info-grid .v { font-size: 14px; font-weight: 600; color: var(--berry-text-dark); }
+        .berry-info-grid .full { grid-column: 1 / -1; }
+        .berry-subtle { font-weight: 500; color: var(--berry-text-muted); font-size: 12px; }
+        .berry-modal-content.wide { max-width: 680px; width: 92vw; }
+        @media (max-width: 560px) { .berry-info-grid { grid-template-columns: 1fr; } }
+        .audit-table .audit-day td { background: var(--berry-bg); font-weight: 700; font-size: 13px; padding: 10px 16px; }
+        .audit-table .audit-day td span { font-weight: 500; color: var(--berry-text-muted); }
+        .audit-table .audit-time { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+        .audit-table .audit-sub { color: var(--berry-text-muted); font-size: 12px; }
 .berry-modal-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
