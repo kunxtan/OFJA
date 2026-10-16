@@ -5559,7 +5559,7 @@ const cancelItemRowStyle = { display: 'flex', alignItems: 'center', gap: '10px',
 const storeThumbStyle = { width: '38px', height: '38px', borderRadius: T.radiusMd, display: 'grid', placeItems: 'center', background: T.primarySoft, color: T.primary, fontWeight: 700 };
 // ===== ตัวเลือกเวลา (ชั่วโมง : นาที) + ปุ่มลัด ใช้แทน <input type="time"> =====
 const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
-const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0'));
+const MINUTES = Array.from({ length: 60 }, (_, i) => String(i ).padStart(2, '0'));
 const SELECT_CHEVRON = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238A8FA6' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E\")";
 function TimeSelect({ value, onChange, disabled, presets = [] }) {
     const [h = '00', m = '00'] = (value || '00:00').split(':');
