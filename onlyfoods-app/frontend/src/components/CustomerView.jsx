@@ -1924,7 +1924,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       >
                         เวลารับอาหาร
                       </div>
-
                       <div
                         style={{
                           fontSize: "13px",
@@ -1932,12 +1931,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           color: "#F97316",
                         }}
                       >
-                        {pickupTime
-                          ? `${pickupTime} น.`
-                          : getCustomerPickupRange() || "กำลังคำนวณเวลา..."}
+                        {getCustomerPickupRange() || "กำลังคำนวณเวลา..."}
                       </div>
 
-                      {!pickupTime && (
+                      {!getCustomerPickupRange() && (
                         <div
                           style={{
                             fontSize: "10px",
