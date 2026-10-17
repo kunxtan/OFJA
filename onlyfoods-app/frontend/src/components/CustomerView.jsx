@@ -630,6 +630,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const filteredStores = useMemo(() => {
     const keyword = search.trim().toLowerCase();
+    const contracted = stores.filter((store) => store.ContractState === "ACTIVE");
     if (!keyword) return stores;
     return stores.filter((store) => String(store.StoreName || "").toLowerCase().includes(keyword));
   }, [stores, search]);
