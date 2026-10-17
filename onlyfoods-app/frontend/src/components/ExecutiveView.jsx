@@ -2161,8 +2161,8 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
                   <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}</td>
                   <td style={tdStyle}>
-                    <Badge tone={s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
-                      {s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
+                    <Badge tone={s.ContractState === 'EXPIRED' || s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
+                      {s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
                     </Badge>
                   </td>
                 </tr>))}
@@ -4338,8 +4338,9 @@ function StoreManagePage({ ctx }) {
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                        <Badge tone={s.IsOpen ? 'ok' : 'neutral'}>{s.IsOpen ? 'เปิด' : 'ปิด'}</Badge>
-                        {s.ContractState === 'EXPIRED' && <Badge tone="danger">หมดสัญญา</Badge>}
+                                               {s.ContractState === 'EXPIRED'
+                            ? <Badge tone="danger">{s.IsClearingOrders ? 'หมดสัญญา · เคลียร์ออเดอร์' : 'หมดสัญญา'}</Badge>
+                            : <Badge tone={s.IsOpen ? 'ok' : 'neutral'}>{s.IsOpen ? 'เปิด' : 'ปิด'}</Badge>}
                         {s.ContractState === 'UPCOMING' && <Badge tone="neutral">ยังไม่เริ่มสัญญา</Badge>}
                         {s.ContractState === 'NONE' && <Badge tone="warn">ไม่มีสัญญา</Badge>}
                         {Boolean(s.IsSuspended) && <Badge tone="danger">ระงับสิทธิ์</Badge>}
@@ -4372,9 +4373,11 @@ function StoreManagePage({ ctx }) {
                             {s.IsOpen ? 'ปิดร้าน' : 'เปิดร้าน'}
                           </Button>
                         )}
-                        <Button variant="soft" icon="ban" onClick={() => suspendStore(s)} style={smallBtn}>
-                          {s.IsSuspended ? 'ปลดระงับ' : 'ระงับสิทธิ์'}
-                        </Button>
+                       {s.ContractState !== 'EXPIRED' && (
+                          <Button variant="soft" icon="ban" onClick={() => suspendStore(s)} style={smallBtn}>
+                            {s.IsSuspended ? 'ปลดระงับ' : 'ระงับสิทธิ์'}
+                          </Button>
+                        )}
                         <Button variant="danger" icon="trash" onClick={() => deleteStore(s)} style={smallBtn}>
                           ลบ
                         </Button>
@@ -4454,7 +4457,9 @@ function validateAccountForm(form, mode) {
 // ===== ติดตามสัญญา: ดูช่วงสัญญา แก้วันสิ้นสุด และเปิดสัญญารอบใหม่ =====
 // กติกา (ต้องตรงกับ backend/routers/stores.py):
 //  - ระบบเก็บแค่วันเริ่ม/วันสิ้นสุด เอกสารสัญญาจริงอยู่นอกระบบ ไม่มีการระงับสิทธิ์ในหน้านี้
-//  - สัญญามีผลถึง 23:59:59 น. ของวันสิ้นสุด เลยจากนั้น = หมดสัญญา พนักงานล็อก เจ้าของดูได้อย่างเดียว 30 วัน
+//  - สัญญามีผลถึง 23:59:59 น. ของวันสิ้นสุด เลยจากนั้น = หมดสัญญา รับออเดอร์ใหม่ไม่ได้
+//    ยังมีออเดอร์ค้าง = ร้านเคลียร์ต่อได้จนจบ ; จบแล้ว พนักงานล็อก เจ้าของดูได้อย่างเดียว 30 วัน
+//  - ตัดสัญญาย้อนหลังได้ไม่เกินเมื่อวาน (ปุ่ม "ตัดสัญญาทันที")
 //  - ยังไม่หมด -> "แก้วันสิ้นสุด" (ต้องมีเหตุผล) ; หมดแล้ว -> กดปุ่ม "หมดสัญญา" เพื่อเปิดรอบใหม่ 1 ปี
 //  - ทุกการแก้ถูกบันทึก (ใคร / เมื่อไหร่ / วันเดิม -> วันใหม่ / เหตุผล) ดูได้จากปุ่ม "ประวัติ"
 const CONTRACT_ACTION_LABEL = {
@@ -4608,6 +4613,7 @@ function ContractTrackingPage({ ctx }) {
     const oldEnd = dStore ? fmt(dStore.ContractEndDate) : '';
     const dStart = isEdit ? fmt(dStore?.ContractStartDate) : startDate;
     const isBackdate = isEdit && endDate && endDate < today;
+    const yesterday = minusOneDayISO(today);
     const reasonOk = reason.trim().length >= CONTRACT_REASON_MIN;
 
     // เปลี่ยนวันเริ่มรอบใหม่ -> วันสิ้นสุดเลื่อนตามเป็น 1 ปีจากวันเริ่ม
@@ -4624,8 +4630,7 @@ function ContractTrackingPage({ ctx }) {
         if (endDate <= dStart) return `วันสิ้นสุดต้องหลังวันเริ่มสัญญา (${dStart})`;
         if (isEdit && endDate === oldEnd) return 'วันสิ้นสุดใหม่ยังเป็นวันเดิม';
         if (!reasonOk) return `กรุณาระบุเหตุผลอย่างน้อย ${CONTRACT_REASON_MIN} ตัวอักษร`;
-        if (isBackdate && Number(dStore?.OpenOrderCount || 0) > 0)
-            return `ร้านนี้ยังมีออเดอร์ค้าง ${dStore.OpenOrderCount} รายการ ตัดสัญญาย้อนหลังไม่ได้จนกว่าออเดอร์จะจบ`;
+        if (isEdit && endDate < yesterday) return `ตัดสัญญาย้อนหลังได้ไม่เกินเมื่อวาน (${yesterday})`;
         if (isBackdate && !ackBackdate) return 'กรุณาติ๊กยืนยันว่าเข้าใจผลของการแก้วันย้อนหลัง';
         return '';
     };
@@ -4857,13 +4862,13 @@ function ContractTrackingPage({ ctx }) {
           )}
           <Field label="วันสิ้นสุดสัญญาใหม่ (ปี ค.ศ.)" required
             hint={isEdit ? 'วันเริ่มสัญญาคงเดิม แก้ได้เฉพาะวันสิ้นสุด' : 'ค่าเริ่มต้น 1 ปีนับจากวันเริ่ม ปรับตามเอกสารจริงได้'}>
-            <input type="date" value={endDate} min={isEdit ? undefined : startDate}
+            <input type="date" value={endDate} min={isEdit ? yesterday : startDate}
               onChange={(e) => { setEndDate(e.target.value); setFormError(''); setAckBackdate(false); }}
               style={formDateInputStyle}/>
           </Field>
           <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', margin: '-4px 0 16px' }}>
             {isEdit
-                ? [quickChip('+6 เดือน', addMonthsToISO(oldEnd, 6)), quickChip('+1 ปี', addMonthsToISO(oldEnd, 12)), quickChip('คืนค่าเดิม', oldEnd)]
+                ? [quickChip('+6 เดือน', addMonthsToISO(oldEnd, 6)), quickChip('+1 ปี', addMonthsToISO(oldEnd, 12)), quickChip('คืนค่าเดิม', oldEnd), quickChip('ตัดสัญญาทันที', yesterday)]
                 : [quickChip('6 เดือน', minusOneDayISO(addMonthsToISO(startDate, 6))), quickChip('1 ปี', addYearsMinusOneDayISO(startDate, 1)), quickChip('2 ปี', addYearsMinusOneDayISO(startDate, 2))]}
           </div>
 
@@ -4879,8 +4884,8 @@ function ContractTrackingPage({ ctx }) {
             <div style={{ padding: '13px 15px', borderRadius: T.radiusMd, background: T.redSoft, border: `1px solid ${T.down}33`, marginBottom: '6px' }}>
               <div style={{ fontSize: '13px', fontWeight: 800, color: T.down, marginBottom: '4px' }}>วันสิ้นสุดอยู่ก่อนวันนี้ = ร้านหมดสัญญาทันที</div>
               <div style={{ fontSize: '12px', color: T.text, lineHeight: 1.6 }}>
-                ร้านจะถูกปิดและพนักงานร้านเข้าสู่ระบบไม่ได้ทันทีหลังบันทึก เจ้าของร้านดูข้อมูลได้อย่างเดียวไม่เกิน 30 วันหลังวันสิ้นสุด ออเดอร์และยอดขายเดิมยังอยู่ครบ
-                {Number(dStore.OpenOrderCount || 0) > 0 && <b> · ตอนนี้ยังมีออเดอร์ค้าง {dStore.OpenOrderCount} รายการ ระบบจะไม่ให้บันทึก</b>}
+                                ร้านจะถูกปิดและรับออเดอร์ใหม่ไม่ได้ทันทีหลังบันทึก พนักงานร้านถูกออกจากระบบ เจ้าของร้านดูข้อมูลได้อย่างเดียวไม่เกิน 30 วันหลังวันสิ้นสุด ออเดอร์และยอดขายเดิมยังอยู่ครบ
+                {Number(dStore.OpenOrderCount || 0) > 0 && <b> · ตอนนี้ยังมีออเดอร์ค้าง {dStore.OpenOrderCount} รายการ ร้านจะยังเคลียร์ออเดอร์ได้ เมื่อจบครบพนักงานจะถูกออกจากระบบเอง</b>}
               </div>
               <label style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px', fontSize: '12.5px', fontWeight: 600, color: T.ink, cursor: 'pointer' }}>
                 <input type="checkbox" checked={ackBackdate} onChange={(e) => { setAckBackdate(e.target.checked); setFormError(''); }}/>

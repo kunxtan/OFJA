@@ -26,7 +26,7 @@ SELECT s.StoreId, s.StoreName, sc.CategoryName AS Category, s.StoreCategoryId, s
        s.ContactName, s.ContactPhone, s.ContactLine, s.ContactEmail,
        s.IsDeleted, s.DeletedAt, s.CreatedAt,
        c.StartDate AS ContractStartDate, c.StartDate AS CurrentContractStartDate,
-       c.EndDate AS ContractEndDate, c.ContractStatus,
+       c.EndDate AS ContractEndDate, 
        (SELECT COUNT(*) FROM `Order` oo JOIN OrderStatus oos ON oos.StatusId = oo.StatusId
         WHERE oo.StoreId = s.StoreId AND oos.IsTerminal = FALSE) AS OpenOrderCount
 FROM Store s
@@ -49,9 +49,8 @@ def shape_store(row: dict, today=None) -> dict:
     row["ContractState"] = state
     row["ContractDaysLeft"] = (end - today).days if end else None
     row["OpenOrderCount"] = int(row.get("OpenOrderCount") or 0)
-    # หมดสัญญาเมื่อวาน + ยังมีออเดอร์ค้าง = บัญชีร้านยังเข้าได้เพื่อเคลียร์ออเดอร์ถึง 23:59:59 วันนี้ (ดู auth.py)
-    row["IsClearingOrders"] = (state == CONTRACT_EXPIRED and row["ContractDaysLeft"] == -1
-                               and row["OpenOrderCount"] > 0)
+    # หมดสัญญาแล้วแต่ยังมีออเดอร์ค้าง = บัญชีร้านยังเข้ามาเคลียร์ออเดอร์ได้ (utils.store_account_access)
+    row["IsClearingOrders"] = state == CONTRACT_EXPIRED and row["OpenOrderCount"] > 0
     # อีกกี่วันร้านที่หมดสัญญาจะถูกลบอัตโนมัติ (services.purge_expired_stores)
     row["AutoDeleteInDays"] = (config.CONTRACT_PURGE_AFTER_DAYS + row["ContractDaysLeft"] + 1
                                if state == CONTRACT_EXPIRED else None)

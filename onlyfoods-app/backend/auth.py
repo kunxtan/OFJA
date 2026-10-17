@@ -1,5 +1,6 @@
 """รหัสผ่าน (bcrypt), JWT, และ dependency ตรวจสิทธิ์"""
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -11,7 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import config
 from db import get_db
 from errors import DomainError
-from utils import ACCESS_LOCKED, ACCESS_READ_ONLY, store_account_access
+from utils import ACCESS_CLEARING, ACCESS_FULL, ACCESS_LOCKED, ACCESS_READ_ONLY, store_account_access
 
 logger = logging.getLogger("onlyfood")
 _bearer = HTTPBearer(auto_error=False)
@@ -23,12 +24,23 @@ STORE_CONTRACT_COLUMNS = """c.EndDate AS ContractEndDate,
                        WHERE ox.StoreId = u.StoreId AND osx.IsTerminal = FALSE)) AS StoreHasOpenOrders"""
 CONTRACT_EXPIRED_MESSAGE = "สัญญาร้านค้าหมดอายุแล้ว บัญชีของร้านนี้ใช้งานไม่ได้ กรุณาติดต่อผู้บริหารศูนย์อาหาร"
 CONTRACT_READ_ONLY_MESSAGE = "สัญญาร้านหมดแล้ว ดูข้อมูลได้อย่างเดียว แก้ไขหรือเปิดร้านไม่ได้"
+CONTRACT_CLEARING_MESSAGE = (
+    "สัญญาร้านหมดอายุแล้ว ตอนนี้ทำได้เฉพาะเคลียร์ออเดอร์ที่ค้างอยู่ "
+    "(เปิดร้าน/รับออเดอร์ใหม่/แก้ข้อมูลร้านไม่ได้)"
+)
+_SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
+# ช่วงเคลียร์ออเดอร์ (CLEARING): นอกจากอ่านข้อมูล ยิงได้เฉพาะ path งานออเดอร์เหล่านี้
+_CLEARING_WRITE_PATHS = re.compile(
+    r"^/api/(orders/\d+/(status|cancel-request|verify-slip|print)"
+    r"|print-jobs/\d+/skip"
+    r"|products/\d+/(toggle-stock|notify-out-of-stock))$"
+)
 
 def contract_access(row: dict) -> str:
-    """FULL / READ_ONLY / LOCKED ของบัญชีนี้ (บัญชีที่ไม่ผูกร้าน = FULL เสมอ)"""
+    """FULL / CLEARING / READ_ONLY / LOCKED ของบัญชีนี้ (บัญชีที่ไม่ผูกร้าน = FULL เสมอ)"""
     if row.get("StoreId") is None:
-        return "FULL"
+        return ACCESS_FULL
     return store_account_access(row.get("ContractEndDate"), row["RoleCode"], bool(row.get("StoreHasOpenOrders")),
                                 config.CONTRACT_OWNER_READONLY_DAYS)
 
@@ -106,10 +118,13 @@ def get_current_user(
         raise _unauthorized("บัญชีนี้ใช้งานไม่ได้")
     access = contract_access(user)
     if access == ACCESS_LOCKED:
-        # หมดสัญญา = token ที่ล็อกอินค้างไว้ใช้ไม่ได้ทันที
+                # หมดสัญญา (และเคลียร์ออเดอร์ครบแล้ว) = token ที่ล็อกอินค้างไว้ใช้ไม่ได้ทันที -> frontend เด้งไปหน้า login
         raise _unauthorized(CONTRACT_EXPIRED_MESSAGE)
-    if access == ACCESS_READ_ONLY and request.method not in ("GET", "HEAD", "OPTIONS"):
-        raise HTTPException(status_code=403, detail=CONTRACT_READ_ONLY_MESSAGE)
+    if request.method not in _SAFE_METHODS:
+        if access == ACCESS_READ_ONLY:
+            raise HTTPException(status_code=403, detail=CONTRACT_READ_ONLY_MESSAGE)
+        if access == ACCESS_CLEARING and not _CLEARING_WRITE_PATHS.match(request.url.path):
+            raise HTTPException(status_code=403, detail=CONTRACT_CLEARING_MESSAGE)
     return user
 
 

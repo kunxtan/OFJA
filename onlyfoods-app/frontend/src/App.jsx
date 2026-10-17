@@ -214,6 +214,18 @@ export default function App() {
 
   const API_BASE = import.meta.env.VITE_API_URL || window.location.origin;
 
+  
+  // token ใช้ไม่ได้แล้ว (สัญญาร้านหมด / บัญชีถูกระงับ / หมดอายุ) -> กลับหน้า login พร้อมข้อความจาก backend (ดู authFetch.js)
+  useEffect(() => {
+    const onExpired = (e) => {
+      setCurrentUser(null);
+      setAuthTab('login');
+      setAuthError(e.detail || 'กรุณาเข้าสู่ระบบใหม่');
+    };
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
+  }, []);
+
   useEffect(() => {
     fetchFoodCourtStatus();
     fetchStores();

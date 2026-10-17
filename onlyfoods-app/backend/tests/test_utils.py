@@ -140,17 +140,15 @@ def test_next_transition():
 
 def test_contract_rules():
     today = date(2026, 6, 15)
-    assert not utils.contract_active(None, None, None, today)  # ไม่มีสัญญา = ขาย/เปิดร้านไม่ได้
-    assert utils.contract_active(date(2026, 1, 1), date(2026, 6, 15), None, today)  # วันสุดท้าย (ถึง 23:59:59) ยังใช้ได้
-    assert not utils.contract_active(date(2026, 1, 1), date(2026, 6, 14), None, today)
-    assert not utils.contract_active(date(2026, 6, 16), date(2026, 12, 1), None, today)
+    assert not utils.contract_active(None, None,  today)  # ไม่มีสัญญา = ขาย/เปิดร้านไม่ได้
+    assert utils.contract_active(date(2026, 1, 1), date(2026, 6, 15),  today)  # วันสุดท้าย (ถึง 23:59:59) ยังใช้ได้
+    assert not utils.contract_active(date(2026, 1, 1), date(2026, 6, 14),  today)
+    assert not utils.contract_active(date(2026, 6, 16), date(2026, 12, 1),  today)
     assert utils.contract_state(None, None, today) == utils.CONTRACT_NONE
     assert utils.contract_state(date(2026, 6, 16), date(2027, 6, 15), today) == utils.CONTRACT_UPCOMING
     assert utils.contract_state(date(2026, 6, 15), date(2027, 6, 14), today) == utils.CONTRACT_ACTIVE
     assert utils.contract_state(date(2025, 6, 15), date(2026, 6, 14), today) == utils.CONTRACT_EXPIRED
-    assert utils.contract_status_for(date(2026, 6, 14), today) == "EXPIRED"
-    assert utils.contract_status_for(date(2026, 7, 15), today) == "EXPIRING"
-    assert utils.contract_status_for(date(2026, 7, 16), today) == "ACTIVE"
+    
 
 
 def test_contract_one_year_and_reason():
@@ -170,8 +168,9 @@ def test_store_account_access_after_expiry():
         end, role, open_orders, 30, today)
     assert acc(date(2026, 6, 14)) == utils.ACCESS_FULL                       # วันสุดท้ายยังใช้ได้
     assert acc(date(2026, 6, 15)) == utils.ACCESS_LOCKED                     # พนักงานล็อกทันที
-    assert acc(date(2026, 6, 15), open_orders=True) == utils.ACCESS_FULL     # ยังมีออเดอร์ค้าง = เคลียร์ได้
-    assert acc(date(2026, 6, 16), open_orders=True) == utils.ACCESS_LOCKED   # เพดานช่วงเคลียร์ 1 วัน
+    assert acc(date(2026, 6, 15), open_orders=True) == utils.ACCESS_CLEARING  # ยังมีออเดอร์ค้าง = เคลียร์ได้
+    assert acc(date(2026, 6, 20), open_orders=True) == utils.ACCESS_CLEARING  # ไม่จำกัดวัน จนกว่าออเดอร์จะจบ
+    assert acc(date(2026, 6, 15), "STORE_OWNER", True) == utils.ACCESS_CLEARING
     assert acc(date(2026, 6, 15), "STORE_OWNER") == utils.ACCESS_READ_ONLY   # เจ้าของดูได้อย่างเดียว
     assert acc(date(2026, 7, 14), "STORE_OWNER") == utils.ACCESS_READ_ONLY   # ครบ 30 วันพอดี
     assert acc(date(2026, 7, 15), "STORE_OWNER") == utils.ACCESS_LOCKED
@@ -206,7 +205,8 @@ def test_shape_store_day_counts():
     assert yday["ContractDaysLeft"] == -1 and yday["IsClearingOrders"] is True
     assert yday["AutoDeleteInDays"] == config.CONTRACT_PURGE_AFTER_DAYS
     two_days = row(date(2026, 1, 1), date(2026, 10, 14), opened=2)
-    assert two_days["IsClearingOrders"] is False  # เพดานช่วงเคลียร์ออเดอร์คือสิ้นวันถัดไป
+    assert two_days["IsClearingOrders"] is True  # เคลียร์ได้จนกว่าออเดอร์จะจบ ไม่จำกัดวัน
+    assert row(date(2026, 1, 1), date(2026, 10, 15))["IsClearingOrders"] is False
     # purge ลบเมื่อ EndDate < วันนี้ - 90 วัน : วันที่ AutoDeleteInDays ถึง 0 คือวันที่ถูกลบ
     due = row(date(2025, 1, 1), today - timedelta(days=config.CONTRACT_PURGE_AFTER_DAYS + 1))
     assert due["AutoDeleteInDays"] == 0
