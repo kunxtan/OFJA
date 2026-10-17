@@ -1225,7 +1225,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       start: newStart,
       end: new Date(newStart.getTime() + extraDishes * DISH_MINUTES * buffer * 60000),
     };
-    return { slots, newOrder };
+    return { slots, newOrder, buffer, waitingDishes };
   };
 
   // แสดงเป็นช่วง "เริ่ม–เสร็จ" ปัดนาทีให้เป็นตัวเลขเต็ม และไม่แสดงเวลาเริ่มที่ผ่านมาแล้ว
@@ -1262,7 +1262,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // โหลดคิวของร้านที่ลูกค้ามีออเดอร์ค้างอยู่ เฉพาะตอนเปิดแท็บคำสั่งซื้อ
   const activeOrderStoreKey = myOrders
-    .filter((o) => canEstimateOrder(o) && isImmediatePickup(o.PickupTime, o.OrderTime))
+    .filter((o) => canEstimateOrder(o))
     .map((o) => o.StoreId)
     .filter(Boolean)
     .filter((id, i, arr) => arr.indexOf(id) === i)
@@ -1303,13 +1303,38 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
   }, [apiBase, activeTab, activeOrderStoreKey]);
 
+  // ออเดอร์ที่ลูกค้านัดเวลารับไว้: แสดงเป็นช่วง "เวลานัด – เวลานัด + เวลาเผื่อ" เผื่อครัวคิวแน่นแล้วเสร็จช้ากว่านัด
+  // เวลาเผื่อ = 5 นาที (1 จาน) + จานที่เพิ่มขึ้นจานละ 4 นาที x ตัวคูณเผื่อตามจานค้างทั้งครัว (+10% / +20%)
+  const SCHEDULED_PICKUP_BASE_MINUTES = 5;
+  const countOrderDishes = (order) =>
+    (order?.items || []).reduce(
+      (sum, it) => sum + (String(it.ItemStatus || "NORMAL").toUpperCase() === "NORMAL" ? Number(it.Qty) || 0 : 0),
+      0
+    ) || 1;
+
+  const formatScheduledPickupRange = (pickup, windowMinutes) => {
+    const m = String(pickup || "").match(/(\d{1,2}):(\d{2})/);
+    if (!m) return String(pickup || "-");
+    const startMin = Number(m[1]) * 60 + Number(m[2]);
+    const endMin = (startMin + windowMinutes) % 1440;
+    const fmt = (t) => `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+    return `${fmt(startMin)}–${fmt(endMin)} น.`;
+  };
+
   const getOrderPickupRange = (order) => {
     const status = orderStatusKey(order);
     if (status === "ready") return "พร้อมรับแล้ว";
     if (!canEstimateOrder(order)) return "-";
 
     // ออเดอร์ที่นัดเวลารับไว้ ใช้เวลานัดตามที่ลูกค้าเลือก
-    if (!isImmediatePickup(order.PickupTime, order.OrderTime)) return order.PickupTime;
+    if (!isImmediatePickup(order.PickupTime, order.OrderTime)) {
+      const dishes = countOrderDishes(order);
+      const queueForStore = orderQueueEstimates[order.StoreId];
+      // ยังโหลดคิวไม่เสร็จ -> ใช้จำนวนจานของออเดอร์นี้ประเมินตัวคูณไปก่อน
+      const buffer = queueForStore ? buildQueueSchedule(queueForStore, dishes).buffer : kitchenBuffer(dishes);
+      const windowMinutes = Math.ceil(SCHEDULED_PICKUP_BASE_MINUTES + (dishes - 1) * DISH_MINUTES * buffer);
+      return formatScheduledPickupRange(order.PickupTime, windowMinutes);
+    }
 
     const queue = orderQueueEstimates[order.StoreId];
     if (!queue) return "กำลังคำนวณเวลา...";
@@ -1320,11 +1345,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (slot) return formatPickupRange(slot.start, slot.end);
 
     // ยังไม่อยู่ในคิวครัว (เช่น รอตรวจสลิป) -> ประเมินเหมือนต่อท้ายคิวที่ค้างอยู่ (เหมือนตะกร้า)
-    const dishes =
-      (order.items || []).reduce(
-        (sum, it) => sum + (String(it.ItemStatus || "NORMAL").toUpperCase() === "NORMAL" ? Number(it.Qty) || 0 : 0),
-        0
-      ) || 1;
+    const dishes = countOrderDishes(order);
     const { newOrder } = buildQueueSchedule(queue, dishes);
     return formatPickupRange(newOrder.start, newOrder.end);
   };
