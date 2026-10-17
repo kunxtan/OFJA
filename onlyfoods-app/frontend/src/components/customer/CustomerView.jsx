@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import { createCartRow, getNotifKey, getOutOfStockItem, previewLateArrival } from "./utils/orders";
-import { getCurrentDateTimeForBackend, getCurrentTimeFormatted, secondsUntil } from "./utils/time";
+import { formatBangkokTime, getCurrentDateTimeForBackend, getCurrentTimeFormatted, secondsUntil } from "./utils/time";
+import { getPickupHours, getPickupRange, isPickupMinuteDisabled, pad2, toMinutes } from "./utils/pickupTime";
 import { COLORS, MAX_FILE_SIZE } from "./constants";
-import { DISH_MINUTES, SCHEDULED_PICKUP_BASE_MINUTES, buildQueueSchedule, canEstimateOrder, countOrderDishes, formatPickupRange, formatScheduledPickupRange, isImmediatePickup, kitchenBuffer, orderStatusKey } from "./utils/queueEstimate";
+import { buildQueueSchedule, canEstimateOrder, countOrderDishes, formatPickupRange, formatScheduledPickupRange, isImmediatePickup, kitchenBuffer, orderStatusKey, scheduledWindowMinutes } from "./utils/queueEstimate";
 import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, logoStyle, pageStyle, profileStyle, searchStyle } from "./styles";
 import { BigUserIcon, CameraIcon, CartIcon, CartIconPlus, HiIcon, HomeIcon, NoodleBowlArt, NotiIcon, OrderIcon, SparkleArt, StarIcon, ThaiTeaArt, UserIcon } from "./icons";
 import { PaymentModal, TopUpModal, OutOfStockModal } from "./modals/PaymentModals";
@@ -47,7 +48,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [newSelectedProduct, setNewSelectedProduct] = useState(null);
   const [timeLeft, setTimeLeft] = useState(1800);
 
-  // TOP-UP (เปลี่ยนเป็นเมนูที่แพงกว่า -> โอนส่วนต่าง + แนบสลิป)
+  // TOP-UP 
   const [topUpSlip, setTopUpSlip] = useState(null);
   const [isSubmittingTopUp, setIsSubmittingTopUp] = useState(false);
   const [hiddenTopUpOrderId, setHiddenTopUpOrderId] = useState(null);
@@ -61,7 +62,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   // CART & ORDER FORM STATE
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [pickupTime, setPickupTime] = useState("");
+  // เวลารับอาหารที่ลูกค้านัด: เก็บ "ชั่วโมง" กับ "นาที" แยกกัน (เช่น "12" กับ "05")
+  const [pickupHour, setPickupHour] = useState("");
+  const [pickupMinute, setPickupMinute] = useState("");
+  // pickupTime ยังเป็นข้อความ "HH:MM" หรือ "" (= รับทันที)
+  const pickupTime = pickupHour !== "" && pickupMinute !== "" ? `${pickupHour}:${pickupMinute}` : "";
+  const setPickupTime = (value) => {
+    const [h = "", m = ""] = String(value || "").split(":");
+    setPickupHour(h);
+    setPickupMinute(m);
+  };
   const [queueEstimateOrders, setQueueEstimateOrders] = useState([]);
   const [orderQueueEstimates, setOrderQueueEstimates] = useState({}); // { [storeId]: orders[] } สำหรับหน้าคำสั่งซื้อ
   const [toasts, setToasts] = useState([]); // ป๊อปอัพแจ้งเตือนที่กำลังแสดง
@@ -128,10 +138,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const res = await fetch(`${apiBase}/api/stores`);
       if (!res.ok) return;
       const allStores = await res.json();
-      // เก็บเฉพาะร้านที่ "ไม่ถูกระงับ" และ "สัญญายังมีผล" (ต้องผ่านทั้งสองเงื่อนไข จึงใช้ &&)
-      // ร้านที่สัญญายังมีผลแต่ปิดชั่วคราว (IsOpen = false) ยังแสดงเป็นการ์ดสีจาง
-      // หน้าผู้บริหาร/เจ้าของร้านยังเห็นครบตามเดิม เพราะกรองเฉพาะฝั่งหน้าลูกค้า
-      const data = Array.isArray(allStores) ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE"): [];
+      // เก็บเฉพาะร้านที่ "ไม่ถูกระงับ" และ "สัญญายังมีผล"
+      const data = Array.isArray(allStores)
+        ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE")
+        : [];
       const storesWithReviews = await Promise.all(
         data.map(async (store) => {
           try {
@@ -175,27 +185,20 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const fetchMyOrders = async () => {
     if (!userId) return;
-
     try {
       const res = await fetch(`${apiBase}/api/orders?user_id=${userId}`);
       if (!res.ok) return;
-
       const data = await res.json();
       setMyOrders(data);
-
       setLatePickupOrder((prev) => {
         const updated = { ...prev };
-
         data.forEach((order) => {
           const orderId = order.OrderID ?? order.OrderId ?? order.order_id;
           if (!orderId) return;
-
           const arrival = order.LatePickupArrivalTime;
           let arrivalTime = "";
-
           if (arrival) {
             const date = new Date(arrival);
-
             if (!Number.isNaN(date.getTime())) {
               arrivalTime = date.toLocaleTimeString("th-TH", {
                 timeZone: "Asia/Bangkok",
@@ -229,22 +232,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const data = await res.json();
       setNotifs(data);
 
-      // เด้งป๊อปอัพเฉพาะการแจ้งเตือนที่เพิ่งเข้ามาหลังเปิดแอป (โหลดครั้งแรกเก็บไว้เฉยๆ ไม่เด้งของเก่า)
+      // เด้งป๊อปอัพเฉพาะการแจ้งเตือนที่เพิ่งเข้ามาหลังเปิดแอป
       if (Array.isArray(data)) {
         if (seenToastKeysRef.current === null) {
           seenToastKeysRef.current = new Set(data.map((n) => getNotifKey(n)));
         } else {
           const fresh = data.filter((n) => !seenToastKeysRef.current.has(getNotifKey(n)));
           fresh.forEach((n) => seenToastKeysRef.current.add(getNotifKey(n)));
-          // อยู่หน้าการแจ้งเตือนอยู่แล้ว ไม่ต้องเด้งซ้ำ
-          if (fresh.length > 0 && activeTabRef.current !== "notifs") {
-            const incoming = fresh.map((n) => ({
-              key: getNotifKey(n),
-              title: n.Title || "Only Foods",
-              message: n.Message || "",
-            }));
-            setToasts((prev) => [...incoming, ...prev].slice(0, 3));
-          }
         }
       }
     } catch (error) {
@@ -256,16 +250,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/food-court/status`);
       if (!res.ok) return;
-
       const data = await res.json();
-
       setIsFoodCourtOpen(Boolean(data?.is_open));
       setFoodCourtMode(data?.mode || "AUTO");
-
       if (data?.open_time) {
         setFoodCourtOpenTime(data.open_time.slice(0, 5));
       }
-
       if (data?.close_time) {
         setFoodCourtCloseTime(data.close_time.slice(0, 5));
       }
@@ -350,7 +340,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!selectedStore) return undefined;
     fetchProducts();
-    // ร้านกดของหมด/เปิดขาย -> ลูกค้าเห็นภายใน 5 วินาที โดยไม่ต้องกดเข้าร้านใหม่
     const timer = setInterval(fetchProducts, 5000);
     return () => clearInterval(timer);
   }, [selectedStore, apiBase]);
@@ -456,7 +445,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const filteredStores = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    // แสดงเฉพาะร้านที่สัญญายังมีผล (ContractState คำนวณจากวันที่ที่ backend: NONE / UPCOMING / ACTIVE / EXPIRED)
+    // แสดงเฉพาะร้านที่สัญญายังมีผล
     const contracted = stores.filter((store) => store.ContractState === "ACTIVE");
     if (!keyword) return contracted;
     return contracted.filter((store) => String(store.StoreName || "").toLowerCase().includes(keyword));
@@ -827,8 +816,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // ORDER SUBMISSION & PAYMENT HANDLERS
+  const isPickupInPast = () =>
+    Boolean(pickupTime) && toMinutes(pickupTime) < toMinutes(formatBangkokTime(new Date()));
+
   const handleProceedToPayment = () => {
     if (!checkFoodCourtOrderTime()) return;
+    if (isPickupInPast()) {
+      return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
+    }
     if (cart.length === 0) return customAlert("กรุณาเลือกอาหารลงตะกร้าก่อนสั่งซื้อ", "", "error");
     if (!selectedStore) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
     setIsCartOpen(false);
@@ -912,7 +907,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
-  // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
   const handleSlipChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -937,7 +931,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // โหลดเฉพาะข้อมูลคิวที่จำเป็นสำหรับประเมินเวลารอให้ลูกค้า
   useEffect(() => {
-    if (!selectedStore || !isCartOpen || pickupTime) {
+    if (!selectedStore || !isCartOpen) {
       setQueueEstimateOrders([]);
       return;
     }
@@ -960,7 +954,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [apiBase, selectedStore, isCartOpen, pickupTime]);
+  }, [apiBase, selectedStore, isCartOpen]);
 
   // ช่วงเวลารับโดยประมาณของตะกร้า (ต่อท้ายคิวที่ค้างอยู่)
   const getCustomerPickupRange = () => {
@@ -1024,7 +1018,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const queueForStore = orderQueueEstimates[order.StoreId];
       // ยังโหลดคิวไม่เสร็จ -> ใช้จำนวนจานของออเดอร์นี้ประเมินตัวคูณไปก่อน
       const buffer = queueForStore ? buildQueueSchedule(queueForStore, dishes).buffer : kitchenBuffer(dishes);
-      const windowMinutes = Math.ceil(SCHEDULED_PICKUP_BASE_MINUTES + (dishes - 1) * DISH_MINUTES * buffer);
+      const windowMinutes = scheduledWindowMinutes(dishes, buffer);
       return formatScheduledPickupRange(order.PickupTime, windowMinutes);
     }
 
@@ -1044,6 +1038,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
     if (!checkFoodCourtOrderTime()) return;
+    if (isPickupInPast()) {
+      // ตรวจซ้ำอีกครั้งก่อนส่งจริง แล้วพากลับไปตะกร้าให้เลือกเวลาใหม่
+      setIsPaymentModalOpen(false);
+      setIsCartOpen(true);
+      return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
+    }
 
     // ทุกวิธีชำระเงินของลูกค้า (PromptPay / TrueMoney) ต้องแนบสลิป
     if (!slipFile || !slipPreview) {
@@ -2165,25 +2165,58 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   เวลารับอาหาร
                 </label>
 
-                <select
-                  value={pickupTime}
-                  onChange={(e) => setPickupTime(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "11px",
-                    borderRadius: "10px",
-                    border: `1px solid ${COLORS.border}`,
-                    fontFamily: "inherit",
-                  }}
-                >
-                  <option value="">เลือกเวลารับอาหาร</option>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <select
+                    value={pickupHour}
+                    onChange={handlePickupHourChange}
+                    aria-label="ชั่วโมงที่รับอาหาร"
+                    style={{ ...pickupSelectStyle, flex: 1 }}
+                  >
+                    <option value="">ชั่วโมง</option>
+                    {pickupHourOptions.map((h) => (
+                      <option key={h} value={pad2(h)}>
+                        {pad2(h)}
+                      </option>
+                    ))}
+                  </select>
 
-                  {pickupTimeOptions.map((time) => (
-                    <option key={time} value={time}>
-                      {time} น.
-                    </option>
-                  ))}
-                </select>
+                  <span style={{ fontWeight: "800" }}>:</span>
+
+                  <select
+                    value={pickupMinute}
+                    onChange={(e) => setPickupMinute(e.target.value)}
+                    disabled={pickupHour === ""}
+                    aria-label="นาทีที่รับอาหาร"
+                    style={{ ...pickupSelectStyle, flex: 1, opacity: pickupHour === "" ? 0.5 : 1 }}
+                  >
+                    <option value="">นาที</option>
+                    {Array.from({ length: 60 }, (_, m) => m).map((m) => (
+                      <option key={m} value={pad2(m)} disabled={isPickupMinuteDisabled(pickupHour, m, pickupRange)}>
+                        {pad2(m)}
+                      </option>
+                    ))}
+                  </select>
+
+                  {(pickupHour !== "" || pickupMinute !== "") && (
+                    <button
+                      type="button"
+                      onClick={() => setPickupTime("")}
+                      style={{
+                        flexShrink: 0,
+                        padding: "11px 14px",
+                        borderRadius: "10px",
+                        border: "none",
+                        background: "#FFEDD5",
+                        color: "#C2410C",
+                        fontWeight: "800",
+                        fontFamily: "inherit",
+                        cursor: "pointer",
+                      }}
+                    >
+                      รับทันที
+                    </button>
+                  )}
+                </div>
 
                 <div
                   style={{
@@ -2192,7 +2225,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     marginTop: "5px",
                   }}
                 >
-                  หากไม่เลือก ระบบจะใช้เวลาปัจจุบันตอนกดสั่ง
+                  ไม่เลือกเวลา = รับทันที ครัวจะทำตามลำดับคิว
                 </div>
 
                 {pickupTime ? (
@@ -2208,7 +2241,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       border: "1px solid #FED7AA",
                     }}
                   >
-                    เวลารับตามที่เลือก: {pickupTime} น.
+                    เวลารับตามที่เลือก: {formatScheduledPickupRange(pickupTime, pickupWindowMinutes)}
+                    {isPickupTooEarly && (
+                      <div style={{ marginTop: "4px", fontSize: "11px", fontWeight: "600", color: "#B45309" }}>
+                        ⚠ ครัวอาจทำไม่ทัน ประมาณเสร็จ {estimatedReadyTime} น. แนะนำเลือกตั้งแต่ {estimatedReadyTime} น.
+                      </div>
+                    )}
+                  </div>
+                ) : pickupHour !== "" ? (
+                  <div style={{ marginTop: "8px", fontSize: "11px", color: COLORS.gray }}>
+                    เลือกนาทีให้ครบเพื่อนัดเวลา หรือกด "รับทันที"
                   </div>
                 ) : cart.length > 0 ? (
                   <div
@@ -2276,21 +2318,43 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   
-  const now = new Date();
-  const currentTime =
-    `${String(now.getHours()).padStart(2, "0")}:` +
-    `${String(now.getMinutes()).padStart(2, "0")}`;
-
-  const pickupTimeOptions = Array.from({ length: 1440 }, (_, i) => {
-    const hour = String(Math.floor(i / 60)).padStart(2, "0");
-    const minute = String(i % 60).padStart(2, "0");
-    return `${hour}:${minute}`;
-  }).filter((time) => {
-    if (time < currentTime) return false;
-    if (foodCourtOpenTime && time < foodCourtOpenTime) return false;
-    if (foodCourtCloseTime && time > foodCourtCloseTime) return false;
-    return true;
+  // ===== เลือกเวลารับอาหาร (ชั่วโมง + นาที) =====
+  // ช่วงที่เลือกได้ = ตั้งแต่ตอนนี้ (เวลาไทย) ถึงเวลาปิดศูนย์อาหาร ห้ามย้อนอดีต
+  const pickupRange = getPickupRange({
+    nowTime: formatBangkokTime(new Date()),
+    openTime: foodCourtOpenTime,
+    closeTime: foodCourtCloseTime,
   });
+  const pickupHourOptions = getPickupHours(pickupRange);
+
+  const pickupSelectStyle = {
+    padding: "11px",
+    borderRadius: "10px",
+    border: `1px solid ${COLORS.border}`,
+    fontFamily: "inherit",
+  };
+
+  // เปลี่ยนชั่วโมงแล้วนาทีที่เลือกไว้เลือกไม่ได้แล้ว (เช่น เป็นชั่วโมงปัจจุบันที่นาทีผ่านไปแล้ว) ให้ล้างนาทีให้เลือกใหม่
+  const handlePickupHourChange = (e) => {
+    const hour = e.target.value;
+    setPickupHour(hour);
+    if (hour === "" || (pickupMinute !== "" && isPickupMinuteDisabled(hour, pickupMinute, pickupRange))) {
+      setPickupMinute("");
+    }
+  };
+
+  // เวลาที่ครัวน่าจะทำเสร็จถ้าสั่งตอนนี้ ใช้เตือนเมื่อลูกค้านัดเวลาที่เร็วกว่านั้น (เตือนเฉยๆ ไม่บล็อก)
+  const cartDishCount = cart.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0);
+  const cartSchedule = cartDishCount ? buildQueueSchedule(queueEstimateOrders, cartDishCount) : null;
+  const estimatedReadyTime = cartSchedule
+    ? formatBangkokTime(new Date(Math.ceil(cartSchedule.newOrder.end.getTime() / 60000) * 60000))
+    : "";
+  const isPickupTooEarly =
+    Boolean(pickupTime && estimatedReadyTime) && toMinutes(pickupTime) < toMinutes(estimatedReadyTime);
+  const pickupWindowMinutes = scheduledWindowMinutes(
+    cartDishCount || 1,
+    cartSchedule ? cartSchedule.buffer : kitchenBuffer(cartDishCount || 1)
+  );
 
   return (
     <div className="customer-view" style={pageStyle}>

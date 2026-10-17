@@ -98,6 +98,10 @@ export const countOrderDishes = (order) =>
     0
   ) || 1;
 
+// ช่วงเผื่อของออเดอร์นัดเวลา (นาที) = 5 + (จำนวนจาน - 1) x 4 x ตัวคูณเผื่อตามจานค้างทั้งครัว
+export const scheduledWindowMinutes = (dishes, buffer) =>
+  Math.ceil(SCHEDULED_PICKUP_BASE_MINUTES + (Math.max(1, dishes) - 1) * DISH_MINUTES * buffer);
+
 export const formatScheduledPickupRange = (pickup, windowMinutes) => {
   const m = String(pickup || "").match(/(\d{1,2}):(\d{2})/);
   if (!m) return String(pickup || "-");
