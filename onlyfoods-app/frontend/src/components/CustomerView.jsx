@@ -1105,6 +1105,55 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       ).padStart(2, "0")}`;
     return `${formatTime(start)}–${formatTime(end)} น.`;
   };
+
+  const getOrderPickupRange = (order) => {
+    // ใช้เวลาที่สร้างออเดอร์ ไม่ใช่เวลาปัจจุบัน
+    const rawOrderTime =
+      order.CreatedAt ||
+      order.created_at ||
+      order.OrderTime ||
+      order.order_time;
+
+    if (!rawOrderTime) {
+      return order.PickupTime || order.pickup_time || "ยังไม่มีข้อมูลเวลา";
+    }
+
+    // แปลงเวลาจาก Backend
+    const orderTime = new Date(
+      String(rawOrderTime).replace(" ", "T")
+    );
+
+    if (Number.isNaN(orderTime.getTime())) {
+      return order.PickupTime || order.pickup_time || "ยังไม่มีข้อมูลเวลา";
+    }
+
+    // นับจำนวนจานของออเดอร์นี้
+    const items = order.items || order.Items || [];
+    const dishCount = Number(
+      order.dish_count ??
+      order.DishCount ??
+      items.reduce(
+        (sum, item) => sum + Number(item.Qty ?? item.qty ?? 1),
+        0
+      )
+    );
+
+    // ประเมินเวลาทำอาหาร 4 นาทีต่อจาน
+    const waitMinutes = Math.max(1, dishCount * 4);
+
+    const start = new Date(orderTime);
+    const end = new Date(
+      orderTime.getTime() + waitMinutes * 60 * 1000
+    );
+
+    const formatTime = (date) =>
+      `${String(date.getHours()).padStart(2, "0")}:${String(
+        date.getMinutes()
+      ).padStart(2, "0")}`;
+
+    return `${formatTime(start)}–${formatTime(end)} น.`;
+  };
+
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
     if (!checkFoodCourtOrderTime()) return;
@@ -1929,21 +1978,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           color: "#F97316",
                         }}
                       >
-                        {getCustomerPickupRange() || "กำลังคำนวณเวลา..."}
+                        {getOrderPickupRange(order)}
                       </div>
-
-                      {!getCustomerPickupRange() && (
-                        <div
-                          style={{
-                            fontSize: "10px",
-                            color: "#9A3412",
-                            marginTop: "4px",
-                            lineHeight: 1.4,
-                          }}
-                        >
-                          เวลาโดยประมาณ
-                        </div>
-                      )}
+                      <div
+                        style={{
+                          fontSize: "10px",
+                          color: "#9A3412",
+                          marginTop: "4px",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        เวลาโดยประมาณ
+                      </div>
                     </div>
                   </div>
                   </div>
@@ -1952,9 +1998,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", color: COLORS.gray }}>
                     {(order.OrderTime || order.CreatedAt || order.order_time) && (
                       <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
-                    )}
-                    {(order.PickupTime || order.pickup_time) && (
-                      <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
                     )}
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
@@ -2274,7 +2317,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       border: "1px solid #FED7AA",
                     }}
                   >
-                    เวลารับอาหารโดยประมาณ {getCustomerPickupRange()}
+                    เวลารับอาหารโดยประมาณ {getOrderPickupRange(order)}
 
                     <div
                       style={{
