@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import config
-from db import _get_pool
+from db import acquire
 from services import log_audit, purge_expired_stores, send_notif
 from utils import bangkok_now, queue_label
 
@@ -80,7 +80,7 @@ def send_pickup_reminders(db, now: Optional[datetime] = None) -> int:
 
 
 def _run_once() -> int:
-    conn = _get_pool().connection()
+    conn = acquire()
     try:
         return send_pickup_reminders(conn)
     finally:
@@ -100,7 +100,7 @@ def _purge_if_due() -> int:
     if _last_purge_at is not None and now - _last_purge_at < timedelta(hours=1):
         return 0
     _last_purge_at = now
-    conn = _get_pool().connection()
+    conn = acquire()
     try:
         purged = purge_expired_stores(conn, config.CONTRACT_PURGE_AFTER_DAYS)
         conn.commit()

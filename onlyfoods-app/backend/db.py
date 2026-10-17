@@ -1,9 +1,10 @@
 """Connection pool + transaction helper"""
 import logging
+import time
 from contextlib import contextmanager
 
 import pymysql
-from dbutils.pooled_db import PooledDB
+from dbutils.pooled_db import PooledDB, TooManyConnectionsError
 from fastapi import HTTPException
 from pymysql.cursors import DictCursor
 
@@ -22,7 +23,7 @@ def _get_pool() -> PooledDB:
             creator=pymysql,
             maxconnections=config.DB_POOL_SIZE,
             mincached=1,
-            blocking=True,
+            blocking=False,  # ห้ามรอไม่จำกัด (ดู acquire)
             ping=1,  # ping ก่อนใช้ทุกครั้ง กัน connection ค้าง/ถูกตัด
             host=config.DB_HOST,
             port=config.DB_PORT,
@@ -39,9 +40,23 @@ def _get_pool() -> PooledDB:
     return _pool
 
 
+def acquire():
+    """ยืม connection จาก pool ; เต็มอยู่ -> รอสั้น ๆ ไม่เกิน DB_POOL_WAIT_SECONDS แล้วตอบ 503
+    (รอแบบไม่มีกำหนดทำให้ backend ค้างทั้งตัวได้ ดูหมายเหตุที่ config.DB_POOL_SIZE)"""
+    deadline = time.monotonic() + config.DB_POOL_WAIT_SECONDS
+    while True:
+        try:
+            return _get_pool().connection()
+        except TooManyConnectionsError:
+            if time.monotonic() >= deadline:
+                logger.error("db pool exhausted (%s connections in use)", config.DB_POOL_SIZE)
+                raise HTTPException(status_code=503, detail="ระบบมีผู้ใช้งานพร้อมกันจำนวนมาก กรุณาลองใหม่อีกครั้ง")
+            time.sleep(0.05)
+
+
 def get_db():
     """FastAPI dependency: ยืม connection จาก pool แล้วคืนเสมอ (rollback ก่อนคืน)"""
-    conn = _get_pool().connection()
+    conn = acquire()
     try:
         yield conn
     finally:
