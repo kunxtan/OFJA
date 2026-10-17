@@ -2015,10 +2015,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       justifyContent: "space-between",
                       alignItems: "center",
                       gap: "12px",
-                      padding: "14px 16px",
-                      borderRadius: "14px",
-                      background: "#FFF7ED",
-                      border: "1px solid #FED7AA",
                     }}
                   >
                     {/* ฝั่งซ้าย: ข้อมูลคิว */}
@@ -2060,7 +2056,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       <div
                         style={{
                           fontSize: "10px",
-                          color: "#9A3412",
+                          opacity: 0.85,
                           marginBottom: "5px",
                         }}
                       >
@@ -2070,7 +2066,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         style={{
                           fontSize: "13px",
                           fontWeight: "900",
-                          color: "#F97316",
                         }}
                       >
                         {getOrderPickupRange(order)}
@@ -2080,7 +2075,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         <div
                           style={{
                             fontSize: "10px",
-                            color: "#9A3412",
+                            opacity: 0.85,
                             marginTop: "4px",
                             lineHeight: 1.4,
                           }}
@@ -2212,6 +2207,29 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           <button
                             onClick={() => handleLatePickup(order, selectedMinutes)}
                             disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
+                            style={{
+                              width: "100%",
+                              marginTop: "12px",
+                              padding: "13px 16px",
+                              border: "none",
+                              borderRadius: "14px",
+                              background:
+                                (latePickupOrder[order.OrderID]?.count || 0) >= 3
+                                  ? "#CBD5E1"
+                                  : "linear-gradient(135deg, #F97316 0%, #EA580C 100%)",
+                              color: "#FFFFFF",
+                              fontSize: "14px",
+                              fontWeight: "800",
+                              fontFamily: "inherit",
+                              letterSpacing: "0.2px",
+                              boxShadow:
+                                (latePickupOrder[order.OrderID]?.count || 0) >= 3
+                                  ? "none"
+                                  : "0 6px 16px rgba(234, 88, 12, 0.35)",
+                              cursor:
+                                (latePickupOrder[order.OrderID]?.count || 0) >= 3 ? "not-allowed" : "pointer",
+                              transition: "transform 0.15s ease, box-shadow 0.15s ease",
+                            }}
                           >
                             {(latePickupOrder[order.OrderID]?.count || 0) >= 3
                               ? "แจ้งครบแล้ว (3/3)"
