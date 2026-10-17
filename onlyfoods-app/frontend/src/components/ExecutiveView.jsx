@@ -351,6 +351,7 @@ const ICON_PATHS = {
     refresh: 'M4 12a8 8 0 0113.7-5.7L20 8M20 4v4h-4M20 12a8 8 0 01-13.7 5.7L4 16M4 20v-4h4',
     settings: 'M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.7 1.7 0 002.5 1.1c1.6-.9 3.4.8 2.4 2.4a1.7 1.7 0 001.1 2.6c1.7.4 1.7 2.9 0 3.3a1.7 1.7 0 00-1.1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 00-2.5 1c-.4 1.8-2.9 1.8-3.4 0a1.7 1.7 0 00-2.5-1c-1.6.9-3.3-.9-2.4-2.4a1.7 1.7 0 00-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 001-2.6c-.9-1.6.8-3.3 2.4-2.4a1.7 1.7 0 002.5-1.1zM9 12a3 3 0 106 0 3 3 0 00-6 0',
     logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3',
+    filter: 'M4 5h16l-6 7.5V18l-4 2v-7.5z',
     history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2',
     arrowRight: 'M5 12h14M13 6l6 6-6 6',
     arrowUp: 'M7 17L17 7M7 7h10v10',
@@ -5330,6 +5331,19 @@ const AUDIT_GROUP_META = {
     order: { label: 'ออเดอร์', bg: T.greenSoft, color: T.up },
     other: { label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text }
 };
+// ตัวกรองหน้า Audit Log : ชิปกลุ่ม + ช่องเลือกการกระทำ ทรงเดียวกัน (มนสุด สูง 36px)
+const auditChipStyle = (active) => ({
+    display: 'inline-flex', alignItems: 'center', gap: '7px', height: '36px', boxSizing: 'border-box',
+    border: `1px solid ${active ? T.primary : T.line}`, backgroundColor: active ? T.primarySoft : T.surface,
+    color: active ? T.primaryDark : T.text, borderRadius: '999px', padding: '0 14px',
+    fontSize: '12.5px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', whiteSpace: 'nowrap',
+    transition: 'background .15s ease, border-color .15s ease'
+});
+const auditActionSelectStyle = (active) => ({
+    ...auditChipStyle(active), appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none', outline: 'none',
+    minWidth: '210px', paddingLeft: '36px', paddingRight: '36px',
+    backgroundImage: active ? 'none' : SELECT_CHEVRON, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 14px center'
+});
 const auditGroupOf = (action) => {
     const key = String(action || '').toUpperCase();
     return AUDIT_GROUP_WORDS.find(([, words]) => words.some((word) => key.includes(word)))?.[0] || 'other';
@@ -5555,38 +5569,34 @@ function AuditHistoryPage({ ctx }) {
           </Button>
         </div>
 
-        <div style={{display: 'flex',gap: '10px',alignItems: 'center',flexWrap: 'wrap',marginTop: '18px'}}>
-          <div style={{ position: 'relative', flex: '1 1 280px', minWidth: 0 }}>
-            <Icon name="search" size={17} color={T.muted} style={{position: 'absolute',left: '13px',top: '50%',transform: 'translateY(-50%)'}}/>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="ค้นหาการดำเนินการ ผู้ดำเนินการ หรือรายละเอียด..."
-              style={{ ...inputStyle, width: '100%', paddingLeft: '40px' }}
-            />
-          </div>
+                <div style={{ position: 'relative', marginTop: '18px' }}>
+          <Icon name="search" size={17} color={T.muted} style={{position: 'absolute',left: '13px',top: '50%',transform: 'translateY(-50%)'}}/>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="ค้นหาการดำเนินการ ผู้ดำเนินการ หรือรายละเอียด..."
+            style={{ ...inputStyle, width: '100%', paddingLeft: '40px' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginTop: '12px' }}>
           <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
-            {filters.map(([id, label]) => (<button
-              key={id}
-              type="button"
-              onClick={() => { setFilter(id); setActionFilter(''); }}
-              style={{
-                  border: `1px solid ${filter === id ? T.primary : T.line}`,
-                  background: filter === id ? T.primarySoft : T.surface,
-                  color: filter === id ? T.primaryDark : T.text,
-                  borderRadius: '999px',
-                  padding: '9px 13px',
-                  fontSize: '12.5px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap'
-              }}
-              >{label}</button>))}
+            {filters.map(([id, label]) => (<button key={id} type="button" onClick={() => { setFilter(id); setActionFilter(''); }} style={auditChipStyle(filter === id)}>
+              {AUDIT_GROUP_META[id] && <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: AUDIT_GROUP_META[id].color }}/>}
+              {label}
+            </button>))}
           </div>
-          <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} style={{ ...inputStyle, width: 'auto', minWidth: '210px' }} aria-label="กรองตามการกระทำ">
-            <option value="">ทุกการกระทำ</option>
-            {actionOptions.map((code) => <option key={code} value={code}>{AUDIT_VERBS[code]}</option>)}
-          </select>
+          <span style={{ width: '1px', height: '24px', background: T.line }}/>
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <Icon name="filter" size={15} color={actionFilter ? T.primaryDark : T.muted} style={{ position: 'absolute', left: '14px', pointerEvents: 'none' }}/>
+            <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} style={auditActionSelectStyle(Boolean(actionFilter))} aria-label="กรองตามการกระทำ">
+              <option value="">ทุกการกระทำ</option>
+              {actionOptions.map((code) => <option key={code} value={code}>{AUDIT_VERBS[code]}</option>)}
+            </select>
+            {actionFilter && (<button type="button" onClick={() => setActionFilter('')} aria-label="ล้างตัวกรองการกระทำ" style={{ position: 'absolute', right: '8px', width: '22px', height: '22px', borderRadius: '50%', border: 'none', background: T.surface, color: T.primaryDark, display: 'grid', placeItems: 'center', cursor: 'pointer', padding: 0 }}>
+              <Icon name="close" size={12}/>
+            </button>)}
+          </div>
         </div>
       </Card>
 
