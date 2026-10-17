@@ -68,8 +68,8 @@ def test_reminder_text_mentions_queue_and_minutes():
     assert "A007" in t and "15 นาที" in t
 
 
-def test_sends_once_after_15_minutes_and_not_before():
-    db = FakeDB([order(1, 14), order(2, 15), order(3, 40)])
+def test_sends_once_after_30_minutes_and_not_before():
+    db = FakeDB([order(1, 29), order(2, 30), order(3, 50)])
     assert jobs.send_pickup_reminders(db, NOW) == 2
     assert {o["OrderId"] for o in db.orders if o["reminded"]} == {2, 3}
     assert len(db.notifs) == 2 and len(db.audits) == 2
@@ -107,15 +107,112 @@ def test_claim_loses_when_status_changed_meanwhile():
 
 
 def test_no_reminder_when_customer_already_said_they_are_late():
-    db = FakeDB([order(1, 20, eta=NOW + timedelta(minutes=60)), order(2, 20)])
+    db = FakeDB([order(1, 40, eta=NOW + timedelta(minutes=60)), order(2, 40)])
     assert jobs.send_pickup_reminders(db, NOW) == 1
     assert [o["OrderId"] for o in db.orders if o["reminded"]] == [2]
 
 
 def test_reminder_sql_excludes_orders_with_eta():
     """ตัว SQL จริงต้องกรอง LatePickupArrivalTime ทั้งตอนเลือกและตอนจอง (FakeDB จำลองตามนี้)"""
-    db = FakeDB([order(1, 20)])
+    db = FakeDB([order(1, 40)])
     jobs.send_pickup_reminders(db, NOW)
     select_sql = next(q for q in db.sql if q.startswith("SELECT o.OrderId"))
     claim_sql = next(q for q in db.sql if q.startswith("UPDATE `Order` SET PickupReminderAt"))
     assert "LatePickupArrivalTime IS NULL" in select_sql and "LatePickupArrivalTime IS NULL" in claim_sql
+
+
+# ------------------------------------------------ ของหมด: ยกเลิกอัตโนมัติเมื่อเลยเส้นตาย
+class CancelCursor:
+    def __init__(self, db):
+        self.db = db
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, args=()):
+        (now,) = args
+        self._rows = [{"OrderId": o["OrderId"]} for o in self.db.orders
+                      if o["StatusCode"] == "PENDING_CANCELLATION" and o["CancelDeadline"] and o["CancelDeadline"] <= now]
+
+    def fetchall(self):
+        return self._rows
+
+
+class CancelDB(FakeDB):
+    def __init__(self, orders):
+        super().__init__(orders)
+        self.commits = 0
+
+    def cursor(self):
+        return CancelCursor(self)
+
+    def commit(self):
+        self.commits += 1
+
+
+def pc_order(oid, deadline_in_minutes, status="PENDING_CANCELLATION"):
+    return {"OrderId": oid, "StatusCode": status, "CancelReason": "วัตถุดิบหมด: ข้าวมันไก่",
+            "CancelDeadline": NOW + timedelta(minutes=deadline_in_minutes)}
+
+
+def patch_cancel(monkeypatch, db, fail_ids=()):
+    calls = []
+
+    def fake_lock(cur, oid):
+        return next(o for o in db.orders if o["OrderId"] == oid)
+
+    def fake_transition(cur, order, new_code, **kw):
+        assert kw["system"] is True and kw["actor_id"] is None and kw["cancel_deadline"] is None
+        if order["OrderId"] in fail_ids:
+            raise jobs.DomainError(400, "มีสลิปส่วนต่างที่ยังไม่ได้ตรวจ")
+        order["StatusCode"] = new_code
+
+    def fake_effects(db_, cur, order, final_code, actor_id, reason):
+        calls.append((order["OrderId"], final_code, actor_id, reason))
+
+    monkeypatch.setattr(jobs, "lock_order", fake_lock)
+    monkeypatch.setattr(jobs, "do_transition", fake_transition)
+    monkeypatch.setattr(jobs, "apply_status_effects", fake_effects)
+    return calls
+
+
+def test_auto_cancel_only_after_deadline(monkeypatch):
+    db = CancelDB([pc_order(1, -1), pc_order(2, 5), pc_order(3, 0), pc_order(4, -10, status="PENDING")])
+    calls = patch_cancel(monkeypatch, db)
+    assert jobs.cancel_expired_requests(db, NOW) == 2
+    assert [c[0] for c in calls] == [1, 3]
+    assert all(c[1] == "CANCELLED" and c[2] is None for c in calls)  # ผลข้างเคียงครบ (คืนเงิน/แจ้งลูกค้า) โดยระบบ
+    assert "ระบบยกเลิกออเดอร์อัตโนมัติ" in calls[0][3] and "ข้าวมันไก่" in calls[0][3]
+    assert {o["OrderId"]: o["StatusCode"] for o in db.orders}[2] == "PENDING_CANCELLATION"
+    assert jobs.cancel_expired_requests(db, NOW) == 0  # รอบถัดไปไม่ยกเลิกซ้ำ
+
+
+def test_auto_cancel_skips_order_changed_meanwhile(monkeypatch):
+    """เลือกไว้แล้ว แต่ตอนล็อกลูกค้าเปลี่ยนเมนูไปแล้ว -> ไม่แตะ"""
+    o = pc_order(1, -1)
+    db = CancelDB([o])
+    calls = patch_cancel(monkeypatch, db)
+    real_lock = jobs.lock_order
+
+    def lock_after_change(cur, oid):
+        o["StatusCode"] = "PENDING"
+        return real_lock(cur, oid)
+
+    monkeypatch.setattr(jobs, "lock_order", lock_after_change)
+    assert jobs.cancel_expired_requests(db, NOW) == 0
+    assert calls == [] and o["StatusCode"] == "PENDING"
+
+
+def test_auto_cancel_one_failure_does_not_block_others(monkeypatch):
+    db = CancelDB([pc_order(1, -2), pc_order(2, -1)])
+    calls = patch_cancel(monkeypatch, db, fail_ids={1})
+    assert jobs.cancel_expired_requests(db, NOW) == 1
+    assert [c[0] for c in calls] == [2] and db.commits == 1
+
+
+def test_auto_cancel_reason_fits_column():
+    assert len(jobs.auto_cancel_reason("x" * 300)) == 255
+    assert jobs.auto_cancel_reason(None).startswith("หมดเวลาเลือกเมนูทดแทน")

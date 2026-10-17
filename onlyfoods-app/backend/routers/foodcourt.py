@@ -3,6 +3,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 
+import config
 from auth import require_role
 from db import get_db, transaction
 from errors import DomainError
@@ -24,6 +25,9 @@ def _status_payload(row: dict, now=None) -> dict:
         "close_time": time_to_hhmm(row["CloseTime"]),
         "mode": mode,
         "override_until": until.strftime("%Y-%m-%d %H:%M:%S") if (until and mode != "AUTO") else None,
+        # เวลาที่หน้าร้านใช้: ขึ้นป้ายให้โทรหาลูกค้า / ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (นาทีหลังอาหารพร้อม)
+        "pickup_reminder_minutes": config.PICKUP_REMINDER_MINUTES,
+        "no_show_after_minutes": config.NO_SHOW_AFTER_MINUTES,
     }
 
 

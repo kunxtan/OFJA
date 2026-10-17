@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Cropper from 'react-easy-crop';
 import * as XLSX from 'xlsx';
+import RefundLog from './RefundLog';
 // ===== ตั้งค่าหลักของหน้า Executive =====
 const ORDER_TIME_IS_UTC = false;
 const MAX_IMAGE_MB = 5;
@@ -351,6 +352,7 @@ const ICON_PATHS = {
     settings: 'M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.7 1.7 0 002.5 1.1c1.6-.9 3.4.8 2.4 2.4a1.7 1.7 0 001.1 2.6c1.7.4 1.7 2.9 0 3.3a1.7 1.7 0 00-1.1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 00-2.5 1c-.4 1.8-2.9 1.8-3.4 0a1.7 1.7 0 00-2.5-1c-1.6.9-3.3-.9-2.4-2.4a1.7 1.7 0 00-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 001-2.6c-.9-1.6.8-3.3 2.4-2.4a1.7 1.7 0 002.5-1.1zM9 12a3 3 0 106 0 3 3 0 00-6 0',
     logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3',
     history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2',
+    refund: 'M3 12a9 9 0 103-6.7M3 4v5h5M12 8v8M14.5 9.5c-.4-.9-1.4-1.5-2.5-1.5-1.4 0-2.5.8-2.5 2 0 2.6 5 1.4 5 4 0 1.2-1.1 2-2.5 2-1.1 0-2.1-.6-2.5-1.5',
     arrowRight: 'M5 12h14M13 6l6 6-6 6',
     arrowUp: 'M7 17L17 7M7 7h10v10',
     arrowDown: 'M7 7l10 10M17 7v10H7'
@@ -1287,6 +1289,7 @@ const returnFoodCourtToAuto = async () => {
         { id: 'store-accounts', icon: 'account', label: 'Store Accounts', caption: 'บัญชีร้านค้า' },
         { id: 'customer-info', icon: 'search', label: 'User Information', caption: 'ข้อมูลผู้ใช้' },
         { id: 'contract-tracking', icon: 'calendar', label: 'Contract Tracking', caption: 'ติดตามสัญญา' },
+        { id: 'refund-log', icon: 'refund', label: 'Refund Log', caption: 'ประวัติการคืนเงิน' },
         { id: 'audit-history', icon: 'history', label: 'Audit Log', caption: 'ประวัติการดำเนินการ' }
     ];
     // ลบได้ป้ะ
@@ -1320,6 +1323,11 @@ const returnFoodCourtToAuto = async () => {
             title: 'ติดตามระยะเวลาสัญญา',
             subtitle: 'ตรวจสอบวันเริ่มสัญญา วันสิ้นสุดสัญญา และร้านค้าที่ใกล้หมดอายุ',
             searchPlaceholder: 'ค้นหาร้านค้า...'
+        },
+        'refund-log': {
+            title: 'ประวัติการคืนเงิน',
+            subtitle: 'เงินคืนที่รอลูกค้ามารับที่ร้าน และที่ร้านคืนแล้ว (ไม่นับเป็นรายได้)',
+            searchPlaceholder: ''
         },
         'audit-history': {
             title: 'ประวัติการดำเนินการ',
@@ -1582,6 +1590,7 @@ const returnFoodCourtToAuto = async () => {
               {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx}/>}
               {activeMenu === 'customer-info' && <CustomerInfoPage ctx={ctx}/>}
               {activeMenu === 'contract-tracking' && <ContractTrackingPage ctx={ctx}/>}
+              {activeMenu === 'refund-log' && <RefundLog apiBase={API} showStore pollMs={15000} />}
               {activeMenu === 'audit-history' && <AuditHistoryPage ctx={ctx}/>}
             </div>
           </main>
@@ -5099,7 +5108,7 @@ function AuditHistoryPage({ ctx }) {
         if (key.includes('ACCOUNT') || key.includes('USER') || key.includes('STAFF') || key.includes('PASSWORD')) {
             return { group: 'account', label: 'บัญชีผู้ใช้', bg: T.deepSoft, color: T.deep };
         }
-        if (key.includes('SLIP') || key.includes('PAYMENT')) {
+        if (key.includes('SLIP') || key.includes('PAYMENT') || key.includes('REFUND')) {
             return { group: 'payment', label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark };
         }
         if (key.includes('ORDER') || key.includes('CANCEL') || key.includes('STATUS') || key.includes('QUEUE') || key.includes('PRINT')) {

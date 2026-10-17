@@ -112,42 +112,66 @@ def _verify_top_up_slip(db, cur, order, approved: bool, reason: str, user: dict,
 
 
 # ---------------------------------------------------------------- refunds
+# คืนเงิน = ลูกค้ามารับเงินสดคืนที่หน้าร้าน (ระบบจำลอง ไม่ได้โอนจริง)
+#   ยกเลิก/เปลี่ยนเป็นเมนูที่ถูกกว่า -> Refund PENDING ("รอลูกค้ามารับเงินคืน") ; ไม่นับเป็นรายได้ตั้งแต่ตอนนี้ (v_order_net)
+#   พนักงานหน้าร้าน/เจ้าของร้านจ่ายเงินให้ลูกค้าแล้วกด "คืนเงินแล้ว" -> DONE (บันทึกผู้คืน เวลา และ AuditLog)
+#   ฝ่ายบัญชี/ผู้บริหารดูได้ทุกร้าน (ดูอย่างเดียว) ; ลูกค้าเห็นเฉพาะของตัวเอง
+REFUND_CONFIRM_ROLES = ("FRONT_STAFF", "STORE_OWNER")
+_REFUND_VIEW_ROLES = ("ACCOUNTANT", "EXECUTIVE", "STORE_OWNER", "FRONT_STAFF", "CUSTOMER")
+
+
 @router.get("/refunds")
 def list_refunds(status: Optional[str] = Query(None, pattern="^(PENDING|DONE|FAILED)$"),
-                 limit: int = Query(200, ge=1, le=1000),
-                 user=Depends(require_role("ACCOUNTANT", "EXECUTIVE", "STORE_OWNER")), db=Depends(get_db)):
-    """ฝ่ายบัญชี/ผู้บริหารเห็นทุกร้าน ; เจ้าของร้านเห็นเฉพาะร้านตัวเอง (ดูอย่างเดียว)"""
+                 store_id: Optional[int] = None,
+                 limit: int = Query(200, ge=1, le=2000),
+                 user=Depends(require_role(*_REFUND_VIEW_ROLES)), db=Depends(get_db)):
     sql = """
         SELECT rf.RefundId, rf.PaymentId, rf.OrderItemId, rf.RefundType, rf.Amount, rf.Reason, rf.RefundStatus,
-               rf.RequestedAt, rf.RefundedAt, p.OrderId, o.StoreId, s.StoreName, s.QueueCode, o.QueueNo
+               rf.RequestedAt, rf.RefundedAt, rb.FullName AS RefundedByName, rr.RoleCode AS RefundedByRole,
+               p.OrderId, o.StoreId, s.StoreName, s.QueueCode, o.QueueNo, o.IsWalkIn, o.OrderDate,
+               cu.FullName AS CustomerName, cu.Phone AS CustomerPhone
         FROM Refund rf
         JOIN Payment p ON p.PaymentId = rf.PaymentId
         JOIN `Order` o ON o.OrderId = p.OrderId
         JOIN Store s ON s.StoreId = o.StoreId
+        LEFT JOIN `User` cu ON cu.UserId = o.CustomerId
+        LEFT JOIN `User` rb ON rb.UserId = rf.RefundedBy
+        LEFT JOIN Role rr ON rr.RoleId = rb.RoleId
     """
     where, params = [], []
-    if user["RoleCode"] == "STORE_OWNER":
+    role = user["RoleCode"]
+    if role in ("STORE_OWNER", "FRONT_STAFF"):
+        if user["StoreId"] is None:
+            raise DomainError(403, "บัญชีนี้ยังไม่ได้ผูกกับร้านค้า")
         where.append("o.StoreId = %s")
         params.append(user["StoreId"])
+    elif role == "CUSTOMER":
+        where.append("o.CustomerId = %s")
+        params.append(user["UserId"])
+    elif store_id is not None:
+        where.append("o.StoreId = %s")
+        params.append(store_id)
     if status:
         where.append("rf.RefundStatus = %s")
         params.append(status)
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY rf.RefundId DESC LIMIT %s"
+    sql += " ORDER BY rf.RefundStatus = 'PENDING' DESC, rf.RefundId DESC LIMIT %s"
     params.append(limit)
     with db.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
     for r in rows:
         r["QueueNo"] = queue_label(r["QueueNo"], r.pop("QueueCode"))
+        if role == "CUSTOMER":  # ลูกค้าไม่ต้องเห็นชื่อพนักงาน
+            r.pop("RefundedByName", None)
+            r.pop("RefundedByRole", None)
     return rows
 
 
 @router.put("/refunds/{refund_id}/done")
-def mark_refund_done(refund_id: int, user=Depends(require_role("ACCOUNTANT")), db=Depends(get_db)):
-    """ฝ่ายบัญชีโอนเงินคืนลูกค้าแล้ว -> บันทึกว่าเสร็จ (ยอดสุทธิของร้านหักทันที ผ่าน v_order_net)
-    แล้วแจ้งเจ้าของร้านและลูกค้า"""
+def mark_refund_done(refund_id: int, user=Depends(require_role(*REFUND_CONFIRM_ROLES)), db=Depends(get_db)):
+    """ลูกค้ามารับเงินคืนที่หน้าร้านแล้ว -> บันทึกว่าคืนแล้ว (ใคร/เมื่อไหร่) แล้วแจ้งลูกค้าและเจ้าของร้าน"""
     with transaction(db):
         with db.cursor() as cur:
             cur.execute(
@@ -165,20 +189,23 @@ def mark_refund_done(refund_id: int, user=Depends(require_role("ACCOUNTANT")), d
             rf = cur.fetchone()
             if not rf:
                 raise DomainError(404, "ไม่พบรายการคืนเงิน")
+            assert_store_access(user, rf["StoreId"])
             if rf["RefundStatus"] != "PENDING":
-                raise DomainError(400, "รายการนี้ดำเนินการไปแล้ว")
+                raise DomainError(400, "รายการนี้คืนเงินไปแล้ว")
+            now = bangkok_now()
             cur.execute(
                 "UPDATE Refund SET RefundStatus = 'DONE', RefundedBy = %s, RefundedAt = %s WHERE RefundId = %s",
-                (user["UserId"], bangkok_now(), refund_id),
+                (user["UserId"], now, refund_id),
             )
         q = queue_label(rf["QueueNo"], rf["QueueCode"])
         amount = Decimal(rf["Amount"])
         kind = {"FULL_CANCEL": "ยกเลิกออเดอร์", "PRICE_DIFF": "ส่วนต่างราคาเมนู"}.get(rf["RefundType"], "คืนเงินรายการ")
-        notify_store_owners(db, rf["StoreId"], "PAYMENT", f"คืนเงินคิว {q}",
-                            f"ฝ่ายบัญชีคืนเงิน {amount:.2f} บาท ({kind}) คิว {q} แล้ว ยอดขายสุทธิของร้านหักตามยอดนี้",
-                            rf["OrderId"])
+        if user["RoleCode"] != "STORE_OWNER":
+            notify_store_owners(db, rf["StoreId"], "PAYMENT", f"คืนเงินคิว {q}",
+                                f"หน้าร้านคืนเงิน {amount:.2f} บาท ({kind}) คิว {q} ให้ลูกค้าแล้ว", rf["OrderId"])
         send_notif(db, rf["CustomerId"], "PAYMENT", f"คืนเงินคิว {q}",
-                   f"คืนเงิน {amount:.2f} บาท ({kind}) คิว {q} เรียบร้อยแล้ว", rf["OrderId"])
-        log_audit(db, user["UserId"], "REFUND_DONE", "Refund", refund_id, None,
-                  {"amount": amount, "order_id": rf["OrderId"], "store_id": rf["StoreId"]})
-    return {"success": True}
+                   f"คุณได้รับเงินคืน {amount:.2f} บาท ({kind}) คิว {q} ที่หน้าร้านเรียบร้อยแล้ว", rf["OrderId"])
+        log_audit(db, user["UserId"], "REFUND_DONE", "Refund", refund_id, {"status": "PENDING"},
+                  {"status": "DONE", "amount": amount, "order_id": rf["OrderId"], "store_id": rf["StoreId"],
+                   "queue": q, "type": rf["RefundType"]})
+    return {"success": True, "refunded_at": now}

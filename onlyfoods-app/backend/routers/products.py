@@ -9,7 +9,7 @@ from auth import assert_store_access, require_role
 from db import get_db, transaction
 from errors import DomainError
 from schemas import NotifyOutStockSchema, ProductCreateSchema, ProductUpdateSchema
-from services import do_transition, lock_order, log_audit, send_notif
+from services import do_transition, lock_order, log_audit, notify_menu_out_of_stock, send_notif
 import state
 from utils import bangkok_now, clean_text, queue_label, save_image
 
@@ -147,16 +147,7 @@ def toggle_stock(product_id: int, user=Depends(require_role("FRONT_STAFF", "KITC
             out_of_stock = not bool(prod["IsOutOfStock"])
             cur.execute("UPDATE Product SET IsOutOfStock = %s WHERE ProductId = %s", (out_of_stock, product_id))
             if out_of_stock:
-                cur.execute(
-                    """
-                    SELECT u.UserId FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
-                    WHERE u.StoreId = %s AND r.RoleCode = 'STORE_OWNER' AND u.IsActive = TRUE
-                    """,
-                    (prod["StoreId"],),
-                )
-                for owner in cur.fetchall():
-                    send_notif(db, owner["UserId"], "SYSTEM", "สินค้าหมด",
-                               f"⚠️ สินค้าหมด: หน้าร้านเพิ่งปรับเมนู '{prod['ProductName']}' เป็นของหมด")
+                notify_menu_out_of_stock(db, prod["StoreId"], prod["ProductName"], user["RoleCode"])
         log_audit(db, user["UserId"], "OUT_OF_STOCK" if out_of_stock else "BACK_IN_STOCK", "Product", product_id,
                   None, {"name": prod["ProductName"]})
     return {"success": True, "is_out_of_stock": out_of_stock}
@@ -199,7 +190,8 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema,
                               cancel_reason=reason, cancel_deadline=deadline, now=now)
                 send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {queue_label(order['QueueNo'], order['QueueCode'])} เมนูหมด",
                            f"⚠️ คิว {queue_label(order['QueueNo'], order['QueueCode'])} สินค้า {prod['ProductName']} หมด! "
-                           f"กรุณาเปลี่ยนเมนูหรือกดยกเลิกรับเงินคืนภายใน {payload.response_window_minutes} นาที", oid)
+                           f"กรุณาเปลี่ยนเมนูหรือกดยกเลิกรับเงินคืนภายใน {payload.response_window_minutes} นาที "
+                           f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติ", oid)
         log_audit(db, user["UserId"], "OUT_OF_STOCK_NOTIFY", "Product", product_id, None,
                   {"orders": len(ids), "name": prod["ProductName"]})
     return {"success": True, "notified_count": len(ids)}

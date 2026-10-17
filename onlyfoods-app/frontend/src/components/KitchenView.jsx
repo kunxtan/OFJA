@@ -147,6 +147,7 @@ const isToday = (timeStr) => {
 
 export default function KitchenView({ user, apiBase, onLogout }) {
   const [allOrders, setAllOrders] = useState([]);
+  const [actionError, setActionError] = useState('');
   const [summary, setSummary] = useState([]);
   const [isDark, setIsDark] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -355,7 +356,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     setAllOrders(prev => prev.map(o => o.OrderID === id ? { ...o, Status: targetStatus } : o));
 
     try {
-      await fetch(`${apiBase}/api/orders/${id}/status`, {
+      const res = await fetch(`${apiBase}/api/orders/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -364,9 +365,19 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           cancel_reason: null
         })
       });
-      fetchData();
+      if (!res.ok) {
+        // ไม่สำเร็จ (เช่น ร้านเพิ่งแจ้งของหมด/ยกเลิกออเดอร์นี้) : บอกเหตุผล แล้วดึงสถานะจริงกลับมาแทนค่าที่เดาไว้
+        const data = await res.json().catch(() => ({}));
+        const order = allOrders.find(o => o.OrderID === id);
+        setActionError(`คิว ${order?.QueueNo || id}: ${typeof data.detail === 'string' ? data.detail : 'อัปเดตสถานะไม่สำเร็จ'}`);
+      } else {
+        setActionError('');
+      }
     } catch (err) {
       console.error("Update status error:", err);
+      setActionError('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ สถานะยังไม่ถูกบันทึก ลองกดอีกครั้ง');
+    } finally {
+      fetchData();
     }
   };
 
@@ -857,6 +868,12 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         overflowY: 'auto',
         overflowX: 'hidden'
       }}>
+        {actionError && (
+          <div role="alert" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '16px', padding: '12px 16px', borderRadius: '12px', background: '#FEE2E2', color: '#991B1B', fontWeight: 700, fontSize: '14px' }}>
+            <span>⚠️ {actionError}</span>
+            <button type="button" onClick={() => setActionError('')} aria-label="ปิดข้อความ" style={{ border: 'none', background: 'transparent', color: 'inherit', fontSize: '18px', cursor: 'pointer', minWidth: '32px', minHeight: '32px' }}>✕</button>
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '22px' }}>
           {displayedOrders.length === 0 ? (
             <div style={{
