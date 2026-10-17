@@ -39,6 +39,7 @@ function Icon({ name, size = 20 }) {
     close: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
     warn: <><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>,
     store: <><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" /><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" /><path d="M2 7h20" /></>,
+    tv: <><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /></>,
     logout: <><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>
   };
   return (
@@ -91,6 +92,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [payMethod, setPayMethod] = useState('Cash');
   const [cashInput, setCashInput] = useState('');
   const [payBusy, setPayBusy] = useState(false);
+  // จอเรียกคิว (จำลอง): คิวที่เพิ่งพร้อมจะกระพริบ + เสียงติ๊ง ; เห็นครั้งแรกตอนเปิดหน้าไม่นับว่า "ใหม่"
+  const [displaySound, setDisplaySound] = useState(true);
+  const [displayFull, setDisplayFull] = useState(false);
+  const displayRef = useRef(null);
+  const readySeenRef = useRef(null); // Map OrderID -> เวลาที่เห็นว่าพร้อมครั้งแรก (null = ยังไม่โหลดรอบแรก)
   const dateKey = (d) => {
     const x = new Date(d);
     if (isNaN(x)) return '';
@@ -118,14 +124,55 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   // ครัวกด "ปรุงเสร็จ" -> backend สร้าง PrintJob PENDING -> เด้ง popup ยืนยันพิมพ์ที่หน้าร้านอัตโนมัติ
   useEffect(() => {
-    if (printConfirmOrder || !pendingPrintJobs.length) return;
+    // จอเรียกคิวหันไปทางลูกค้า: ไม่เด้ง popup ทับ (เด้งเมื่อกลับมาหน้าอื่น)
+    if (activeTab === 'display' || printConfirmOrder || !pendingPrintJobs.length) return;
     const job = pendingPrintJobs.find(j => !autoPromptedJobsRef.current.has(j.PrintJobID));
     if (!job) return;
     const order = orders.find(o => o.OrderID === job.OrderID);
     if (!order) return; // รอ orders โหลดก่อน
     autoPromptedJobsRef.current.add(job.PrintJobID);
     openPrintConfirm(order, 'FIRST_PRINT', job);
-  }, [pendingPrintJobs, orders, printConfirmOrder]);
+  }, [pendingPrintJobs, orders, printConfirmOrder, activeTab]);
+
+  useEffect(() => {
+    const ready = orders.filter(o => o.Status === 'Ready');
+    if (readySeenRef.current === null) {
+      if (!orders.length) return;
+      readySeenRef.current = new Map(ready.map(o => [o.OrderID, 0])); // ของที่พร้อมอยู่แล้วตอนเปิดหน้า: ไม่กระพริบ
+      return;
+    }
+    const seen = readySeenRef.current;
+    const fresh = ready.filter(o => !seen.has(o.OrderID));
+    fresh.forEach(o => seen.set(o.OrderID, Date.now()));
+    if (fresh.length && activeTab === 'display' && displaySound) playChime();
+  }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onFs = () => setDisplayFull(document.fullscreenElement === displayRef.current && !!displayRef.current);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+
+  const playChime = () => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = playChime.ctx || (playChime.ctx = new Ctx());
+      [880, 1320].forEach((f, i) => {
+        const osc = ctx.createOscillator(), gain = ctx.createGain();
+        const t = ctx.currentTime + i * 0.18;
+        osc.frequency.value = f; osc.type = 'sine';
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+        osc.connect(gain).connect(ctx.destination); osc.start(t); osc.stop(t + 0.5);
+      });
+    } catch { /* ไม่มีเสียงก็ยังแสดงผลได้ */ }
+  };
+  const toggleDisplayFull = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else displayRef.current?.requestFullscreen?.().catch(() => showToast('เบราว์เซอร์นี้เปิดเต็มจอไม่ได้'));
+  };
 
   const showToast = (msg) => {
     setToast({ show: true, msg });
@@ -718,6 +765,15 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const historyOrders = orders
     .filter(o => dateKey(o.CreatedAt) === historyDate)
     .sort((a, b) => (b.OrderID || 0) - (a.OrderID || 0));
+  // จอเรียกคิว: แสดงแค่เลขคิว (จอสาธารณะ ไม่โชว์ชื่อ/เบอร์) ; คิวเก่าก่อน
+  const DISPLAY_FLASH_MS = 10000;
+  const displayCooking = orders.filter(o => ['Pending', 'Cooking'].includes(o.Status)).sort((a, b) => a.OrderID - b.OrderID);
+  const displayReady = orders.filter(o => o.Status === 'Ready')
+    .sort((a, b) => (new Date(a.ReadyAt || 0) - new Date(b.ReadyAt || 0)) || (a.OrderID - b.OrderID));
+  const isFreshReady = (o) => {
+    const at = readySeenRef.current?.get(o.OrderID);
+    return Boolean(at) && nowTick - at < DISPLAY_FLASH_MS;
+  };
   const canReprint = (o) => !['Verifying_Slip', 'Cancelled', 'NoShow'].includes(o.Status);
 
   const navItems = [
@@ -726,6 +782,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     { id: 'walkin', label: 'Walk-in POS', caption: 'แคชเชียร์สั่งอาหารหน้าร้าน', icon: 'walkin' },
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
     { id: 'reports', label: 'Reports', caption: 'รายงานการขายและปัญหา', icon: 'orders' },
+    { id: 'display', label: 'จอเรียกคิว (จำลอง)', caption: 'ของจริงเปิดค้างบนทีวีหน้าร้าน', icon: 'tv' },
   ];
 
   const quickReasons = [
@@ -1129,6 +1186,49 @@ export default function CounterView({ user, apiBase, onLogout }) {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* จอเรียกคิว (จำลอง) */}
+          {activeTab === 'display' && (
+            <div className="cv-stack">
+              <div className="display-note">
+                <b>📺 หน้าจำลองจอเรียกคิว</b>
+                <span>ร้านจริงเปิดหน้านี้ค้างไว้บนทีวีหรือจอที่หันไปทางลูกค้า แสดงแค่เลขคิว ไม่แสดงชื่อหรือเบอร์โทร
+                  · คิวที่เพิ่งพร้อมจะกระพริบ 10 วินาทีพร้อมเสียงเตือน แทนการตะโกนเรียก · ส่งมอบแล้วคิวหายจากจอเอง</span>
+                <div className="display-note-actions">
+                  <button className="cv-btn btn-ghost" onClick={() => { setDisplaySound(v => !v); if (!displaySound) playChime(); }}>
+                    {displaySound ? '🔔 เสียงเปิดอยู่' : '🔕 เสียงปิดอยู่'}
+                  </button>
+                  <button className="cv-btn btn-dark" onClick={toggleDisplayFull}>⛶ เปิดเต็มจอ</button>
+                </div>
+              </div>
+              <div ref={displayRef} className={`queue-display ${displayFull ? 'full' : ''}`}>
+                <div className="qd-head">
+                  <span>{currentStore?.StoreName || 'ร้านค้า'}</span>
+                  <span className="qd-clock">{new Date(nowTick).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false })} น.</span>
+                </div>
+                <div className="qd-cols">
+                  <section className="qd-col cooking">
+                    <h4>🍳 กำลังทำ <span>{displayCooking.length}</span></h4>
+                    <div className="qd-grid">
+                      {displayCooking.length === 0 ? <div className="qd-empty">—</div> : displayCooking.map(o => (
+                        <div key={o.OrderID} className="qd-num">{o.QueueNo}</div>
+                      ))}
+                    </div>
+                  </section>
+                  <section className="qd-col ready">
+                    <h4>✅ พร้อมรับ <span>{displayReady.length}</span></h4>
+                    <div className="qd-grid">
+                      {displayReady.length === 0 ? <div className="qd-empty">ยังไม่มีคิวพร้อมรับ</div> : displayReady.map(o => (
+                        <div key={o.OrderID} className={`qd-num ${isFreshReady(o) ? 'fresh' : ''}`}>{o.QueueNo}</div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+                <div className="qd-foot">กรุณาแสดงเลขคิวที่หน้าเคาน์เตอร์เพื่อรับอาหาร</div>
+                {displayFull && <button className="qd-exit" onClick={toggleDisplayFull}>ออกจากเต็มจอ (Esc)</button>}
               </div>
             </div>
           )}
@@ -2005,6 +2105,34 @@ const CV_STYLES = `
 .cv-print-modal { width:500px; }
 .cv-print-error { margin-top:10px; padding:10px 12px; border-radius:var(--radius-md); background:${PALETTE.redLight}; color:${PALETTE.red}; font-size:13px; line-height:1.5; }
 .cv-print-error b { display:block; }
+.display-note { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:14px 18px; border-radius:var(--radius-lg); border:1px dashed ${PALETTE.border}; background:#fff; }
+.display-note b { font-size:15px; }
+.display-note span { flex:1 1 320px; font-size:13px; color:${PALETTE.textSub}; line-height:1.5; }
+.display-note-actions { display:flex; gap:8px; }
+.queue-display { position:relative; background:#14161F; color:#fff; border-radius:18px; padding:22px 26px 18px; min-height:460px; display:flex; flex-direction:column; }
+.queue-display.full { border-radius:0; min-height:100vh; padding:36px 48px 28px; }
+.qd-head { display:flex; justify-content:space-between; align-items:baseline; font-size:22px; font-weight:700; margin-bottom:18px; }
+.queue-display.full .qd-head { font-size:34px; }
+.qd-clock { font-family:'Roboto', monospace; opacity:.75; }
+.qd-cols { flex:1; display:grid; grid-template-columns:1fr 1.4fr; gap:20px; }
+.qd-col { border-radius:14px; padding:16px 18px; background:rgba(255,255,255,.05); }
+.qd-col.ready { background:rgba(34,197,94,.12); border:1px solid rgba(34,197,94,.45); }
+.qd-col h4 { margin:0 0 14px; font-size:20px; display:flex; align-items:center; gap:10px; }
+.queue-display.full .qd-col h4 { font-size:30px; }
+.qd-col h4 span { font-size:14px; padding:2px 10px; border-radius:999px; background:rgba(255,255,255,.12); }
+.qd-grid { display:flex; flex-wrap:wrap; gap:12px; align-content:flex-start; }
+.qd-num { font-family:'Roboto', monospace; font-weight:800; font-size:34px; padding:8px 16px; border-radius:12px; background:rgba(255,255,255,.08); letter-spacing:1px; }
+.qd-col.ready .qd-num { font-size:48px; background:rgba(34,197,94,.22); color:#D9FBE5; }
+.queue-display.full .qd-num { font-size:52px; }
+.queue-display.full .qd-col.ready .qd-num { font-size:80px; padding:10px 24px; }
+.qd-num.fresh { animation: qdFlash 1s ease-in-out infinite; }
+@keyframes qdFlash { 0%,100% { background:rgba(34,197,94,.22); transform:scale(1); } 50% { background:#22C55E; color:#fff; transform:scale(1.06); } }
+.qd-empty { font-size:18px; opacity:.5; }
+.qd-foot { margin-top:16px; text-align:center; font-size:15px; opacity:.7; }
+.queue-display.full .qd-foot { font-size:22px; }
+.qd-exit { position:absolute; top:12px; right:16px; background:rgba(255,255,255,.1); color:#fff; border:none; border-radius:8px; padding:6px 12px; font-family:inherit; cursor:pointer; opacity:.4; }
+.qd-exit:hover { opacity:1; }
+@media (max-width: 768px) { .qd-cols { grid-template-columns:1fr; } }
 .cv-pay-modal { width:520px; max-width:calc(100vw - 32px); }
 .pay-total { display:flex; justify-content:space-between; align-items:baseline; padding:12px 16px; border-radius:12px; background:${PALETTE.bgSoft}; margin-bottom:14px; }
 .pay-total span { font-size:15px; color:${PALETTE.textSub}; }
