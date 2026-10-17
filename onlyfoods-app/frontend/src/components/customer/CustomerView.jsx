@@ -1,61 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
-
-// ป๊อปอัพแจ้งเตือนที่เด้งขึ้นด้านบนของทุกหน้า หายเองใน 6 วินาที แตะเพื่อไปหน้าการแจ้งเตือน
-function NotifToastItem({ toast, icon, onClose, onOpen }) {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 6000);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast.key]);
-
-  return (
-    <div
-      onClick={onOpen}
-      role="alert"
-      style={{
-        pointerEvents: "auto",
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "12px",
-        padding: "14px 14px 14px 16px",
-        background: "#FFFFFF",
-        borderRadius: "16px",
-        borderLeft: "5px solid #EA580C",
-        boxShadow: "0 12px 32px rgba(42, 44, 65, 0.28)",
-        cursor: "pointer",
-        animation: "notifToastIn 0.3s ease-out",
-        fontFamily: "inherit",
-      }}
-    >
-      <div style={{ color: "#EA580C", flexShrink: 0, marginTop: "1px" }}>{icon}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: "900", fontSize: "14px", color: "#1E293B", marginBottom: "2px" }}>{toast.title}</div>
-        <div style={{ fontSize: "13px", color: "#475569", lineHeight: 1.45, overflowWrap: "anywhere" }}>{toast.message}</div>
-      </div>
-      <button
-        type="button"
-        aria-label="ปิดการแจ้งเตือน"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        style={{
-          border: "none",
-          background: "transparent",
-          color: "#94A3B8",
-          fontSize: "18px",
-          lineHeight: 1,
-          cursor: "pointer",
-          padding: "2px 4px",
-          fontFamily: "inherit",
-        }}
-      >
-        ×
-      </button>
-    </div>
-  );
-}
+import { createCartRow, getNotifKey, getOutOfStockItem, previewLateArrival } from "./utils/orders";
+import { getCurrentDateTimeForBackend, getCurrentTimeFormatted, secondsUntil } from "./utils/time";
+import { COLORS, MAX_FILE_SIZE } from "./constants";
+import { DISH_MINUTES, SCHEDULED_PICKUP_BASE_MINUTES, buildQueueSchedule, canEstimateOrder, countOrderDishes, formatPickupRange, formatScheduledPickupRange, isImmediatePickup, kitchenBuffer, orderStatusKey } from "./utils/queueEstimate";
+import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, logoStyle, pageStyle, profileStyle, searchStyle } from "./styles";
+import { BigUserIcon, CameraIcon, CartIcon, CartIconPlus, HiIcon, HomeIcon, NoodleBowlArt, NotiIcon, OrderIcon, SparkleArt, StarIcon, ThaiTeaArt, UserIcon } from "./icons";
+import PaymentModal from "./modals/PaymentModal";
+import ReviewModal from "./modals/ReviewModal";
+import OutOfStockModal from "./modals/OutOfStockModal";
+import TopUpModal from "./modals/TopUpModal";
+import StoreReviewsModal from "./modals/StoreReviewsModal";
+import ReportModal from "./modals/ReportModal";
+import ViewReportsModal from "./modals/ViewReportsModal";
+import NotifToasts from "./NotifToasts";
+import CustomAlert from "./modals/CustomAlert";
 
 export default function CustomerView({ user, apiBase, onLogout }) {
 
@@ -156,68 +115,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [myIssueReports, setMyIssueReports] = useState([]);
   const [isViewReportsModalOpen, setIsViewReportsModalOpen] = useState(false);
 
-  // ICONS
-  const CameraIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/></svg>);
-  const UserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>);
-  const BigUserIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>);
-  const NotiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>);
-  const HomeIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>);
-  const OrderIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></svg>);
-  const HiIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>);
-  const CartIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>);
-  const CartIconPlus = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 5h6"/><path d="M19 2v6"/><path d="m2.05 2.05 1.099-.028a1 1 0 011.008.815l2.69 14.347A1 1 0 007.83 18H18"/><path d="M4.564 5H12"/><path d="M6.25 14h12.712a2 2 0 001.991-1.57l.172-1.041"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/></svg>);
-  const StarIcon = () => (<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="22" height="22" fill="#FFD700"><path d="M12 .587l3.668 7.431 8.2 1.192-5.934 5.787 1.4 8.168L12 18.896l-7.334 3.857 1.4-8.168L.132 9.21l8.2-1.192z"/></svg>);
-  const CommentIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg>);
-
-  const NoodleBowlArt = ({ width = 220, height = 170, className = "", style = {}, ...props }) => (
-    <svg viewBox="0 0 220 170" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
-      <ellipse cx="110" cy="161" rx="80" ry="7" fill="rgba(80,30,0,0.2)" />
-      <path d="M26 84 Q30 34 110 30 Q190 34 194 84Z" fill="#FFD966" />
-      <g stroke="#FFF1B8" strokeWidth="5" strokeLinecap="round" fill="none">
-        <path d="M38 76 Q56 52 74 72 T110 66 T146 62 T182 74" />
-        <path d="M44 62 Q62 40 84 56 T126 48 T170 56" />
-        <path d="M60 46 Q84 30 108 42 T152 40" />
-      </g>
-      <ellipse cx="78" cy="58" rx="24" ry="15" fill="#FFFFFF" />
-      <circle cx="80" cy="57" r="9" fill="#FFB400" />
-      <path d="M126 46 Q150 26 168 50 Q174 66 158 68 Q164 56 148 54 Q138 54 130 62Z" fill="#FF8A4C" />
-      <g fill="#5CB85C">
-        <circle cx="110" cy="40" r="4" />
-        <circle cx="100" cy="66" r="4" />
-        <circle cx="148" cy="72" r="4" />
-        <circle cx="58" cy="76" r="4" />
-      </g>
-      <g stroke="#7B4A22" strokeWidth="5" strokeLinecap="round">
-        <line x1="168" y1="2" x2="116" y2="52" />
-        <line x1="182" y1="10" x2="128" y2="58" />
-      </g>
-      <path d="M14 80 H206 Q206 150 110 156 Q14 150 14 80Z" fill="#E8412F" />
-      <rect x="10" y="74" width="200" height="12" rx="6" fill="#C93322" />
-      <path d="M18 104 H202 Q200 114 196 122 H24 Q20 114 18 104Z" fill="#FFC72C" />
-      <path d="M28 94 Q30 122 52 142" stroke="rgba(255,255,255,0.3)" strokeWidth="6" strokeLinecap="round" fill="none" />
-    </svg>
-  );
-
-  const ThaiTeaArt = ({ width = 100, height = 192, className = "", style = {}, ...props }) => (
-    <svg viewBox="0 0 100 192" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
-      <ellipse cx="50" cy="189" rx="34" ry="4" fill="rgba(80,30,0,0.2)" />
-      <path d="M14 38 L24 178 Q25 186 34 186 H66 Q75 186 76 178 L86 38Z" fill="rgba(255,255,255,0.5)" />
-      <path d="M17 84 H83 L76 178 Q75 186 66 186 H34 Q25 186 24 178Z" fill="#F28A2E" />
-      <path d="M17 84 Q33 74 50 84 T83 84 V104 Q66 96 50 106 T17 102Z" fill="#FFE9CF" />
-      <rect x="30" y="118" width="22" height="22" rx="5" fill="rgba(255,255,255,0.55)" transform="rotate(-12 41 129)" />
-      <rect x="50" y="144" width="20" height="20" rx="5" fill="rgba(255,255,255,0.5)" transform="rotate(10 60 154)" />
-      <path d="M26 56 L32 170" stroke="rgba(255,255,255,0.6)" strokeWidth="5" strokeLinecap="round" />
-      <rect x="10" y="32" width="80" height="10" rx="5" fill="#FFFFFF" />
-      <line x1="66" y1="2" x2="56" y2="132" stroke="#3D5AFE" strokeWidth="8" strokeLinecap="round" />
-    </svg>
-  );
-
-  const SparkleArt = ({ width = 24, height = 24, className = "", style = {}, ...props }) => (
-    <svg viewBox="-12 -12 24 24" width={width} height={height} className={className} style={{ display: "inline-block", verticalAlign: "middle", ...style }} {...props}>
-      <path d="M0 -11 Q0 0 11 0 Q0 0 0 11 Q0 0 -11 0 Q0 0 0 -11Z" fill="#FFFFFF" />
-    </svg>
-  );
-
   // CUSTOM ALERT STATE
   const [alertData, setAlertData] = useState({
     isOpen: false,
@@ -230,79 +127,17 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setAlertData({ isOpen: true, title, message, type, onConfirm });
   };
 
-  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-
-  const COLORS = {
-    orange: "#FF724C",
-    yellow: "#FDBF50",
-    navy: "#2A2C41",
-    bg: "#FFF9F5",
-    white: "#FFFFFF",
-    text: "#2A2C41",
-    gray: "#777777",
-    lightGray: "#F4F4F4",
-    border: "#EEEEEE",
-    green: "#20B486",
-    red: "#E0523B",
-  };
-
-  const getNotifKey = (n) => n.NotifId ?? n.NotificationID ?? n.id ?? `${n.Message}_${n.CreatedAt}`;
-
-  const getOutOfStockItem = (order) => {
-    const items = order?.items || [];
-    return items.find((it) => it.ItemStatus === "OUT_OF_STOCK") || items[0] || null;
-  };
-
-  // วินาทีที่เหลือจนถึง CancelDeadline ที่ร้านกำหนด (ไม่รีเซ็ตเป็น 30 นาทีทุกครั้งที่เปิดแอป)
-  const secondsUntil = (deadline) => {
-    if (!deadline) return 1800;
-    const iso = String(deadline).trim().replace(" ", "T");
-    // backend ส่งเวลาไทยแบบไม่มี timezone -> อ่านเป็น +07:00 (ไม่ขึ้นกับเขตเวลาของเครื่องลูกค้า)
-    const end = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}+07:00`).getTime();
-    if (Number.isNaN(end)) return 1800;
-    return Math.max(0, Math.floor((end - Date.now()) / 1000));
-  };
-
-  const formatTimeLeft = (seconds) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${s < 10 ? "0" : ""}${s}`;
-  };
-
-  const getCurrentTimeFormatted = () => {
-    const now = new Date();
-    return now.toLocaleTimeString("th-TH", {
-      timeZone: "Asia/Bangkok",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }) + " น.";
-  };
-
-  const getCurrentDateTimeForBackend = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Bangkok",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).formatToParts(now);
-
-    const getPart = (type) => parts.find((p) => p.type === type)?.value || "00";
-    return `${getPart("year")}-${getPart("month")}-${getPart("day")} ${getPart("hour")}:${getPart("minute")}:${getPart("second")}`;
-  };
-
   const fetchStores = async () => {
     try {
       const res = await fetch(`${apiBase}/api/stores`);
       if (!res.ok) return;
       const allStores = await res.json();
-      const data = Array.isArray(allStores) ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE"): [];
+      // เก็บเฉพาะร้านที่ "ไม่ถูกระงับ" และ "สัญญายังมีผล" (ต้องผ่านทั้งสองเงื่อนไข จึงใช้ &&)
+      // ร้านที่สัญญายังมีผลแต่ปิดชั่วคราว (IsOpen = false) ยังแสดงเป็นการ์ดสีจาง
+      // หน้าผู้บริหาร/เจ้าของร้านยังเห็นครบตามเดิม เพราะกรองเฉพาะฝั่งหน้าลูกค้า
+      const data = Array.isArray(allStores)
+        ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE")
+        : [];
       const storesWithReviews = await Promise.all(
         data.map(async (store) => {
           try {
@@ -343,7 +178,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       console.error("Error fetching products:", error);
     }
   };
-
 
   const fetchMyOrders = async () => {
     if (!userId) return;
@@ -392,7 +226,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       console.error("Error fetching orders:", error);
     }
   };
-
 
   const fetchNotifs = async () => {
     if (!userId) return;
@@ -615,7 +448,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     return () => clearInterval(interval);
   }, [apiBase]);
 
-
   const activeStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
     [stores, selectedStore]
@@ -630,9 +462,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const filteredStores = useMemo(() => {
     const keyword = search.trim().toLowerCase();
+    // แสดงเฉพาะร้านที่สัญญายังมีผล (ContractState คำนวณจากวันที่ที่ backend: NONE / UPCOMING / ACTIVE / EXPIRED)
     const contracted = stores.filter((store) => store.ContractState === "ACTIVE");
-    if (!keyword) return stores;
-    return stores.filter((store) => String(store.StoreName || "").toLowerCase().includes(keyword));
+    if (!keyword) return contracted;
+    return contracted.filter((store) => String(store.StoreName || "").toLowerCase().includes(keyword));
   }, [stores, search]);
 
   const filteredProducts = useMemo(() => {
@@ -658,14 +491,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const handleSelectStore = (storeId) => {
     setSelectedStore(storeId);
     setViewMode("products");
-  };
-
-  // CART HANDLERS
-  const createCartRow = (product) => {
-    const uniqueId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    return { ...product, cartItemId: uniqueId, qty: 1, item_note: "" };
   };
 
   const addToCart = (product) => {
@@ -1016,23 +841,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setIsPaymentModalOpen(true);
   };
 
-  // LATE PICKUP HANDLER
-
-  // เวลามาถึงที่จะได้ถ้ากดยืนยัน (ตรงกับ backend): นับจากเวลานัดรับ หรือเวลาตอนนี้ถ้าเลยเวลานัดแล้ว + N นาที
-  // แจ้งใหม่ = แทนเวลาเดิม ไม่บวกต่อ (นัด 12:00 กด 15 -> 12:15 ; กด 30 อีกครั้ง -> 12:30)
-  const previewLateArrival = (order, minutes) => {
-    const now = new Date();
-    let base = now;
-    const m = String(order.PickupTime || order.pickup_time || "").match(/(\d{1,2}):(\d{2})/);
-    if (m) {
-      const pickup = new Date(now);
-      pickup.setHours(Number(m[1]), Number(m[2]), 0, 0);
-      if (pickup > now) base = pickup;
-    }
-    const arrival = new Date(base.getTime() + Number(minutes) * 60000);
-    return `${String(arrival.getHours()).padStart(2, "0")}:${String(arrival.getMinutes()).padStart(2, "0")}`;
-  };
-
   const handleLatePickup = async (order, minutes) => {
     const orderId = order.OrderID;
 
@@ -1109,7 +917,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
   // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
   const handleSlipChange = (e) => {
@@ -1161,105 +968,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
   }, [apiBase, selectedStore, isCartOpen, pickupTime]);
 
-  // ===== คำนวณเวลารอคิว =====
-  // - จานละ 4 นาที (ดูจำนวนจานของแต่ละคิว ไม่ใช่จำนวนคิว)
-  // - คิวเราเริ่มนับต่อจากเวลาที่คิวก่อนหน้าจะเสร็จ ไม่ซ้อนทับกัน
-  // - เวลาเผื่อตามจานค้างทั้งครัว: < 5 จาน = ปกติ, 5-15 จาน = +10%, > 15 จาน = +20%
-  // - ถ้าครัวกด "เสร็จแล้ว" ก่อนเวลา คิวนั้นจะหลุดจากคิวค้าง และ ReadyAt จริงกลายเป็นจุดเริ่มของคิวถัดไป
-  //   คิวที่เหลือทั้งหมดจึงถูกคำนวณใหม่ทุกครั้งที่โหลดข้อมูลคิว (ทุก 5 วินาที)
-  const DISH_MINUTES = 4;
-  const kitchenBuffer = (waitingDishes) => (waitingDishes > 15 ? 1.2 : waitingDishes >= 5 ? 1.1 : 1);
-
-  const parseBangkokTime = (value) => {
-    if (!value) return null;
-    const d = new Date(String(value).replace(" ", "T") + "+07:00");
-    return Number.isNaN(d.getTime()) ? null : d;
-  };
-
-  const formatBangkokTime = (d) =>
-    d.toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false });
-
-  // รับทันที = ไม่มีเวลานัด หรือเวลานัดตรงกับเวลาที่สั่ง (ตอนไม่เลือกเวลา ระบบส่งเวลาปัจจุบันไปเก็บเป็น PickupTime)
-  // ใช้หลักเดียวกับ KitchenView; เผื่อคลาดเคลื่อน 2 นาทีจากเวลาที่ client กับ server สร้างออเดอร์
-  const isImmediatePickup = (pickup, created) => {
-    const pm = String(pickup || "").match(/(\d{1,2}):(\d{2})/);
-    if (!pm) return true;
-    const c = parseBangkokTime(created);
-    if (!c) return false;
-    const [ch, cm] = formatBangkokTime(c).split(":").map(Number);
-    return Math.abs(Number(pm[1]) * 60 + Number(pm[2]) - (ch * 60 + cm)) <= 2;
-  };
-
-  // คืน { slots: {orderId: {start, end}}, newOrder: {start, end} }
-  // newOrder = ออเดอร์สมมติที่จะต่อท้ายคิว (ใช้กับตะกร้า) เมื่อใส่ extraDishes
-  const buildQueueSchedule = (queueOrders, extraDishes = 0) => {
-    const now = new Date();
-    const list = Array.isArray(queueOrders) ? queueOrders : [];
-    const isScheduled = (o) => !isImmediatePickup(o.pickup_time, o.created_at); // ออเดอร์นัดเวลาจริงไม่อยู่ในสายคิวทันที
-    const active = list
-      .filter((o) => ["PENDING", "COOKING"].includes(String(o.status || "").toUpperCase()) && !isScheduled(o))
-      .sort((a, b) => Number(a.order_id) - Number(b.order_id));
-
-    const waitingDishes = active.reduce((sum, o) => sum + (Number(o.dish_count) || 0), 0) + extraDishes;
-    const buffer = kitchenBuffer(waitingDishes);
-
-    // จุดเริ่ม = เวลาที่คิวล่าสุดทำเสร็จจริง (ReadyAt ของคิวที่กด "เสร็จแล้ว")
-    let cursor = null;
-    list.forEach((o) => {
-      if (!["READY", "COMPLETED"].includes(String(o.status || "").toUpperCase()) || isScheduled(o)) return;
-      const t = parseBangkokTime(o.ready_at);
-      if (t && (!cursor || t > cursor)) cursor = t;
-    });
-
-    const slots = {};
-    active.forEach((o) => {
-      const created = parseBangkokTime(o.created_at);
-      let start = cursor || created || now;
-      if (created && created > start) start = created;
-      let end = new Date(start.getTime() + (Number(o.dish_count) || 0) * DISH_MINUTES * buffer * 60000);
-      if (end < now) end = now; // ครัวช้ากว่าที่ประเมิน ให้คิวถัดไปเริ่มจากตอนนี้
-      slots[o.order_id] = { start, end };
-      cursor = end;
-    });
-
-    const newStart = cursor && cursor > now ? cursor : now;
-    const newOrder = {
-      start: newStart,
-      end: new Date(newStart.getTime() + extraDishes * DISH_MINUTES * buffer * 60000),
-    };
-    return { slots, newOrder, buffer, waitingDishes };
-  };
-
-  // แสดงเป็นช่วง "เริ่ม–เสร็จ" ปัดนาทีให้เป็นตัวเลขเต็ม และไม่แสดงเวลาเริ่มที่ผ่านมาแล้ว
-  const formatPickupRange = (start, end) => {
-    const now = new Date();
-    const s = new Date(start < now ? now : start);
-    s.setSeconds(0, 0);
-    let e = new Date(end);
-    if (e.getSeconds() || e.getMilliseconds()) {
-      e.setSeconds(0, 0);
-      e = new Date(e.getTime() + 60000);
-    }
-    if (e <= s) e = new Date(s.getTime() + 60000);
-    return `${formatBangkokTime(s)}–${formatBangkokTime(e)} น.`;
-  };
-
   // ช่วงเวลารับโดยประมาณของตะกร้า (ต่อท้ายคิวที่ค้างอยู่)
   const getCustomerPickupRange = () => {
     const cartDishCount = cart.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0);
     if (!cartDishCount) return "กำลังคำนวณเวลา...";
     const { newOrder } = buildQueueSchedule(queueEstimateOrders, cartDishCount);
     return formatPickupRange(newOrder.start, newOrder.end);
-  };
-
-  // ===== เวลารับโดยประมาณของ "แต่ละออเดอร์" ในหน้าคำสั่งซื้อ =====
-  // สถานะที่ "จบแล้ว" ไม่ต้องแสดงเวลารอ / Ready = แสดงว่าพร้อมรับ / ที่เหลือทุกสถานะ (รอตรวจสลิป, Pending, Cooking,
-  // รอโอนส่วนต่าง, รอเปลี่ยนเมนู ฯลฯ) แสดงเป็นช่วงเวลาโดยประมาณ
-  const FINISHED_ORDER_STATUSES = ["completed", "cancelled", "canceled", "noshow", "no_show"];
-  const orderStatusKey = (order) => String(order?.Status || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-  const canEstimateOrder = (order) => {
-    const st = orderStatusKey(order);
-    return st !== "ready" && !FINISHED_ORDER_STATUSES.includes(st);
   };
 
   // โหลดคิวของร้านที่ลูกค้ามีออเดอร์ค้างอยู่ เฉพาะตอนเปิดแท็บคำสั่งซื้อ
@@ -1304,24 +1018,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       clearInterval(interval);
     };
   }, [apiBase, activeTab, activeOrderStoreKey]);
-
-  // ออเดอร์ที่ลูกค้านัดเวลารับไว้: แสดงเป็นช่วง "เวลานัด – เวลานัด + เวลาเผื่อ" เผื่อครัวคิวแน่นแล้วเสร็จช้ากว่านัด
-  // เวลาเผื่อ = 5 นาที (1 จาน) + จานที่เพิ่มขึ้นจานละ 4 นาที x ตัวคูณเผื่อตามจานค้างทั้งครัว (+10% / +20%)
-  const SCHEDULED_PICKUP_BASE_MINUTES = 5;
-  const countOrderDishes = (order) =>
-    (order?.items || []).reduce(
-      (sum, it) => sum + (String(it.ItemStatus || "NORMAL").toUpperCase() === "NORMAL" ? Number(it.Qty) || 0 : 0),
-      0
-    ) || 1;
-
-  const formatScheduledPickupRange = (pickup, windowMinutes) => {
-    const m = String(pickup || "").match(/(\d{1,2}):(\d{2})/);
-    if (!m) return String(pickup || "-");
-    const startMin = Number(m[1]) * 60 + Number(m[2]);
-    const endMin = (startMin + windowMinutes) % 1440;
-    const fmt = (t) => `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
-    return `${fmt(startMin)}–${fmt(endMin)} น.`;
-  };
 
   const getOrderPickupRange = (order) => {
     const status = orderStatusKey(order);
@@ -1601,17 +1297,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       setIsSubmittingReport(false);
     }
   };
-
-  // STYLE
-  const pageStyle = { minHeight: "100vh", height: "100vh", overflowY: "auto", scrollbarWidth: "none", background: COLORS.bg, color: COLORS.text, fontFamily: "'Sarabun', 'Roboto', sans-serif", boxSizing: "border-box" };
-  const containerStyle = { width: "100%", maxWidth: "1450px", margin: "0 auto", padding: "20px 20px 110px", boxSizing: "border-box" };
-  const headerStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "15px", marginBottom: "25px", flexWrap: "wrap" };
-  const logoStyle = { fontSize: "27px", fontWeight: "900", color: COLORS.navy, whiteSpace: "nowrap", cursor: "pointer" };
-  const searchStyle = { flex: "1", minWidth: "220px", maxWidth: "560px", padding: "13px 20px", border: `1px solid ${COLORS.border}`, borderRadius: "30px", outline: "none", fontSize: "14px", background: COLORS.white, boxSizing: "border-box" };
-  const profileStyle = { display: "flex", alignItems: "center", gap: "10px", background: COLORS.white, borderRadius: "30px", padding: "7px 14px 7px 7px", boxShadow: "0 4px 18px rgba(42,44,65,0.06)", cursor: "pointer" };
-  const avatarStyle = { width: "40px", height: "40px", borderRadius: "50%", background: COLORS.yellow, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "19px", overflow: "hidden" };
-  const heroStyle = { background: `linear-gradient(135deg, ${COLORS.orange}, ${COLORS.yellow})`, borderRadius: "28px", padding: "32px", color: COLORS.white, display: "flex", justifyContent: "space-between", alignItems: "center", gap: "20px", marginBottom: "28px", overflow: "hidden" };
-  const cardStyle = { background: COLORS.white, borderRadius: "20px", padding: "13px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}` };
 
   // MENU TAB 
   const renderMenu = () => {
@@ -2352,8 +2037,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   </div>
                 )}
 
-
-
                 {order.Status === "Completed" && (
                   <div style={{ display: "flex", gap: "10px", marginTop: "15px", width: "100%" }}>
                     <button
@@ -2598,811 +2281,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  // PAYMENT MODAL (PromptPay / TrueMoney + แนบสลิป)
-  const renderPaymentModal = () => {
-    if (!isPaymentModalOpen) return null;
-
-    return (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(42,44,65,0.6)",
-          zIndex: 2000,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "20px",
-          boxSizing: "border-box",
-          overflowY: "auto",
-        }}
-        onClick={() => setIsPaymentModalOpen(false)}
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            background: COLORS.white,
-            width: "min(500px, 100%)",
-            maxHeight: "90vh",
-            overflowY: "auto",
-            borderRadius: "24px",
-            padding: "25px",
-            boxSizing: "border-box",
-            textAlign: "center",
-          }}
-        >
-          {/* HEADER */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}>ชำระเงิน</h3>
-            <button
-              onClick={() => setIsPaymentModalOpen(false)}
-              style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}
-            >
-              ×
-            </button>
-          </div>
-
-          {/* TOTAL */}
-          <div style={{ background: "#FFF9F5", padding: "15px", borderRadius: "15px", marginBottom: "18px", border: `1px solid ${COLORS.border}` }}>
-            <div style={{ fontSize: "13px", color: COLORS.gray }}>ยอดชำระสุทธิ</div>
-            <div style={{ fontSize: "28px", fontWeight: "900", color: COLORS.orange }}>{totalAmount.toFixed(2)} ฿</div>
-          </div>
-
-          {/* PROMPTPAY */}
-          {paymentMethod === "PromptPay" && (
-            <>
-              <div style={{ margin: "15px 0", background: "#FFFFFF", padding: "15px", borderRadius: "16px", display: "inline-block", border: `2px solid ${COLORS.navy}` }}>
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
-                  alt="PromptPay QR Code"
-                  style={{ width: "180px", height: "180px", display: "block" }}
-                />
-                <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "8px", fontWeight: "700" }}>PromptPay (จำลองระบบ)</div>
-              </div>
-
-              <div style={{ marginTop: "15px", textAlign: "left" }}>
-                <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleSlipChange}
-                  style={{ width: "100%", padding: "10px", borderRadius: "10px", border: `1px dashed ${COLORS.orange}`, background: COLORS.bg, fontSize: "12px", boxSizing: "border-box" }}
-                />
-              </div>
-
-              {slipPreview && (
-                <div style={{ marginTop: "12px", textAlign: "center" }}>
-                  <div style={{ fontSize: "11px", color: COLORS.green, fontWeight: "800", marginBottom: "4px" }}>✓ เลือกรูปภาพเรียบร้อย</div>
-                  <img src={slipPreview} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />
-                </div>
-              )}
-            </>
-          )}
-
-          {paymentMethod === "TrueMoney" && (
-            <>
-              <div style={{ margin: "15px 0", background: "#FFFFFF", padding: "15px", borderRadius: "16px", display: "inline-block", border: `2px solid ${COLORS.navy}` }}>
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${totalAmount}`}
-                  alt="TrueMoney QR Code"
-                  style={{ width: "180px", height: "180px", display: "block" }}
-                />
-                <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "8px", fontWeight: "700" }}>TrueMoney (จำลองระบบ)</div>
-              </div>
-
-              <div style={{ marginTop: "15px", textAlign: "left" }}>
-                <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>แนบหลักฐานสลิปการโอนเงิน (ไม่เกิน 5MB):</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleSlipChange}
-                  style={{ width: "100%", padding: "10px", borderRadius: "10px", border: `1px dashed ${COLORS.orange}`, background: COLORS.bg, fontSize: "12px", boxSizing: "border-box" }}
-                />
-              </div>
-
-              {slipPreview && (
-                <div style={{ marginTop: "12px", textAlign: "center" }}>
-                  <div style={{ fontSize: "11px", color: COLORS.green, fontWeight: "800", marginBottom: "4px" }}>✓ เลือกรูปภาพเรียบร้อย</div>
-                  <img src={slipPreview} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />
-                </div>
-              )}
-            </>
-          )}
-
-          {/* SUBMIT */}
-          <button
-            onClick={submitOrder}
-            disabled={isSubmittingOrder}
-            style={{
-              width: "100%",
-              padding: "15px",
-              marginTop: "10px",
-              border: "none",
-              borderRadius: "15px",
-              background: isSubmittingOrder ? "#BBBBBB" : COLORS.green,
-              color: COLORS.white,
-              fontSize: "16px",
-              fontWeight: "900",
-              cursor: isSubmittingOrder ? "not-allowed" : "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            {isSubmittingOrder ? "กำลังส่งคำสั่งซื้อ..." : "ยืนยันการชำระเงินและสั่งซื้อ"}
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  // REVIEW MODAL
-  const renderReviewModal = () => {
-    if (!reviewOrder) return null;
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }} onClick={() => setReviewOrder(null)}>
-        <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(420px, 100%)", borderRadius: "22px", padding: "25px", boxSizing: "border-box" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, fontSize: "20px" }}>{isReadOnlyReview ? "รีวิวของคุณ" : "ให้คะแนนร้าน"}</h3>
-            <button onClick={() => setReviewOrder(null)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
-          </div>
-          <p style={{ color: COLORS.gray, fontSize: "13px" }}>คิว #{reviewOrder.QueueNo} • {reviewOrder.StoreName}</p>
-
-          <div style={{ marginTop: "20px", textAlign: "center" }}>
-            <label style={{ fontSize: "14px", fontWeight: "800", display: "block", marginBottom: "8px" }}>คะแนนความพึงพอใจ</label>
-            {isReadOnlyReview ? (
-              <div style={{ fontSize: "30px" }}>
-                {Array.from({ length: 5 }, (_, i) => (<StarIcon key={i} style={{color: i < Number(rating) ? "#FFD166" : "#D9D9D9"}}/>))}
-                <span style={{ fontSize: "14px", color: COLORS.gray, marginLeft: "8px", fontWeight: "700" }}>({rating}/5)</span>
-              </div>
-            ) : (
-              <div>
-                <div style={{ display: "flex", justifyContent: "center", gap: "8px", fontSize: "36px", cursor: "pointer", userSelect: "none" }}>
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <span
-                      key={star}
-                      onClick={() => setRating(star)}
-                      onMouseEnter={() => setHoverRating(star)}
-                      onMouseLeave={() => setHoverRating(0)}
-                      style={{
-                        transition: "transform 0.1s ease",
-                        transform: (hoverRating >= star || (!hoverRating && rating >= star)) ? "scale(1.15)" : "scale(1)",
-                        filter: (hoverRating >= star || (!hoverRating && rating >= star)) ? "none" : "grayscale(100%) opacity(0.3)"
-                      }}
-                    >
-                      <StarIcon/>
-                    </span>
-                  ))}
-                </div>
-                <div style={{ fontSize: "13px", color: COLORS.orange, fontWeight: "800", marginTop: "6px" }}>
-                  {hoverRating ? `${hoverRating} ดาว` : `${rating} ดาว`}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ marginTop: "18px" }}>
-            <label style={{ fontSize: "13px", fontWeight: "800" }}>ความคิดเห็น (ไม่จำเป็นต้องใส่)</label>
-            {isReadOnlyReview ? (
-              <div style={{ marginTop: "7px", background: COLORS.lightGray, padding: "13px", borderRadius: "12px", fontSize: "13px" }}>{reviewComment}</div>
-            ) : (
-              <textarea value={reviewComment} onChange={e => setReviewComment(e.target.value)} placeholder="บอกความรู้สึกของคุณเกี่ยวกับอาหารและบริการ (ไม่จำเป็น)..." rows={3} style={{ width: "100%", boxSizing: "border-box", marginTop: "7px", padding: "11px", borderRadius: "12px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit", resize: "vertical" }} />
-            )}
-          </div>
-
-          <div style={{ marginTop: "18px" }}>
-            <label style={{ fontSize: "13px", fontWeight: "800", display: "block", marginBottom: "6px" }}>📷 แนบรูปภาพรีวิว (ไม่เกิน 5MB)</label>
-            {isReadOnlyReview ? (
-              reviewImagePreview ? (
-                <img src={reviewImagePreview} alt="Review Attachment" style={{ width: "100%", maxHeight: "200px", objectFit: "cover", borderRadius: "12px", marginTop: "5px" }} />
-              ) : (
-                <div style={{ fontSize: "12px", color: COLORS.gray, fontStyle: "italic" }}>ไม่มีรูปภาพแนบ</div>
-              )
-            ) : (
-              <div>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleReviewImageChange}
-                  style={{
-                    width: "100%",
-                    padding: "8px",
-                    borderRadius: "10px",
-                    border: `1px dashed ${COLORS.orange}`,
-                    background: COLORS.bg,
-                    fontSize: "12px",
-                    boxSizing: "border-box"
-                  }}
-                />
-                {reviewImagePreview && (
-                  <div style={{ marginTop: "10px", textAlign: "center" }}>
-                    <img src={reviewImagePreview} alt="Review Preview" style={{ width: "100px", height: "100px", objectFit: "cover", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {!isReadOnlyReview && (
-            <button onClick={submitReview} style={{ width: "100%", marginTop: "22px", padding: "13px", border: "none", borderRadius: "13px", background: COLORS.orange, color: COLORS.white, fontWeight: "900", fontSize: "14px", cursor: "pointer", fontFamily: "inherit" }}>
-              ส่งรีวิว 
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // OUT OF STOCK MODAL
-  const renderOutOfStockModal = () => {
-    if (!outOfStockOrder) return null;
-
-    const targetItem = getOutOfStockItem(outOfStockOrder);
-    const targetPrice = Number(targetItem?.UnitPrice || 0);
-    const availableProducts = products.filter((p) => {
-      const isSameStore = Number(p.StoreId || p.store_id) === Number(outOfStockOrder.StoreId || outOfStockOrder.StoreID);
-      const isAvailable = !Number(p.IsOutOfStock);
-      const isNotOriginal = Number(p.ProductId) !== Number(targetItem?.ProductId);
-      return isSameStore && isAvailable && isNotOriginal;
-    });
-
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.75)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-        <div style={{ background: COLORS.white, width: "min(460px, 100%)", borderRadius: "24px", padding: "25px", textAlign: "center" }}>
-          <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>
-            สินค้าบางรายการหมด!
-          </h3>
-          <p style={{ color: COLORS.gray, fontSize: "13px", marginTop: "6px" }}>
-            คิว #{outOfStockOrder.QueueNo} • ร้าน {outOfStockOrder.StoreName} แจ้งว่าวัตถุดิบหมดชั่วคราว
-          </p>
-          {targetItem && (
-            <div style={{ background: "#F8F8FA", borderRadius: "12px", padding: "10px 14px", marginTop: "10px", fontSize: "13px", textAlign: "left" }}>
-              <div>เมนูที่หมด: <b>{targetItem.ProductName}</b> ({Number(targetItem.UnitPrice || 0).toFixed(2)} ฿)</div>
-              {outOfStockOrder.CancelReason && <div style={{ color: COLORS.gray, marginTop: "4px" }}>เหตุผลจากร้าน: {outOfStockOrder.CancelReason}</div>}
-              <div style={{ color: COLORS.gray, marginTop: "4px" }}>เมนูที่ถูกกว่า: คืนเงินส่วนต่างให้ • เมนูที่แพงกว่า: โอนส่วนต่างเพิ่มแล้วแนบสลิป</div>
-            </div>
-          )}
-
-          <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "10px 14px", borderRadius: "12px", margin: "14px 0", fontSize: "14px", fontWeight: "800", border: `1px solid ${COLORS.red}` }}>
-            ⏱ กรุณาเลือกภายใน: <span style={{ fontSize: "18px", color: COLORS.red, fontWeight: "900" }}>{formatTimeLeft(timeLeft)}</span> นาที
-            <div style={{ fontSize: "11px", fontWeight: "normal", marginTop: "2px", color: "#b91c1c" }}>
-              (ระบบจะยกเลิกและคืนเงินให้อัตโนมัติหากหมดเวลา)
-            </div>
-          </div>
-
-          {!isChangeMenuMode ? (
-            <div style={{ marginTop: "20px", display: "flex", flexDirection: "column", gap: "10px" }}>
-              <button
-                onClick={() => setIsChangeMenuMode(true)}
-                style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: COLORS.orange, color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: "pointer" }}
-              >
-                เลือกระบุเมนูใหม่ทดแทน
-              </button>
-              <button
-                onClick={() => handleCancelOutOfStockOrder("ลูกค้าขอยกเลิกออเดอร์เนื่องจากวัตถุดิบหมด")}
-                style={{ width: "100%", padding: "14px", border: `1px solid ${COLORS.red}`, borderRadius: "14px", background: "#FFF0ED", color: COLORS.red, fontWeight: "900", fontSize: "15px", cursor: "pointer" }}
-              >
-                ยกเลิกออเดอร์นี้ (ขอคืนเงิน)
-              </button>
-            </div>
-          ) : (
-            <div style={{ marginTop: "16px", textAlign: "left" }}>
-              <label style={{ fontSize: "13px", fontWeight: "800", color: COLORS.navy, display: "block", marginBottom: "8px" }}>
-                เลือกเมนูทดแทนจากร้าน {outOfStockOrder.StoreName}:
-              </label>
-
-              <div style={{ maxHeight: "200px", overflowY: "auto", display: "grid", gap: "8px", marginBottom: "14px" }}>
-                {availableProducts.length === 0 ? (
-                  <div style={{ textAlign: "center", color: COLORS.gray, padding: "20px", fontSize: "13px" }}>
-                    ไม่มีเมนูอื่นที่พร้อมจำหน่ายในขณะนี้
-                  </div>
-                ) : (
-                  availableProducts.map((product) => (
-                    <div
-                      key={product.ProductId}
-                      onClick={() => setNewSelectedProduct(product)}
-                      style={{
-                        padding: "10px 14px",
-                        borderRadius: "12px",
-                        border: `2px solid ${newSelectedProduct?.ProductId === product.ProductId ? COLORS.orange : COLORS.border}`,
-                        background: newSelectedProduct?.ProductId === product.ProductId ? "#FFF9F5" : COLORS.white,
-                        cursor: "pointer",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center"
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: "800", fontSize: "14px" }}>{product.ProductName}</div>
-                        <div style={{ fontSize: "12px", color: COLORS.gray }}>
-                          {product.UnitPrice} ฿
-                          {(() => {
-                            const diff = (Number(product.UnitPrice) - targetPrice) * Number(targetItem?.Qty || 1);
-                            if (!targetItem || diff === 0) return null;
-                            return diff > 0
-                              ? <span style={{ color: COLORS.red, fontWeight: "800" }}> • โอนเพิ่ม {diff.toFixed(2)} ฿</span>
-                              : <span style={{ color: COLORS.green, fontWeight: "800" }}> • คืนเงิน {(-diff).toFixed(2)} ฿</span>;
-                          })()}
-                        </div>
-                      </div>
-                      {newSelectedProduct?.ProductId === product.ProductId && (
-                        <span style={{ color: COLORS.orange, fontWeight: "900" }}>✓ เลือก</span>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button
-                  onClick={() => setIsChangeMenuMode(false)}
-                  style={{ flex: 1, padding: "11px", border: `1px solid ${COLORS.border}`, borderRadius: "10px", background: COLORS.lightGray, cursor: "pointer" }}
-                >
-                  ย้อนกลับ
-                </button>
-                <button
-                  onClick={handleChangeOrderMenu}
-                  disabled={!newSelectedProduct}
-                  style={{
-                    flex: 2,
-                    padding: "11px",
-                    border: "none",
-                    borderRadius: "10px",
-                    background: newSelectedProduct ? COLORS.green : "#CCCCCC",
-                    color: COLORS.white,
-                    fontWeight: "900",
-                    cursor: newSelectedProduct ? "pointer" : "not-allowed"
-                  }}
-                >
-                  ยืนยันเปลี่ยนเมนู
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // TOP-UP MODAL (รอโอนส่วนต่าง)
-  const renderTopUpModal = () => {
-    if (!topUpOrder || outOfStockOrder || hiddenTopUpOrderId === topUpOrder.OrderID) return null;
-    const amount = Number(topUpOrder.TopUpAmount || 0);
-    const waitingCheck = Boolean(topUpOrder.TopUpSlipUrl);
-    const lastRejected = [...(topUpOrder.Payments || [])].reverse()
-      .find((p) => p.PaymentType === "TOP_UP" && p.PaymentStatus === "REJECTED" && p.SlipUrl);
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.75)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-        <div style={{ background: COLORS.white, width: "min(460px, 100%)", maxHeight: "92vh", overflowY: "auto", borderRadius: "24px", padding: "25px", textAlign: "center" }}>
-          <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>โอนส่วนต่างค่าอาหาร</h3>
-          <p style={{ color: COLORS.gray, fontSize: "13px", marginTop: "6px" }}>
-            คิว #{topUpOrder.QueueNo} • ร้าน {topUpOrder.StoreName} • เมนูใหม่ราคาสูงกว่าเดิม
-          </p>
-          <div style={{ fontSize: "30px", fontWeight: "900", color: COLORS.orange, margin: "8px 0" }}>{amount.toFixed(2)} ฿</div>
-
-          {waitingCheck ? (
-            <div style={{ background: "#ECFDF5", color: "#047857", padding: "12px", borderRadius: "12px", fontSize: "14px", fontWeight: "800" }}>
-              ส่งสลิปแล้ว รอร้านตรวจสอบ
-              <div style={{ fontSize: "12px", fontWeight: "normal", marginTop: "4px" }}>ร้านจะเริ่มทำอาหารหลังยืนยันสลิป (แนบใหม่ทับได้ถ้าส่งผิดรูป)</div>
-            </div>
-          ) : (
-            <>
-              {lastRejected && (
-                <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "10px", borderRadius: "12px", fontSize: "13px", fontWeight: "800", marginBottom: "10px" }}>
-                  สลิปก่อนหน้าถูกปฏิเสธ: {lastRejected.RejectReason || "สลิปไม่ถูกต้อง"} กรุณาแนบสลิปใหม่
-                </div>
-              )}
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=PromptPay_${amount}`}
-                alt="PromptPay QR Code"
-                style={{ width: "160px", height: "160px", margin: "4px auto 10px", display: "block" }}
-              />
-            </>
-          )}
-
-          <label style={{ display: "block", marginTop: "12px", padding: "12px", border: `2px dashed ${COLORS.border}`, borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "800", color: COLORS.navy }}>
-            {topUpSlip ? "เปลี่ยนรูปสลิป" : waitingCheck ? "แนบสลิปใหม่ (ทับใบเดิม)" : "เลือกรูปสลิปส่วนต่าง"}
-            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleTopUpSlipChange} style={{ display: "none" }} />
-          </label>
-          {topUpSlip && <img src={topUpSlip} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", margin: "10px auto 0", display: "block", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />}
-
-          <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
-            <button
-              onClick={submitTopUpSlip}
-              disabled={!topUpSlip || isSubmittingTopUp}
-              style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: topUpSlip ? COLORS.green : "#CCCCCC", color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: topUpSlip ? "pointer" : "not-allowed" }}
-            >
-              {isSubmittingTopUp ? "กำลังส่ง..." : "ส่งสลิปส่วนต่าง"}
-            </button>
-            {!waitingCheck && (
-              <button
-                onClick={cancelTopUpOrder}
-                style={{ width: "100%", padding: "14px", border: `1px solid ${COLORS.red}`, borderRadius: "14px", background: "#FFF0ED", color: COLORS.red, fontWeight: "900", fontSize: "15px", cursor: "pointer" }}
-              >
-                ไม่โอน ยกเลิกออเดอร์ (คืนเงินค่าอาหาร)
-              </button>
-            )}
-            <button
-              onClick={() => setHiddenTopUpOrderId(topUpOrder.OrderID)}
-              style={{ width: "100%", padding: "10px", border: "none", background: "transparent", color: COLORS.gray, fontSize: "13px", cursor: "pointer" }}
-            >
-              ปิดไว้ก่อน (เปิดอีกครั้งได้จากประวัติการสั่งซื้อ)
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // STORE REVIEWS MODAL
-  const renderStoreReviewsModal = () => {
-    if (!selectedStoreForReviews) return null;
-
-    return (
-      <div 
-        style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.6)", zIndex: 2500, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }}
-        onClick={() => setSelectedStoreForReviews(null)}
-      >
-        <div 
-          onClick={e => e.stopPropagation()} 
-          style={{ background: COLORS.white, width: "min(500px, 100%)", maxHeight: "80vh", borderRadius: "24px", padding: "25px", boxSizing: "border-box", display: "flex", flexDirection: "column" }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px", borderBottom: `1px solid ${COLORS.border}`, paddingBottom: "12px" }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900" }}> รีวิวจากลูกค้า</h3>
-              <div style={{ fontSize: "13px", color: COLORS.gray, marginTop: "2px" }}>ร้าน: {selectedStoreForReviews.StoreName}</div>
-            </div>
-            <button onClick={() => setSelectedStoreForReviews(null)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
-          </div>
-
-          <div style={{ overflowY: "auto", flex: 1, paddingRight: "5px" }}>
-            {isLoadingReviews ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: COLORS.gray }}>กำลังโหลดรีวิว...</div>
-            ) : storeReviewsList.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: COLORS.gray }}>
-                <div style={{ fontSize: "40px", marginBottom: "8px" }}> <CommentIcon/> </div> ยังไม่มีความคิดเห็นสำหรับร้านนี้ 
-              </div>
-            ) : (
-              <div style={{ display: "grid", gap: "12px" }}>
-                {storeReviewsList.map((rev, index) => (
-                  <div key={rev.ReviewID || index} style={{ background: COLORS.bg, padding: "14px", borderRadius: "16px", border: `1px solid ${COLORS.border}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                      <span style={{ fontWeight: "800", fontSize: "13px" }}>{rev.ReviewerName || rev.CustomerName || rev.FullName || "ผู้ใช้บริการ"}</span>
-                      <span style={{ fontSize: "11px", color: COLORS.gray }}>{rev.CreatedAt || rev.ReviewDate || ""}</span>
-                    </div>
-                    <div style={{ fontSize: "14px", marginBottom: "6px", display: "flex", gap: "2px" }}>
-                      {Array.from({ length: Number(rev.Rating || rev.rating || 5) }, (_, i) => <StarIcon key={i} />)}
-                    </div>
-
-                    {rev.Comment || rev.comment ? (
-                      <div style={{ fontSize: "13px", color: COLORS.navy, lineHeight: "1.4" }}>
-                        {rev.Comment || rev.comment}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: "12px", color: COLORS.gray, fontStyle: "italic" }}>ไม่ได้ระบุข้อความ</div>
-                    )}
-
-                    {(rev.ImageUrl || rev.image_url) && (
-                      <img 
-                        src={rev.ImageUrl || rev.image_url} 
-                        alt="Review Attachment" 
-                        style={{ width: "100%", maxHeight: "160px", objectFit: "cover", borderRadius: "10px", marginTop: "10px" }} 
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // REPORT ISSUE MODAL 
-  const renderReportModal = () => {
-    if (!isReportModalOpen) return null;
-
-    return (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(42,44,65,0.6)",
-          zIndex: 2500,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "20px",
-          boxSizing: "border-box"
-        }}
-        onClick={() => setIsReportModalOpen(false)}
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            background: COLORS.white,
-            width: "min(460px, 100%)",
-            borderRadius: "24px",
-            padding: "25px",
-            boxSizing: "border-box"
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
-            <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>
-               รายงานปัญหาการใช้งาน / คำสั่งซื้อ
-            </h3>
-            <button
-              onClick={() => setIsReportModalOpen(false)}
-              style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}
-            >
-              ×
-            </button>
-          </div>
-
-          {selectedOrderForReport && (
-            <div style={{ background: COLORS.bg, padding: "10px 14px", borderRadius: "12px", fontSize: "13px", marginBottom: "15px", border: `1px solid ${COLORS.border}` }}>
-              <b>ออเดอร์อ้างอิง:</b> คิว #{selectedOrderForReport.QueueNo} ({selectedOrderForReport.StoreName})
-            </div>
-          )}
-
-          <div style={{ marginBottom: "15px" }}>
-            <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>ประเภทปัญหา</label>
-            <select
-              value={issueType}
-              onChange={(e) => setIssueType(e.target.value)}
-              style={{ width: "100%", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }}
-            >
-              <option value="อาหารไม่ตรงตามออเดอร์">อาหารไม่ตรงตามออเดอร์</option>
-              <option value="อาหารรอนานเกินกำหนด">อาหารรอนานเกินกำหนด</option>
-              <option value="ปัญหาเรื่องการชำระเงิน/สลิป">ปัญหาเรื่องการชำระเงิน/สลิป</option>
-              <option value="คุณภาพ/รสชาติอาหาร">คุณภาพ/รสชาติอาหาร</option>
-              <option value="ระบบขัดข้อง/อื่นๆ">ระบบขัดข้อง/อื่นๆ</option>
-            </select>
-          </div>
-
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "6px" }}>รายละเอียดปัญหา</label>
-            <textarea
-              value={issueDescription}
-              onChange={(e) => setIssueDescription(e.target.value)}
-              placeholder="อธิบายปัญหาที่พบเพื่อความรวดเร็วในการตรวจสอบ..."
-              rows={4}
-              style={{ width: "100%", boxSizing: "border-box", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit", resize: "vertical" }}
-            />
-          </div>
-
-          <button
-            onClick={handleSubmitReport}
-            disabled={isSubmittingReport}
-            style={{
-              width: "100%",
-              padding: "14px",
-              border: "none",
-              borderRadius: "14px",
-              background: isSubmittingReport ? "#CCCCCC" : COLORS.orange,
-              color: COLORS.white,
-              fontWeight: "900",
-              fontSize: "15px",
-              cursor: isSubmittingReport ? "not-allowed" : "pointer",
-              fontFamily: "inherit"
-            }}
-          >
-            {isSubmittingReport ? "กำลังส่งข้อมูล..." : "ส่งรายงานปัญหา"}
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  // VIEW REPORT HISTORY MODAL
-  const renderViewReportsModal = () => {
-    if (!isViewReportsModalOpen) return null;
-
-    return (
-      <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-        <div style={{ background: "#ffffff", width: "min(550px, 100%)", borderRadius: "16px", padding: "24px", maxHeight: "85vh", overflowY: "auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
-            <h3 style={{ margin: 0, fontSize: "18px", color: "#0f172a", fontWeight: "800" }}>รายละเอียดปัญหาที่แจ้งไว้</h3>
-            <button onClick={() => setIsViewReportsModalOpen(false)} style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: "#64748b" }}>✕</button>
-          </div>
-
-          {myIssueReports.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 0", color: "#94a3b8" }}>
-              <div style={{ fontSize: "40px", marginBottom: "8px" }}></div>
-              ไม่พบประวัติการแจ้งปัญหา
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              {myIssueReports.map((report, idx) => (
-                <div key={report.ReportID || idx} style={{ border: "1px solid #e2e8f0", borderRadius: "12px", padding: "14px", background: "#f8fafc" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                    <span style={{ fontWeight: "800", fontSize: "13px", color: "#0f172a" }}>
-                      {report.IssueType || report.issue_type || "รายงานปัญหา"}
-                    </span>
-                    <span style={{
-                      fontSize: "11px",
-                      padding: "3px 8px",
-                      borderRadius: "10px",
-                      fontWeight: "bold",
-                      background: report.Status === "Resolved" ? "#dcfce7" : report.Status === "In_Progress" ? "#fef3c7" : report.Status === "Rejected" ? "#e2e8f0" : "#fee2e2",
-                      color: report.Status === "Resolved" ? "#166534" : report.Status === "In_Progress" ? "#92400e" : report.Status === "Rejected" ? "#475569" : "#991b1b"
-                    }}>
-                      {report.Status === "Resolved" ? "แก้ไขแล้ว" : report.Status === "In_Progress" ? "กำลังตรวจสอบ" : report.Status === "Rejected" ? "ไม่รับเรื่อง" : "รอดำเนินการ"}
-                    </span>
-                  </div>
-
-                  <div style={{ fontSize: "13px", color: "#334155", margin: "6px 0" }}>
-                    <b>รายละเอียด:</b> {report.Description || report.description}
-                  </div>
-
-                  {report.AdminNote && (
-                    <div style={{ marginTop: "8px", padding: "8px 10px", background: "#e0f2fe", borderRadius: "8px", fontSize: "12px", color: "#0369a1" }}>
-                      <b>การตอบกลับจากร้าน:</b> {report.AdminNote}
-                    </div>
-                  )}
-
-                  <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "8px", textAlign: "right" }}>
-                    แจ้งเมื่อ:{" "}
-                    {report.CreatedAt || report.created_at
-                      ? new Date(report.CreatedAt || report.created_at).toLocaleString("th-TH", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })
-                      : "-"}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            onClick={() => setIsViewReportsModalOpen(false)}
-            style={{ width: "100%", marginTop: "20px", padding: "10px", background: "#64748b", color: "#ffffff", border: "none", borderRadius: "8px", fontWeight: "bold", cursor: "pointer" }}
-          >
-            ปิดหน้าต่าง
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  // NOTIFICATION TOASTS (แสดงทุกหน้า)
-  const renderNotifToasts = () => {
-    if (toasts.length === 0) return null;
-    return (
-      <div
-        style={{
-          position: "fixed",
-          top: "max(12px, env(safe-area-inset-top))",
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: "min(92vw, 420px)",
-          zIndex: 3000,
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-          pointerEvents: "none",
-        }}
-      >
-        <style>{`@keyframes notifToastIn { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-        {toasts.map((toast) => (
-          <NotifToastItem
-            key={toast.key}
-            toast={toast}
-            icon={<NotiIcon />}
-            onClose={() => setToasts((prev) => prev.filter((t) => t.key !== toast.key))}
-            onOpen={() => {
-              setToasts((prev) => prev.filter((t) => t.key !== toast.key));
-              handleSelectTab("notifs");
-            }}
-          />
-        ))}
-      </div>
-    );
-  };
-
-  // CUSTOM ALERT DIALOG
-  const renderCustomAlert = () => {
-    if (!alertData.isOpen) return null;
-
-    const getIcon = () => {
-      switch (alertData.type) {
-        case "success": return "✔";
-        case "error": return "✖";
-        case "warning": return "🛇";
-        default: return "✔";
-      }
-    };
-
-    const getButtonColor = () => {
-      switch (alertData.type) {
-        case "success": return COLORS.green;
-        case "error": return COLORS.red;
-        case "warning": return COLORS.orange;
-        default: return COLORS.green;
-      }
-    };
-
-    const closeAlert = () => setAlertData({ ...alertData, isOpen: false });
-
-    const handleConfirm = () => {
-      if (alertData.onConfirm) alertData.onConfirm();
-      closeAlert();
-    };
-
-    return (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(42,44,65,0.6)",
-          zIndex: 9999,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "20px",
-          boxSizing: "border-box",
-        }}
-        onClick={closeAlert}
-      >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            background: COLORS.white,
-            width: "min(380px, 100%)",
-            borderRadius: "24px",
-            padding: "30px 25px",
-            textAlign: "center",
-            boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
-            boxSizing: "border-box",
-          }}
-        >
-          <div style={{ fontSize: "55px", marginBottom: "15px" }}>{getIcon()}</div>
-
-          <h3 style={{ margin: "0 0 10px", fontSize: "22px", fontWeight: "900", color: COLORS.navy }}>
-            {alertData.title}
-          </h3>
-
-          <div style={{ margin: "0 0 25px", fontSize: "14px", color: COLORS.gray, whiteSpace: "pre-line", lineHeight: "1.6" }}>
-            {alertData.message}
-          </div>
-
-          {alertData.onConfirm ? (
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button
-                onClick={closeAlert}
-                style={{
-                  flex: 1, padding: "14px", border: "1px solid #ddd", borderRadius: "14px",
-                  background: COLORS.white, color: COLORS.gray, fontWeight: "900", fontSize: "15px", cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                onClick={handleConfirm}
-                style={{
-                  flex: 1, padding: "14px", border: "none", borderRadius: "14px",
-                  background: getButtonColor(), color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: "pointer", fontFamily: "inherit",
-                }}
-              >
-                เปลี่ยนร้าน
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={closeAlert}
-              style={{
-                width: "100%", padding: "14px", border: "none", borderRadius: "14px",
-                background: getButtonColor(), color: COLORS.white, fontWeight: "900", fontSize: "16px", cursor: "pointer", fontFamily: "inherit",
-              }}
-            >
-              ตกลง
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
   
   const now = new Date();
   const currentTime =
@@ -3614,15 +2492,83 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
       {/* RENDER ALL MODALS */}
       {renderCart()}
-      {renderPaymentModal()}
-      {renderReviewModal()}
-      {renderOutOfStockModal()}
-      {renderTopUpModal()}
-      {renderStoreReviewsModal()}
-      {renderReportModal()}
-      {renderViewReportsModal()}
-      {renderCustomAlert()}
-      {renderNotifToasts()}
+      <PaymentModal
+        isPaymentModalOpen={isPaymentModalOpen}
+        setIsPaymentModalOpen={setIsPaymentModalOpen}
+        totalAmount={totalAmount}
+        paymentMethod={paymentMethod}
+        handleSlipChange={handleSlipChange}
+        slipPreview={slipPreview}
+        submitOrder={submitOrder}
+        isSubmittingOrder={isSubmittingOrder}
+      />
+      <ReviewModal
+        reviewOrder={reviewOrder}
+        setReviewOrder={setReviewOrder}
+        isReadOnlyReview={isReadOnlyReview}
+        rating={rating}
+        setRating={setRating}
+        setHoverRating={setHoverRating}
+        hoverRating={hoverRating}
+        reviewComment={reviewComment}
+        setReviewComment={setReviewComment}
+        reviewImagePreview={reviewImagePreview}
+        handleReviewImageChange={handleReviewImageChange}
+        submitReview={submitReview}
+      />
+      <OutOfStockModal
+        outOfStockOrder={outOfStockOrder}
+        products={products}
+        timeLeft={timeLeft}
+        isChangeMenuMode={isChangeMenuMode}
+        setIsChangeMenuMode={setIsChangeMenuMode}
+        handleCancelOutOfStockOrder={handleCancelOutOfStockOrder}
+        setNewSelectedProduct={setNewSelectedProduct}
+        newSelectedProduct={newSelectedProduct}
+        handleChangeOrderMenu={handleChangeOrderMenu}
+      />
+      <TopUpModal
+        topUpOrder={topUpOrder}
+        outOfStockOrder={outOfStockOrder}
+        hiddenTopUpOrderId={hiddenTopUpOrderId}
+        topUpSlip={topUpSlip}
+        handleTopUpSlipChange={handleTopUpSlipChange}
+        submitTopUpSlip={submitTopUpSlip}
+        isSubmittingTopUp={isSubmittingTopUp}
+        cancelTopUpOrder={cancelTopUpOrder}
+        setHiddenTopUpOrderId={setHiddenTopUpOrderId}
+      />
+      <StoreReviewsModal
+        selectedStoreForReviews={selectedStoreForReviews}
+        setSelectedStoreForReviews={setSelectedStoreForReviews}
+        isLoadingReviews={isLoadingReviews}
+        storeReviewsList={storeReviewsList}
+      />
+      <ReportModal
+        isReportModalOpen={isReportModalOpen}
+        setIsReportModalOpen={setIsReportModalOpen}
+        selectedOrderForReport={selectedOrderForReport}
+        issueType={issueType}
+        setIssueType={setIssueType}
+        issueDescription={issueDescription}
+        setIssueDescription={setIssueDescription}
+        handleSubmitReport={handleSubmitReport}
+        isSubmittingReport={isSubmittingReport}
+      />
+      <ViewReportsModal
+        isViewReportsModalOpen={isViewReportsModalOpen}
+        setIsViewReportsModalOpen={setIsViewReportsModalOpen}
+        myIssueReports={myIssueReports}
+      />
+      <CustomAlert
+        alertData={alertData}
+        setAlertData={setAlertData}
+      />
+      <NotifToasts
+        toasts={toasts}
+        setToasts={setToasts}
+        handleSelectTab={handleSelectTab}
+      />
 
       {isCropModalOpen && cropImage && (
         <div
