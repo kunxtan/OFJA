@@ -21,8 +21,8 @@ from services import get_foodcourt, is_duplicate_key, log_audit, open_order_coun
 from shapes import STORE_SELECT, shape_store
 from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, add_years_minus_one_day,
                    bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
-                   next_free_queue_code, parse_date, save_image, validate_password, validate_queue_code,
-                   validate_username)
+                   next_free_queue_code, parse_date, save_image, validate_password, validate_phone,
+                   validate_queue_code, validate_username)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 
@@ -171,7 +171,7 @@ def create_store_full(data: StoreFullSchema, user=Depends(require_role("EXECUTIV
                 VALUES (%s, %s, %s, %s, %s, %s, TRUE, FALSE, %s, %s, %s, %s)
                 """,
                 (name, category_id, fc["FoodCourtId"], code, clean_text(data.description), image,
-                 clean_text(data.contact_name), clean_text(data.contact_phone),
+                 clean_text(data.contact_name), validate_phone(data.contact_phone),
                  clean_text(data.contact_line), clean_text(data.contact_email)),
             )
             try:
@@ -237,7 +237,7 @@ def update_store_full(store_id: int, data: StoreFullSchema, user=Depends(require
                        ContactPhone = %s, ContactLine = %s, ContactEmail = %s, Description = %s, ImageUrl = %s
                 WHERE StoreId = %s
                 """,
-                (name, category_id, code, clean_text(data.contact_name), clean_text(data.contact_phone),
+                                (name, category_id, code, clean_text(data.contact_name), validate_phone(data.contact_phone),
                  clean_text(data.contact_line), clean_text(data.contact_email), clean_text(data.description),
                  image, store_id),
             )

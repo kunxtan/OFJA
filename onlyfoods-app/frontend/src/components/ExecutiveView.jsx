@@ -1714,7 +1714,7 @@ return {
 
     }, [orders, stores, anchor, days ,  customRange, customStart, customEnd]);
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
-const periodLabel = customRange ? effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || (effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}`) : days === 1? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
 const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบวันก่อนหน้า' : `เทียบ ${days} วันก่อนหน้า`;
     const visibleStoreRows = report.storeRows;
     const issueBounds = customRange
@@ -2873,15 +2873,49 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
         </>)}
     </Card>);
 }
+// ===== เลือกเป็นเดือน (ใช้กับ Dashboard + ยอดขายรายร้าน และไฟล์ CSV/XLSX ที่ export ตามช่วงนี้) =====
+const TH_MONTH_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+// เดือน m (1–12) ของปี y -> [วันที่ 1, วันสุดท้าย] ; เดือนปัจจุบันตัดที่วันนี้
+function monthRange(y, m) {
+    const last = toISODate(new Date(y, m, 0));
+    const today = todayISO();
+    return [`${y}-${pad2(m)}-01`, last > today ? today : last];
+}
+// ช่วงวันที่ตรงกับ "ทั้งเดือน" -> "เดือนธันวาคม 2025" ; ไม่ใช่ -> ''
+function monthLabelOf(startISO, endISO) {
+    if (!startISO || !endISO || startISO.slice(8) !== '01' || startISO.slice(0, 7) !== endISO.slice(0, 7)) return '';
+    const [y, m] = startISO.split('-').map(Number);
+    const [, end] = monthRange(y, m);
+    if (endISO !== end) return '';
+    const label = `เดือน${TH_MONTH_FULL[m - 1]} ${y}`;
+    return end === todayISO() && end !== toISODate(new Date(y, m, 0)) ? `${label} (ถึงวันนี้)` : label;
+}
 function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom, startDate, setStartDate, endDate, setEndDate }) {
-    const choosePreset = (value) => { setCustom(false); setDays(value); };
+    const [monthMode, setMonthMode] = useState(() => custom && Boolean(monthLabelOf(startDate, endDate)));
+    const choosePreset = (value) => { setMonthMode(false); setCustom(false); setDays(value); };
+    const chooseMonth = (y, m) => { const [start, end] = monthRange(y, m); setStartDate(start); setEndDate(end); };
+    const nowY = Number(todayISO().slice(0, 4));
+    const nowM = Number(todayISO().slice(5, 7));
+    const pickY = Number(startDate.slice(0, 4)) || nowY;
+    const pickM = Number(startDate.slice(5, 7)) || nowM;
+    const tab = (active) => ({ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: active ? T.surface : 'transparent', color: active ? T.primary : T.muted, boxShadow: active ? '0 1px 3px rgba(18,25,38,.12)' : 'none' });
+    const monthSelect = { border: `1px solid ${T.line}`, borderRadius: '7px', background: '#FFFFFF', color: T.ink, fontSize: '12.5px', fontFamily: FONT_STACK, padding: '8px 9px' };
     const inputStyle = { ...dateInputStyle, width: '145px' };
     return (<div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', background: T.primarySoft, padding: '4px', borderRadius: T.radiusMd }}>
         {[1, 7, 14, 30].map((v) => (<button key={v} type="button" onClick={() => choosePreset(v)} style={{ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: !custom && days === v ? T.surface : 'transparent', color: !custom && days === v ? T.primary : T.muted, boxShadow: !custom && days === v ? '0 1px 3px rgba(18,25,38,.12)' : 'none' }}>{v === 1 ? 'วันนี้' : `${v} วัน`}</button>))}
-        <button type="button" onClick={() => setCustom(true)} style={{ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: custom ? T.surface : 'transparent', color: custom ? T.primary : T.muted, boxShadow: custom ? '0 1px 3px rgba(18,25,38,.12)' : 'none' }}>กำหนดเอง</button>
+                <button type="button" onClick={() => { setMonthMode(true); setCustom(true); chooseMonth(nowY, nowM); }} style={tab(custom && monthMode)}>รายเดือน</button>
+        <button type="button" onClick={() => { setMonthMode(false); setCustom(true); }} style={tab(custom && !monthMode)}>กำหนดเอง</button>
       </div>
-      {custom ? (<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface, boxShadow: '0 1px 2px rgba(42,44,65,0.03)' }}>
+      {custom && monthMode ? (<div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface }}>
+        <Icon name="calendar" size={16} color={T.muted}/>
+        <select value={pickM} onChange={(e) => chooseMonth(pickY, Number(e.target.value))} style={monthSelect} aria-label="เลือกเดือน">
+          {TH_MONTH_FULL.map((name, i) => (<option key={name} value={i + 1} disabled={pickY === nowY && i + 1 > nowM}>{name}</option>))}
+        </select>
+        <select value={pickY} onChange={(e) => { const y = Number(e.target.value); chooseMonth(y, y === nowY ? Math.min(pickM, nowM) : pickM); }} style={monthSelect} aria-label="เลือกปี">
+          {[nowY, nowY - 1, nowY - 2].map((y) => (<option key={y} value={y}>{y}</option>))}
+        </select>
+      </div>) : custom ? (<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface, boxShadow: '0 1px 2px rgba(42,44,65,0.03)' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: T.text, fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' }}>
           ตั้งแต่วันที่
           <input type="date" value={startDate} max={endDate || todayISO()} onChange={(e) => { const value = e.target.value || todayISO(); setStartDate(value); if (value > endDate) setEndDate(value); }} style={{ ...inputStyle, width: '136px', minWidth: '136px', boxSizing: 'border-box', padding: '8px 9px', border: `1px solid ${T.line}`, borderRadius: '7px', background: '#FFFFFF', color: T.ink, fontSize: '12.5px' }} aria-label="ตั้งแต่วันที่" />
@@ -3009,7 +3043,7 @@ function StoreSalesPage({ ctx }) {
     const effectiveStart = customRange ? customStart : toISODate(new Date(new Date(`${anchor}T00:00:00`).setDate(new Date(`${anchor}T00:00:00`).getDate() - days + 1)));
     const effectiveEnd = customRange ? customEnd : anchor;
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
-    const periodLabel = customRange ? `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+    const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1
     const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
     const exportDateBounds = customRange
     ? customPeriodBounds(customStart, customEnd)
@@ -3430,6 +3464,15 @@ const EMAIL_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@(?:[a-zA-Z0-9](?
 // รหัสผ่าน: ต้องตรงกับ backend (config.MIN_PASSWORD_LENGTH = 8 ; bcrypt รับได้ไม่เกิน 72)
 const STORE_PASSWORD_MIN = 8;
 const STORE_PASSWORD_MAX = 72;
+// เบอร์ร้าน: ตัวเลข 9–10 หลัก ขึ้นต้นด้วย 0 (พิมพ์ขีด/เว้นวรรคมาได้) -> ข้อความผิด หรือ '' ถ้าถูก
+// ใช้ทั้งฟอร์มเพิ่มร้าน และตอนแก้เบอร์ในหน้าดู/แก้ไขร้าน (backend ตรวจซ้ำด้วย utils.validate_phone)
+function storePhoneError(value) {
+    const phone = String(value || '').replace(/[\s-]/g, '');
+    if (!phone) return 'กรุณากรอกเบอร์โทรติดต่อ';
+    if (!/^0\d{8,9}$/.test(phone)) return 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก และขึ้นต้นด้วย 0';
+    if (looksLikeGarbage(phone)) return 'เบอร์โทรนี้ไม่ถูกต้อง';
+    return '';
+}
 function validateStoreForm(form, mode = 'create') {
     const errors = {};
     if (form.queueCode && !/^[A-Za-z]{1,2}$/.test(form.queueCode.trim()))
@@ -3458,15 +3501,10 @@ function validateStoreForm(form, mode = 'create') {
     else if (/^[\d\s\-_.]+$/.test(contactName) || looksLikeGarbage(contactName)) {
         errors.contactName = 'กรุณากรอกชื่อผู้ติดต่อจริง ไม่ใช่ตัวเลขหรือข้อความมั่ว';
     }
-    const phone = form.phone.replace(/[\s-]/g, '');
-    if (!phone)
-        errors.phone = 'กรุณากรอกเบอร์โทรติดต่อ';
-    else if (!/^0\d{8,9}$/.test(phone)) {
-        errors.phone = 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก และขึ้นต้นด้วย 0';
-    }
-    else if (looksLikeGarbage(phone)) {
-        errors.phone = 'เบอร์โทรนี้ไม่ถูกต้อง';
-    }
+        const phoneError = storePhoneError(form.phone);
+    if (phoneError)
+        errors.phone = phoneError;
+
         // LINE และอีเมลไม่บังคับ : ตรวจเฉพาะตอนกรอกมา
     const lineId = form.lineId.trim();
     if (lineId) {
@@ -4003,8 +4041,16 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         }
     };
 
-    const saveStoreField = async (key) => {
-        const next = value.trim();
+        const saveStoreField = async (key) => {
+        let next = value.trim();
+        if (key === 'ContactPhone') {
+            const phoneError = storePhoneError(next);
+            if (phoneError) {
+                pushToast(phoneError, 'error');
+                return;
+            }
+            next = next.replace(/\D/g, '');
+        }
         const current = String(storeValue(key) || '').trim();
         if (next === current) {
             setEditing(null);
@@ -4059,6 +4105,8 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                                 {!FOOD_CATEGORIES.includes(value) && <option value={value}>{value || '— เลือกประเภทอาหาร —'}</option>}
                                 {FOOD_CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
                             </select>
+                                                ) : key === 'ContactPhone' ? (
+                            <input autoFocus value={value} inputMode="tel" maxLength={12} placeholder="081-234-5678" onChange={(e) => setValue(e.target.value.replace(/[^\d-]/g, ''))} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
                         ) : (
                             <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
                         )}
