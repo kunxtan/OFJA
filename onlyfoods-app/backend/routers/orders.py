@@ -13,8 +13,8 @@ from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
                      LatePickupSchema, StatusUpdateSchema, TopUpSlipSchema)
 from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
-                      lock_order, log_audit, log_first_status, pending_top_up, refund_price_diff, send_notif,
-                      status_id)
+                      lock_order, log_audit, log_first_status, notify_menu_out_of_stock, pending_top_up,
+                      refund_price_diff, send_notif, status_id)
 from shapes import ORDER_SELECT, attach_items, order_people, shape_order
 from utils import (bangkok_now, clean_text, contract_active, foodcourt_is_open, parse_pickup_time,
                    queue_label, save_image)
@@ -471,10 +471,12 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
                           cancel_reason=reason, cancel_deadline=deadline, now=now)
             q = queue_label(order["QueueNo"], order["QueueCode"])
             send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} มีปัญหา",
-                       f"คิว {q} มีปัญหา: {reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)", order_id)
+                       f"คิว {q} มีปัญหา: {reason} กรุณาเปลี่ยนเมนูหรือยกเลิกภายใน {payload.response_window_minutes} นาที "
+                       f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติและคืนเงินที่ร้าน", order_id)
         log_audit(db, user["UserId"], "CANCEL_REQUEST", "Order", order_id, None,
                   {"reason": reason, "store_id": order["StoreId"], "items": payload.item_ids or []})
         for pid, name in closed:
+            notify_menu_out_of_stock(db, order["StoreId"], name, user["RoleCode"])
             log_audit(db, user["UserId"], "OUT_OF_STOCK", "Product", pid, None, {"name": name, "from_order": order_id})
     return {"success": True, "reason": reason, "closed_menus": [name for _, name in closed]}
 
@@ -547,9 +549,11 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             )
             diff = (old_price - new_price) * int(old["Qty"])
             top_up_due = Decimal(0)
-            if diff > 0:  # ถูกลง -> คืนส่วนต่าง
-                refund_price_diff(cur, order_id, diff,
-                                  f"ส่วนต่างราคา {old['ProductName']} -> {new['ProductName']}", old["OrderItemId"])
+            diff_refunded = False
+            if diff > 0:  # ถูกลง -> คืนส่วนต่าง (ลูกค้ามารับเงินที่หน้าร้าน)
+                diff_refunded = refund_price_diff(cur, order_id, diff,
+                                                  f"ส่วนต่างราคา {old['ProductName']} -> {new['ProductName']}",
+                                                  old["OrderItemId"])
             elif diff < 0:  # แพงขึ้น -> ลูกค้าต้องโอนเพิ่ม (รวมกับส่วนต่างที่ยังไม่โอนของรายการอื่น)
                 top_up_due = add_top_up(cur, order_id, -diff)
 
@@ -575,6 +579,8 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             msg = f"คิว {q} เปลี่ยนเมนูจาก '{old['ProductName']}' เป็น '{new['ProductName']}' เรียบร้อยแล้ว"
             if pending:
                 msg += f" กรุณาโอนส่วนต่าง {top_up_due:.2f} บาท และแนบสลิป"
+            if diff_refunded:
+                msg += f" รับเงินส่วนต่างคืน {diff:.2f} บาท ที่ร้านโดยแจ้งเลขคิว {q}"
             send_notif(db, user["UserId"], "ORDER_STATUS", f"คิว {q} เปลี่ยนเมนู", msg, order_id)
         log_audit(db, user["UserId"], "CUSTOMER_CHANGE_ITEM", "Order", order_id,
                   {"product": old["ProductName"], "price": old_price},

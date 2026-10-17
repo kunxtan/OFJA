@@ -13,7 +13,8 @@ from errors import DomainError
 from schemas import ChangePasswordSchema, GoogleAuthSchema, LoginSchema, RegisterSchema
 from services import is_duplicate_key, log_audit
 from shapes import USER_SELECT, shape_user
-from utils import ACCESS_LOCKED, bangkok_now, clean_text, validate_password, validate_username
+from utils import (ACCESS_LOCKED, bangkok_now, validate_email, validate_password, validate_phone,
+                   validate_username)
 
 logger = logging.getLogger("onlyfood")
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -94,6 +95,11 @@ def login(data: LoginSchema, db=Depends(get_db)):
 def register(data: RegisterSchema, db=Depends(get_db)):
     username = validate_username(data.username)
     validate_password(data.password)
+    name = data.name.strip()
+    if not name:
+        raise DomainError(400, "กรุณากรอกชื่อ-นามสกุล")
+    phone = validate_phone(data.phone, required=True)
+    email = validate_email(data.email)
     with transaction(db):
         with db.cursor() as cur:
             cur.execute("SELECT UserId FROM `User` WHERE Username = %s", (username,))
@@ -105,8 +111,7 @@ def register(data: RegisterSchema, db=Depends(get_db)):
                     INSERT INTO `User` (Username, PasswordHash, FullName, Phone, Email, RoleId)
                     VALUES (%s, %s, %s, %s, %s, (SELECT RoleId FROM Role WHERE RoleCode = 'CUSTOMER'))
                     """,
-                    (username, hash_password(data.password), data.name.strip(), data.phone.strip(),
-                     clean_text(data.email)),
+                    (username, hash_password(data.password), name, phone, email),
                 )
             except Exception as exc:  # noqa: BLE001
                 if is_duplicate_key(exc):

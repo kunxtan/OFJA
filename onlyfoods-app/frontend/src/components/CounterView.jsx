@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import RefundLog from './RefundLog';
 
 // โทนสีเดิมของ Counter & Theme กลาง
 const PALETTE = {
@@ -39,6 +40,7 @@ function Icon({ name, size = 20 }) {
     close: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
     warn: <><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>,
     store: <><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" /><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" /><path d="M2 7h20" /></>,
+    coin: <><circle cx="12" cy="12" r="9" /><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .9-3 2.2 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.2-3 2.2-1.4 0-2.6-.6-3.1-1.6" /><path d="M12 6v2M12 16v2" /></>,
     tv: <><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /></>,
     logout: <><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>
   };
@@ -108,10 +110,13 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [historyQuery, setHistoryQuery] = useState('');
   const autoPromptedJobsRef = useRef(new Set()); // job ที่เด้ง popup อัตโนมัติไปแล้ว (ปิดแล้วไม่เด้งซ้ำ ยังกดจากแถบเหลืองได้)
   const [noShowModal, setNoShowModal] = useState(null);
-  // อาหารพร้อมรับแล้วลูกค้ายังไม่มา: 15 นาที = ระบบเตือนลูกค้าเอง + ป้ายให้พนักงานโทรตาม ;
-  // 30 นาที = ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (พนักงานกดเองเสมอ กันกรณีลูกค้าแจ้งว่าจะมาช้า)
-  const PICKUP_WARNING_MINUTES = 15;
-  const NO_SHOW_UNLOCK_MINUTES = 30;
+  // อาหารพร้อมรับแล้วลูกค้ายังไม่มา (ค่าจาก backend /api/food-court/status ; ค่าเริ่มต้น 30 / 60 นาที):
+  // PICKUP_WARNING_MINUTES = ระบบเตือนลูกค้าเอง + ป้ายให้พนักงานโทรตาม ;
+  // NO_SHOW_UNLOCK_MINUTES = ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (พนักงานกดเองเสมอ กันกรณีลูกค้าแจ้งว่าจะมาช้า)
+  const [pickupTimes, setPickupTimes] = useState({ warn: 30, noShow: 60 });
+  const PICKUP_WARNING_MINUTES = pickupTimes.warn;
+  const NO_SHOW_UNLOCK_MINUTES = pickupTimes.noShow;
+  const [pendingRefunds, setPendingRefunds] = useState(0);
 
   // 🔴 Modal ยกเลิกคำสั่งซื้อแบบใหม่
   const [cancelModal, setCancelModal] = useState(null); // { order, actionType: 'immediate' | 'window' }
@@ -212,6 +217,16 @@ export default function CounterView({ user, apiBase, onLogout }) {
       .then(r => r.ok ? r.json() : [])
       .then(d => setPendingPrintJobs(Array.isArray(d) ? d : []))
       .catch(err => console.error("Error print jobs:", err));
+
+    fetchPendingRefunds();
+  };
+
+  // จำนวนรายการที่รอลูกค้ามารับเงินคืน (ป้ายตัวเลขบนเมนู "คืนเงินลูกค้า")
+  const fetchPendingRefunds = () => {
+    fetch(`${apiBase}/api/refunds?status=PENDING&limit=500`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d)) setPendingRefunds(d.length); })
+      .catch(err => console.error("Error refunds:", err));
   };
 
   const fetchReports = () => {
@@ -249,6 +264,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
       const data = await res.json();
       setFoodCourtOpen(Boolean(data?.is_open));
+      if (data?.pickup_reminder_minutes && data?.no_show_after_minutes) {
+        setPickupTimes(prev => (prev.warn === data.pickup_reminder_minutes && prev.noShow === data.no_show_after_minutes)
+          ? prev : { warn: data.pickup_reminder_minutes, noShow: data.no_show_after_minutes });
+      }
     } catch (err) {
       console.error("Error food court status:", err);
     }
@@ -705,7 +724,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const getRemainingLabel = (deadline) => {
     if (!deadline) return '-';
     const diff = new Date(deadline).getTime() - nowTick;
-    if (diff <= 0) return 'หมดเวลา';
+    if (diff <= 0) return 'หมดเวลา · ระบบกำลังยกเลิกให้';
     const m = Math.floor(diff / 60000);
     const s = Math.floor((diff % 60000) / 1000);
     return `${m}:${s.toString().padStart(2, '0')} น.`;
@@ -826,6 +845,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     { id: 'orders', label: 'Queue & Slips', caption: 'จัดการคิว & ตรวจสลิป', icon: 'orders', badge: verifyingOrders.length || null },
     { id: 'history', label: 'ประวัติออเดอร์', caption: 'ประวัติรายวัน / ดูลูกค้า / พิมพ์ใบเสร็จ', icon: 'stale' },
     { id: 'walkin', label: 'Walk-in POS', caption: 'แคชเชียร์สั่งอาหารหน้าร้าน', icon: 'walkin' },
+    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: 'ลูกค้ามารับเงินคืนที่หน้าร้าน', icon: 'coin', badge: pendingRefunds || null },
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
     { id: 'reports', label: 'Reports', caption: 'รายงานการขายและปัญหา', icon: 'orders' },
     { id: 'display', label: 'จอเรียกคิว (จำลอง)', caption: 'ของจริงเปิดค้างบนทีวีหน้าร้าน', icon: 'tv' },
@@ -1491,6 +1511,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
             </div>
           )}
 
+          {activeTab === 'refunds' && (
+            <RefundLog apiBase={apiBase} canConfirm pollMs={10000} onChanged={fetchPendingRefunds} />
+          )}
+
           {/* TAB 5: MENU & STOCK */}
           {activeTab === 'menu' && (
             <div className="cv-card">
@@ -1643,7 +1667,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="stock-queue-list">
                   {stockModal.notifiable.map(o => <span key={o.OrderID} className="stock-queue">{o.QueueNo}</span>)}
                 </div>
-                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที</small>
+                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ (ลูกค้ามารับเงินคืนที่ร้าน)</small>
               </div>
             ) : (
               <p className="stock-none">ไม่มีออเดอร์ลูกค้าออนไลน์ที่ต้องแจ้ง</p>
@@ -1698,7 +1722,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
           <div className="cv-modal cv-out-modal" onClick={e => e.stopPropagation()}>
             <div className="cv-modal-head">
               <div><h3>⚠️ แจ้งของหมด · คิว {outModal.order.QueueNo}</h3>
-                <div className="caption">ลูกค้าเลือกเปลี่ยนเมนู หรือยกเลิกรับเงินคืนได้ภายใน 30 นาที</div></div>
+                <div className="caption">ลูกค้าเลือกเปลี่ยนเมนู หรือยกเลิกรับเงินคืนได้ภายใน 30 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ</div></div>
               <button onClick={() => setOutModal(null)} className="cv-modal-close" disabled={outBusy}>✖</button>
             </div>
             <div className="out-label">เมนูไหนหมด? (เลือกได้หลายจาน)</div>

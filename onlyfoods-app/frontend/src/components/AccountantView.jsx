@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import RefundLog from './RefundLog';
 
 /* ============================================================
    OF Accounting — เจ้าหน้าที่บัญชีสถาบัน (Foodka Theme)
@@ -65,6 +66,20 @@ function classifyCancelledOrder(o) {
   if (reason.includes('สลิป')) return 'VERIFY_SLIP_REJECT';
   if (reason.includes('ลูกค้า')) return 'CUSTOMER_CANCEL_ORDER';
   return 'STORE_CANCEL_ORDER';
+}
+
+const AUDIT_PAGE = 500;
+// รวม audit log 2 ชุดโดยไม่ซ้ำ (เรียงล่าสุดก่อน) : ชุดแรกชนะเมื่อ id ซ้ำ
+function mergeLogs(first, second) {
+  const seen = new Set();
+  const out = [];
+  [...(first || []), ...(second || [])].forEach(l => {
+    const id = l.AuditLogId ?? l.LogID;
+    if (id != null && seen.has(id)) return;
+    if (id != null) seen.add(id);
+    out.push(l);
+  });
+  return out.sort((a, b) => Number(b.AuditLogId ?? b.LogID ?? 0) - Number(a.AuditLogId ?? a.LogID ?? 0));
 }
 
 function buildAuditRows(logs, orders) {
@@ -654,6 +669,7 @@ function Icon({ name, size = 18, color = 'currentColor' }) {
     dashboard: <><path d="M4 4h6v8H4z" /><path d="M4 16h6v4H4z" /><path d="M14 12h6v8h-6z" /><path d="M14 4h6v4h-6z" /></>,
     sales: <><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></>,
     cancel: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6l4 2" /></>,
+    refund: <><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><path d="M12 8v8M14.5 9.5c-.4-.9-1.4-1.5-2.5-1.5-1.4 0-2.5.8-2.5 2 0 2.6 5 1.4 5 4 0 1.2-1.1 2-2.5 2-1.1 0-2.1-.6-2.5-1.5" /></>,
     close: <><path d="M18 6L6 18" /><path d="M6 6l12 12" /></>,
     audit: <><path d="M9 12h6M9 16h6M9 8h6" /><rect x="4" y="3" width="16" height="18" rx="2" /></>,
     report: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
@@ -1038,6 +1054,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [stores, setStores] = useState([]);
   const [orders, setOrders] = useState([]);
   const [logs, setLogs] = useState([]);
+  // Audit log ดึงทีละหน้า (backend จำกัด 500 แถวต่อครั้ง) : รอบ polling รีเฟรชหน้าล่าสุด ; ปุ่มด้านล่างโหลดหน้าที่เก่ากว่า
+  const [auditHasMore, setAuditHasMore] = useState(false);
+  const [auditLoadingOlder, setAuditLoadingOlder] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [page, setPage] = useState('dashboard');
@@ -1142,16 +1161,36 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       .then(d => (Array.isArray(d) ? d : Promise.reject(new Error(`${path} → ข้อมูลไม่ใช่รายการ`))));
 
     const storesReq = getList('/api/stores/history').catch(() => getList('/api/stores'));  // ถ้า history ใช้ไม่ได้ ถอยไปใช้รายชื่อร้านปกติ
-    const [st, od, lg] = await Promise.allSettled([storesReq, getList('/api/orders'), getList('/api/audit-logs')]);
+    const [st, od, lg] = await Promise.allSettled([storesReq, getList('/api/orders'), getList(`/api/audit-logs?limit=${AUDIT_PAGE}`)]);
     if (st.status === 'fulfilled') setStores(st.value);
     if (od.status === 'fulfilled') setOrders(od.value);
-    if (lg.status === 'fulfilled') setLogs(lg.value);
+    if (lg.status === 'fulfilled') {
+      setLogs(prev => mergeLogs(lg.value, prev));
+      setAuditHasMore(prev => prev || lg.value.length >= AUDIT_PAGE);
+    }
     const failed = [st, od, lg].filter(r => r.status === 'rejected').map(r => r.reason && r.reason.message);
     setLoadError(failed.length ? `โหลดข้อมูลจากฐานข้อมูลไม่สำเร็จ — ${failed.join('  |  ')}` : '');
     setConnInfo(failed.length === 0 && od.value.length === 0
       ? `เชื่อมต่อ backend (${base}) สำเร็จ แต่ยังไม่มีออเดอร์ในฐานข้อมูล` : '');
     if (failed.length < 3) setLastUpdated(new Date());
     setLoading(false);
+  };
+
+  const loadOlderLogs = async () => {
+    setAuditLoadingOlder(true);
+    try {
+      const base = baseRef.current || apiBase || '';
+      const res = await fetch(`${base}/api/audit-logs?limit=${AUDIT_PAGE}&offset=${logs.length}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      const older = Array.isArray(d) ? d : [];
+      setLogs(prev => mergeLogs(prev, older));
+      setAuditHasMore(older.length >= AUDIT_PAGE);
+    } catch (e) {
+      setLoadError(`โหลดประวัติเก่าไม่สำเร็จ — ${e.message}`);
+    } finally {
+      setAuditLoadingOlder(false);
+    }
   };
 
   useEffect(() => {
@@ -1462,6 +1501,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมบัญชี', icon: 'dashboard' },
     { id: 'sales', label: 'Sales Summary', caption: 'สรุปยอดขาย', icon: 'sales' },
     { id: 'cancel', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก', icon: 'cancel', badge: alertStores.length || null },
+    { id: 'refunds', label: 'Refund Log', caption: 'ประวัติการคืนเงิน', icon: 'refund' },
     { id: 'audit', label: 'Audit Log', caption: 'ประวัติการเปลี่ยนแปลง', icon: 'audit' },
     { id: 'report', label: 'Financial Report', caption: 'ออกรายงานการเงิน', icon: 'report' },
   ];
@@ -2164,12 +2204,16 @@ export default function AccountantView({ apiBase, user, onLogout }) {
             );
           })()}
 
+          {page === 'refunds' && (
+            <RefundLog apiBase={baseRef.current || apiBase || ''} showStore pollMs={15000} />
+          )}
+
           {page === 'audit' && (
             <div className="berry-dashboard-grid">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                 <div>
                   <h2 style={{ margin: 0 }}>ประวัติการทำรายการทั้งหมด (Audit Log)</h2>
-                  <div style={{ color: 'var(--berry-text-muted)', fontSize: 13 }}>ข้อมูลอ้างอิงเพื่อความโปร่งใส บันทึกแบบแก้ไขย้อนหลังไม่ได้ • เก็บย้อนหลัง 1 ปี</div>
+                  <div style={{ color: 'var(--berry-text-muted)', fontSize: 13 }}>ข้อมูลอ้างอิงเพื่อความโปร่งใส บันทึกแบบแก้ไขย้อนหลังไม่ได้ • โหลดแล้ว {fmtMoney(logs.length)} รายการล่าสุด</div>
                 </div>
                 <span className="berry-readonly-badge"><Icon name="audit" size={16} color="#fff" /> Read Only - แก้ไขย้อนหลังไม่ได้</span>
               </div>
@@ -2241,6 +2285,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <div style={{ padding: '12px 16px 0' }}>
                     <button className="berry-btn" style={{ width: '100%' }} onClick={() => setAuditLimit(l => l + 100)}>
                       แสดงเพิ่ม (เหลืออีก {fmtMoney(auditFiltered.length - auditLimit)} รายการ)
+                    </button>
+                  </div>
+                )}
+                {auditHasMore && (
+                  <div style={{ padding: '12px 16px 0' }}>
+                    <button className="berry-btn" style={{ width: '100%' }} onClick={loadOlderLogs} disabled={auditLoadingOlder}>
+                      {auditLoadingOlder ? 'กำลังโหลด…' : `โหลดประวัติที่เก่ากว่านี้จากฐานข้อมูล (ทีละ ${AUDIT_PAGE} รายการ)`}
                     </button>
                   </div>
                 )}

@@ -31,3 +31,28 @@ export const previewLateArrival = (order, minutes) => {
   const arrival = new Date(base.getTime() + Number(minutes) * 60000);
   return `${String(arrival.getHours()).padStart(2, "0")}:${String(arrival.getMinutes()).padStart(2, "0")}`;
 };
+
+// สถานะออเดอร์ (ชื่อจาก backend) -> ข้อความที่ลูกค้าเห็น
+const ORDER_STATUS_TH = {
+  Verifying_Slip: "รอร้านตรวจสลิป",
+  Pending: "ร้านรับออเดอร์แล้ว",
+  Cooking: "กำลังปรุงอาหาร",
+  Ready: "อาหารพร้อมรับ",
+  Completed: "รับอาหารแล้ว",
+  Pending_Cancellation: "รอคุณเลือกเปลี่ยนเมนู/ยกเลิก",
+  Awaiting_Top_Up: "รอโอนส่วนต่าง",
+  Cancelled: "ยกเลิกแล้ว",
+  NoShow: "ไม่ได้มารับอาหาร",
+};
+export const orderStatusTh = (status) => ORDER_STATUS_TH[status] || status || "รอดำเนินการ";
+
+// รวมเงินคืนของออเดอร์ (จาก GET /api/refunds) -> { pending, done, doneAt }
+export const summarizeRefunds = (refunds) => (refunds || []).reduce((acc, r) => {
+  const amount = Number(r.Amount || 0);
+  if (r.RefundStatus === "PENDING") acc.pending += amount;
+  if (r.RefundStatus === "DONE") {
+    acc.done += amount;
+    if (!acc.doneAt || String(r.RefundedAt) > String(acc.doneAt)) acc.doneAt = r.RefundedAt;
+  }
+  return acc;
+}, { pending: 0, done: 0, doneAt: null });

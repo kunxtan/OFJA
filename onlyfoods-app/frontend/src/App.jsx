@@ -204,8 +204,6 @@ export default function App() {
 
   // Forgot Password Modal State
   const [showForgotModal, setShowForgotModal] = useState(false);
-  const [forgotForm, setForgotForm] = useState({ username_or_phone: '', new_password: '' });
-  const [forgotMsg, setForgotMsg] = useState({ type: '', text: '' });
 
   const [authTab, setAuthTab] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', name: '', phone: '' });
@@ -312,6 +310,17 @@ export default function App() {
     } catch (err) { console.error(err); }
   };
 
+  // ข้อความ error จาก backend : detail เป็นข้อความ (DomainError) หรือรายการ (422 จาก pydantic) -> ไม่ให้ขึ้น [object Object]
+  const apiErrorText = (data, fallback) => {
+    if (typeof data?.detail === 'string') return data.detail;
+    if (Array.isArray(data?.detail)) {
+      const FIELD_TH = { username: 'ชื่อผู้ใช้', password: 'รหัสผ่าน', name: 'ชื่อ-นามสกุล', phone: 'เบอร์โทรศัพท์', email: 'อีเมล' };
+      const fields = [...new Set(data.detail.map(d => FIELD_TH[d?.loc?.[d.loc.length - 1]]).filter(Boolean))];
+      if (fields.length) return `กรุณาตรวจสอบ ${fields.join(', ')} (ข้อมูลยาวหรือสั้นเกินไป)`;
+    }
+    return fallback;
+  };
+
   const mapRole = (role) => {
     let roleMap = { 'Kitchen Staff': 'Kitchen', 'Front Staff': 'Front', 'Shop Owner': 'Owner' };
     return roleMap[role] || role || 'Customer';
@@ -381,8 +390,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData)
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(apiErrorText(data, authTab === 'login' ? 'เข้าสู่ระบบไม่สำเร็จ' : 'สมัครสมาชิกไม่สำเร็จ'));
 
       const finalRole = mapRole(data.Role);
 
@@ -397,29 +406,6 @@ export default function App() {
       setAuthForm({ username: '', password: '', name: '', phone: '' });
     } catch (err) {
       setAuthError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
-    }
-  };
-
-  const handleResetPassword = async (e) => {
-    e.preventDefault();
-    setForgotMsg({ type: '', text: '' });
-    try {
-      const res = await fetch(`${API_BASE}/api/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(forgotForm)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "ไม่สามารถเปลี่ยนรหัสผ่านได้");
-
-      setForgotMsg({ type: 'success', text: 'เปลี่ยนรหัสผ่านสำเร็จ! กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่' });
-      setTimeout(() => {
-        setShowForgotModal(false);
-        setForgotForm({ username_or_phone: '', new_password: '' });
-        setForgotMsg({ type: '', text: '' });
-      }, 2000);
-    } catch (err) {
-      setForgotMsg({ type: 'error', text: err.message });
     }
   };
 
@@ -942,10 +928,14 @@ export default function App() {
                         </div>
 
                         <div className="input-group">
+ 
                           <input 
                             type="tel" 
                             required 
-                            placeholder="เบอร์โทรศัพท์" 
+                            inputMode="numeric"
+                            autoComplete="tel"
+                            maxLength={12}
+                            placeholder="เบอร์โทรศัพท์ เช่น 0812345678" 
                             className="modern-input" 
                             value={authForm.phone} 
                             onChange={e => setAuthForm({ ...authForm, phone: e.target.value })} 
@@ -961,7 +951,9 @@ export default function App() {
                       <input 
                         type="text" 
                         required 
-                        placeholder="ชื่อผู้ใช้ หรือ เบอร์โทรศัพท์" 
+ 
+                        autoComplete="username"
+                        placeholder={authTab === 'login' ? 'ชื่อผู้ใช้' : 'ชื่อผู้ใช้ (a-z, 0-9, _ ยาว 4–20 ตัว)'} 
                         className="modern-input" 
                         value={authForm.username} 
                         onChange={e => setAuthForm({ ...authForm, username: e.target.value })} 
@@ -975,7 +967,8 @@ export default function App() {
                       <input 
                         type={showPassword ? "text" : "password"} 
                         required 
-                        placeholder="รหัสผ่าน" 
+                        autoComplete={authTab === 'login' ? 'current-password' : 'new-password'}
+                        placeholder={authTab === 'login' ? 'รหัสผ่าน' : 'รหัสผ่าน (อย่างน้อย 8 ตัว ไม่มีช่องว่าง)'} 
                         className="modern-input" 
                         style={{ paddingRight: '44px' }}
                         value={authForm.password} 
@@ -1004,7 +997,7 @@ export default function App() {
                       <div style={{ textAlign: 'right', marginBottom: '18px' }}>
                         <button
                           type="button"
-                          onClick={() => { setShowForgotModal(true); setForgotMsg({ type: '', text: '' }); }}
+                          onClick={() => setShowForgotModal(true)}
                           style={{
                             background: 'none', border: 'none', color: PALETTE.primary,
                             fontSize: '12px', fontWeight: 600, cursor: 'pointer', padding: 0,
@@ -1117,6 +1110,8 @@ export default function App() {
             border: `1.5px solid ${PALETTE.borderOrange}`
           }}>
             <button 
+              type="button"
+              aria-label="ปิด"
               onClick={() => setShowForgotModal(false)}
               style={{
                 position: 'absolute', right: '18px', top: '18px', background: 'none', border: 'none',
@@ -1126,53 +1121,18 @@ export default function App() {
               ✕
             </button>
 
-            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-              <h3 style={{ margin: '0 0 6px 0', fontSize: '19px', fontWeight: 800 }}>รีเซ็ตรหัสผ่าน</h3>
-              <p style={{ fontSize: '12.5px', color: PALETTE.subText, margin: 0 }}>
-                ระบุชื่อผู้ใช้หรือเบอร์โทรศัพท์ เพื่อเปลี่ยนรหัสผ่านใหม่
+            <div style={{ textAlign: 'center', marginBottom: '18px' }}>
+              <h3 style={{ margin: '0 0 6px 0', fontSize: '19px', fontWeight: 800 }}>ลืมรหัสผ่าน</h3>
+              <p style={{ fontSize: '13px', color: PALETTE.subText, margin: 0, lineHeight: 1.6 }}>
+                เพื่อความปลอดภัยของบัญชี ระบบไม่เปิดให้ตั้งรหัสผ่านใหม่เองจากหน้านี้
               </p>
             </div>
-
-            {forgotMsg.text && (
-              <div style={{ 
-                background: forgotMsg.type === 'success' ? '#ECFDF5' : '#FEF2F2', 
-                color: forgotMsg.type === 'success' ? PALETTE.success : PALETTE.danger, 
-                padding: '10px 14px', borderRadius: '12px', fontSize: '12.5px', 
-                marginBottom: '16px', fontWeight: 600, textAlign: 'center'
-              }}>
-                {forgotMsg.text}
-              </div>
-            )}
-
-            <form onSubmit={handleResetPassword}>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '6px', color: PALETTE.slateText }}>ชื่อผู้ใช้ หรือ เบอร์โทรศัพท์</label>
-                <input 
-                  type="text" 
-                  required 
-                  placeholder="ระบุ username หรือ เบอร์โทร"
-                  value={forgotForm.username_or_phone} 
-                  onChange={e => setForgotForm({ ...forgotForm, username_or_phone: e.target.value })} 
-                  style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: `1.5px solid ${PALETTE.border}`, background: '#FAFAFA', outline: 'none', fontSize: '13px', fontWeight: 500 }} 
-                />
-              </div>
-
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '11.5px', fontWeight: 700, marginBottom: '6px', color: PALETTE.slateText }}>รหัสผ่านใหม่</label>
-                <input 
-                  type="password" 
-                  required 
-                  placeholder="ระบุรหัสผ่านใหม่" 
-                  value={forgotForm.new_password} 
-                  onChange={e => setForgotForm({ ...forgotForm, new_password: e.target.value })} 
-                  style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: `1.5px solid ${PALETTE.border}`, background: '#FAFAFA', outline: 'none', fontSize: '13px', fontWeight: 500 }} 
-                />
-              </div>
-
-              <button type="submit" className="btn-primary">
-                ยืนยันการเปลี่ยนรหัสผ่าน
-              </button>
-            </form>
+            <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.borderOrange}`, borderRadius: '14px', padding: '14px 16px', fontSize: '13px', lineHeight: 1.7, marginBottom: '18px' }}>
+              กรุณาติดต่อเจ้าหน้าที่ศูนย์อาหาร พร้อมแจ้ง<b>ชื่อผู้ใช้</b>และ<b>เบอร์โทรศัพท์</b>ที่ลงทะเบียนไว้ เพื่อขอรีเซ็ตรหัสผ่าน
+            </div>
+            <button type="button" className="btn-primary" onClick={() => setShowForgotModal(false)}>
+              เข้าใจแล้ว กลับไปหน้าเข้าสู่ระบบ
+            </button>
           </div>
         </div>
       )}

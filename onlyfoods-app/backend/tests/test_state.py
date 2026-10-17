@@ -153,7 +153,7 @@ def test_reminder_comes_before_no_show_unlock():
     """ลูกค้าต้องได้รับเตือนก่อนที่พนักงานจะตัดคิวได้ (ไม่งั้นไม่มีเวลาตอบสนอง)"""
     import config
     assert config.PICKUP_REMINDER_MINUTES < config.NO_SHOW_AFTER_MINUTES
-    assert (config.PICKUP_REMINDER_MINUTES, config.NO_SHOW_AFTER_MINUTES) == (15, 30)
+    assert (config.PICKUP_REMINDER_MINUTES, config.NO_SHOW_AFTER_MINUTES) == (30, 60)
 
 
 def test_legacy_names_round_trip():
