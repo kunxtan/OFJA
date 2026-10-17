@@ -1931,7 +1931,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           color: "#F97316",
                         }}
                       >
-                        {getCustomerPickupRange() || "กำลังคำนวณเวลา..."}
+                        {order.PickupTime || order.pickup_time || "รับทันที"}
                       </div>
 
                       {!getCustomerPickupRange() && (
