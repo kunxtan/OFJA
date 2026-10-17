@@ -334,6 +334,11 @@ const ICON_PATHS = {
     download: 'M12 3v12M7 11l5 5 5-5M4 21h16',
     calendar: 'M7 3v4M17 3v4M3 9h18M5 5h14v16H5z',
     edit: 'M4 20h4l10-10-4-4L4 16zM14 6l4 4',
+    eyeOff: 'M3 3l18 18M10.6 6.1A10.9 10.9 0 0112 6c6.5 0 10 6 10 6a17.6 17.6 0 01-3.2 3.9M6.6 6.6C3.8 8.3 2 12 2 12s3.5 6 10 6a9.7 9.7 0 004.4-1M9.9 9.9a3 3 0 004.2 4.2',
+    phone: 'M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2',
+    mail: 'M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2zM3 7l9 6 9-6',
+    lock: 'M5 13a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H7a2 2 0 01-2-2zM8 11V7a4 4 0 118 0v4',
+    chat: 'M3 20l1.3-3.9A8 8 0 1112 20a8.1 8.1 0 01-4.6-1.4z',
     eye: 'M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6zM12 15a3 3 0 100-6 3 3 0 000 6z',
     trash: 'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14',
     power: 'M12 3v9M7 6a8 8 0 1010 0',
@@ -3201,7 +3206,6 @@ const EMPTY_STORE_FORM = {
     contractStartDate: '',
     contractDuration: '',
     contractEndDate: '',
-    ownerFullName: '',
     ownerUsername: '',
     ownerPassword: '',
     ownerConfirm: ''
@@ -3222,6 +3226,9 @@ function looksLikeGarbage(value) {
     return false;
 }
 const EMAIL_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+// รหัสผ่าน: ต้องตรงกับ backend (config.MIN_PASSWORD_LENGTH = 8 ; bcrypt รับได้ไม่เกิน 72)
+const STORE_PASSWORD_MIN = 8;
+const STORE_PASSWORD_MAX = 72;
 function validateStoreForm(form, mode = 'create') {
     const errors = {};
     if (form.queueCode && !/^[A-Za-z]{1,2}$/.test(form.queueCode.trim()))
@@ -3259,31 +3266,24 @@ function validateStoreForm(form, mode = 'create') {
     else if (looksLikeGarbage(phone)) {
         errors.phone = 'เบอร์โทรนี้ไม่ถูกต้อง';
     }
+        // LINE และอีเมลไม่บังคับ : ตรวจเฉพาะตอนกรอกมา
     const lineId = form.lineId.trim();
-    if (!lineId) {
-        errors.lineId = 'กรุณากรอก LINE ID สำหรับติดต่อร้าน';
-    }
-    else if (/\s/.test(lineId)) {
-        errors.lineId = 'LINE ID ห้ามมีช่องว่าง';
-    }
-    else if (lineId.replace(/^@/, '').length < 2) {
-        errors.lineId = 'LINE ID สั้นเกินไป';
-    }
-    else if (lineId.length > 30) {
-        errors.lineId = 'LINE ID ต้องไม่เกิน 30 ตัวอักษร';
-    }
-    else if (looksLikeGarbage(lineId.replace(/^@/, ''))) {
-        errors.lineId = 'กรุณากรอก LINE ID ที่ถูกต้อง ไม่ใช่ข้อความมั่ว';
+    if (lineId) {
+        if (/\s/.test(lineId))
+            errors.lineId = 'LINE ID ห้ามมีช่องว่าง';
+        else if (lineId.replace(/^@/, '').length < 2)
+            errors.lineId = 'LINE ID สั้นเกินไป';
+        else if (lineId.length > 30)
+            errors.lineId = 'LINE ID ต้องไม่เกิน 30 ตัวอักษร';
+        else if (looksLikeGarbage(lineId.replace(/^@/, '')))
+            errors.lineId = 'กรุณากรอก LINE ID ที่ถูกต้อง ไม่ใช่ข้อความมั่ว';
     }
     const email = form.email.trim();
-    if (!email) {
-        errors.email = 'กรุณากรอกอีเมลติดต่อ';
-    }
-    else if (!EMAIL_RE.test(email)) {
-        errors.email = 'รูปแบบอีเมลไม่ถูกต้อง เช่น shop@example.com';
-    }
-    else if (looksLikeGarbage(email.split('@')[0])) {
-        errors.email = 'กรุณากรอกอีเมลที่ถูกต้อง ไม่ใช่ข้อความมั่ว';
+    if (email) {
+        if (!EMAIL_RE.test(email))
+            errors.email = 'รูปแบบอีเมลไม่ถูกต้อง เช่น shop@example.com';
+        else if (looksLikeGarbage(email.split('@')[0]))
+            errors.email = 'กรุณากรอกอีเมลที่ถูกต้อง ไม่ใช่ข้อความมั่ว';
     }
     if (form.description.trim().length > 300) {
         errors.description = 'คำอธิบายต้องไม่เกิน 300 ตัวอักษร';
@@ -3303,30 +3303,104 @@ function validateStoreForm(form, mode = 'create') {
         errors.contractEndDate = 'กรุณาระบุปีเป็น ค.ศ. (เช่น 2026 ไม่ใช่ 2569)';
 
     if (mode === 'create') {
-        const ownerFullName = String(form.ownerFullName || '').trim();
         const ownerUsername = String(form.ownerUsername || '').trim();
         const ownerPassword = String(form.ownerPassword || '');
         const ownerConfirm = String(form.ownerConfirm || '');
-        if (!ownerFullName)
-            errors.ownerFullName = 'กรุณากรอกชื่อเจ้าของร้าน';
-        else if (ownerFullName.length > 100)
-            errors.ownerFullName = 'ชื่อต้องไม่เกิน 100 ตัวอักษร';
         if (!ownerUsername)
             errors.ownerUsername = 'กรุณากรอกชื่อผู้ใช้';
         else if (!/^[a-zA-Z0-9_]{4,20}$/.test(ownerUsername))
             errors.ownerUsername = 'ใช้ได้เฉพาะ a-z, 0-9 และ _ ความยาว 4–20 ตัว';
         if (!ownerPassword)
             errors.ownerPassword = 'กรุณากรอกรหัสผ่าน';
-        else if (ownerPassword.length < 6)
-            errors.ownerPassword = 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร';
-        else if (ownerPassword.length > 50)
-            errors.ownerPassword = 'รหัสผ่านต้องไม่เกิน 50 ตัวอักษร';
+        else if (ownerPassword.length < STORE_PASSWORD_MIN)
+            errors.ownerPassword = `รหัสผ่านต้องยาวอย่างน้อย ${STORE_PASSWORD_MIN} ตัวอักษร`;
+        else if (ownerPassword.length > STORE_PASSWORD_MAX)
+            errors.ownerPassword = `รหัสผ่านต้องไม่เกิน ${STORE_PASSWORD_MAX} ตัวอักษร`;
         else if (/\s/.test(ownerPassword))
             errors.ownerPassword = 'รหัสผ่านห้ามมีช่องว่าง';
         if (ownerConfirm !== ownerPassword)
             errors.ownerConfirm = 'ยืนยันรหัสผ่านไม่ตรงกัน';
     }
     return errors;
+}
+
+// ===== ชิ้นส่วนฟอร์มร้านค้า =====
+function FormSectionTitle({ icon, children }) {
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', margin: '20px 0 12px', color: T.muted, fontSize: '13px', fontWeight: 600 }}>
+            <Icon name={icon} size={16} color={T.primary}/>
+            {children}
+        </div>
+    );
+}
+
+function IconInput({ icon, style, ...props }) {
+    return (
+        <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: T.muted, display: 'grid', pointerEvents: 'none' }}>
+                <Icon name={icon} size={16}/>
+            </span>
+            <input {...props} style={{ ...inputStyle, paddingLeft: '38px', ...style }}/>
+        </div>
+    );
+}
+
+// 0812345678 -> 081-234-5678 ; 021234567 -> 02-123-4567
+function formatPhone(value) {
+    const d = String(value || '').replace(/\D/g, '');
+    if (/^0\d{9}$/.test(d)) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+    if (/^0\d{8}$/.test(d)) return `${d.slice(0, 2)}-${d.slice(2, 5)}-${d.slice(5)}`;
+    return value || '';
+}
+
+function PasswordField({ value, onChange, show, onToggle, placeholder }) {
+    return (
+        <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: T.muted, display: 'grid', pointerEvents: 'none' }}>
+                <Icon name="lock" size={16}/>
+            </span>
+            <input type={show ? 'text' : 'password'} value={value} onChange={onChange} maxLength={STORE_PASSWORD_MAX} autoComplete="new-password" placeholder={placeholder} style={{ ...inputStyle, paddingLeft: '38px', paddingRight: '44px' }}/>
+            <button type="button" onClick={onToggle} tabIndex={-1} aria-label={show ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'} style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', padding: '6px', cursor: 'pointer', color: T.muted, display: 'grid', placeItems: 'center' }}>
+                <Icon name={show ? 'eyeOff' : 'eye'} size={17}/>
+            </button>
+        </div>
+    );
+}
+
+function PasswordChecklist({ password, confirm }) {
+    const checks = [
+        [password.length >= STORE_PASSWORD_MIN, `อย่างน้อย ${STORE_PASSWORD_MIN} ตัวอักษร`],
+        [password.length > 0 && !/\s/.test(password), 'ไม่มีช่องว่าง'],
+        [password.length > 0 && password === confirm, 'ยืนยันรหัสผ่านตรงกัน']
+    ];
+    return (
+        <div style={{ display: 'flex', gap: '6px 16px', flexWrap: 'wrap', margin: '-4px 0 6px' }}>
+            {checks.map(([ok, label]) => (
+                <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 600, color: ok ? T.up : T.muted }}>
+                    <Icon name={ok ? 'check' : 'info'} size={13}/>
+                    {label}
+                </span>
+            ))}
+        </div>
+    );
+}
+
+// การ์ดตำแหน่งเจ้าของร้าน (เลือกไว้แล้ว)
+function OwnerRoleCard() {
+    return (
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', borderRadius: '14px', border: `1.5px solid ${T.primary}`, background: T.primarySoft, marginBottom: '14px' }}>
+            <span style={{ width: '40px', height: '40px', borderRadius: '10px', background: T.surface, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                <Icon name="store" size={20} color={T.primary}/>
+            </span>
+            <span style={{ minWidth: 0 }}>
+                <strong style={{ display: 'block', color: T.ink, fontSize: '14px', fontWeight: 700 }}>เจ้าของร้าน</strong>
+                <span style={{ ...captionStyle, display: 'block' }}>จัดการเมนู พนักงาน และดูยอดขายของร้านนี้</span>
+            </span>
+            <span style={{ position: 'absolute', top: '10px', right: '10px', width: '20px', height: '20px', borderRadius: '50%', background: T.primary, display: 'grid', placeItems: 'center' }}>
+                <Icon name="check" size={12} color="#FFFFFF" strokeWidth={3}/>
+            </span>
+        </div>
+    );
 }
 
 // ===== ครอปรูปหน้าร้านก่อนนำไปบันทึก =====
@@ -3397,7 +3471,7 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
     const [dragOver, setDragOver] = useState(false);
     const [cropSource, setCropSource] = useState('');
     const [cropFileName, setCropFileName] = useState('');
-   
+    const [showPassword, setShowPassword] = useState(false);
 
     const calculateContractEnd = (startISO, duration) => {
         if (!startISO || !duration || duration === 'custom')
@@ -3485,84 +3559,24 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
             {saving ? 'กำลังบันทึก...' : mode === 'edit' ? 'บันทึกการแก้ไข' : 'เพิ่มร้านค้า'}
           </Button>
         </>}>
+            <FormSectionTitle icon="store">ข้อมูลร้าน</FormSectionTitle>
       <Field label="ชื่อร้านค้า" required error={errors.name}>
         <input value={form.name} onChange={update('name')} maxLength={100} placeholder="เช่น ร้านข้าวแกงวิศวะเดือด" style={inputStyle}/>
       </Field>
-
-      <Field label="ตัวอักษรคิวของร้าน" error={errors.queueCode} hint="เลขคิวจะแสดงเป็น A001, A002 ... เว้นว่าง = ระบบเลือกตัวอักษรที่ยังว่างให้">
-        <input value={form.queueCode || ''} onChange={update('queueCode')} maxLength={2} placeholder="เช่น A" style={{ ...inputStyle, textTransform: 'uppercase' }}/>
-      </Field>
-
-      <Field label="ประเภทอาหาร" required error={errors.category}>
-        <select value={form.category} onChange={update('category')} style={inputStyle}>
-          <option value="">— เลือกประเภทอาหาร —</option>
-          {FOOD_CATEGORIES.map((c) => (<option key={c} value={c}>
-              {c}
-            </option>))}
-        </select>
-      </Field>
-         
-          <div style={{ width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
-    <Field label="วันที่เริ่มสัญญา (ปี ค.ศ.)" required error={errors.contractStartDate}>
-        <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={formDateInputStyle} />
-    </Field>
-
-    <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
-        <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={{ ...inputStyle, display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
-            <option value="">— เลือกระยะเวลา —</option><option value="6m">6 เดือน</option><option value="1y">1 ปี</option><option value="2y">2 ปี</option><option value="3y">3 ปี</option><option value="custom">กำหนดวันสิ้นสุดเอง</option>
-        </select>
-    </Field>
-
-    <Field label="วันที่สิ้นสุดสัญญา (ปี ค.ศ.)" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณจากวันเริ่มสัญญาอัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดสัญญาได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
-        <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...formDateInputStyle, background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }} />
-    </Field>
-</div>
-
       <div style={twoColStyle}>
-        <Field label="ชื่อผู้ติดต่อ" required error={errors.contactName}>
-          <input value={form.contactName} onChange={update('contactName')} maxLength={60} placeholder="ชื่อเจ้าของร้านหรือผู้ดูแล" style={inputStyle}/>
+        <Field label="ประเภทอาหาร" required error={errors.category}>
+          <select value={form.category} onChange={update('category')} style={inputStyle}>
+            <option value="">— เลือกประเภทอาหาร —</option>
+            {FOOD_CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
+          </select>
         </Field>
-
-        <Field label="เบอร์โทรติดต่อ" required error={errors.phone} hint="ตัวเลข 9–10 หลัก ขึ้นต้นด้วย 0">
-          <input value={form.phone} onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value.replace(/[^\d]/g, '').slice(0, 10) }))} inputMode="numeric" placeholder="0812345678" style={inputStyle}/>
+        <Field label="ตัวอักษรคิวของร้าน" error={errors.queueCode} hint="คิวจะเป็น A001, A002 ... เว้นว่าง = ระบบเลือกให้">
+          <input value={form.queueCode || ''} onChange={update('queueCode')} maxLength={2} placeholder="เช่น A" style={{ ...inputStyle, textTransform: 'uppercase' }}/>
         </Field>
       </div>
-
-      <div style={twoColStyle}>
-        <Field label="LINE ID" required error={errors.lineId} hint="ห้ามเว้นวรรค">
-          <input value={form.lineId} onChange={(e) => setForm((prev) => ({ ...prev, lineId: e.target.value.replace(/\s/g, '').slice(0, 30) }))} placeholder="@onlyfoods" style={inputStyle}/>
-        </Field>
-
-        <Field label="อีเมล" required error={errors.email} hint="เช่น shop@example.com">
-          <input type="email" value={form.email} onChange={update('email')} maxLength={100} placeholder="shop@example.com" style={inputStyle}/>
-        </Field>
-      </div>
-
-      {mode === 'create' && (<div style={{ marginTop: '6px', padding: '16px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: '#FAFBFD' }}>
-        <div style={{ marginBottom: '12px' }}>
-          <div style={{ color: T.ink, fontSize: '14px', fontWeight: 700 }}>บัญชีเจ้าของร้าน</div>
-          <div style={{ color: T.muted, fontSize: '12px', marginTop: '3px' }}>สร้างบัญชีเจ้าของร้านพร้อมกับร้านค้าในขั้นตอนเดียว</div>
-        </div>
-        <Field label="ชื่อเจ้าของร้าน" required error={errors.ownerFullName}>
-          <input value={form.ownerFullName || ''} onChange={update('ownerFullName')} maxLength={100} placeholder="ชื่อ-นามสกุลเจ้าของร้าน" style={inputStyle}/>
-        </Field>
-        <div style={twoColStyle}>
-          <Field label="ชื่อผู้ใช้" required error={errors.ownerUsername} hint="a-z, 0-9 และ _ ความยาว 4–20 ตัว">
-            <input value={form.ownerUsername || ''} onChange={update('ownerUsername')} maxLength={20} autoComplete="off" placeholder="เช่น owner_shop" style={inputStyle}/>
-          </Field>
-          <Field label="รหัสผ่าน" required error={errors.ownerPassword} hint="อย่างน้อย 6 ตัว">
-            <input type="password" value={form.ownerPassword || ''} onChange={update('ownerPassword')} maxLength={50} autoComplete="new-password" placeholder="ตั้งรหัสผ่าน" style={inputStyle}/>
-          </Field>
-        </div>
-        <Field label="ยืนยันรหัสผ่าน" required error={errors.ownerConfirm}>
-          <input type="password" value={form.ownerConfirm || ''} onChange={update('ownerConfirm')} maxLength={50} autoComplete="new-password" placeholder="กรอกรหัสผ่านอีกครั้ง" style={inputStyle}/>
-        </Field>
-      </div>)}
-
       <Field label="คำอธิบายร้าน" error={errors.description} hint={`${form.description.length}/300 ตัวอักษร`}>
-        <textarea value={form.description} onChange={update('description')} maxLength={300} rows={3} placeholder="จุดเด่นของร้าน เมนูแนะนำ ฯลฯ" style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_STACK }}/>
+        <textarea value={form.description} onChange={update('description')} maxLength={300} rows={2} placeholder="จุดเด่นของร้าน เมนูแนะนำ ฯลฯ" style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_STACK }}/>
       </Field>
-
       <Field label="รูปหน้าร้าน" error={errors.image}>
         <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={onPickImage} style={{ display: 'none' }}/>
         <button
@@ -3627,7 +3641,59 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
           </div>
         )}
       </Field>
-    </Modal>
+
+      <FormSectionTitle icon="calendar">สัญญาเช่า</FormSectionTitle>
+      <Field label="วันที่เริ่มสัญญา (ปี ค.ศ.)" required error={errors.contractStartDate}>
+        <input type="date" value={form.contractStartDate || ''} onChange={update('contractStartDate')} style={formDateInputStyle} />
+      </Field>
+      <div style={twoColStyle}>
+        <Field label="ระยะเวลาสัญญา" required error={errors.contractDuration}>
+          <select value={form.contractDuration || ''} onChange={update('contractDuration')} style={{ ...inputStyle, display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}>
+            <option value="">— เลือกระยะเวลา —</option><option value="6m">6 เดือน</option><option value="1y">1 ปี</option><option value="2y">2 ปี</option><option value="3y">3 ปี</option><option value="custom">กำหนดวันสิ้นสุดเอง</option>
+          </select>
+        </Field>
+        <Field label="วันที่สิ้นสุดสัญญา (ปี ค.ศ.)" required error={errors.contractEndDate} hint={form.contractDuration && form.contractDuration !== 'custom' ? 'ระบบคำนวณให้อัตโนมัติ' : form.contractDuration === 'custom' ? 'เลือกวันสิ้นสุดได้เอง' : 'เลือกระยะเวลาสัญญาก่อน'}>
+          <input type="date" value={form.contractEndDate || ''} min={form.contractStartDate || undefined} onChange={update('contractEndDate')} disabled={form.contractDuration !== 'custom'} style={{ ...formDateInputStyle, background: form.contractDuration !== 'custom' ? '#F7F8FB' : inputStyle.background, color: form.contractDuration !== 'custom' ? T.muted : T.ink, cursor: form.contractDuration !== 'custom' ? 'not-allowed' : 'pointer' }} />
+        </Field>
+      </div>
+
+      <FormSectionTitle icon="account">ผู้ติดต่อ</FormSectionTitle>
+      <div style={twoColStyle}>
+        <Field label="ชื่อเจ้าของร้าน / ผู้ติดต่อ" required error={errors.contactName} hint={mode === 'create' ? 'ใช้เป็นชื่อบัญชีเจ้าของร้านด้วย' : undefined}>
+          <IconInput icon="account" value={form.contactName} onChange={update('contactName')} maxLength={60} placeholder="ชื่อ-นามสกุล"/>
+        </Field>
+        <Field label="เบอร์โทรติดต่อ" required error={errors.phone} hint="ตัวเลข 9–10 หลัก ขึ้นต้นด้วย 0">
+          <IconInput icon="phone" value={form.phone} inputMode="tel" maxLength={12} placeholder="081-234-5678"
+            onChange={(e) => { setForm((prev) => ({ ...prev, phone: e.target.value.replace(/[^\d-]/g, '').slice(0, 12) })); setErrors((prev) => ({ ...prev, phone: undefined })); }}
+            onBlur={() => setForm((prev) => ({ ...prev, phone: formatPhone(prev.phone) }))}/>
+        </Field>
+      </div>
+      <div style={twoColStyle}>
+        <Field label="LINE ID (ไม่บังคับ)" error={errors.lineId} hint="ห้ามเว้นวรรค">
+          <IconInput icon="chat" value={form.lineId} onChange={(e) => setForm((prev) => ({ ...prev, lineId: e.target.value.replace(/\s/g, '').slice(0, 30) }))} placeholder="@onlyfoods"/>
+        </Field>
+        <Field label="อีเมล (ไม่บังคับ)" error={errors.email}>
+          <IconInput icon="mail" type="email" value={form.email} onChange={update('email')} maxLength={100} placeholder="shop@example.com"/>
+        </Field>
+      </div>
+
+      {mode === 'create' && (<>
+        <FormSectionTitle icon="key">บัญชีเข้าสู่ระบบ</FormSectionTitle>
+        <OwnerRoleCard/>
+        <Field label="ชื่อผู้ใช้ (username)" required error={errors.ownerUsername} hint="a-z, 0-9 และ _ ความยาว 4–20 ตัว ห้ามซ้ำกับบัญชีอื่น">
+          <IconInput icon="account" value={form.ownerUsername || ''} onChange={(e) => { setForm((prev) => ({ ...prev, ownerUsername: e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20) })); setErrors((prev) => ({ ...prev, ownerUsername: undefined })); }} autoComplete="off" placeholder="เช่น owner_shop"/>
+        </Field>
+        <div style={twoColStyle}>
+          <Field label="รหัสผ่าน" required error={errors.ownerPassword}>
+            <PasswordField value={form.ownerPassword || ''} onChange={update('ownerPassword')} show={showPassword} onToggle={() => setShowPassword((v) => !v)} placeholder={`อย่างน้อย ${STORE_PASSWORD_MIN} ตัว`}/>
+          </Field>
+          <Field label="ยืนยันรหัสผ่าน" required error={errors.ownerConfirm}>
+            <PasswordField value={form.ownerConfirm || ''} onChange={update('ownerConfirm')} show={showPassword} onToggle={() => setShowPassword((v) => !v)} placeholder="พิมพ์อีกครั้ง"/>
+          </Field>
+        </div>
+        <PasswordChecklist password={form.ownerPassword || ''} confirm={form.ownerConfirm || ''}/>
+      </>)}
+       </Modal>
 
     <StoreImageCropModal
       open={Boolean(cropSource)}
@@ -3763,8 +3829,9 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
 
     const saveAccountField = async (key) => {
         const next = accountValue.trim();
-        if (key === 'Password' && next.length < 6) {
-            throw new Error('รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร');
+                if (key === 'Password' && next.length < STORE_PASSWORD_MIN) {
+            pushToast(`รหัสผ่านต้องยาวอย่างน้อย ${STORE_PASSWORD_MIN} ตัวอักษร`, 'error');
+            return;
         }
         const current = String(account?.[key] || '').trim();
         if (key !== 'Password' && next === current) {
@@ -3784,9 +3851,16 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         return (
             <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
                 <div style={{ ...captionStyle, marginBottom: '4px' }}>{label}</div>
-                {isEditing ? (
+                                {isEditing ? (
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
-                        <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
+                        {key === 'Category' ? (
+                            <select autoFocus value={value} onChange={(e) => setValue(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }}>
+                                {!FOOD_CATEGORIES.includes(value) && <option value={value}>{value || '— เลือกประเภทอาหาร —'}</option>}
+                                {FOOD_CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
+                            </select>
+                        ) : (
+                            <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
+                        )}
                         <Button variant="primary" icon="check" disabled={saving} onClick={() => saveStoreField(key)}>บันทึก</Button>
                         <Button variant="ghost" disabled={saving} onClick={() => setEditing(null)}>ยกเลิก</Button>
                     </div>
@@ -3853,8 +3927,8 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                 {editableStoreItem('Category', 'ประเภท')}
                 {editableStoreItem('ContactName', 'ชื่อผู้ติดต่อ')}
                 {editableStoreItem('ContactPhone', 'เบอร์โทรศัพท์')}
-                {editableStoreItem('ContactLine', 'LINE')}
-                {editableStoreItem('ContactEmail', 'อีเมล')}
+                {editableStoreItem('ContactLine', 'LINE (ไม่บังคับ)')}
+                {editableStoreItem('ContactEmail', 'อีเมล (ไม่บังคับ)')}
                 {editableStoreItem('Description', 'รายละเอียดร้าน')}
 
                 <div style={{ padding: '12px 0', borderBottom: `1px solid ${T.line}` }}>
@@ -4018,7 +4092,6 @@ function StoreManagePage({ ctx }) {
     const [form, setForm] = useState(EMPTY_STORE_FORM);
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
-    const [quickName, setQuickName] = useState('');
     const loadDetails = useCallback(async () => {
         try {
             const data = await callApi(`${API}/api/stores`);
@@ -4048,12 +4121,8 @@ function StoreManagePage({ ctx }) {
         .filter((s) => !focusStoreId || String(s.StoreId) === String(focusStoreId))
         .filter((s) => String(s.StoreName || '').toLowerCase().includes(search));
     const openCreate = () => {
-        if (!quickName.trim()) {
-            pushToast('กรุณากรอกชื่อร้านค้าก่อน จึงจะเปิดฟอร์มเพิ่มร้านได้', 'warn');
-            return;
-        }
         setMode('create');
-        setForm({ ...EMPTY_STORE_FORM, name: quickName.trim() });
+        setForm(EMPTY_STORE_FORM);
         setErrors({});
         setModalOpen(true);
     };
@@ -4071,7 +4140,7 @@ function StoreManagePage({ ctx }) {
             queue_code: (form.queueCode || '').trim().toUpperCase() || null,
             category: form.category,
             contact_name: form.contactName.trim(),
-            contact_phone: form.phone,
+            contact_phone: form.phone.replace(/\D/g, ''),
             contact_line: form.lineId.trim(),
             contact_email: form.email.trim(),
             description: form.description.trim(),
@@ -4080,7 +4149,7 @@ function StoreManagePage({ ctx }) {
             contract_end_date: form.contractEndDate || null,
             performed_by: 'Executive',
             ...(mode === 'create' ? {
-                owner_full_name: form.ownerFullName.trim(),
+                owner_full_name: form.contactName.trim(),
                 owner_username: form.ownerUsername.trim(),
                 owner_password: form.ownerPassword
             } : {})
@@ -4112,8 +4181,6 @@ function StoreManagePage({ ctx }) {
                 await send(fullPath, method);
                 pushToast('เพิ่มร้านค้าและบัญชีเจ้าของร้านเรียบร้อยแล้ว');
             }
-            if (!isEdit)
-                setQuickName('');
             setModalOpen(false);
             await reloadStores();
             await loadDetails();
@@ -4282,21 +4349,8 @@ function StoreManagePage({ ctx }) {
           <Button variant="ghost" onClick={clearFocusStore} style={{ padding: '9px 14px' }}>แสดงร้านค้าทั้งหมด</Button>
         </div>
       </div>)}
-      <Card title="เพิ่มร้านค้าใหม่" subtitle="พิมพ์ชื่อร้านก่อน แล้วกดต่อเพื่อกรอกรายละเอียดให้ครบ" style={{ marginBottom: '16px' }}>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
-          <input value={quickName} onChange={(e) => setQuickName(e.target.value)} onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                openCreate();
-            }
-        }} maxLength={100} placeholder="ชื่อร้านค้า เช่น ก๋วยเตี๋ยวเรือตึกพระเทพ" style={{ ...inputStyle, flex: 1, minWidth: '240px' }}/>
-          <Button icon="plus" onClick={openCreate}>
-            กรอกรายละเอียดร้าน
-          </Button>
-        </div>
-      </Card>
-
-      <Card title="รายชื่อร้านค้าทั้งหมด" subtitle={`${money(rows.length)} ร้านที่แสดงอยู่ · ใช้ช่องค้นหาด้านบนเพื่อกรองรายชื่อ`}>
+            <Card title="รายชื่อร้านค้าทั้งหมด" subtitle={`${money(rows.length)} ร้านที่แสดงอยู่ · ใช้ช่องค้นหาด้านบนเพื่อกรองรายชื่อ`}
+        right={<Button icon="plus" onClick={openCreate}>เพิ่มร้านค้า</Button>}>
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
             <thead>
@@ -4442,10 +4496,10 @@ function validateAccountForm(form, mode) {
     }
     if (!form.password)
         errors.password = 'กรุณากรอกรหัสผ่าน';
-    else if (form.password.length < 6)
-        errors.password = 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร';
-    else if (form.password.length > 50)
-        errors.password = 'รหัสผ่านต้องไม่เกิน 50 ตัวอักษร';
+    else if (form.password.length < STORE_PASSWORD_MIN)
+        errors.password = `รหัสผ่านต้องยาวอย่างน้อย ${STORE_PASSWORD_MIN} ตัวอักษร`;
+    else if (form.password.length > STORE_PASSWORD_MAX)
+        errors.password = `รหัสผ่านต้องไม่เกิน ${STORE_PASSWORD_MAX} ตัวอักษร`;
     else if (/\s/.test(form.password))
         errors.password = 'รหัสผ่านห้ามมีช่องว่าง';
     if (form.confirm !== form.password)
@@ -5597,11 +5651,11 @@ function StoreAccountsPage({ ctx }) {
         </Field>
 
         <div style={twoColStyle}>
-          <Field label="รหัสผ่าน" required error={errors.password} hint="อย่างน้อย 6 ตัว ห้ามเว้นวรรค">
-            <input type="text" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value.replace(/\s/g, '').slice(0, 50) }))} style={inputStyle}/>
+          <Field label="รหัสผ่าน" required error={errors.password} hint={`อย่างน้อย ${STORE_PASSWORD_MIN} ตัว ห้ามเว้นวรรค`}>
+            <input type="text" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value.replace(/\s/g, '').slice(0, STORE_PASSWORD_MAX) }))} style={inputStyle}/>
           </Field>
           <Field label="ยืนยันรหัสผ่าน" required error={errors.confirm}>
-            <input type="text" value={form.confirm} onChange={(e) => setForm((prev) => ({ ...prev, confirm: e.target.value.replace(/\s/g, '').slice(0, 50) }))} style={inputStyle}/>
+            <input type="text" value={form.confirm} onChange={(e) => setForm((prev) => ({ ...prev, confirm: e.target.value.replace(/\s/g, '').slice(0, STORE_PASSWORD_MAX) }))} style={inputStyle}/>
           </Field>
         </div>
       </Modal>
