@@ -1076,45 +1076,89 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
   }, [apiBase, selectedStore, isCartOpen, pickupTime]);
 
-  const getCustomerWaitEstimate = () => {
-    const cartDishCount = cart.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0);
-    if (!cartDishCount) return 0;
+  // ===== คำนวณเวลารอคิว =====
+  // - จานละ 4 นาที (ดูจำนวนจานของแต่ละคิว ไม่ใช่จำนวนคิว)
+  // - คิวเราเริ่มนับต่อจากเวลาที่คิวก่อนหน้าจะเสร็จ ไม่ซ้อนทับกัน
+  // - เวลาเผื่อตามจานค้างทั้งครัว: < 5 จาน = ปกติ, 5-15 จาน = +10%, > 15 จาน = +20%
+  // - ถ้าครัวกด "เสร็จแล้ว" ก่อนเวลา คิวนั้นจะหลุดจากคิวค้าง และ ReadyAt จริงกลายเป็นจุดเริ่มของคิวถัดไป
+  //   คิวที่เหลือทั้งหมดจึงถูกคำนวณใหม่ทุกครั้งที่โหลดข้อมูลคิว (ทุก 5 วินาที)
+  const DISH_MINUTES = 4;
+  const kitchenBuffer = (waitingDishes) => (waitingDishes > 15 ? 1.2 : waitingDishes >= 5 ? 1.1 : 1);
 
-    const activeOrders = queueEstimateOrders
-      .filter(order => ["PENDING", "COOKING"].includes(String(order.status || "").toUpperCase()))
-      .sort((a, b) => Number(a.order_id) - Number(b.order_id));
-    const waitingDishes = activeOrders.reduce((sum, order) => sum + (Number(order.dish_count) || 0), 0) + cartDishCount;
-    const buffer = waitingDishes > 15 ? 1.2 : waitingDishes >= 5 ? 1.1 : 1;
-    const waitingMinutes = activeOrders.reduce((sum, order) => sum + (Number(order.dish_count) || 0) * 4, 0);
-    return Math.max(1, Math.ceil(waitingMinutes + cartDishCount * 4 * buffer));
+  const parseBangkokTime = (value) => {
+    if (!value) return null;
+    const d = new Date(String(value).replace(" ", "T") + "+07:00");
+    return Number.isNaN(d.getTime()) ? null : d;
   };
 
-  // แสดงช่วงเวลารับโดยประมาณ เริ่มจากเวลาปัจจุบันไปจนถึงเวลารอที่คำนวณได้
-  const getCustomerPickupRange = () => {
-    const waitMinutes = Number(getCustomerWaitEstimate());
-    if (!Number.isFinite(waitMinutes) || waitMinutes < 0) {
-      return "กำลังคำนวณเวลา...";
+  const formatBangkokTime = (d) =>
+    d.toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false });
+
+  // คืน { slots: {orderId: {start, end}}, newOrder: {start, end} }
+  // newOrder = ออเดอร์สมมติที่จะต่อท้ายคิว (ใช้กับตะกร้า) เมื่อใส่ extraDishes
+  const buildQueueSchedule = (queueOrders, extraDishes = 0) => {
+    const now = new Date();
+    const list = Array.isArray(queueOrders) ? queueOrders : [];
+    const isScheduled = (o) => Boolean(o.pickup_time); // ออเดอร์นัดเวลาไม่อยู่ในสายคิวทันที
+    const active = list
+      .filter((o) => ["PENDING", "COOKING"].includes(String(o.status || "").toUpperCase()) && !isScheduled(o))
+      .sort((a, b) => Number(a.order_id) - Number(b.order_id));
+
+    const waitingDishes = active.reduce((sum, o) => sum + (Number(o.dish_count) || 0), 0) + extraDishes;
+    const buffer = kitchenBuffer(waitingDishes);
+
+    // จุดเริ่ม = เวลาที่คิวล่าสุดทำเสร็จจริง (ReadyAt ของคิวที่กด "เสร็จแล้ว")
+    let cursor = null;
+    list.forEach((o) => {
+      if (!["READY", "COMPLETED"].includes(String(o.status || "").toUpperCase()) || isScheduled(o)) return;
+      const t = parseBangkokTime(o.ready_at);
+      if (t && (!cursor || t > cursor)) cursor = t;
+    });
+
+    const slots = {};
+    active.forEach((o) => {
+      const created = parseBangkokTime(o.created_at);
+      let start = cursor || created || now;
+      if (created && created > start) start = created;
+      let end = new Date(start.getTime() + (Number(o.dish_count) || 0) * DISH_MINUTES * buffer * 60000);
+      if (end < now) end = now; // ครัวช้ากว่าที่ประเมิน ให้คิวถัดไปเริ่มจากตอนนี้
+      slots[o.order_id] = { start, end };
+      cursor = end;
+    });
+
+    const newStart = cursor && cursor > now ? cursor : now;
+    const newOrder = {
+      start: newStart,
+      end: new Date(newStart.getTime() + extraDishes * DISH_MINUTES * buffer * 60000),
+    };
+    return { slots, newOrder };
+  };
+
+  // แสดงเป็นช่วง "เริ่ม–เสร็จ" ปัดนาทีให้เป็นตัวเลขเต็ม และไม่แสดงเวลาเริ่มที่ผ่านมาแล้ว
+  const formatPickupRange = (start, end) => {
+    const now = new Date();
+    const s = new Date(start < now ? now : start);
+    s.setSeconds(0, 0);
+    let e = new Date(end);
+    if (e.getSeconds() || e.getMilliseconds()) {
+      e.setSeconds(0, 0);
+      e = new Date(e.getTime() + 60000);
     }
-    const start = new Date();
-    start.setSeconds(0, 0);
-    const end = new Date(
-      start.getTime() + waitMinutes * 60 * 1000
-    );
-    const formatTime = (date) =>
-      `${String(date.getHours()).padStart(2, "0")}:${String(
-        date.getMinutes()
-      ).padStart(2, "0")}`;
-    return `${formatTime(start)}–${formatTime(end)} น.`;
+    if (e <= s) e = new Date(s.getTime() + 60000);
+    return `${formatBangkokTime(s)}–${formatBangkokTime(e)} น.`;
+  };
+
+  // ช่วงเวลารับโดยประมาณของตะกร้า (ต่อท้ายคิวที่ค้างอยู่)
+  const getCustomerPickupRange = () => {
+    const cartDishCount = cart.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0);
+    if (!cartDishCount) return "กำลังคำนวณเวลา...";
+    const { newOrder } = buildQueueSchedule(queueEstimateOrders, cartDishCount);
+    return formatPickupRange(newOrder.start, newOrder.end);
   };
 
   // ===== เวลารับโดยประมาณของ "แต่ละออเดอร์" ในหน้าคำสั่งซื้อ =====
   const ACTIVE_ESTIMATE_STATUSES = ["pending", "cooking"];
   const orderStatusKey = (order) => String(order?.Status || "").trim().toLowerCase();
-  const orderDishCount = (order) =>
-    (order?.items || []).reduce(
-      (sum, it) => sum + (String(it.ItemStatus || "NORMAL").toUpperCase() === "NORMAL" ? Number(it.Qty) || 0 : 0),
-      0
-    );
 
   // โหลดคิวของร้านที่ลูกค้ามีออเดอร์ค้างอยู่ เฉพาะตอนเปิดแท็บคำสั่งซื้อ
   const activeOrderStoreKey = myOrders
@@ -1170,27 +1214,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     const queue = orderQueueEstimates[order.StoreId];
     if (!queue) return "กำลังคำนวณเวลา...";
 
-    const myId = Number(order.OrderID);
-    const ahead = queue
-      .filter((o) => ["PENDING", "COOKING"].includes(String(o.status || "").toUpperCase()))
-      .filter((o) => Number(o.order_id) < myId);
-    const aheadDishes = ahead.reduce((sum, o) => sum + (Number(o.dish_count) || 0), 0);
-    const myDishes = orderDishCount(order) || 1;
-    const totalDishes = aheadDishes + myDishes;
-    const buffer = totalDishes > 15 ? 1.2 : totalDishes >= 5 ? 1.1 : 1;
-    const totalMinutes = aheadDishes * 4 + myDishes * 4 * buffer;
-
-    // หักเวลาที่ผ่านไปแล้วนับจากตอนสั่ง (OrderTime เป็นเวลา Asia/Bangkok)
-    const placed = order.OrderTime ? new Date(String(order.OrderTime).replace(" ", "T") + "+07:00") : null;
-    const elapsed = placed && !Number.isNaN(placed.getTime()) ? (Date.now() - placed.getTime()) / 60000 : 0;
-    const remaining = Math.max(1, Math.ceil(totalMinutes - Math.max(0, elapsed)));
-
-    const start = new Date();
-    start.setSeconds(0, 0);
-    const end = new Date(start.getTime() + remaining * 60000);
-    const fmt = (d) =>
-      d.toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false });
-    return `${fmt(start)}–${fmt(end)} น.`;
+    const { slots } = buildQueueSchedule(queue);
+    const slot = slots[order.OrderID];
+    if (!slot) return "กำลังคำนวณเวลา...";
+    return formatPickupRange(slot.start, slot.end);
   };
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
