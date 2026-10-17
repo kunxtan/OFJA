@@ -4940,31 +4940,101 @@ function ContractTrackingPage({ ctx }) {
 }
 
 // ===== ประวัติการดำเนินการ: ตรวจสอบกิจกรรมสำคัญในระบบ =====
+// ค้นหา/กรองที่ backend (ค้นได้ทั้งตาราง) แล้วโหลดทีละ AUDIT_PAGE_SIZE รายการ กด "โหลดเพิ่ม" เพื่อดูเก่ากว่า
+const AUDIT_PAGE_SIZE = 100;
+// ชื่อภาษาไทยของการดำเนินการ (ใช้ทั้งแสดงผลและแปลงคำค้นภาษาไทยเป็น ActionCode ส่งให้ backend)
+const AUDIT_VERBS = {
+    CREATE_ORDER: 'สร้างออเดอร์',
+    CANCEL_ORDER: 'ยกเลิกออเดอร์',
+    CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
+    CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
+    UPDATE_STATUS: 'เปลี่ยนสถานะออเดอร์',
+    RECALL_QUEUE: 'เรียกคิวซ้ำ',
+    PRINT_ORDER: 'พิมพ์ใบคิว',
+    REPRINT_ORDER: 'พิมพ์ใบคิวซ้ำ',
+    VERIFY_SLIP_APPROVE: 'อนุมัติสลิปชำระเงิน',
+    VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปชำระเงิน',
+    CREATE_STORE: 'เพิ่มร้านค้า',
+    UPDATE_STORE: 'แก้ไขข้อมูลร้าน',
+    DELETE_STORE: 'ลบร้านค้า',
+    OPEN_STORE: 'เปิดร้าน',
+    CLOSE_STORE: 'ปิดร้าน',
+    SUSPEND_STORE: 'ระงับร้าน',
+    UNSUSPEND_STORE: 'ปลดระงับร้าน',
+    LOGIN: 'เข้าสู่ระบบ',
+    LOGIN_FAIL: 'เข้าสู่ระบบไม่สำเร็จ',
+    UPDATE_FOOD_COURT_SCHEDULE: 'เปลี่ยนเวลาเปิด–ปิดศูนย์อาหาร'
+};
+const auditCodesMatching = (keyword) => Object.keys(AUDIT_VERBS)
+    .filter((code) => AUDIT_VERBS[code].toLowerCase().includes(keyword));
+
 function AuditHistoryPage({ ctx }) {
     const { API } = ctx;
     const [logs, setLogs] = useState([]);
     const [loadingLogs, setLoadingLogs] = useState(true);
     const [loadError, setLoadError] = useState('');
-    const [query, setQuery] = useState('');
+        const [query, setQuery] = useState('');
     const [filter, setFilter] = useState('all');
+    const [hasMore, setHasMore] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const requestNo = useRef(0);  // พิมพ์เร็ว ๆ แล้วผลเก่ากลับมาทีหลัง -> ทิ้ง
+
+    const auditUrl = useCallback((offset) => {
+        const params = new URLSearchParams({ limit: String(AUDIT_PAGE_SIZE), offset: String(offset) });
+        const keyword = query.trim().toLowerCase();
+        if (keyword) {
+            params.set('q', keyword);
+            const codes = auditCodesMatching(keyword);
+            if (codes.length) params.set('actions', codes.join(','));
+        }
+        if (filter !== 'all') params.set('group', filter);
+        return `${API}/api/audit-logs?${params}`;
+    }, [API, query, filter]);
 
     const loadLogs = useCallback(async () => {
+        const no = ++requestNo.current;
         setLoadingLogs(true);
         try {
-            const data = await callApi(`${API}/api/audit-logs`);
-            setLogs(Array.isArray(data) ? data : []);
+            const data = await callApi(auditUrl(0));
+            if (no !== requestNo.current) return;
+            const rows = Array.isArray(data) ? data : [];
+            setLogs(rows);
+            setHasMore(rows.length === AUDIT_PAGE_SIZE);
             setLoadError('');
+        }
+        catch (err) {
+            if (no === requestNo.current) setLoadError(err.message);
+        }
+        finally {
+            if (no === requestNo.current) setLoadingLogs(false);
+        }
+    }, [auditUrl]);
+
+    const loadMore = async () => {
+        const no = requestNo.current;
+        setLoadingMore(true);
+        try {
+            const data = await callApi(auditUrl(logs.length));
+            if (no !== requestNo.current) return;
+            const rows = Array.isArray(data) ? data : [];
+            setLogs((prev) => {
+                const seen = new Set(prev.map((log) => log.LogID));
+                return [...prev, ...rows.filter((log) => !seen.has(log.LogID))];
+            });
+            setHasMore(rows.length === AUDIT_PAGE_SIZE);
         }
         catch (err) {
             setLoadError(err.message);
         }
         finally {
-            setLoadingLogs(false);
+            setLoadingMore(false);
         }
-    }, [API]);
+    };
 
+    // พิมพ์ค้นหา/เปลี่ยนตัวกรอง -> รอหยุดพิมพ์ 0.35 วิ แล้วค้นที่ backend ใหม่
     useEffect(() => {
-        loadLogs();
+        const timer = setTimeout(loadLogs, 350);
+        return () => clearTimeout(timer);
     }, [loadLogs]);
 
     const actionMeta = (action) => {
@@ -5027,28 +5097,7 @@ const formatAuditDetails = (log) => {
     const order = log.OrderId != null ? `ออเดอร์ #${log.OrderId}` : '';
     const queue = log.QueueLabel ? `คิว ${log.QueueLabel}` : '';
     const context = [order, queue, store].filter(Boolean).join(' · ');
-    const verbs = {
-        CREATE_ORDER: 'สร้างออเดอร์',
-        CANCEL_ORDER: 'ยกเลิกออเดอร์',
-        CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
-        CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
-        UPDATE_STATUS: 'เปลี่ยนสถานะออเดอร์',
-        RECALL_QUEUE: 'เรียกคิวซ้ำ',
-        PRINT_ORDER: 'พิมพ์ใบคิว',
-        REPRINT_ORDER: 'พิมพ์ใบคิวซ้ำ',
-        VERIFY_SLIP_APPROVE: 'อนุมัติสลิปชำระเงิน',
-        VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปชำระเงิน',
-        CREATE_STORE: 'เพิ่มร้านค้า',
-        UPDATE_STORE: 'แก้ไขข้อมูลร้าน',
-        DELETE_STORE: 'ลบร้านค้า',
-        OPEN_STORE: 'เปิดร้าน',
-        CLOSE_STORE: 'ปิดร้าน',
-        SUSPEND_STORE: 'ระงับร้าน',
-        UNSUSPEND_STORE: 'ปลดระงับร้าน',
-        LOGIN: 'เข้าสู่ระบบ',
-        LOGIN_FAIL: 'เข้าสู่ระบบไม่สำเร็จ',
-        UPDATE_FOOD_COURT_SCHEDULE: 'เปลี่ยนเวลาเปิด–ปิดศูนย์อาหาร'
-    };
+    const verbs = AUDIT_VERBS;
     const raw = String(log.Details || '').trim();
     if (action === 'UPDATE_FOOD_COURT_SCHEDULE') {
         const open = raw.match(/["]open["]\s*:\s*["]([^"]+)["]/i);
@@ -5062,17 +5111,7 @@ const formatAuditDetails = (log) => {
 
 
 
-    const filtered = logs.filter((log) => {
-        const meta = actionMeta(log.Action);
-        if (filter !== 'all' && meta.group !== filter)
-            return false;
-        const q = query.trim().toLowerCase();
-        if (!q)
-            return true;
-        return `${actionName(log.Action)} ${log.Action || ''} ${log.PerformedBy || ''} ${log.PerformerRole || ''} ${formatAuditDetails(log)} ${log.Details || ''}`
-    .toLowerCase()
-    .includes(q);
-    });
+    const filtered = logs;  // backend ค้น/กรองมาให้แล้ว
 
     const filters = [
         ['all', 'ทั้งหมด'],
@@ -5167,12 +5206,22 @@ const formatAuditDetails = (log) => {
                   </tr>);
               })}
             </tbody>
-          </table>
+                    </table>
         </div>)}
+        {!loadError && !loadingLogs && logs.length > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', marginTop: '16px', fontSize: '12.5px', color: T.muted }}>
+            <span>แสดง {logs.length} รายการ{hasMore ? '' : ' (ครบแล้ว)'}</span>
+            {hasMore && (
+              <Button tone="secondary" onClick={loadMore} disabled={loadingMore}>
+                {loadingMore ? 'กำลังโหลด...' : 'โหลดเพิ่ม'}
+              </Button>
+            )}
+          </div>
+        )}
       </Card>
     </>);
 }
-// ===== ข้อมูลผู้ใช้: ค้นหาและตรวจสอบข้อมูล Customer =====
+// ===== ข้อมูลผู้ใช้
 const historyThStyle = { padding: '16px', textAlign: 'left', fontSize: '13px', fontWeight: 700, whiteSpace: 'nowrap' };
 const historyTdStyle = { padding: '16px', textAlign: 'left', verticalAlign: 'top', fontSize: '13px', color: T.text };
 
