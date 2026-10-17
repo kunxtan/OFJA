@@ -13,7 +13,7 @@ from errors import DomainError
 from schemas import ChangePasswordSchema, GoogleAuthSchema, LoginSchema, RegisterSchema
 from services import is_duplicate_key, log_audit
 from shapes import USER_SELECT, shape_user
-from utils import bangkok_now, clean_text, validate_password, validate_username
+from utils import ACCESS_LOCKED, bangkok_now, clean_text, validate_password, validate_username
 
 logger = logging.getLogger("onlyfood")
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -75,7 +75,7 @@ def login(data: LoginSchema, db=Depends(get_db)):
         raise HTTPException(status_code=403, detail="บัญชีนี้ถูกปิดใช้งาน")
     if row["StoreIsDeleted"]:
         raise HTTPException(status_code=403, detail="ร้านค้านี้ถูกลบแล้ว ไม่สามารถเข้าสู่ระบบได้")
-    if contract_access(row) == "LOCKED":
+    if contract_access(row) == ACCESS_LOCKED:
         raise HTTPException(status_code=403, detail=CONTRACT_EXPIRED_MESSAGE)
     
     with transaction(db):

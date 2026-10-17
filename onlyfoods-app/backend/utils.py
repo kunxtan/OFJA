@@ -277,7 +277,7 @@ def foodcourt_is_open(row: dict, now: Optional[datetime] = None) -> bool:
 
 # -------------------------------------------------------------------- contract
 #  กติกา: สัญญามีผลตั้งแต่ 00:00:00 ของวันเริ่ม ถึง 23:59:59 ของวันสิ้นสุด (เวลาไทย)
-#  สถานะคำนวณจากวันที่เสมอ (เหมือนสถานะเปิด/ปิดศูนย์อาหาร) ไม่เชื่อคอลัมน์ ContractStatus
+#  สถานะคำนวณจากวันที่เสมอ (เหมือนสถานะเปิด/ปิดศูนย์อาหาร) ไม่มีคอลัมน์สถานะเก็บใน DB
 CONTRACT_NONE = "NONE"          # ยังไม่มีสัญญา  -> ขาย/เปิดร้านไม่ได้ แต่ยังล็อกอินได้
 CONTRACT_UPCOMING = "UPCOMING"  # ยังไม่ถึงวันเริ่ม -> ขาย/เปิดร้านไม่ได้ แต่ล็อกอินเตรียมร้านได้
 CONTRACT_ACTIVE = "ACTIVE"      # อยู่ในช่วงสัญญา -> ใช้งานได้ปกติ
@@ -295,42 +295,32 @@ def contract_state(start: Optional[date], end: Optional[date], today: Optional[d
     return CONTRACT_ACTIVE
 
 
-def contract_active(start: Optional[date], end: Optional[date], status: Optional[str] = None,
-                    today: Optional[date] = None) -> bool:
-    """ขาย/เปิดร้านได้เฉพาะช่วงสัญญา ; ไม่มีสัญญา = ไม่ได้ (status ไม่ใช้แล้ว เก็บพารามิเตอร์ไว้ให้โค้ดเดิมเรียกได้)"""
+def contract_active(start: Optional[date], end: Optional[date], today: Optional[date] = None) -> bool:
+    """ขาย/เปิดร้านได้เฉพาะช่วงสัญญา ; ไม่มีสัญญา = ไม่ได้"""
     return contract_state(start, end, today) == CONTRACT_ACTIVE
 
 
-ACCESS_FULL, ACCESS_READ_ONLY, ACCESS_LOCKED = "FULL", "READ_ONLY", "LOCKED"
+ACCESS_FULL, ACCESS_CLEARING, ACCESS_READ_ONLY, ACCESS_LOCKED = "FULL", "CLEARING", "READ_ONLY", "LOCKED"
 
 
 def store_account_access(end: Optional[date], role: str, has_open_orders: bool, owner_readonly_days: int,
                          today: Optional[date] = None) -> str:
-    """สิทธิ์ของบัญชีที่ผูกร้าน หลังสัญญาหมด (เลย 23:59:59 ของวันสิ้นสุด)
+    """สิทธิ์ของบัญชีที่ผูกร้าน (เจ้าของ/หน้าร้าน/ครัว) เทียบกับวันสิ้นสุดสัญญา
 
-    - วันแรกหลังหมด + ยังมีออเดอร์ค้าง  -> FULL      (ทุกบัญชีเคลียร์ออเดอร์ได้ ; เปิดร้าน/รับออเดอร์ใหม่ไม่ได้อยู่แล้ว)
-    - เจ้าของร้าน ภายใน N วันหลังหมด      -> READ_ONLY (ดูยอดขาย/ประวัติได้ แก้อะไรไม่ได้)
-    - นอกนั้น                            -> LOCKED
+    - สัญญายังไม่หมด                       -> FULL
+    - หมดแล้ว + ร้านยังมีออเดอร์ค้าง        -> CLEARING  ทุกบัญชีของร้านทำได้เฉพาะงานเคลียร์ออเดอร์ (auth.py)
+                                               ไม่จำกัดวัน เพราะหลังหมดสัญญาไม่มีออเดอร์ใหม่เข้ามาได้อีก
+    - เคลียร์ครบแล้ว : เจ้าของร้าน ภายใน N วัน -> READ_ONLY (ดูยอดขาย/ประวัติได้ แก้อะไรไม่ได้)
+    - นอกนั้น                               -> LOCKED    (token เดิมใช้ไม่ได้ทันที = เด้งออกจากระบบ)
     """
     today = today or bangkok_now().date()
     if end is None or today <= end:
         return ACCESS_FULL
-    days_over = (today - end).days
-    if days_over == 1 and has_open_orders:
-        return ACCESS_FULL
-    if role == "STORE_OWNER" and days_over <= owner_readonly_days:
+    if has_open_orders:
+        return ACCESS_CLEARING
+    if role == "STORE_OWNER" and (today - end).days <= owner_readonly_days:
         return ACCESS_READ_ONLY
     return ACCESS_LOCKED
-
-
-def contract_status_for(end: date, today: Optional[date] = None) -> str:
-    """ค่าที่เขียนลงคอลัมน์ StoreContract.ContractStatus ตอนบันทึก (ใช้แสดงผลเท่านั้น)"""
-    today = today or bangkok_now().date()
-    if end < today:
-        return "EXPIRED"
-    if (end - today).days <= 30:
-        return "EXPIRING"
-    return "ACTIVE"
 
 
 def add_years_minus_one_day(start: date, years: int = 1) -> date:

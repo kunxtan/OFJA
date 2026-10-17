@@ -58,7 +58,7 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
 
             cur.execute(
                 """
-                SELECT s.StoreName, s.QueueCode, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate, c.ContractStatus
+                SELECT s.StoreName, s.QueueCode, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate
                 FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId WHERE s.StoreId = %s
                 """,
                 (data.store_id,),
@@ -68,7 +68,7 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
                 raise DomainError(404, "ไม่พบร้านค้านี้")
             if store["IsSuspended"]:
                 raise DomainError(400, f"ร้าน '{store['StoreName']}' ถูกระงับสิทธิ์การจำหน่ายชั่วคราว")
-            if not contract_active(store["StartDate"], store["EndDate"], store["ContractStatus"], now.date()):
+            if not contract_active(store["StartDate"], store["EndDate"], now.date()):
                 raise DomainError(400, f"สัญญาร้าน '{store['StoreName']}' หมดอายุหรือยังไม่มีผล ไม่สามารถรับออเดอร์ใหม่ได้")
             if not store["IsOpen"]:
                 raise DomainError(400, f"ร้าน '{store['StoreName']}' ปิดทำการอยู่ขณะนี้")

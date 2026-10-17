@@ -168,7 +168,6 @@ CREATE TABLE StoreContract (
   StoreId        INT UNSIGNED  NOT NULL,
   StartDate      DATE          NOT NULL,
   EndDate        DATE          NOT NULL,
-  ContractStatus ENUM('ACTIVE','EXPIRING','EXPIRED','TERMINATED') NOT NULL DEFAULT 'ACTIVE',
   CreatedBy      INT UNSIGNED  NOT NULL,
   CreatedAt      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (ContractId),
@@ -639,7 +638,7 @@ SELECT
   DATEDIFF(sc.EndDate, CURDATE()) AS DaysLeft
 FROM StoreContract sc
 JOIN Store s ON s.StoreId = sc.StoreId
-WHERE sc.ContractStatus IN ('ACTIVE', 'EXPIRING')
+WHERE sc.EndDate >= CURDATE()
   AND sc.EndDate <= DATE_ADD(CURDATE(), INTERVAL 30 DAY);
 
 -- =====================================================================

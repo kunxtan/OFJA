@@ -2,11 +2,13 @@
 
 กติกาสัญญา (ระบบเก็บแค่วันเริ่ม/วันสิ้นสุด เอกสารจริงอยู่นอกระบบ):
   1. มีผล 00:00:00 วันเริ่ม -> 23:59:59 วันสิ้นสุด (เวลาไทย) สถานะคำนวณจากวันที่เสมอ
-  2. หมดสัญญา = ร้านเปิด/รับออเดอร์ไม่ได้ ; พนักงานล็อกทันที เจ้าของดูได้อย่างเดียว 30 วัน (auth.py) ;
-     ตัดสัญญาให้จบก่อนกำหนดไม่ได้ถ้ายังมีออเดอร์ค้าง ; หมดเกิน 90 วันไม่เปิดรอบใหม่ = ลบอัตโนมัติ (jobs.py)
+    2. หมดสัญญา = ร้านเปิด/รับออเดอร์ใหม่ไม่ได้ ; ถ้ายังมีออเดอร์ค้าง บัญชีร้านเคลียร์ออเดอร์ต่อได้จนจบครบ
+     แล้วพนักงานล็อกทันที เจ้าของดูได้อย่างเดียว 30 วัน (utils.store_account_access + auth.py) ;
+     ตัดสัญญาย้อนหลังได้ไม่เกินเมื่อวาน ; หมดเกิน 90 วันไม่เปิดรอบใหม่ = ลบอัตโนมัติ (jobs.py)
   3. ทุกการแก้วันต้องมีเหตุผล -> AuditLog (ใคร/เมื่อไหร่/วันเดิม->วันใหม่/เหตุผล) ไม่มีการลบ log
 """
 import json
+from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -18,13 +20,13 @@ from schemas import ContractEndUpdateSchema, ContractRestartSchema, StoreFullSch
 from services import get_foodcourt, is_duplicate_key, log_audit, open_order_count
 from shapes import STORE_SELECT, shape_store
 from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, add_years_minus_one_day,
-                   bangkok_now, clean_reason, clean_text, contract_state, contract_status_for, foodcourt_is_open,
+                   bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
                    next_free_queue_code, parse_date, save_image, validate_password, validate_queue_code,
                    validate_username)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 
-_ADMIN_STORE_SELECT = STORE_SELECT
+
 
 
 def _category_id(cur, name: Optional[str]) -> int:
@@ -40,15 +42,13 @@ def _category_id(cur, name: Optional[str]) -> int:
 def _upsert_contract(cur, store_id: int, start, end, user_id: int) -> None:
     if end <= start:
         raise DomainError(400, "วันสิ้นสุดสัญญาต้องหลังวันเริ่มสัญญา")
-    status = contract_status_for(end)
-    cur.execute(
+        cur.execute(
         """
-        INSERT INTO StoreContract (StoreId, StartDate, EndDate, ContractStatus, CreatedBy)
-        VALUES (%s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE StartDate = VALUES(StartDate), EndDate = VALUES(EndDate),
-            ContractStatus = VALUES(ContractStatus)
+        INSERT INTO StoreContract (StoreId, StartDate, EndDate, CreatedBy)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE StartDate = VALUES(StartDate), EndDate = VALUES(EndDate)
         """,
-        (store_id, start, end, status, user_id),
+        (store_id, start, end, user_id),
     )
 
 
@@ -107,7 +107,7 @@ def get_stores(db=Depends(get_db)):
 def get_store_history(user=Depends(require_role("EXECUTIVE", "ACCOUNTANT")), db=Depends(get_db)):
     """ร้านทั้งหมดรวมที่ถูกลบ (สำหรับผู้บริหาร/บัญชี)"""
     with db.cursor() as cur:
-        cur.execute(_ADMIN_STORE_SELECT + " ORDER BY s.StoreName")
+        cur.execute(STORE_SELECT + " ORDER BY s.StoreName")
         today = bangkok_now().date()
         return [shape_store(r, today) for r in cur.fetchall()]
 
@@ -257,14 +257,7 @@ def delete_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Depe
                 raise DomainError(404, "ไม่พบร้านค้า")
             if store["IsDeleted"]:
                 raise DomainError(400, "ร้านค้านี้ถูกลบไปแล้ว")
-            cur.execute(
-                """
-                SELECT COUNT(*) AS n FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
-                WHERE o.StoreId = %s AND os.IsTerminal = FALSE
-                """,
-                (store_id,),
-            )
-            pending = cur.fetchone()["n"]
+            pending = open_order_count(cur, store_id)
             if pending:
                 raise DomainError(400, f"ร้านนี้ยังมีออเดอร์ค้างอยู่ {pending} รายการ กรุณาจัดการออเดอร์ให้เสร็จก่อนลบร้าน")
             cur.execute("UPDATE Store SET IsDeleted = TRUE, DeletedAt = %s, IsOpen = FALSE WHERE StoreId = %s",
@@ -280,8 +273,7 @@ def toggle_store(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUT
         with db.cursor() as cur:
             cur.execute(
                 """
-                SELECT s.StoreName, s.IsOpen, s.IsSuspended, s.IsDeleted,
-                       c.StartDate, c.EndDate, c.ContractStatus
+                SELECT s.StoreName, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate
                 FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
                 WHERE s.StoreId = %s FOR UPDATE OF s
                 """,
@@ -315,10 +307,19 @@ def toggle_store(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUT
 def suspend_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
     with transaction(db):
         with db.cursor() as cur:
-            cur.execute("SELECT StoreName, IsSuspended FROM Store WHERE StoreId = %s FOR UPDATE", (store_id,))
+            cur.execute(
+                """
+                SELECT s.StoreName, s.IsSuspended, c.StartDate, c.EndDate
+                FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
+                WHERE s.StoreId = %s FOR UPDATE OF s
+                """,
+                (store_id,),
+            )
             store = cur.fetchone()
             if not store:
                 raise DomainError(404, "ไม่พบร้านค้า")
+            if contract_state(store["StartDate"], store["EndDate"]) == CONTRACT_EXPIRED:
+                raise DomainError(400, "ร้านนี้หมดสัญญาแล้ว ระงับ/ปลดระงับสิทธิ์ไม่ได้ (ร้านเปิดขายไม่ได้อยู่แล้ว)")
             suspended = not bool(store["IsSuspended"])
             if suspended:
                 cur.execute("UPDATE Store SET IsSuspended = TRUE, IsOpen = FALSE WHERE StoreId = %s", (store_id,))
@@ -340,7 +341,7 @@ def update_contract_end(store_id: int, data: ContractEndUpdateSchema, user=Depen
     """แก้วันสิ้นสุดสัญญาของร้านที่สัญญายังไม่หมด (ต่อ/ลดระยะ หลังทำเรื่องภายนอกแล้ว)
 
     - สัญญาหมดแล้ว แก้ไม่ได้ -> ต้องใช้ /contract/restart
-    - แก้ให้จบย้อนหลัง (ก่อนวันนี้) ได้ แต่ร้านหมดสัญญาทันที และห้ามถ้ายังมีออเดอร์ค้าง
+    - แก้ให้จบย้อนหลังได้ไม่เกินเมื่อวาน = ร้านหมดสัญญาทันที ; ถ้ายังมีออเดอร์ค้าง ร้านเคลียร์ออเดอร์ต่อได้จนจบ
     - วันเดิม/วันใหม่/เหตุผล/ผู้แก้/เวลา/IP เก็บใน AuditLog ทุกครั้ง
     """
     new_end = parse_date(data.contract_end_date, "วันสิ้นสุดสัญญา")
@@ -361,21 +362,28 @@ def update_contract_end(store_id: int, data: ContractEndUpdateSchema, user=Depen
                 raise DomainError(400, "วันสิ้นสุดใหม่ซ้ำกับวันเดิม")
             if new_end <= start:
                 raise DomainError(400, f"วันสิ้นสุดสัญญาต้องหลังวันเริ่มสัญญา ({start.isoformat()})")
+            yesterday = today - timedelta(days=1)
+            if new_end < yesterday:
+                # ย้อนไกลกว่านี้ = เจ้าของเสียสิทธิ์ดูย้อนหลัง/ร้านโดนลบอัตโนมัติเร็วกว่าที่ควร
+                raise DomainError(400, f"ตัดสัญญาย้อนหลังได้ไม่เกินเมื่อวาน ({yesterday.isoformat()})")
             backdated = new_end < today
+            pending = open_order_count(cur, store_id) if backdated else 0
             if backdated:
-                pending = open_order_count(cur, store_id)
-                if pending:
-                    raise DomainError(400, f"ร้านนี้ยังมีออเดอร์ค้าง {pending} รายการ ตัดสัญญาให้จบย้อนหลังไม่ได้ "
-                                           "กรุณาให้ร้านจัดการออเดอร์ให้จบก่อน")
                 cur.execute("UPDATE Store SET IsOpen = FALSE WHERE StoreId = %s", (store_id,))
-            cur.execute("UPDATE StoreContract SET EndDate = %s, ContractStatus = %s WHERE StoreId = %s",
-                        (new_end, contract_status_for(new_end, today), store_id))
+            cur.execute("UPDATE StoreContract SET EndDate = %s WHERE StoreId = %s", (new_end, store_id))
         action = "CONTRACT_END_BACKDATED" if backdated else ("CONTRACT_EXTEND" if new_end > old_end else "CONTRACT_SHORTEN")
         log_audit(db, user["UserId"], action, "Store", store_id,
                   {"start": start, "end": old_end, "state": old_state},
                   {"start": start, "end": new_end, "state": contract_state(start, new_end, today),
-                   "reason": reason, "name": row["StoreName"]})
-    return {"success": True, "message": "แก้ไขวันสิ้นสุดสัญญาเรียบร้อยแล้ว",
+                   "reason": reason, "name": row["StoreName"], "open_orders": pending})
+    if not backdated:
+        message = "แก้ไขวันสิ้นสุดสัญญาเรียบร้อยแล้ว"
+    elif pending:
+        message = (f"ตัดสัญญาเรียบร้อยแล้ว ร้านปิดรับออเดอร์ใหม่ทันที · ยังมีออเดอร์ค้าง {pending} รายการ "
+                   "ร้านยังเคลียร์ออเดอร์ได้ เมื่อจบครบระบบจะออกจากระบบบัญชีพนักงานให้เอง")
+    else:
+        message = "ตัดสัญญาเรียบร้อยแล้ว ร้านหมดสัญญาทันที บัญชีพนักงานถูกออกจากระบบ"
+    return {"success": True, "message": message, "open_orders": pending,
             "contract_start_date": start.isoformat(), "contract_end_date": new_end.isoformat(),
             "contract_state": contract_state(start, new_end, today)}
 
