@@ -42,7 +42,7 @@ def _category_id(cur, name: Optional[str]) -> int:
 def _upsert_contract(cur, store_id: int, start, end, user_id: int) -> None:
     if end <= start:
         raise DomainError(400, "วันสิ้นสุดสัญญาต้องหลังวันเริ่มสัญญา")
-        cur.execute(
+    cur.execute(
         """
         INSERT INTO StoreContract (StoreId, StartDate, EndDate, CreatedBy)
         VALUES (%s, %s, %s, %s)
