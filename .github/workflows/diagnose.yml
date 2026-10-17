@@ -1,0 +1,83 @@
+name: Diagnose / Recover Server
+
+# กดรันเองจากแท็บ Actions -> "Diagnose / Recover Server" -> Run workflow
+# ใช้ตอนเว็บตอบช้า / 502 / 504 โดยไม่ต้องเข้า server : ทุกขั้นแสดงผลใน log ของ job นี้
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "diagnose = ดูอย่างเดียว ; kill-idle-locks = ปิด connection ที่ว่างแต่ถือตารางค้าง ; restart-backend = รีสตาร์ท backend"
+        type: choice
+        default: diagnose
+        options: [diagnose, kill-idle-locks, restart-backend]
+
+# แยกจาก deploy-production : ถ้า deploy ค้าง งานนี้ยังรันได้ (ถ้า runner ว่าง)
+concurrency:
+  group: ops-diagnose
+  cancel-in-progress: false
+
+env:
+  DOMAIN: only-foods.cskmitl.com
+  APP_DIR: /home/ubuntu/OFJA/onlyfoods-app
+  DC: sudo docker compose -f docker-compose.cloud.yml
+
+jobs:
+  ops:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Containers + health
+        run: |
+          cd "$APP_DIR"
+          $DC ps
+          echo "-- health (ผ่าน nginx เหมือน Cloudflare):"
+          curl -sS -o /dev/null -w "food-court/status: %{http_code} in %{time_total}s\n" --max-time 20 \
+            -H "Host: $DOMAIN" http://127.0.0.1/api/food-court/status || echo "ไม่ตอบภายใน 20 วินาที"
+          echo "-- เครื่อง:"; uptime; free -m; df -h / | tail -1
+
+      - name: Backend log (ล่าสุด)
+        run: |
+          cd "$APP_DIR"
+          $DC logs --tail=150 --timestamps backend 2>&1 | tail -150
+          echo "-- error/timeout ล่าสุด:"
+          $DC logs --since=2h backend 2>&1 | grep -iE "error|exception|timeout|traceback|lock" | tail -40 || true
+
+      - name: Database (connection / lock ที่ค้าง)
+        run: |
+          cd "$APP_DIR"
+          q() { $DC exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -t onlyfood 2>/dev/null' <<<"$1" || echo "(query ไม่สำเร็จ)"; }
+          echo "-- จำนวน connection ตามสถานะ:"
+          q "SELECT COMMAND, STATE, COUNT(*) AS n, MAX(TIME) AS max_sec FROM information_schema.PROCESSLIST GROUP BY COMMAND, STATE ORDER BY n DESC;"
+          echo "-- คำสั่งที่รันนานกว่า 5 วินาที:"
+          q "SELECT ID, USER, HOST, COMMAND, TIME, STATE, LEFT(INFO, 120) AS info FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND TIME >= 5 AND ID <> CONNECTION_ID() ORDER BY TIME DESC LIMIT 30;"
+          echo "-- transaction ที่เปิดค้าง:"
+          q "SELECT trx_mysql_thread_id AS id, trx_state, trx_started, TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS age_sec, trx_rows_locked, LEFT(trx_query, 120) AS query FROM information_schema.innodb_trx ORDER BY trx_started LIMIT 30;"
+          echo "-- ใครรอ lock ใคร:"
+          q "SELECT * FROM sys.innodb_lock_waits LIMIT 20\G" || true
+          echo "-- connection ที่ว่าง (Sleep) แต่ถือตารางค้าง:"
+          q "SELECT DISTINCT t.PROCESSLIST_ID AS id, t.PROCESSLIST_USER AS user, t.PROCESSLIST_HOST AS host, t.PROCESSLIST_TIME AS idle_sec, ml.OBJECT_NAME AS table_name FROM performance_schema.metadata_locks ml JOIN performance_schema.threads t ON t.THREAD_ID = ml.OWNER_THREAD_ID WHERE ml.OBJECT_SCHEMA = 'onlyfood' AND ml.LOCK_STATUS = 'GRANTED' AND t.PROCESSLIST_COMMAND = 'Sleep' AND t.PROCESSLIST_ID <> CONNECTION_ID() ORDER BY idle_sec DESC LIMIT 30;"
+
+      - name: Kill idle lock holders
+        if: inputs.action == 'kill-idle-locks'
+        run: |
+          cd "$APP_DIR"
+          ids=$($DC exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B onlyfood 2>/dev/null' <<<"SELECT DISTINCT t.PROCESSLIST_ID FROM performance_schema.metadata_locks ml JOIN performance_schema.threads t ON t.THREAD_ID = ml.OWNER_THREAD_ID WHERE ml.OBJECT_SCHEMA = 'onlyfood' AND ml.LOCK_STATUS = 'GRANTED' AND t.PROCESSLIST_COMMAND = 'Sleep' AND t.PROCESSLIST_TIME >= 30 AND t.PROCESSLIST_ID <> CONNECTION_ID();")
+          [ -z "$ids" ] && { echo "ไม่มี connection ว่างที่ถือตารางค้าง"; exit 0; }
+          for id in $ids; do echo "KILL $id"; $DC exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" 2>/dev/null' <<<"KILL $id;" || true; done
+
+      - name: Restart backend
+        if: inputs.action == 'restart-backend'
+        run: |
+          cd "$APP_DIR"
+          $DC restart backend
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null --max-time 5 -H "Host: $DOMAIN" http://127.0.0.1/api/food-court/status && { echo "OK: backend ตอบแล้ว"; exit 0; }
+            echo "รอ backend... ($i/30)"; sleep 3
+          done
+          echo "backend ยังไม่ตอบ"; $DC logs --tail=60 backend; exit 1
+
+      - name: Health after
+        if: inputs.action != 'diagnose'
+        run: |
+          curl -sS -o /dev/null -w "food-court/status: %{http_code} in %{time_total}s\n" --max-time 20 \
+            -H "Host: $DOMAIN" http://127.0.0.1/api/food-court/status || echo "ยังไม่ตอบ"
