@@ -496,11 +496,11 @@ def list_issues_for_executive(
         i["ResolveHours"] = _hours_between(i["CreatedAt"], i["ResolvedAt"]) if not is_open and i["ResolvedAt"] else None
         i["IsStale"] = is_open and i["AgeHours"] >= ISSUE_STALE_HOURS
 
-        by_type: dict = {}
-        for i in issues:
-                row = by_type.setdefault(i["TypeCode"], {"TypeCode": i["TypeCode"], "IssueType": i["IssueType"], "count": 0})
-                row["count"] += 1
-        resolve = [i["ResolveHours"] for i in issues if i["ResolveHours"] is not None]
+    by_type: dict = {}
+    for i in issues:
+            row = by_type.setdefault(i["TypeCode"], {"TypeCode": i["TypeCode"], "IssueType": i["IssueType"], "count": 0})
+            row["count"] += 1
+    resolve = [i["ResolveHours"] for i in issues if i["ResolveHours"] is not None]
     summary = {
         "total": len(issues),
         "by_status": {code: sum(1 for i in issues if i["IssueStatus"] == code) for code in ISSUE_STATUS_TH},
