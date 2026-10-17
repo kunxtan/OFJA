@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import AccountantView from './components/AccountantView';
 import CounterView from './components/CounterView';
-import CustomerView from './components/CustomerView';
+import CustomerView from './components/customer/CustomerView';
 import ExecutiveView from './components/ExecutiveView';
 import KitchenView from './components/KitchenView';
 import OwnerView from './components/OwnerView';
