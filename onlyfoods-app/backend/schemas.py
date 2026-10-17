@@ -185,6 +185,9 @@ class StatusUpdateSchema(BaseModel):
 class CancelRequestSchema(BaseModel):
     reason: str = Field(min_length=1, max_length=255)
     response_window_minutes: int = Field(ge=1, le=240)
+    # แจ้งของหมดจากหน้าคิว: จานที่หมด (OrderItemId) -> ลูกค้าเห็นว่าต้องเปลี่ยนจานไหน
+    item_ids: Optional[List[int]] = Field(default=None, max_length=50)
+    close_menu: bool = False  # ปิดเมนูของจานที่เลือกในร้านด้วย (คนอื่นสั่งไม่ได้)
 
 
 class CustomerCancelSchema(BaseModel):
