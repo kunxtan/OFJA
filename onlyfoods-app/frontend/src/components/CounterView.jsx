@@ -86,6 +86,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [queueQuery, setQueueQuery] = useState('');
   const [handoverBusy, setHandoverBusy] = useState(null);
   const queueSearchRef = useRef(null);
+  // Walk-in POS: ขั้นตอนชำระเงิน (เงินสด = กรอกเงินที่รับ + เงินทอน ; QR/TrueMoney = ลูกค้าโอนต่อหน้า พนักงานกดยืนยัน)
+  const [payOpen, setPayOpen] = useState(false);
+  const [payMethod, setPayMethod] = useState('Cash');
+  const [cashInput, setCashInput] = useState('');
+  const [payBusy, setPayBusy] = useState(false);
   const dateKey = (d) => {
     const x = new Date(d);
     if (isNaN(x)) return '';
@@ -548,28 +553,54 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
   const totalAmount = cart.reduce((sum, item) => sum + Number(item.UnitPrice), 0);
 
-  const submitWalkInOrder = () => {
-    if (!foodCourtOpen) return showToast('โรงอาหารปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้');
-    if (currentStore?.IsSuspended) return showToast('ร้านถูกระงับการขายชั่วคราว');
-    if (currentStore && !currentStore.IsOpen) return showToast('ร้านปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้');
-    if (cart.length === 0) return showToast('กรุณาเลือกอาหารก่อนกดสั่งซื้อ');
-    fetch(`${apiBase}/api/orders`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        store_id: activeStoreId,
-        user_id: null,
-        items: cart.map(i => ({ product_id: i.ProductId, qty: 1, unit_price: i.UnitPrice, note: i.note || '' })),
-        is_walk_in: true,
-        note: orderNote || 'Walk-in'
-      })
-    }).then(async res => {
+  const walkInBlocked = () => {
+    if (!foodCourtOpen) return 'โรงอาหารปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้';
+    if (currentStore?.IsSuspended) return 'ร้านถูกระงับการขายชั่วคราว';
+    if (currentStore && !currentStore.IsOpen) return 'ร้านปิดอยู่ ไม่สามารถเปิดคิว Walk-in ได้';
+    if (cart.length === 0) return 'กรุณาเลือกอาหารก่อนกดชำระเงิน';
+    return null;
+  };
+  const openPayment = () => {
+    const why = walkInBlocked();
+    if (why) return showToast(why);
+    setPayMethod('Cash'); setCashInput(''); setPayOpen(true);
+  };
+  const cashReceived = Number(cashInput || 0);
+  const cashChange = cashReceived - totalAmount;
+  const cashEnough = cashInput !== '' && cashChange >= -0.001;
+  const addCash = (n) => setCashInput(v => String(Number(v || 0) + n));
+
+  const submitWalkInOrder = async () => {
+    const why = walkInBlocked();
+    if (why) return showToast(why);
+    if (payBusy) return;
+    if (payMethod === 'Cash' && !cashEnough) return showToast('จำนวนเงินที่รับยังไม่พอ');
+    setPayBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/api/orders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          store_id: activeStoreId,
+          user_id: null,
+          items: cart.map(i => ({ product_id: i.ProductId, qty: 1, unit_price: i.UnitPrice, note: i.note || '' })),
+          is_walk_in: true,
+          note: orderNote || 'Walk-in',
+          payment_method: payMethod,
+          cash_received: payMethod === 'Cash' ? cashReceived : null,
+        })
+      });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) showToast(`สั่งซื้อไม่สำเร็จ: ${data.detail || `HTTP ${res.status}`}`);
-      else {
-        showToast(`สั่งซื้อสำเร็จ! คิว: ${data.queue_no}`);
-        setCart([]); setOrderNote(''); fetchData(); setActiveTab('orders');
-      }
-    }).catch(() => showToast('เชื่อมต่อระบบสั่งซื้อไม่สำเร็จ'));
+      if (!res.ok) { showToast(`สั่งซื้อไม่สำเร็จ: ${data.detail || `HTTP ${res.status}`}`); return; }
+      showToast(payMethod === 'Cash'
+        ? `ออกคิว ${data.queue_no} แล้ว · ทอน ฿${fmtMoney(Math.max(0, cashChange))}`
+        : `ออกคิว ${data.queue_no} แล้ว · รับโอน ฿${fmtMoney(totalAmount)}`);
+      setPayOpen(false); setCart([]); setOrderNote(''); setCashInput('');
+      fetchData(); setActiveTab('orders');
+    } catch {
+      showToast('เชื่อมต่อระบบสั่งซื้อไม่สำเร็จ');
+    } finally {
+      setPayBusy(false);
+    }
   };
 
   const getStatusBadgeTone = (status) => {
@@ -1204,7 +1235,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="cv-card-head">
                   <div>
                     <h3>🛒 ตะกร้าหน้าร้าน</h3>
-                    <div className="caption">ชำระเงินสดและเปิดคิวทันที</div>
+                    <div className="caption">กดชำระเงิน: เงินสด / QR / TrueMoney แล้วออกคิวทันที</div>
                   </div>
                 </div>
 
@@ -1247,8 +1278,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
                       style={{ marginBottom: '14px' }}
                     />
 
-                    <button disabled={!foodCourtOpen || currentStore?.IsSuspended || currentStore?.IsOpen === false} onClick={submitWalkInOrder} className="cv-btn btn-dark" style={{ width: '100%', padding: '14px', fontSize: '16px' }}>
-                      {!foodCourtOpen ? '🔒 โรงอาหารปิด — เปิดคิวไม่ได้' : currentStore?.IsSuspended ? '🔒 ร้านถูกระงับ' : currentStore?.IsOpen === false ? '🔒 ร้านปิด — เปิดคิวไม่ได้' : '💰 รับเงินสด & ออกคิวทันที'}
+                    <button disabled={!foodCourtOpen || currentStore?.IsSuspended || currentStore?.IsOpen === false} onClick={openPayment} className="cv-btn btn-dark cv-btn-lg" style={{ width: '100%' }}>
+                      {!foodCourtOpen ? '🔒 โรงอาหารปิด — เปิดคิวไม่ได้' : currentStore?.IsSuspended ? '🔒 ร้านถูกระงับ' : currentStore?.IsOpen === false ? '🔒 ร้านปิด — เปิดคิวไม่ได้' : `💳 ชำระเงิน ฿${fmtMoney(totalAmount)}`}
                     </button>
                   </div>
                 )}
@@ -1370,6 +1401,60 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <button onClick={confirmPrint} className="cv-btn btn-dark"
                 disabled={!printConfirmOrder.order || printerStatus !== 'READY' || printBusy || Boolean(validatePrintData(printConfirmOrder.order))}>
                 {printBusy ? 'กำลังดำเนินการ...' : 'ยืนยันการพิมพ์'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {payOpen && (
+        <div className="cv-modal-overlay" onClick={() => !payBusy && setPayOpen(false)}>
+          <div className="cv-modal cv-pay-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-modal-head">
+              <div><h3>💳 ชำระเงิน Walk-in</h3><div className="caption">{cart.length} รายการ · ชำระแล้วออกคิวเข้าครัวทันที</div></div>
+              <button onClick={() => setPayOpen(false)} className="cv-modal-close" disabled={payBusy}>✖</button>
+            </div>
+            <div className="pay-total"><span>ยอดรวม</span><b>฿{fmtMoney(totalAmount)}</b></div>
+            <div className="pay-methods" role="radiogroup" aria-label="วิธีชำระเงิน">
+              {[['Cash', '💵 เงินสด'], ['PromptPay', '📱 QR PromptPay'], ['TrueMoney', '👛 TrueMoney']].map(([v, label]) => (
+                <button key={v} role="radio" aria-checked={payMethod === v} className={`pay-method ${payMethod === v ? 'active' : ''}`}
+                  onClick={() => setPayMethod(v)} disabled={payBusy}>{label}</button>
+              ))}
+            </div>
+            {payMethod === 'Cash' ? (
+              <>
+                <label className="pay-label" htmlFor="cash-input">รับเงินจากลูกค้า (บาท)</label>
+                <input id="cash-input" className="pay-cash-input" inputMode="decimal" autoFocus value={cashInput}
+                  onChange={e => setCashInput(e.target.value.replace(/[^\d.]/g, ''))}
+                  onKeyDown={e => { if (e.key === 'Enter' && cashEnough) submitWalkInOrder(); }}
+                  placeholder="0" />
+                <div className="pay-quick">
+                  <button className="cv-btn btn-ghost" onClick={() => setCashInput(String(totalAmount))}>พอดี</button>
+                  {[20, 50, 100, 500, 1000].map(n => (
+                    <button key={n} className="cv-btn btn-ghost" onClick={() => addCash(n)}>+฿{n}</button>
+                  ))}
+                  <button className="cv-btn btn-ghost" onClick={() => setCashInput('')}>ล้าง</button>
+                </div>
+                <div className={`pay-change ${cashInput === '' ? '' : cashEnough ? 'ok' : 'short'}`}>
+                  {cashInput === '' ? 'กรอกจำนวนเงินที่รับ หรือกดปุ่มด้านบน'
+                    : cashEnough ? <>เงินทอน <b>฿{fmtMoney(cashChange)}</b></>
+                    : <>ขาดอีก <b>฿{fmtMoney(-cashChange)}</b></>}
+                </div>
+              </>
+            ) : (
+              <div className="pay-qr">
+                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${payMethod}_${totalAmount}`} alt={`QR ${payMethod}`} />
+                <div>
+                  <b>ให้ลูกค้าสแกนจ่าย ฿{fmtMoney(totalAmount)}</b>
+                  <small>ดูหน้าจอ "โอนสำเร็จ" บนมือถือลูกค้า ยอดและเวลาต้องตรง แล้วกดยืนยัน (ระบบบันทึกชื่อคุณเป็นผู้รับเงิน) · QR จำลอง</small>
+                </div>
+              </div>
+            )}
+            <div className="modal-footer-btns">
+              <button onClick={() => setPayOpen(false)} className="cv-btn btn-ghost" disabled={payBusy}>ยกเลิก</button>
+              <button onClick={submitWalkInOrder} className="cv-btn btn-success"
+                disabled={payBusy || (payMethod === 'Cash' && !cashEnough)}>
+                {payBusy ? 'กำลังออกคิว...' : payMethod === 'Cash' ? '💰 รับเงิน & ออกคิว' : '✅ ได้รับเงินแล้ว & ออกคิว'}
               </button>
             </div>
           </div>
@@ -1920,6 +2005,26 @@ const CV_STYLES = `
 .cv-print-modal { width:500px; }
 .cv-print-error { margin-top:10px; padding:10px 12px; border-radius:var(--radius-md); background:${PALETTE.redLight}; color:${PALETTE.red}; font-size:13px; line-height:1.5; }
 .cv-print-error b { display:block; }
+.cv-pay-modal { width:520px; max-width:calc(100vw - 32px); }
+.pay-total { display:flex; justify-content:space-between; align-items:baseline; padding:12px 16px; border-radius:12px; background:${PALETTE.bgSoft}; margin-bottom:14px; }
+.pay-total span { font-size:15px; color:${PALETTE.textSub}; }
+.pay-total b { font-size:30px; color:${PALETTE.coral}; }
+.pay-methods { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-bottom:16px; }
+.pay-method { min-height:52px; border-radius:12px; border:2px solid ${PALETTE.border}; background:#fff; font-family:inherit; font-size:15px; font-weight:700; color:${PALETTE.dark}; cursor:pointer; }
+.pay-method.active { border-color:${PALETTE.coral}; background:${PALETTE.coralLight}; color:${PALETTE.coralDark}; }
+.pay-label { display:block; font-size:13px; font-weight:700; color:${PALETTE.textSub}; margin-bottom:6px; }
+.pay-cash-input { width:100%; box-sizing:border-box; font-size:32px; font-weight:800; text-align:right; padding:10px 14px; border-radius:12px; border:2px solid ${PALETTE.border}; font-family:inherit; outline:none; }
+.pay-cash-input:focus { border-color:${PALETTE.coral}; }
+.pay-quick { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 12px; }
+.pay-quick .cv-btn { flex:1 1 64px; min-height:48px; padding:8px 6px; font-size:15px; white-space:nowrap; }
+.pay-change { padding:14px 16px; border-radius:12px; background:${PALETTE.bgSoft}; color:${PALETTE.textSub}; font-size:15px; text-align:center; }
+.pay-change b { font-size:28px; margin-left:6px; }
+.pay-change.ok { background:${PALETTE.greenLight}; color:${PALETTE.green}; }
+.pay-change.short { background:${PALETTE.redLight}; color:${PALETTE.red}; }
+.pay-qr { display:flex; gap:16px; align-items:center; padding:12px; border-radius:12px; background:${PALETTE.bgSoft}; }
+.pay-qr img { width:150px; height:150px; background:#fff; border-radius:10px; padding:6px; flex-shrink:0; }
+.pay-qr b { display:block; font-size:16px; margin-bottom:6px; }
+.pay-qr small { display:block; font-size:12px; color:${PALETTE.textSub}; line-height:1.5; }
 .cv-stock-modal { width:560px; max-width:calc(100vw - 32px); }
 .cv-stock-modal .modal-footer-btns { flex-wrap:wrap; }
 .cv-stock-modal .modal-footer-btns .cv-btn { white-space:nowrap; }

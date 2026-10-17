@@ -2171,6 +2171,9 @@ function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
                           <Badge tone={ps.tone}>{ps.label}</Badge>
                         </div>
                         <div className="sh-pay-sub">{p.MethodNameTh}{p.SlipUrl ? '' : (p.MethodCode === 'CASH' ? '' : ' · ไม่มีสลิปแนบ')}</div>
+                        {p.CashReceived != null && (
+                          <div className="sh-pay-sub">รับเงินสด <b>฿{fmtMoney(p.CashReceived)}</b> · ทอน <b>฿{fmtMoney(p.ChangeGiven || 0)}</b></div>
+                        )}
                         <div className="sh-pay-sub">
                           {p.VerifiedByName
                             ? <>{p.PaymentStatus === 'REJECTED' ? 'ปฏิเสธโดย' : 'ตรวจโดย'} <b>{p.VerifiedByName}</b> ({ROLE_TH[p.VerifiedByRole] || p.VerifiedByRoleTh}){p.PaidAt ? ` · ${thaiDateTime(p.PaidAt, true)}` : ''}</>
@@ -2813,6 +2816,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       ready: count('Ready'),
       outOfStock: (products || []).filter(p => p.IsOutOfStock).length,
       todayOrders: todayOrders.length,
+      // เงินสดที่ควรอยู่ในลิ้นชักวันนี้ = ค่าอาหารที่รับเป็นเงินสด (เงินทอนคืนลูกค้าไปแล้ว) ; ออเดอร์ที่ยกเลิกไม่นับ
+      cashToday: todayOrders
+        .filter(o => !orderIs(o, 'Cancelled') && o.StatusCode !== 'CANCELLED')
+        .flatMap(o => o.Payments || [])
+        .filter(p => p.MethodCode === 'CASH' && p.PaymentStatus === 'VERIFIED')
+        .reduce((acc, p) => acc + Number(p.Amount || 0), 0),
     };
   }, [history, products]);
 
@@ -3498,7 +3507,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 <div className="od-live-head">
                   <span className="pulse" />
                   <strong>ตอนนี้ในร้าน</strong>
-                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์</span>
+                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์ · เงินสดที่ควรมีในลิ้นชัก <b>฿{fmtMoney(liveStats.cashToday)}</b></span>
                 </div>
                 <div className="od-live-grid">
                   {live.map(item => (
