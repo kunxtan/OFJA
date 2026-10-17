@@ -732,8 +732,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const queueTabs = [
     { id: 'ready', label: 'พร้อมรับ', match: (o) => o.Status === 'Ready' },
     { id: 'attention', label: 'ต้องจัดการ', match: needsAttention },
-    { id: 'cooking', label: 'กำลังทำ', match: (o) => o.Status === 'Cooking' },
-    { id: 'waiting', label: 'รอทำ', match: (o) => o.Status === 'Pending' },
+    // ครัวกดแค่ "ปรุงเสร็จ" (ไม่มีปุ่มเริ่มทำ) : ร้านรับออเดอร์แล้ว = กำลังทำ จนกว่าจะพร้อมรับ
+    { id: 'cooking', label: 'กำลังทำ', match: (o) => ['Pending', 'Cooking'].includes(o.Status) },
     { id: 'all', label: 'ทั้งหมด', match: () => true },
   ];
   // "12" / "012" / "a12" / "A012" -> หาคิว A012 (เทียบตัวเลข ; ถ้าพิมพ์ตัวอักษรมาด้วยต้องตรงร้าน)
@@ -925,7 +925,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 </div>
                 <div className="cv-card cv-bg-yellow">
                   <div className="cv-stat-body">
-                    <h2>{orders.filter(o => o.Status === 'Cooking').length}</h2>
+                    <h2>{orders.filter(o => ['Pending', 'Cooking'].includes(o.Status)).length}</h2>
                     <p>คิวที่ครัวกำลังปรุง</p>
                   </div>
                 </div>
