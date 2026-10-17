@@ -1105,53 +1105,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       ).padStart(2, "0")}`;
     return `${formatTime(start)}–${formatTime(end)} น.`;
   };
-
-  const getOrderPickupRange = (order) => {
-    // ใช้เวลาที่สร้างออเดอร์ ไม่ใช่เวลาปัจจุบัน
-    const rawOrderTime =
-      order.CreatedAt ||
-      order.created_at ||
-      order.OrderTime ||
-      order.order_time;
-
-    if (!rawOrderTime) {
-      return order.PickupTime || order.pickup_time || "ยังไม่มีข้อมูลเวลา";
-    }
-
-    // แปลงเวลาจาก Backend
-    const orderTime = new Date(
-      String(rawOrderTime).replace(" ", "T")
-    );
-
-    if (Number.isNaN(orderTime.getTime())) {
-      return order.PickupTime || order.pickup_time || "ยังไม่มีข้อมูลเวลา";
-    }
-
-    // นับจำนวนจานของออเดอร์นี้
-    const items = order.items || order.Items || [];
-    const itemDishCount = items.reduce(
-      (sum, item) => sum + Number(item.Qty ?? item.qty ?? 1),
-      0
-    );
-    // ประเมินเวลาทำอาหาร 4 นาทีต่อจาน
-    const dishCount =
-      itemDishCount > 0
-        ? itemDishCount
-        : Number(order.dish_count || order.DishCount || 1);
-
-    const waitMinutes = Math.max(4, dishCount * 4);
-    const end = new Date(
-      orderTime.getTime() + waitMinutes * 60000
-    );
-
-    const formatTime = (date) =>
-      `${String(date.getHours()).padStart(2, "0")}:${String(
-        date.getMinutes()
-      ).padStart(2, "0")}`;
-
-    return `${formatTime(start)}–${formatTime(end)} น.`;
-  };
-
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
     if (!checkFoodCourtOrderTime()) return;
@@ -1163,7 +1116,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     const currentOrderTime = getCurrentDateTimeForBackend();
     const displayOrderTime = getCurrentTimeFormatted();
-    const finalPickupTime = pickupTime? `${pickupTime} น.`: getCustomerPickupRange();
+    const finalPickupTime = pickupTime ? `${pickupTime} น.` : displayOrderTime;
+
     const orderItems = cart.map((item) => ({
       product_id: Number(item.ProductId),
       qty: 1,
@@ -1922,6 +1876,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       padding: "14px 16px",
                       borderRadius: "14px",
                       background: "#FFF7ED",
+                      border: "1px solid #FED7AA",
                     }}
                   >
                     {/* ฝั่งซ้าย: ข้อมูลคิว */}
@@ -1976,18 +1931,21 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           color: "#F97316",
                         }}
                       >
-                        {getOrderPickupRange(order)}
+                        {getCustomerPickupRange() || "กำลังคำนวณเวลา..."}
                       </div>
-                      <div
-                        style={{
-                          fontSize: "10px",
-                          color: "#9A3412",
-                          marginTop: "4px",
-                          lineHeight: 1.4,
-                        }}
-                      >
-                        เวลาโดยประมาณ
-                      </div>
+
+                      {!getCustomerPickupRange() && (
+                        <div
+                          style={{
+                            fontSize: "10px",
+                            color: "#9A3412",
+                            marginTop: "4px",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          เวลาโดยประมาณ
+                        </div>
+                      )}
                     </div>
                   </div>
                   </div>
@@ -1996,6 +1954,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", color: COLORS.gray }}>
                     {(order.OrderTime || order.CreatedAt || order.order_time) && (
                       <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
+                    )}
+                    {(order.PickupTime || order.pickup_time) && (
+                      <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
                     )}
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
@@ -2230,7 +2191,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         <div style={{ color: COLORS.orange, fontWeight: "900", marginTop: "3px" }}>{Number(item.UnitPrice).toFixed(2)} ฿</div>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
                           <button onClick={() => decreaseQty(index)} style={{ width: "29px", height: "29px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>−</button>
-                          <b>{item.Qty || 1}</b>
+                          <b>1</b>
                           <button onClick={() => increaseQty(index)} style={{ width: "29px", height: "29px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>+</button>
                         </div>
                       </div>
