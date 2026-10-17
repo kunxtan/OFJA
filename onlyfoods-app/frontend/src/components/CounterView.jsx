@@ -81,6 +81,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [printBusy, setPrintBusy] = useState(false);
   const [stockModal, setStockModal] = useState(null); // { product, notifiable: [], silent: [] }
   const [stockBusy, setStockBusy] = useState(false);
+  // ตารางคิว: แท็บตามสถานะ + ค้นหาเลขคิว (ลูกค้าบอกคิว -> พนักงานพิมพ์ -> ส่งมอบจากการ์ด)
+  const [queueTab, setQueueTab] = useState('ready');
+  const [queueQuery, setQueueQuery] = useState('');
+  const [handoverBusy, setHandoverBusy] = useState(null);
+  const queueSearchRef = useRef(null);
   const dateKey = (d) => {
     const x = new Date(d);
     if (isNaN(x)) return '';
@@ -260,6 +265,28 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
 
   const printableItems = (order) => (order?.items || []).filter(i => !i.ItemStatus || i.ItemStatus === 'NORMAL');
+
+  // ส่งมอบอาหาร: ใช้ได้ทั้งปุ่มในตารางและการ์ดจากการค้นหาเลขคิว
+  const handOver = async (order) => {
+    if (handoverBusy) return;
+    setHandoverBusy(order.OrderID);
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/status`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Completed', user_role: 'Front Staff' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.detail || 'ส่งมอบไม่สำเร็จ'); return; }
+      showToast(`✅ ส่งมอบคิว ${order.QueueNo} แล้ว`);
+      setQueueQuery('');
+      queueSearchRef.current?.focus();
+      fetchData();
+    } catch {
+      showToast('เชื่อมต่อระบบออเดอร์ไม่สำเร็จ');
+    } finally {
+      setHandoverBusy(null);
+    }
+  };
 
   const buildPrintData = (order) => ({
     orderId: order.OrderID,
@@ -621,6 +648,42 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const slipToCheck = (o) => (isTopUpSlip(o) ? o.TopUpSlipUrl : o.SlipUrl);
   const verifyingOrders = orders.filter(o => o.Status === 'Verifying_Slip' || isTopUpSlip(o));
   const activeOrders = orders.filter(o => o.Status !== 'Verifying_Slip' && !isTopUpSlip(o) && o.Status !== 'Completed' && o.Status !== 'Cancelled' && o.Status !== 'NoShow');
+  // คิวที่ "ต้องจัดการ": รอลูกค้าเปลี่ยนเมนู / รอโอนส่วนต่าง / พร้อมรับแต่เลยเวลาแล้ว (ป้ายให้โทร)
+  const needsAttention = (o) => ['Pending_Cancellation', 'Awaiting_Top_Up'].includes(o.Status)
+    || (o.Status === 'Ready' && isPickupWarning(o.ReadyAt) && !beforeEta(o));
+  const queueTabs = [
+    { id: 'ready', label: 'พร้อมรับ', match: (o) => o.Status === 'Ready' },
+    { id: 'attention', label: 'ต้องจัดการ', match: needsAttention },
+    { id: 'cooking', label: 'กำลังทำ', match: (o) => o.Status === 'Cooking' },
+    { id: 'waiting', label: 'รอทำ', match: (o) => o.Status === 'Pending' },
+    { id: 'all', label: 'ทั้งหมด', match: () => true },
+  ];
+  // "12" / "012" / "a12" / "A012" -> หาคิว A012 (เทียบตัวเลข ; ถ้าพิมพ์ตัวอักษรมาด้วยต้องตรงร้าน)
+  const queueMatches = (o, raw) => {
+    const q = raw.trim().toUpperCase().replace(/\s+/g, '');
+    if (!q) return true;
+    const label = String(o.QueueNo || '').toUpperCase();
+    const m = q.match(/^([A-Z]*)(\d+)$/);
+    if (!m) return label.includes(q);
+    const digits = label.replace(/\D/g, '');
+    const letters = label.replace(/[^A-Z]/g, '');
+    return digits !== '' && Number(digits) === Number(m[2]) && (!m[1] || m[1] === letters);
+  };
+  const byOldest = (tab) => (a, b) => tab === 'ready'
+    ? (new Date(a.ReadyAt || 0) - new Date(b.ReadyAt || 0)) || (a.OrderID - b.OrderID)
+    : a.OrderID - b.OrderID;
+  const searching = queueQuery.trim() !== '';
+  const currentQueueTab = queueTabs.find(t => t.id === queueTab) || queueTabs[0];
+  const shownOrders = (searching
+    ? activeOrders.filter(o => queueMatches(o, queueQuery))
+    : activeOrders.filter(currentQueueTab.match)
+  ).slice().sort(byOldest(searching ? 'all' : queueTab));
+  // ค้นแล้วเจอคิวเดียว -> การ์ดส่งมอบ ; ถ้าไม่อยู่ในคิวที่ดำเนินการ ดูว่าจบไปแล้วหรือยัง (บอกพนักงานได้ทันที)
+  const handoverOrder = searching && shownOrders.length === 1 ? shownOrders[0] : null;
+  const endedMatch = searching && shownOrders.length === 0
+    ? orders.find(o => ['Completed', 'Cancelled', 'NoShow', 'Verifying_Slip'].includes(o.Status) && queueMatches(o, queueQuery))
+    : null;
+
   const historyOrders = orders
     .filter(o => dateKey(o.CreatedAt) === historyDate)
     .sort((a, b) => (b.OrderID || 0) - (a.OrderID || 0));
@@ -847,9 +910,66 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="cv-card-head">
                   <div>
                     <h3>2. คิวคำสั่งซื้อที่กำลังดำเนินการ</h3>
-                    <div className="caption">สถานะคิวล่าสุดของร้านค้าแบบเรียลไทม์</div>
+                    <div className="caption">ลูกค้ามารับ: ถามเลขคิว แล้วพิมพ์ในช่องค้นหา · คิวเก่าอยู่บนสุด</div>
                   </div>
                 </div>
+                <div className="queue-search">
+                  <span className="queue-search-icon">🔍</span>
+                  <input
+                    ref={queueSearchRef}
+                    value={queueQuery}
+                    onChange={e => setQueueQuery(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Escape') setQueueQuery(''); }}
+                    placeholder="พิมพ์เลขคิวที่ลูกค้าบอก เช่น 12"
+                    inputMode="numeric"
+                    aria-label="ค้นหาเลขคิว"
+                  />
+                  {searching && <button className="cv-btn btn-ghost" onClick={() => { setQueueQuery(''); queueSearchRef.current?.focus(); }}>ล้าง</button>}
+                </div>
+                {!searching && (
+                  <div className="queue-tabs" role="tablist">
+                    {queueTabs.map(t => {
+                      const n = activeOrders.filter(t.match).length;
+                      return (
+                        <button key={t.id} role="tab" aria-selected={queueTab === t.id}
+                          className={`queue-tab ${queueTab === t.id ? 'active' : ''} ${t.id === 'attention' && n ? 'alert' : ''}`}
+                          onClick={() => setQueueTab(t.id)}>
+                          {t.label} <span className="queue-tab-count">{n}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {handoverOrder && (
+                  <div className={`handover-card ${handoverOrder.Status === 'Ready' ? 'ready' : ''}`}>
+                    <div className="handover-main">
+                      <div className="handover-queue">{handoverOrder.QueueNo}</div>
+                      <div>
+                        <div className="handover-name">
+                          {isWalkInOrder(handoverOrder) ? 'ลูกค้า Walk-in' : (handoverOrder.CustomerName || handoverOrder.UserName || '-')}
+                        </div>
+                        <div className="handover-items">
+                          {(handoverOrder.items || []).map(it => `${it.ProductName} ×${it.Qty}`).join(', ')}
+                        </div>
+                        <div className="handover-status">
+                          <Badge tone={getStatusBadgeTone(handoverOrder.Status)}>{getStatusLabel(handoverOrder.Status)}</Badge>
+                          {handoverOrder.Status === 'Ready' && <span> พร้อมมาแล้ว {getElapsedLabel(handoverOrder.ReadyAt)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                    {handoverOrder.Status === 'Ready' ? (
+                      <button className="cv-btn btn-success cv-btn-lg" disabled={handoverBusy === handoverOrder.OrderID}
+                        onClick={() => handOver(handoverOrder)}>
+                        {handoverBusy === handoverOrder.OrderID ? 'กำลังบันทึก...' : `✅ ส่งมอบ ${handoverOrder.QueueNo}`}
+                      </button>
+                    ) : (
+                      <div className="handover-wait">ยังส่งมอบไม่ได้ — แจ้งลูกค้าว่าอาหาร{getStatusLabel(handoverOrder.Status)}</div>
+                    )}
+                  </div>
+                )}
+                {searching && shownOrders.length > 1 && (
+                  <div className="queue-search-hint">พบ {shownOrders.length} คิว — พิมพ์ตัวอักษรร้านนำหน้าเพื่อระบุให้ชัด</div>
+                )}
                 <div className="cv-table-wrapper">
                   <table className="cv-table">
                     <thead>
@@ -861,10 +981,16 @@ export default function CounterView({ user, apiBase, onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeOrders.length === 0 ? (
-                        <tr><td colSpan="4" className="empty-state">ไม่มีคิวที่กำลังดำเนินการ</td></tr>
+                      {shownOrders.length === 0 ? (
+                        <tr><td colSpan="4" className="empty-state">
+                          {searching
+                            ? (endedMatch
+                              ? `คิว ${endedMatch.QueueNo} ${endedMatch.Status === 'Completed' ? 'ส่งมอบไปแล้ว' : endedMatch.Status === 'Verifying_Slip' ? 'ยังรอตรวจสลิป (ดูตารางด้านบน)' : getStatusLabel(endedMatch.Status)}`
+                              : `ไม่พบคิว "${queueQuery.trim()}" ในร้านนี้`)
+                            : activeOrders.length === 0 ? 'ไม่มีคิวที่กำลังดำเนินการ' : `ไม่มีคิวในแท็บ "${currentQueueTab.label}"`}
+                        </td></tr>
                       ) : (
-                        activeOrders.map(o => {
+                        shownOrders.map(o => {
                           const isPendingCancel = o.Status === 'Pending_Cancellation';
                           return (
                             <tr key={o.OrderID}>
@@ -926,7 +1052,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                 <div className="cv-action-buttons">
                                   {o.Status === 'Ready' && (
                                     <>
-                                      <button onClick={() => updateStatus(o.OrderID, 'Completed')} className="cv-btn btn-success">
+                                      <button onClick={() => handOver(o)} className="cv-btn btn-success" disabled={handoverBusy === o.OrderID}>
                                         ✅ ส่งมอบอาหาร
                                       </button>
                                       <button
@@ -1689,12 +1815,33 @@ const CV_STYLES = `
 /* ---------- Buttons ---------- */
 .cv-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 6px 12px; border-radius: 6px; border: none; font-size: 12px; font-weight: 500;
+  min-height: 40px; padding: 8px 16px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600;
   cursor: pointer; font-family: inherit; transition: all 0.2s ease;
 }
 .cv-btn:disabled { opacity: .45; cursor: not-allowed; }
+.cv-btn-lg { min-height: 52px; padding: 12px 24px; font-size: 17px; border-radius: 10px; }
+.queue-search { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 2px solid ${PALETTE.border}; border-radius: 12px; background: #fff; margin-bottom: 12px; }
+.queue-search:focus-within { border-color: ${PALETTE.coral}; }
+.queue-search-icon { font-size: 20px; }
+.queue-search input { flex: 1; border: none; outline: none; font-size: 22px; font-weight: 700; font-family: inherit; padding: 6px 0; min-width: 0; background: transparent; }
+.queue-search-hint { font-size: 13px; color: ${PALETTE.textSub}; margin: -4px 0 10px; }
+.queue-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.queue-tab { min-height: 44px; padding: 8px 16px; border-radius: 999px; border: 1px solid ${PALETTE.border}; background: #fff; font-family: inherit; font-size: 15px; font-weight: 600; color: ${PALETTE.dark}; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.queue-tab.active { background: ${PALETTE.dark}; border-color: ${PALETTE.dark}; color: #fff; }
+.queue-tab-count { min-width: 26px; padding: 1px 8px; border-radius: 999px; background: ${PALETTE.bgSoft}; color: ${PALETTE.dark}; font-size: 13px; text-align: center; }
+.queue-tab.active .queue-tab-count { background: rgba(255,255,255,.2); color: #fff; }
+.queue-tab.alert:not(.active) { border-color: ${PALETTE.coral}; color: ${PALETTE.coral}; }
+.queue-tab.alert .queue-tab-count { background: ${PALETTE.coral}; color: #fff; }
+.handover-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 16px 18px; margin-bottom: 14px; border-radius: 14px; border: 2px solid ${PALETTE.border}; background: ${PALETTE.bgSoft}; }
+.handover-card.ready { border-color: ${PALETTE.green}; background: ${PALETTE.greenLight}; }
+.handover-main { display: flex; gap: 16px; align-items: center; min-width: 0; }
+.handover-queue { font-size: 34px; font-weight: 800; font-family: 'Roboto', monospace; color: ${PALETTE.dark}; }
+.handover-name { font-size: 17px; font-weight: 700; color: ${PALETTE.dark}; }
+.handover-items { font-size: 14px; color: ${PALETTE.textSub}; margin: 2px 0 6px; }
+.handover-status { font-size: 13px; color: ${PALETTE.textSub}; }
+.handover-wait { font-size: 14px; font-weight: 600; color: ${PALETTE.amber}; }
 .cv-btn-icon {
-  width: 32px; height: 32px; border-radius: 6px; border: none; background: ${PALETTE.bgSoft};
+  width: 40px; height: 40px; border-radius: 6px; border: none; background: ${PALETTE.bgSoft};
   display: flex; align-items: center; justify-content: center; cursor: pointer; color: ${PALETTE.dark}; transition: all 0.2s ease;
 }
 .cv-btn-icon:hover { background: ${PALETTE.coral}; color: #fff; }
@@ -1834,7 +1981,7 @@ const CV_STYLES = `
 .reason-chip.active { background: ${PALETTE.coralLight}; color: ${PALETTE.coral}; border-color: ${PALETTE.coral}; }
 
 .modal-footer-btns { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
-.modal-footer-btns .cv-btn { padding: 10px 20px; font-size: 14px; border-radius: var(--radius-md); }
+.modal-footer-btns .cv-btn { min-height: 48px; padding: 12px 22px; font-size: 15px; border-radius: var(--radius-md); }
 
 /* ---------- Toast ---------- */
 .cv-toast {
