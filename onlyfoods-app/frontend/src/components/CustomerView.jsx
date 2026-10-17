@@ -1129,21 +1129,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     // นับจำนวนจานของออเดอร์นี้
     const items = order.items || order.Items || [];
-    const dishCount = Number(
-      order.dish_count ??
-      order.DishCount ??
-      items.reduce(
-        (sum, item) => sum + Number(item.Qty ?? item.qty ?? 1),
-        0
-      )
+    const itemDishCount = items.reduce(
+      (sum, item) => sum + Number(item.Qty ?? item.qty ?? 1),
+      0
     );
-
     // ประเมินเวลาทำอาหาร 4 นาทีต่อจาน
-    const waitMinutes = Math.max(1, dishCount * 4);
+    const dishCount =
+      itemDishCount > 0
+        ? itemDishCount
+        : Number(order.dish_count || order.DishCount || 1);
 
-    const start = new Date(orderTime);
+    const waitMinutes = Math.max(4, dishCount * 4);
     const end = new Date(
-      orderTime.getTime() + waitMinutes * 60 * 1000
+      orderTime.getTime() + waitMinutes * 60000
     );
 
     const formatTime = (date) =>
@@ -1921,9 +1919,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       justifyContent: "space-between",
                       alignItems: "center",
                       gap: "12px",
-                      padding: "14px 16px",
-                      borderRadius: "14px",
-                      background: "#FFF7ED",
                     }}
                   >
                     {/* ฝั่งซ้าย: ข้อมูลคิว */}
