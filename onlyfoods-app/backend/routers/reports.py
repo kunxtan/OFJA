@@ -81,15 +81,38 @@ def _details(entity_type: str, entity_id, new_value, old_value) -> str:
         return f"{head} {json.dumps(val, ensure_ascii=False, default=str)}"
     return head
 
+# ตัวกรองประเภท : ต้องตรงกับ actionMeta ใน ExecutiveView.jsx (เช็คตามลำดับ กลุ่มแรกที่ตรงชนะ)
+_AUDIT_GROUPS = (
+    ("store", ("STORE", "SUSPEND")),
+    ("account", ("ACCOUNT", "USER", "STAFF", "PASSWORD")),
+    ("payment", ("SLIP", "PAYMENT")),
+    ("order", ("ORDER", "CANCEL", "STATUS", "QUEUE", "PRINT")),
+)
+
+
+def _audit_group_filter(group: str):
+    conds, params = [], []
+    for name, words in _AUDIT_GROUPS:
+        any_word = "(" + " OR ".join(["a.ActionCode LIKE %s"] * len(words)) + ")"
+        params += [f"%{w}%" for w in words]
+        if name == group:
+            conds.append(any_word)
+            return conds, params
+        conds.append("NOT " + any_word)
+    return [], []
 
 @router.get("/audit-logs")
 def get_logs(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     action: Optional[str] = Query(None, max_length=50),
+    q: Optional[str] = Query(None, max_length=100),
+    group: Optional[str] = Query(None, pattern="^(store|account|payment|order)$"),
+    actions: Optional[str] = Query(None, max_length=2000),
     user=Depends(require_role("EXECUTIVE", "ACCOUNTANT")),
     db=Depends(get_db),
 ):
+    """ค้นหา/กรองที่ฐานข้อมูล แล้วค่อยแบ่งหน้า (limit/offset) ค้นเจอทั้งตาราง ไม่ใช่แค่หน้าที่โหลดมาแล้ว"""
     sql = """
         SELECT a.AuditLogId AS LogID, a.AuditLogId, a.ActionCode AS Action, a.EntityType, a.EntityId,
                a.PerformedBy, a.IpAddress, a.CreatedAt, a.OldValue, a.NewValue,
@@ -97,11 +120,42 @@ def get_logs(
         FROM AuditLog a
         LEFT JOIN `User` u ON u.UserId = a.PerformedBy
         LEFT JOIN Role r ON r.RoleId = u.RoleId
+        LEFT JOIN Payment ap ON a.EntityType = 'Payment' AND ap.PaymentId = a.EntityId
+        LEFT JOIN `Order` ao ON ao.OrderId = COALESCE(IF(a.EntityType = 'Order', a.EntityId, NULL), ap.OrderId)
+        LEFT JOIN Store ast ON ast.StoreId = COALESCE(ao.StoreId, IF(a.EntityType = 'Store', a.EntityId, NULL))
     """
-    params = []
+    where, params = [], []
     if action:
-        sql += " WHERE a.ActionCode = %s"
+        where.append("a.ActionCode = %s")
         params.append(action)
+    if group:
+        conds, group_params = _audit_group_filter(group)
+        where += conds
+        params += group_params
+    keyword = (q or "").strip().lower()
+    if keyword:
+        like = "%" + keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        search = [
+            "LOWER(REPLACE(a.ActionCode, '_', ' ')) LIKE %s",
+            "LOWER(a.ActionCode) LIKE %s",
+            "a.EntityId = %s",
+            "LOWER(CAST(a.NewValue AS CHAR)) LIKE %s",
+            "LOWER(CAST(a.OldValue AS CHAR)) LIKE %s",
+            "LOWER(u.FullName) LIKE %s",
+            "LOWER(u.Username) LIKE %s",
+            "r.RoleNameTh LIKE %s",
+            "LOWER(ast.StoreName) LIKE %s",
+            "LOWER(CONCAT(ast.QueueCode, LPAD(ao.QueueNo, 3, '0'))) LIKE %s"
+        ]
+        search_params = [like, like, keyword.lstrip("#"), like, like, like, like, like, like, like]
+        codes = [c for c in (actions or "").upper().split(",") if c and len(c) <= 50 and c.replace("_", "").isalpha()][:50]
+        if codes:
+            search.append(f"a.ActionCode IN ({','.join(['%s'] * len(codes))})")
+            search_params += codes
+        where.append("(" + " OR ".join(search) + ")")
+        params += search_params
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY a.AuditLogId DESC LIMIT %s OFFSET %s"
     params += [limit, offset]
     with db.cursor() as cur:
