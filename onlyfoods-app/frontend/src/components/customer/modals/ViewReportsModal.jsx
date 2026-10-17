@@ -1,5 +1,4 @@
 
-
 export default function ViewReportsModal({ isViewReportsModalOpen, setIsViewReportsModalOpen, myIssueReports }) {
   if (!isViewReportsModalOpen) return null;
 

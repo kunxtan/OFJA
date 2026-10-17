@@ -1,5 +1,4 @@
 // ค่าคงที่ของหน้าลูกค้า (สี, ขนาดไฟล์สูงสุด)
-
 export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
 export const COLORS = {

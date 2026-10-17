@@ -6,13 +6,9 @@ import { COLORS, MAX_FILE_SIZE } from "./constants";
 import { DISH_MINUTES, SCHEDULED_PICKUP_BASE_MINUTES, buildQueueSchedule, canEstimateOrder, countOrderDishes, formatPickupRange, formatScheduledPickupRange, isImmediatePickup, kitchenBuffer, orderStatusKey } from "./utils/queueEstimate";
 import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, logoStyle, pageStyle, profileStyle, searchStyle } from "./styles";
 import { BigUserIcon, CameraIcon, CartIcon, CartIconPlus, HiIcon, HomeIcon, NoodleBowlArt, NotiIcon, OrderIcon, SparkleArt, StarIcon, ThaiTeaArt, UserIcon } from "./icons";
-import PaymentModal from "./modals/PaymentModal";
-import ReviewModal from "./modals/ReviewModal";
-import OutOfStockModal from "./modals/OutOfStockModal";
-import TopUpModal from "./modals/TopUpModal";
-import StoreReviewsModal from "./modals/StoreReviewsModal";
-import ReportModal from "./modals/ReportModal";
-import ViewReportsModal from "./modals/ViewReportsModal";
+import { PaymentModal, TopUpModal, OutOfStockModal } from "./modals/PaymentModals";
+import { ReviewModal, StoreReviewsModal } from "./modals/ReviewModals";
+import { ReportModal, ViewReportsModal } from "./modals/ReportModals";
 import NotifToasts from "./NotifToasts";
 import CustomAlert from "./modals/CustomAlert";
 
@@ -135,9 +131,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       // เก็บเฉพาะร้านที่ "ไม่ถูกระงับ" และ "สัญญายังมีผล" (ต้องผ่านทั้งสองเงื่อนไข จึงใช้ &&)
       // ร้านที่สัญญายังมีผลแต่ปิดชั่วคราว (IsOpen = false) ยังแสดงเป็นการ์ดสีจาง
       // หน้าผู้บริหาร/เจ้าของร้านยังเห็นครบตามเดิม เพราะกรองเฉพาะฝั่งหน้าลูกค้า
-      const data = Array.isArray(allStores)
-        ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE")
-        : [];
+      const data = Array.isArray(allStores) ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE"): [];
       const storesWithReviews = await Promise.all(
         data.map(async (store) => {
           try {
