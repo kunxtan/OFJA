@@ -4665,7 +4665,6 @@ function StoreManagePage({ ctx }) {
       />
     </>);
 }
-const STORE_ROLES = ['Shop Owner'];
 const ROLE_LABEL = {
     'Shop Owner': 'เจ้าของร้าน',
 };
@@ -5624,6 +5623,7 @@ function StoreAccountsPage({ ctx }) {
     const [form, setForm] = useState(EMPTY_ACCOUNT_FORM);
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const loadAccounts = useCallback(async () => {
         try {
             const data = await callApi(`${API}/api/store-accounts`);
@@ -5824,6 +5824,7 @@ function StoreAccountsPage({ ctx }) {
               {saving ? 'กำลังบันทึก...' : 'บันทึก'}
             </Button>
           </>}>
+                <FormSectionTitle icon="store">ร้านค้า</FormSectionTitle>
         <Field label="ร้านค้า" required error={errors.storeId}>
           <select value={form.storeId} onChange={update('storeId')} style={inputStyle}>
             <option value="">— เลือกร้านค้า —</option>
@@ -5833,33 +5834,23 @@ function StoreAccountsPage({ ctx }) {
           </select>
         </Field>
 
-        <Field label="ตำแหน่ง" required error={errors.role}>
-          <select value={form.role} onChange={update('role')} style={inputStyle}>
-            {STORE_ROLES.map((r) => (<option key={r} value={r}>
-                {ROLE_LABEL[r]}
-              </option>))}
-          </select>
+        <FormSectionTitle icon="key">บัญชีเข้าสู่ระบบ</FormSectionTitle>
+        <OwnerRoleCard/>
+        <Field label="ชื่อ-นามสกุลเจ้าของร้าน" required error={errors.fullName}>
+          <IconInput icon="account" value={form.fullName} onChange={update('fullName')} maxLength={100} placeholder="เช่น สมชาย ใจดี"/>
         </Field>
-
-        <Field label="ชื่อ-นามสกุลผู้ใช้" required error={errors.fullName}>
-          <input value={form.fullName} onChange={update('fullName')} maxLength={100} style={inputStyle}/>
+        <Field label="ชื่อผู้ใช้ (username)" required error={errors.username} hint={mode === 'password' ? 'แก้ชื่อผู้ใช้ไม่ได้' : 'a-z, 0-9 และ _ ความยาว 4–20 ตัว ห้ามซ้ำกับบัญชีอื่น'}>
+          <IconInput icon="account" value={form.username} disabled={mode === 'password'} onChange={(e) => { setForm((prev) => ({ ...prev, username: e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20) })); setErrors((prev) => ({ ...prev, username: undefined })); }} autoComplete="off" placeholder="เช่น owner_shop" style={mode === 'password' ? { background: '#F3F3F8', color: T.muted } : undefined}/>
         </Field>
-
-        <Field label="ชื่อผู้ใช้ (username)" required error={errors.username} hint={mode === 'password' ? 'แก้ชื่อผู้ใช้ไม่ได้' : 'a-z, 0-9, _ ความยาว 4–20 ตัว'}>
-          <input value={form.username} disabled={mode === 'password'} onChange={(e) => setForm((prev) => ({
-            ...prev,
-            username: e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20)
-        }))} style={{ ...inputStyle, background: mode === 'password' ? '#F3F3F8' : T.surface }}/>
-        </Field>
-
         <div style={twoColStyle}>
-          <Field label="รหัสผ่าน" required error={errors.password} hint={`อย่างน้อย ${STORE_PASSWORD_MIN} ตัว ห้ามเว้นวรรค`}>
-            <input type="text" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value.replace(/\s/g, '').slice(0, STORE_PASSWORD_MAX) }))} style={inputStyle}/>
+          <Field label={mode === 'password' ? 'รหัสผ่านใหม่' : 'รหัสผ่าน'} required error={errors.password}>
+            <PasswordField value={form.password} onChange={(e) => { setForm((prev) => ({ ...prev, password: e.target.value.replace(/\s/g, '') })); setErrors((prev) => ({ ...prev, password: undefined })); }} show={showPassword} onToggle={() => setShowPassword((v) => !v)} placeholder={`อย่างน้อย ${STORE_PASSWORD_MIN} ตัว`}/>
           </Field>
           <Field label="ยืนยันรหัสผ่าน" required error={errors.confirm}>
-            <input type="text" value={form.confirm} onChange={(e) => setForm((prev) => ({ ...prev, confirm: e.target.value.replace(/\s/g, '').slice(0, STORE_PASSWORD_MAX) }))} style={inputStyle}/>
+            <PasswordField value={form.confirm} onChange={(e) => { setForm((prev) => ({ ...prev, confirm: e.target.value.replace(/\s/g, '') })); setErrors((prev) => ({ ...prev, confirm: undefined })); }} show={showPassword} onToggle={() => setShowPassword((v) => !v)} placeholder="พิมพ์อีกครั้ง"/>
           </Field>
         </div>
+        <PasswordChecklist password={form.password} confirm={form.confirm}/>
       </Modal>
     </>);
 }
