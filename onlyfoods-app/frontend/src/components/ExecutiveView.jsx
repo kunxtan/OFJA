@@ -2208,7 +2208,6 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                 <h3 style={{ ...h3Style, margin: 0 }}>รายงานภาพรวมศูนย์อาหาร</h3>
                 <p style={{ ...captionStyle, marginTop: '5px' }}>{periodLabel}</p>
               </div>
-              <Badge tone="neutral">{exportPreview === 'xlsx' ? 'XLSX · ไฟล์ Excel' : 'CSV · เปิดต่อใน Excel ได้'}</Badge>
             </div>
           </div>
           <div style={{ padding: '16px 20px' }}>
@@ -5269,6 +5268,24 @@ const AUDIT_VERBS = {
 
 const auditCodesMatching = (keyword) => Object.keys(AUDIT_VERBS)
     .filter((code) => AUDIT_VERBS[code].toLowerCase().includes(keyword));
+// กลุ่มของการกระทำ : ต้องตรงกับ _AUDIT_GROUPS ใน backend/routers/reports.py (เช็คตามลำดับ กลุ่มแรกที่ตรงชนะ)
+const AUDIT_GROUP_WORDS = [
+    ['store', ['STORE', 'SUSPEND']],
+    ['account', ['ACCOUNT', 'USER', 'STAFF', 'PASSWORD']],
+    ['payment', ['SLIP', 'PAYMENT']],
+    ['order', ['ORDER', 'CANCEL', 'STATUS', 'QUEUE', 'PRINT']]
+];
+const AUDIT_GROUP_META = {
+    store: { label: 'ร้านค้า', bg: T.primarySoft, color: T.primaryDark },
+    account: { label: 'บัญชีผู้ใช้', bg: T.deepSoft, color: T.deep },
+    payment: { label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark },
+    order: { label: 'ออเดอร์', bg: T.greenSoft, color: T.up },
+    other: { label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text }
+};
+const auditGroupOf = (action) => {
+    const key = String(action || '').toUpperCase();
+    return AUDIT_GROUP_WORDS.find(([, words]) => words.some((word) => key.includes(word)))?.[0] || 'other';
+};
 
 // ===== รายละเอียดภาษาไทย : backend ส่ง Details มาเป็น `ชนิด รหัส {JSON}` (เช่น `Product 12 {"name":"ข้าวมันไก่"}`)
 // ดึง JSON ท้ายข้อความมาแต่งเป็นประโยค ; รหัสที่ไม่รู้จักแสดงข้อความเดิม
@@ -5361,8 +5378,9 @@ function AuditHistoryPage({ ctx }) {
     const [logs, setLogs] = useState([]);
     const [loadingLogs, setLoadingLogs] = useState(true);
     const [loadError, setLoadError] = useState('');
-        const [query, setQuery] = useState('');
+    const [query, setQuery] = useState('');
     const [filter, setFilter] = useState('all');
+    const [actionFilter, setActionFilter] = useState('');  // กรองการกระทำเดียว เช่น CANCEL_ORDER
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const requestNo = useRef(0);  // พิมพ์เร็ว ๆ แล้วผลเก่ากลับมาทีหลัง -> ทิ้ง
@@ -5375,9 +5393,10 @@ function AuditHistoryPage({ ctx }) {
             const codes = auditCodesMatching(keyword);
             if (codes.length) params.set('actions', codes.join(','));
         }
-        if (filter !== 'all') params.set('group', filter);
+                if (filter !== 'all') params.set('group', filter);
+        if (actionFilter) params.set('action', actionFilter);
         return `${API}/api/audit-logs?${params}`;
-    }, [API, query, filter]);
+    }, [API, query, filter, actionFilter]);
 
     const loadLogs = useCallback(async () => {
         const no = ++requestNo.current;
@@ -5425,22 +5444,7 @@ function AuditHistoryPage({ ctx }) {
         return () => clearTimeout(timer);
     }, [loadLogs]);
 
-    const actionMeta = (action) => {
-        const key = String(action || '').toUpperCase();
-        if (key.includes('STORE') || key.includes('SUSPEND')) {
-            return { group: 'store', label: 'ร้านค้า', bg: T.primarySoft, color: T.primaryDark };
-        }
-        if (key.includes('ACCOUNT') || key.includes('USER') || key.includes('STAFF') || key.includes('PASSWORD')) {
-            return { group: 'account', label: 'บัญชีผู้ใช้', bg: T.deepSoft, color: T.deep };
-        }
-        if (key.includes('SLIP') || key.includes('PAYMENT')) {
-            return { group: 'payment', label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark };
-        }
-        if (key.includes('ORDER') || key.includes('CANCEL') || key.includes('STATUS') || key.includes('QUEUE') || key.includes('PRINT')) {
-            return { group: 'order', label: 'ออเดอร์', bg: T.greenSoft, color: T.up };
-        }
-        return { group: 'other', label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text };
-    };
+        const actionMeta = (action) => AUDIT_GROUP_META[auditGroupOf(action)];
 
     
     const actionName = (action) => {
@@ -5488,6 +5492,8 @@ function AuditHistoryPage({ ctx }) {
         ['order', 'ออเดอร์'],
         ['payment', 'การชำระเงิน']
     ];
+    // ตัวเลือกการกระทำ : เฉพาะที่อยู่ในกลุ่มที่เลือก
+    const actionOptions = Object.keys(AUDIT_VERBS).filter((code) => filter === 'all' || auditGroupOf(code) === filter);
 
     return (<>
       <Card style={{ marginBottom: '16px' }}>
@@ -5515,7 +5521,7 @@ function AuditHistoryPage({ ctx }) {
             {filters.map(([id, label]) => (<button
               key={id}
               type="button"
-              onClick={() => setFilter(id)}
+              onClick={() => { setFilter(id); setActionFilter(''); }}
               style={{
                   border: `1px solid ${filter === id ? T.primary : T.line}`,
                   background: filter === id ? T.primarySoft : T.surface,
@@ -5527,8 +5533,12 @@ function AuditHistoryPage({ ctx }) {
                   cursor: 'pointer',
                   whiteSpace: 'nowrap'
               }}
-            >{label}</button>))}
+              >{label}</button>))}
           </div>
+          <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} style={{ ...inputStyle, width: 'auto', minWidth: '210px' }} aria-label="กรองตามการกระทำ">
+            <option value="">ทุกการกระทำ</option>
+            {actionOptions.map((code) => <option key={code} value={code}>{AUDIT_VERBS[code]}</option>)}
+          </select>
         </div>
       </Card>
 
