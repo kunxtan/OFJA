@@ -1168,12 +1168,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // ===== เวลารับโดยประมาณของ "แต่ละออเดอร์" ในหน้าคำสั่งซื้อ =====
-  const ACTIVE_ESTIMATE_STATUSES = ["pending", "cooking"];
-  const orderStatusKey = (order) => String(order?.Status || "").trim().toLowerCase();
+  // สถานะที่ "จบแล้ว" ไม่ต้องแสดงเวลารอ / Ready = แสดงว่าพร้อมรับ / ที่เหลือทุกสถานะ (รอตรวจสลิป, Pending, Cooking,
+  // รอโอนส่วนต่าง, รอเปลี่ยนเมนู ฯลฯ) แสดงเป็นช่วงเวลาโดยประมาณ
+  const FINISHED_ORDER_STATUSES = ["completed", "cancelled", "canceled", "noshow", "no_show"];
+  const orderStatusKey = (order) => String(order?.Status || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const canEstimateOrder = (order) => {
+    const st = orderStatusKey(order);
+    return st !== "ready" && !FINISHED_ORDER_STATUSES.includes(st);
+  };
 
   // โหลดคิวของร้านที่ลูกค้ามีออเดอร์ค้างอยู่ เฉพาะตอนเปิดแท็บคำสั่งซื้อ
   const activeOrderStoreKey = myOrders
-    .filter((o) => ACTIVE_ESTIMATE_STATUSES.includes(orderStatusKey(o)) && isImmediatePickup(o.PickupTime, o.OrderTime))
+    .filter((o) => canEstimateOrder(o) && isImmediatePickup(o.PickupTime, o.OrderTime))
     .map((o) => o.StoreId)
     .filter(Boolean)
     .filter((id, i, arr) => arr.indexOf(id) === i)
@@ -1217,7 +1223,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const getOrderPickupRange = (order) => {
     const status = orderStatusKey(order);
     if (status === "ready") return "พร้อมรับแล้ว";
-    if (!ACTIVE_ESTIMATE_STATUSES.includes(status)) return "-";
+    if (!canEstimateOrder(order)) return "-";
 
     // ออเดอร์ที่นัดเวลารับไว้ ใช้เวลานัดตามที่ลูกค้าเลือก
     if (!isImmediatePickup(order.PickupTime, order.OrderTime)) return order.PickupTime;
@@ -1225,10 +1231,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     const queue = orderQueueEstimates[order.StoreId];
     if (!queue) return "กำลังคำนวณเวลา...";
 
+    // อยู่ในคิวครัวแล้ว (Pending/Cooking) -> ใช้ช่วงของคิวตัวเองในโซ่
     const { slots } = buildQueueSchedule(queue);
     const slot = slots[order.OrderID];
-    if (!slot) return "กำลังคำนวณเวลา...";
-    return formatPickupRange(slot.start, slot.end);
+    if (slot) return formatPickupRange(slot.start, slot.end);
+
+    // ยังไม่อยู่ในคิวครัว (เช่น รอตรวจสลิป) -> ประเมินเหมือนต่อท้ายคิวที่ค้างอยู่ (เหมือนตะกร้า)
+    const dishes =
+      (order.items || []).reduce(
+        (sum, it) => sum + (String(it.ItemStatus || "NORMAL").toUpperCase() === "NORMAL" ? Number(it.Qty) || 0 : 0),
+        0
+      ) || 1;
+    const { newOrder } = buildQueueSchedule(queue, dishes);
+    return formatPickupRange(newOrder.start, newOrder.end);
   };
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
@@ -1271,9 +1286,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return customAlert(data.detail || "ไม่สามารถสั่งซื้อได้", "", "error");
 
+      // รับทันที -> แสดงช่วงเวลาโดยประมาณเหมือนในตะกร้า / นัดเวลา -> แสดงเวลานัด
+      const pickupLabel = pickupTime ? finalPickupTime : getCustomerPickupRange();
       customAlert(
         `สั่งซื้อสำเร็จ!`,
-        `หมายเลขคิว: ${data.queue_no || "-"}\nเวลาที่สั่ง: ${displayOrderTime}\nเวลารับอาหาร: ${finalPickupTime}`
+        `หมายเลขคิว: ${data.queue_no || "-"}\nเวลาที่สั่ง: ${displayOrderTime}\nเวลารับอาหารโดยประมาณ: ${pickupLabel}`
       );
 
       setCart([]);
