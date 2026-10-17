@@ -132,10 +132,11 @@ INSERT INTO Product (StoreId, CategoryId, ProductName, Description, UnitPrice, I
 -- ---------------------------------------------------------------------
 -- 5) StoreContract   (1 : 1 with Store)
 -- ---------------------------------------------------------------------
-INSERT INTO StoreContract (StoreId, StartDate, EndDate, ContractStatus, CreatedBy) VALUES
-(1, '2026-01-01', '2026-12-31', 'ACTIVE',   10),
-(2, '2026-01-01', '2026-10-31', 'EXPIRING', 10),  -- ใกล้หมด -> โผล่ใน v_contract_expiring
-(3, '2026-03-01', '2027-02-28', 'ACTIVE',   10);
+-- สถานะสัญญาคำนวณจากวันที่ (utils.contract_state) ไม่มีคอลัมน์ ContractStatus แล้ว
+INSERT INTO StoreContract (StoreId, StartDate, EndDate, CreatedBy) VALUES
+(1, '2026-01-01', '2026-12-31', 10),
+(2, '2026-01-01', '2026-10-31', 10),  -- ใกล้หมด
+(3, '2026-03-01', '2027-02-28', 10);
 
 
 -- ---------------------------------------------------------------------
