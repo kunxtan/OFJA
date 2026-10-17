@@ -483,6 +483,9 @@ def list_issues_for_executive(
     with db.cursor() as cur:
         cur.execute(sql + " ORDER BY r.CreatedAt DESC, r.IssueReportId DESC", params)
         issues = _shape_issues(cur.fetchall())
+        # ประเภทปัญหาทั้งหมด (ไม่ขึ้นกับตัวกรอง) ไว้ทำช่องเลือก
+        cur.execute("SELECT TypeCode, TypeNameTh AS IssueType FROM IssueType ORDER BY IssueTypeId")
+        types = cur.fetchall()
 
     now = bangkok_now()
     for i in issues:
@@ -493,23 +496,19 @@ def list_issues_for_executive(
         i["ResolveHours"] = _hours_between(i["CreatedAt"], i["ResolvedAt"]) if not is_open and i["ResolvedAt"] else None
         i["IsStale"] = is_open and i["AgeHours"] >= ISSUE_STALE_HOURS
 
-    pending_by_store: dict = {}
-    for i in issues:
-        if i["IsOpen"]:
-            row = pending_by_store.setdefault(i["StoreId"], {"StoreId": i["StoreId"], "StoreName": i["StoreName"], "count": 0})
+        by_type: dict = {}
+        for i in issues:
+            row = by_type.setdefault(i["TypeCode"], {"TypeCode": i["TypeCode"], "IssueType": i["IssueType"], "count": 0})
             row["count"] += 1
-    resolve = [i["ResolveHours"] for i in issues if i["ResolveHours"] is not None]
-    types: dict = {}
-    for i in issues:
-        types.setdefault(i["TypeCode"], i["IssueType"])
+        resolve = [i["ResolveHours"] for i in issues if i["ResolveHours"] is not None]
     summary = {
         "total": len(issues),
         "by_status": {code: sum(1 for i in issues if i["IssueStatus"] == code) for code in ISSUE_STATUS_TH},
         "pending": sum(1 for i in issues if i["IsOpen"]),
         "stale": sum(1 for i in issues if i["IsStale"]),
         "avg_resolve_hours": round(sum(resolve) / len(resolve), 1) if resolve else None,
-        "top_pending_store": max(pending_by_store.values(), key=lambda r: r["count"], default=None),
-        "types": [{"TypeCode": code, "IssueType": name} for code, name in types.items()],
+        "top_type": max(by_type.values(), key=lambda r: r["count"], default=None),
+        "types": types,
         "stale_hours": ISSUE_STALE_HOURS,
     }
     return {"issues": issues, "summary": summary}

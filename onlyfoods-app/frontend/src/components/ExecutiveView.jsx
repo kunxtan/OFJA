@@ -1293,8 +1293,7 @@ const returnFoodCourtToAuto = async () => {
         },
         'issue-reports': {
             title: 'รายงานปัญหาจากลูกค้า',
-            subtitle: 'ติดตามสถานะรายงานปัญหาของทุกร้าน (ดูอย่างเดียว ร้านเป็นผู้อัปเดตสถานะ)',
-            searchPlaceholder: 'ค้นหาร้าน ประเภทปัญหา คิว หรือข้อความ...'
+            subtitle: 'ติดตามสถานะรายงานปัญหาของทุกร้าน (ดูอย่างเดียว ร้านเป็นผู้อัปเดตสถานะ)'
         },
         'store-accounts': {
             title: 'บัญชีร้านค้า',
@@ -2480,13 +2479,16 @@ function IssueDetailModal({ API, issueId, onClose }) {
 const ISSUE_RANGES = [['7', '7 วันล่าสุด'], ['30', '30 วันล่าสุด'], ['90', '90 วันล่าสุด'], ['all', 'ทั้งหมด'], ['custom', 'กำหนดช่วงเอง']];
 const ISSUE_STATUS_TABS = [['all', 'ทั้งหมด'], ['pending', 'ต้องจัดการ'], ['IN_PROGRESS', 'กำลังดำเนินการ'], ['RESOLVED', 'แก้ไขแล้ว'], ['REJECTED', 'ไม่รับเรื่อง']];
 function IssueReportsPage({ ctx }) {
-    const { API, stores, search, focusStoreId, clearFocusStore } = ctx;
+    const { API, stores, focusStoreId, clearFocusStore } = ctx;
     const [storeId, setStoreId] = useState(focusStoreId || '');
+    const [query, setQuery] = useState('');
     const [range, setRange] = useState('30');
     const [customStart, setCustomStart] = useState(() => daysAgoISO(29));
     const [customEnd, setCustomEnd] = useState(todayISO());
     const [typeCode, setTypeCode] = useState('');
     const [status, setStatus] = useState('pending');
+    // ยังไม่ได้กดแท็บเอง = เลือกแท็บให้ : มีเรื่องค้าง -> "ต้องจัดการ" ; ไม่มี -> "ทั้งหมด"
+    const autoTab = useRef(true);
     const [state, setState] = useState({ loading: true, error: '', issues: [], summary: null });
     const [openIssueId, setOpenIssueId] = useState(null);
 
@@ -2511,7 +2513,11 @@ function IssueReportsPage({ ctx }) {
         let cancelled = false;
         setState((prev) => ({ ...prev, loading: true, error: '' }));
         callApi(`${API}/api/executive/issues?${params}`)
-            .then((data) => { if (!cancelled) setState({ loading: false, error: '', issues: data.issues || [], summary: data.summary || null }); })
+                        .then((data) => {
+                if (cancelled) return;
+                setState({ loading: false, error: '', issues: data.issues || [], summary: data.summary || null });
+                if (autoTab.current) setStatus(data.summary?.pending ? 'pending' : 'all');
+            })
             .catch((err) => { if (!cancelled) setState({ loading: false, error: err.message, issues: [], summary: null }); });
         return () => { cancelled = true; };
     }, [API, storeId, typeCode, range, customStart, customEnd]);
@@ -2519,15 +2525,16 @@ function IssueReportsPage({ ctx }) {
     const sm = state.summary || {};
     const byStatus = sm.by_status || {};
     const countOf = (id) => (id === 'all' ? (sm.total || 0) : id === 'pending' ? (sm.pending || 0) : (byStatus[id] || 0));
+    const q = query.trim().toLowerCase().replace(/^#/, '');
     const rows = state.issues
         .filter((i) => status === 'all' || (status === 'pending' ? i.IsOpen : i.IssueStatus === status))
-        .filter((i) => !search || `${i.StoreName} ${i.IssueType} ${i.Description} ${i.QueueNo || ''} ${i.CustomerName}`.toLowerCase().includes(search));
+        .filter((i) => !q || `${i.QueueNo || ''} ${i.OrderID || ''} ${i.StoreName} ${i.IssueType} ${i.CustomerName} ${i.Description}`.toLowerCase().includes(q));
     // เรื่องที่ต้องจัดการ: เก่าสุดขึ้นก่อน จะได้ไม่จมหาย ; แท็บอื่น: ใหม่สุดขึ้นก่อน
     const shown = status === 'pending' ? [...rows].reverse() : rows;
 
-    const stat = (label, value, sub, color, first = false) => (<div style={{ padding: '4px 18px', borderLeft: first ? 'none' : `1px solid ${T.line}`, minWidth: 0 }}>
+        const stat = (label, value, sub, color, first = false, small = false) => (<div style={{ padding: '4px 18px', borderLeft: first ? 'none' : `1px solid ${T.line}`, minWidth: 0 }}>
       <div style={captionStyle}>{label}</div>
-      <div style={{ color: color || T.ink, fontSize: '22px', fontWeight: 700, marginTop: '2px' }}>{value}</div>
+      <div style={{ color: color || T.ink, fontSize: small ? '16px' : '22px', lineHeight: small ? '30px' : 1.4, fontWeight: 700, marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
       {sub && <div style={{ ...captionStyle, fontSize: '11.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
     </div>);
     const chip = (active) => ({ border: `1px solid ${active ? T.primary : T.line}`, background: active ? T.primarySoft : T.surface, color: active ? T.primaryDark : T.text, borderRadius: '999px', padding: '7px 12px', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: FONT_STACK });
@@ -2538,10 +2545,13 @@ function IssueReportsPage({ ctx }) {
           {stat('ต้องจัดการ', money(sm.pending || 0), byStatus.IN_PROGRESS ? `กำลังดำเนินการ ${money(byStatus.IN_PROGRESS)}` : null, sm.pending ? T.down : T.ink, true)}
           {stat(`ค้างเกิน ${sm.stale_hours || 24} ชม.`, money(sm.stale || 0), null, sm.stale ? T.down : T.ink)}
           {stat('เวลาปิดเรื่องเฉลี่ย', formatHoursTh(sm.avg_resolve_hours))}
-          {stat('ร้านที่ค้างมากสุด', sm.top_pending_store ? `${money(sm.top_pending_store.count)} เรื่อง` : '—', sm.top_pending_store?.StoreName)}
+          {stat('ปัญหาที่พบบ่อยสุด', sm.top_type?.IssueType || '—', sm.top_type ? `${money(sm.top_type.count)} เรื่อง` : null, null, false, true)}
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '18px' }}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '18px' }}>
+          <div style={{ flex: '1 1 240px', minWidth: '200px' }}>
+            <IconInput icon="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ค้นหาเลขคิว เลขออเดอร์ ชื่อลูกค้า หรือข้อความ..."/>
+          </div>
           <select value={storeId} onChange={(e) => setStoreId(e.target.value)} style={{ ...inputStyle, width: 'auto', minWidth: '200px' }}>
             <option value="">ทุกร้าน</option>
             {stores.map((st) => <option key={st.StoreId} value={String(st.StoreId)}>{st.StoreName}</option>)}
@@ -2560,7 +2570,7 @@ function IssueReportsPage({ ctx }) {
         </div>
 
         <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '12px' }}>
-          {ISSUE_STATUS_TABS.map(([id, label]) => (<button key={id} type="button" onClick={() => setStatus(id)} style={chip(status === id)}>
+            {ISSUE_STATUS_TABS.map(([id, label]) => (<button key={id} type="button" onClick={() => { autoTab.current = false; setStatus(id); }} style={chip(status === id)}>
             {label} ({money(countOf(id))})
           </button>))}
         </div>
@@ -2569,7 +2579,7 @@ function IssueReportsPage({ ctx }) {
       <Card title="รายการรายงานปัญหา" subtitle={status === 'pending' ? 'เรียงเรื่องที่ค้างนานสุดขึ้นก่อน · กดที่แถวเพื่อดูรายละเอียด' : 'เรียงใหม่สุดขึ้นก่อน · กดที่แถวเพื่อดูรายละเอียด'}>
         {state.loading ? <EmptyState text="กำลังโหลดรายงานปัญหา..."/>
           : state.error ? <EmptyState text={state.error}/>
-          : shown.length === 0 ? <EmptyState text={status === 'pending' ? 'ไม่มีเรื่องที่ต้องจัดการในช่วงนี้' : 'ไม่พบรายงานปัญหาตามตัวกรอง'}/>
+          : shown.length === 0 ? <EmptyState text={q ? `ไม่พบรายงานที่ตรงกับ “${query.trim()}”` : status === 'pending' ? 'ไม่มีเรื่องที่ต้องจัดการในช่วงนี้' : 'ไม่พบรายงานปัญหาตามตัวกรอง'}/>
           : (<div style={{ overflowX: 'auto' }}>
             <table style={{ ...tableStyle, minWidth: '720px' }}>
               <thead>
@@ -2694,12 +2704,10 @@ function StoreIssueReportSection({ ctx, storeId, style }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <strong style={{ color: T.ink, fontSize: '14px' }}>{report.IssueType || 'ไม่ระบุประเภท'}</strong>
-                  {report.QueueNo && <Badge tone="neutral">คิว {report.QueueNo}</Badge>}
-                </div>                  <strong style={{ color: T.ink, fontSize: '14px' }}>{report.IssueType || 'ไม่ระบุประเภท'}</strong>
+                 <strong style={{ color: T.ink, fontSize: '14px' }}>{report.IssueType || 'ไม่ระบุประเภท'}</strong>
                   <IssueStatusBadge status={report.IssueStatus}/>
                   {report.QueueNo && <Badge tone="neutral">คิว {report.QueueNo}</Badge>}
-                <div style={{ ...captionStyle, marginTop: '4px' }}>
+                <div style={{ ...captionStyle, marginTop: '4px' }}> </div>
                   ผู้แจ้ง: {report.CustomerName || `User ${report.UserId}`}
                   {report.OrderID ? ` · Order #${report.OrderID}` : ''}
                 </div>
