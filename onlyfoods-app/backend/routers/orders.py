@@ -31,7 +31,11 @@ _METHOD_ALIASES = {
 
 def _resolve_payment_method(raw: Optional[str], walk_in: bool) -> str:
     if walk_in:
-        return "CASH"  # ออเดอร์ walk-in จ่ายเงินสดที่หน้าร้าน
+        # walk-in: เงินสด หรือโอน (QR / TrueMoney) ต่อหน้าพนักงาน -> พนักงานเห็นหน้าจอโอนสำเร็จแล้วกดยืนยันเอง ไม่มีสลิป
+        code = _METHOD_ALIASES.get((raw or "Cash").strip())
+        if code is None:
+            raise DomainError(400, "วิธีชำระเงิน walk-in รองรับ เงินสด / PromptPay / TrueMoney")
+        return code
     code = _METHOD_ALIASES.get((raw or "PromptPay").strip())
     if code is None or code == "CASH":
         raise DomainError(400, "ไม่รองรับวิธีชำระเงินนี้ (รองรับเฉพาะ PromptPay / TrueMoney) ระบบไม่เก็บข้อมูลบัตรเครดิต")
@@ -95,6 +99,14 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
                 rows.append((item.product_id, item.qty, price, clean_text(item.item_note or item.note)))
             if total <= 0:
                 raise DomainError(400, "ยอดรวมออเดอร์ต้องมากกว่า 0 บาท")
+            cash_received = change_given = None
+            if is_staff and method_code == "CASH":
+                if data.cash_received is None:
+                    raise DomainError(400, "กรุณากรอกจำนวนเงินที่รับจากลูกค้า")
+                cash_received = Decimal(data.cash_received).quantize(Decimal("0.01"))
+                if cash_received < total:
+                    raise DomainError(400, f"รับเงิน {cash_received:,.2f} บาท ไม่พอ ยอดรวม {total:,.2f} บาท (ขาด {total - cash_received:,.2f})")
+                change_given = cash_received - total
 
             customer_id = None if is_staff else user["UserId"]
             staff_id = user["UserId"] if is_staff else None
@@ -127,10 +139,11 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
             if is_staff:
                 cur.execute(
                     """
-                    INSERT INTO Payment (OrderId, MethodId, Amount, PaymentStatus, VerifiedBy, PaidAt)
-                    VALUES (%s, %s, %s, 'VERIFIED', %s, %s)
+                    INSERT INTO Payment (OrderId, MethodId, Amount, PaymentStatus, VerifiedBy, PaidAt,
+                                         CashReceived, ChangeGiven)
+                    VALUES (%s, %s, %s, 'VERIFIED', %s, %s, %s, %s)
                     """,
-                    (order_id, method["MethodId"], total, user["UserId"], now),
+                    (order_id, method["MethodId"], total, user["UserId"], now, cash_received, change_given),
                 )
             else:
                 slip = save_image(data.slip_url, "slips")  # slip_placeholder.png ฯลฯ -> None (ร้านจะเห็นว่าไม่มีสลิป)
@@ -292,7 +305,7 @@ def get_order_detail(order_id: int, user=Depends(require_role("STORE_OWNER", "EX
         cur.execute(
             """
             SELECT p.PaymentId, p.PaymentType, p.Amount, p.PaymentStatus, p.SlipImageUrl AS SlipUrl, p.RejectReason,
-                   p.PaidAt, p.CreatedAt, pm.MethodCode, pm.MethodNameTh,
+                   p.PaidAt, p.CreatedAt, pm.MethodCode, pm.MethodNameTh, p.CashReceived, p.ChangeGiven,
                    v.FullName AS VerifiedByName, vr.RoleCode AS VerifiedByRole, vr.RoleNameTh AS VerifiedByRoleTh
             FROM Payment p
             JOIN PaymentMethod pm ON pm.MethodId = p.MethodId

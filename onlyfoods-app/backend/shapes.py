@@ -135,15 +135,18 @@ def _attach_payments(cur, orders: List[Dict], ids: List[int], placeholders: str)
     """ทุกการชำระของออเดอร์ (ค่าอาหาร + ส่วนต่าง รวมใบที่ถูกปฏิเสธ) ให้ร้าน/ลูกค้าดูสลิปย้อนหลังได้ทุกใบ"""
     cur.execute(
         f"""
-        SELECT OrderId, PaymentId, PaymentType, Amount, PaymentStatus, SlipImageUrl AS SlipUrl,
-               RejectReason, PaidAt, CreatedAt
-        FROM Payment WHERE OrderId IN ({placeholders}) ORDER BY PaymentId
+        SELECT p.OrderId, p.PaymentId, p.PaymentType, p.Amount, p.PaymentStatus, p.SlipImageUrl AS SlipUrl,
+               p.RejectReason, p.PaidAt, p.CreatedAt, pm.MethodCode, p.CashReceived, p.ChangeGiven
+        FROM Payment p JOIN PaymentMethod pm ON pm.MethodId = p.MethodId
+        WHERE p.OrderId IN ({placeholders}) ORDER BY p.PaymentId
         """,
         ids,
     )
     by_order: Dict[int, List[Dict]] = {}
     for p in cur.fetchall():
         p["Amount"] = float(p["Amount"])
+        for k in ("CashReceived", "ChangeGiven"):
+            p[k] = float(p[k]) if p[k] is not None else None
         by_order.setdefault(p.pop("OrderId"), []).append(p)
     for o in orders:
         o["Payments"] = by_order.get(o["OrderID"], [])
