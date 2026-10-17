@@ -339,6 +339,7 @@ const ICON_PATHS = {
     mail: 'M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2zM3 7l9 6 9-6',
     lock: 'M5 13a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H7a2 2 0 01-2-2zM8 11V7a4 4 0 118 0v4',
     chat: 'M3 20l1.3-3.9A8 8 0 1112 20a8.1 8.1 0 01-4.6-1.4z',
+    alert: 'M12 4l9 16H3zM12 10v4M12 17h.01',
     eye: 'M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6zM12 15a3 3 0 100-6 3 3 0 000 6z',
     trash: 'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14',
     power: 'M12 3v9M7 6a8 8 0 1010 0',
@@ -864,7 +865,6 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const [activeMenu, setActiveMenu] = useState('overview');
     // [CROSS-NAV] เก็บร้านที่ผู้บริหารคลิกมาจากอีกหน้า เพื่อเปิดรายละเอียดร้านเดิมต่อเนื่อง
     const [focusStoreId, setFocusStoreId] = useState('');
-    const [scrollToStoreIssues, setScrollToStoreIssues] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [search, setSearch] = useState('');
     const searchRef = useRef(null);
@@ -984,33 +984,18 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         }
 
         try {
-            const results = await Promise.all(
-                currentStores.map(async (store) => {
-                    try {
-                        const rows = await callApi(`${API}/api/reports/issue/store/${store.StoreId}`);
-                        return (Array.isArray(rows) ? rows : []).map((report) => ({
-                            NotifId: `front-issue-${report.ReportID}`,
-                            Synthetic: true,
-                            EventType: 'ISSUE_REPORT',
-                            StoreId: report.StoreId || store.StoreId,
-                            Message: `มีรายงานปัญหาจาก ${report.StoreName || store.StoreName}: ${report.IssueType || 'ไม่ระบุประเภท'}`,
-                            CreatedAt: report.CreatedAt
-                        }));
-                    }
-                    catch {
-                        return [];
-                    }
-                })
-            );
-
-            const merged = results
-                .flat()
-                .sort((a, b) => {
-                    const ad = parseOrderDate(a.CreatedAt);
-                    const bd = parseOrderDate(b.CreatedAt);
-                    return (bd?.getTime() || 0) - (ad?.getTime() || 0);
-                })
-                .slice(0, 20);
+                       // ดึงรายงานทั้งศูนย์ในคำขอเดียว (เดิมยิงทีละร้าน)
+            const data = await callApi(`${API}/api/executive/issues`);
+            const merged = (Array.isArray(data?.issues) ? data.issues : [])
+                .slice(0, 20)
+                .map((report) => ({
+                    NotifId: `front-issue-${report.ReportID}`,
+                    Synthetic: true,
+                    EventType: 'ISSUE_REPORT',
+                    StoreId: report.StoreId,
+                    Message: `มีรายงานปัญหาจาก ${report.StoreName}: ${report.IssueType || 'ไม่ระบุประเภท'}`,
+                    CreatedAt: report.CreatedAt
+                }));
 
             setIssueAlerts(merged);
         }
@@ -1215,8 +1200,7 @@ const returnFoodCourtToAuto = async () => {
 
         if (notif?.EventType === 'ISSUE_REPORT') {
             setFocusStoreId(String(notif.StoreId || ''));
-            setScrollToStoreIssues(true);
-            setActiveMenu('store-sales');
+            setActiveMenu('issue-reports');
             setSearch('');
         }}else {
         if (notif?.EventType === 'CONTRACT') {
@@ -1284,6 +1268,7 @@ const returnFoodCourtToAuto = async () => {
         { id: 'overview', icon: 'overview', label: 'Dashboard', caption: 'ภาพรวมศูนย์อาหาร' },
         { id: 'store-sales', icon: 'trend', label: 'Sales Summary', caption: 'ยอดขายรายร้าน' },
         { id: 'store-manage', icon: 'store', label: 'Store Management', caption: 'จัดการร้านค้า' },
+        { id: 'issue-reports', icon: 'alert', label: 'Issue Reports', caption: 'รายงานปัญหา' },
         { id: 'store-accounts', icon: 'account', label: 'Store Accounts', caption: 'บัญชีร้านค้า' },
         { id: 'customer-info', icon: 'search', label: 'User Information', caption: 'ข้อมูลผู้ใช้' },
         { id: 'contract-tracking', icon: 'calendar', label: 'Contract Tracking', caption: 'ติดตามสัญญา' },
@@ -1306,6 +1291,11 @@ const returnFoodCourtToAuto = async () => {
             subtitle: 'เพิ่ม แก้ไข ปิดร้าน ระงับสิทธิ์ และลบร้านค้าออกจากระบบ',
             searchPlaceholder: 'ค้นหาร้านค้าที่ต้องการจัดการ...'
         },
+        'issue-reports': {
+            title: 'รายงานปัญหาจากลูกค้า',
+            subtitle: 'ติดตามสถานะรายงานปัญหาของทุกร้าน (ดูอย่างเดียว ร้านเป็นผู้อัปเดตสถานะ)',
+            searchPlaceholder: 'ค้นหาร้าน ประเภทปัญหา คิว หรือข้อความ...'
+        },
         'store-accounts': {
             title: 'บัญชีร้านค้า',
             subtitle: 'ออกบัญชีผู้ใช้ให้ร้านค้าเข้าระบบไปจัดการเมนูและออเดอร์ของตัวเอง',
@@ -1327,9 +1317,8 @@ const returnFoodCourtToAuto = async () => {
             searchPlaceholder: 'ค้นหาประวัติการดำเนินการ...'
         }
     }[activeMenu];
-    const navigateTo = useCallback((menuId, storeId = '', shouldScrollToIssues = false) => {
+        const navigateTo = useCallback((menuId, storeId = '') => {
         setFocusStoreId(storeId ? String(storeId) : '');
-        setScrollToStoreIssues(Boolean(shouldScrollToIssues));
         setActiveMenu(menuId);
         setSearch('');
         if (isNarrow) setSidebarOpen(false);
@@ -1346,8 +1335,6 @@ const returnFoodCourtToAuto = async () => {
         reloadStores: loadStores,
         reloadOrders: loadOrders,
         focusStoreId,
-        scrollToStoreIssues,
-        clearScrollToStoreIssues: () => setScrollToStoreIssues(false),
         navigateTo,
         clearFocusStore: () => setFocusStoreId('')
     };
@@ -1583,6 +1570,7 @@ const returnFoodCourtToAuto = async () => {
               {activeMenu === 'customer-info' && <CustomerInfoPage ctx={ctx}/>}
               {activeMenu === 'contract-tracking' && <ContractTrackingPage ctx={ctx}/>}
               {activeMenu === 'audit-history' && <AuditHistoryPage ctx={ctx}/>}
+              {activeMenu === 'issue-reports' && <IssueReportsPage ctx={ctx}/>}
             </div>
           </main>
         </div>
@@ -1628,20 +1616,11 @@ function OverviewPage({ ctx, foodCourtOpen,foodCourtOpenTime,foodCourtCloseTime,
             return undefined;
         }
         let cancelled = false;
-        Promise.all(stores.map(async (store) => {
-            try {
-                const rows = await callApi(`${API}/api/reports/issue/store/${store.StoreId}`);
-                return (Array.isArray(rows) ? rows : []).map((item) => ({
-                    ...item,
-                    StoreId: item.StoreId || store.StoreId,
-                    StoreName: item.StoreName || store.StoreName || `ร้าน #${store.StoreId}`
-                }));
-            } catch (err) {
-                console.debug(`โหลดรายงานปัญหาของร้าน ${store.StoreId} ไม่สำเร็จ:`, err.message);
-                return [];
-            }
-        })).then((results) => {
-            if (!cancelled) setIssueReports(results.flat());
+               // ดึงรายงานทั้งศูนย์ในคำขอเดียว (เดิมยิงทีละร้าน)
+        callApi(`${API}/api/executive/issues`).then((data) => {
+            if (!cancelled) setIssueReports(Array.isArray(data?.issues) ? data.issues : []);
+        }).catch((err) => {
+            console.debug('โหลดรายงานปัญหาไม่สำเร็จ:', err.message);
         }).finally(() => {
             if (!cancelled) setIssueLoading(false);
         });
@@ -2189,7 +2168,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         ) :effectiveDays === 1 ? (
           <div style={{ display: 'grid', gap: '10px' }}>
             {periodIssueReports.slice(0, 5).map((item) => (
-              <button key={item.ReportID} type="button" onClick={() => navigateTo('store-sales', item.StoreId, true)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', width: '100%', textAlign: 'left', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '13px 14px', background: '#FFF', cursor: 'pointer', fontFamily: FONT_STACK }}>
+              <button key={item.ReportID} type="button" onClick={() => navigateTo('issue-reports', item.StoreId)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px', width: '100%', textAlign: 'left', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '13px 14px', background: '#FFF', cursor: 'pointer', fontFamily: FONT_STACK }}>
                 <span style={{ minWidth: 0 }}>
                   <strong style={{ display: 'block', color: T.ink, fontSize: '14px' }}>{item.StoreName}</strong>
                   <span style={{ display: 'block', color: T.text, fontSize: '13px', marginTop: '4px' }}>{item.IssueType || 'ไม่ระบุประเภท'}</span>
@@ -2207,7 +2186,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
             <p style={{ ...captionStyle, margin: '0 0 4px' }}>เรียงตามจำนวนรายงานจากมากไปน้อย · คลิกชื่อร้านเพื่อดูรายละเอียดรายงาน</p>
             {(showAllIssueStores ? issueCountsByStore : issueCountsByStore.slice(0, 5)).map((item) => (
               <div key={item.StoreId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '11px 13px' }}>
-                <button type="button" onClick={() => navigateTo('store-sales', item.StoreId, true)} style={{ border: 0, background: 'transparent', padding: 0, color: T.ink, fontWeight: 700, cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left' }}>{item.StoreName}</button>
+                <button type="button" onClick={() => navigateTo('issue-reports', item.StoreId)} style={{ border: 0, background: 'transparent', padding: 0, color: T.ink, fontWeight: 700, cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left' }}>{item.StoreName}</button>
                 <Badge tone="warning">{money(item.count)} ครั้ง</Badge>
               </div>
             ))}
@@ -2403,11 +2382,234 @@ function StoreReviewSection({ ctx, storeId, style }) {
         </div>)}
     </Card>);
 }
+// ===== รายงานปัญหา (ผู้บริหารดูอย่างเดียว) : สถานะ / หน้าต่างรายละเอียด / หน้ารวมทุกร้าน =====
+const ISSUE_STATUS_META = {
+    OPEN: { label: 'รอดำเนินการ', tone: 'danger' },
+    IN_PROGRESS: { label: 'กำลังดำเนินการ', tone: 'warn' },
+    RESOLVED: { label: 'แก้ไขแล้ว', tone: 'ok' },
+    REJECTED: { label: 'ไม่รับเรื่อง', tone: 'neutral' }
+};
+function IssueStatusBadge({ status }) {
+    const meta = ISSUE_STATUS_META[status] || { label: status || '-', tone: 'neutral' };
+    return <Badge tone={meta.tone}>{meta.label}</Badge>;
+}
+function daysAgoISO(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return toISODate(d);
+}
+function formatHoursTh(h) {
+    if (h === null || h === undefined) return '—';
+    if (h < 1) return `${Math.max(1, Math.round(h * 60))} นาที`;
+    if (h < 48) return `${Math.round(h * 10) / 10} ชม.`;
+    return `${Math.round(h / 24)} วัน`;
+}
+function IssueDetailModal({ API, issueId, onClose }) {
+    const [state, setState] = useState({ loading: false, error: '', data: null });
+    useEffect(() => {
+        if (!issueId) return undefined;
+        let cancelled = false;
+        setState({ loading: true, error: '', data: null });
+        callApi(`${API}/api/executive/issues/${issueId}`)
+            .then((data) => { if (!cancelled) setState({ loading: false, error: '', data }); })
+            .catch((err) => { if (!cancelled) setState({ loading: false, error: err.message, data: null }); });
+        return () => { cancelled = true; };
+    }, [API, issueId]);
+    const d = state.data;
+    const row = (label, value) => (<div style={{ minWidth: 0 }}>
+      <div style={captionStyle}>{label}</div>
+      <div style={{ color: T.ink, fontSize: '13.5px', fontWeight: 600, marginTop: '2px' }}>{value || '—'}</div>
+    </div>);
+    const sectionTitle = (text) => <div style={{ color: T.muted, fontSize: '12.5px', fontWeight: 700, margin: '18px 0 8px' }}>{text}</div>;
+    return (<Modal open={Boolean(issueId)} title={d ? `รายงานปัญหา #${d.IssueReportId}` : 'รายงานปัญหา'} subtitle={d ? `${d.StoreName} · ${d.IssueType}` : ''} onClose={onClose} width={640}
+      footer={<>
+        <span style={{ ...captionStyle, marginRight: 'auto' }}>ผู้บริหารดูได้อย่างเดียว · ร้านเป็นผู้อัปเดตสถานะ</span>
+        <Button variant="ghost" onClick={onClose}>ปิด</Button>
+      </>}>
+      {state.loading && <EmptyState text="กำลังโหลดรายละเอียด..." minHeight="160px"/>}
+      {state.error && <EmptyState text={state.error} minHeight="160px"/>}
+      {d && (<div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <IssueStatusBadge status={d.IssueStatus}/>
+          <span style={captionStyle}>แจ้งเมื่อ {thaiDateTime(d.CreatedAt)}</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', gap: '12px', marginTop: '14px' }}>
+          {row('ร้าน', d.StoreName)}
+          {row('ผู้แจ้ง', d.CustomerName)}
+          {row('ออเดอร์', d.OrderID ? `${d.QueueNo ? `คิว ${d.QueueNo} · ` : ''}#${d.OrderID}` : 'ไม่ได้ระบุออเดอร์')}
+          {d.Order && row('สถานะออเดอร์ / ยอด', `${d.Order.StatusNameTh} · ${money2(d.Order.TotalAmount)} บาท`)}
+        </div>
+
+        {sectionTitle('ข้อความจากลูกค้า')}
+        <div style={{ padding: '11px 13px', borderRadius: T.radiusMd, background: T.bg, color: T.text, fontSize: '13.5px', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
+          {d.Description || '-'}
+        </div>
+
+        {d.items.length > 0 && (<>
+          {sectionTitle('รายการอาหารในออเดอร์')}
+          <div style={{ display: 'grid', gap: '4px' }}>
+            {d.items.map((it, idx) => (<div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: T.text }}>
+              <span>{it.ProductName}</span><span style={{ color: T.muted }}>x{it.Qty}</span>
+            </div>))}
+          </div>
+        </>)}
+
+        {sectionTitle('การตอบกลับของร้าน')}
+        {d.AdminNote ? (<div style={{ padding: '11px 13px', borderRadius: T.radiusMd, border: `1px solid ${T.line}`, fontSize: '13.5px', color: T.text, lineHeight: 1.6 }}>
+          {d.AdminNote}
+          {d.HandledByName && <div style={{ ...captionStyle, marginTop: '6px' }}>โดย {d.HandledByName}</div>}
+        </div>) : <div style={captionStyle}>ร้านยังไม่ได้ตอบกลับ</div>}
+
+        {sectionTitle('ลำดับเหตุการณ์')}
+        <div style={{ display: 'grid', gap: '0' }}>
+          {d.Timeline.map((t, idx) => (<div key={idx} style={{ display: 'flex', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', marginTop: '5px', background: idx === d.Timeline.length - 1 ? T.primary : T.line }}/>
+              {idx < d.Timeline.length - 1 && <span style={{ width: '2px', flex: 1, background: T.line }}/>}
+            </div>
+            <div style={{ paddingBottom: '12px', minWidth: 0 }}>
+              <div style={{ color: T.ink, fontSize: '13.5px', fontWeight: 600 }}>{t.Label}</div>
+              <div style={captionStyle}>{thaiDateTime(t.At)} · {t.By}</div>
+              {t.Note && <div style={{ color: T.text, fontSize: '13px', marginTop: '3px' }}>“{t.Note}”</div>}
+            </div>
+          </div>))}
+        </div>
+      </div>)}
+    </Modal>);
+}
+const ISSUE_RANGES = [['7', '7 วันล่าสุด'], ['30', '30 วันล่าสุด'], ['90', '90 วันล่าสุด'], ['all', 'ทั้งหมด'], ['custom', 'กำหนดช่วงเอง']];
+const ISSUE_STATUS_TABS = [['all', 'ทั้งหมด'], ['pending', 'ต้องจัดการ'], ['IN_PROGRESS', 'กำลังดำเนินการ'], ['RESOLVED', 'แก้ไขแล้ว'], ['REJECTED', 'ไม่รับเรื่อง']];
+function IssueReportsPage({ ctx }) {
+    const { API, stores, search, focusStoreId, clearFocusStore } = ctx;
+    const [storeId, setStoreId] = useState(focusStoreId || '');
+    const [range, setRange] = useState('30');
+    const [customStart, setCustomStart] = useState(() => daysAgoISO(29));
+    const [customEnd, setCustomEnd] = useState(todayISO());
+    const [typeCode, setTypeCode] = useState('');
+    const [status, setStatus] = useState('pending');
+    const [state, setState] = useState({ loading: true, error: '', issues: [], summary: null });
+    const [openIssueId, setOpenIssueId] = useState(null);
+
+    // มาจากปุ่มของหน้าอื่น (กระดิ่ง / Dashboard / ยอดขายรายร้าน) = เลือกร้านนั้นไว้ให้
+    useEffect(() => {
+        if (focusStoreId) {
+            setStoreId(focusStoreId);
+            clearFocusStore();
+        }
+    }, [focusStoreId, clearFocusStore]);
+
+    useEffect(() => {
+        const params = new URLSearchParams();
+        if (storeId) params.set('store_id', storeId);
+        if (typeCode) params.set('type_code', typeCode);
+        if (range === 'custom') {
+            if (customStart) params.set('date_from', customStart);
+            if (customEnd) params.set('date_to', customEnd);
+        } else if (range !== 'all') {
+            params.set('date_from', daysAgoISO(Number(range) - 1));
+        }
+        let cancelled = false;
+        setState((prev) => ({ ...prev, loading: true, error: '' }));
+        callApi(`${API}/api/executive/issues?${params}`)
+            .then((data) => { if (!cancelled) setState({ loading: false, error: '', issues: data.issues || [], summary: data.summary || null }); })
+            .catch((err) => { if (!cancelled) setState({ loading: false, error: err.message, issues: [], summary: null }); });
+        return () => { cancelled = true; };
+    }, [API, storeId, typeCode, range, customStart, customEnd]);
+
+    const sm = state.summary || {};
+    const byStatus = sm.by_status || {};
+    const countOf = (id) => (id === 'all' ? (sm.total || 0) : id === 'pending' ? (sm.pending || 0) : (byStatus[id] || 0));
+    const rows = state.issues
+        .filter((i) => status === 'all' || (status === 'pending' ? i.IsOpen : i.IssueStatus === status))
+        .filter((i) => !search || `${i.StoreName} ${i.IssueType} ${i.Description} ${i.QueueNo || ''} ${i.CustomerName}`.toLowerCase().includes(search));
+    // เรื่องที่ต้องจัดการ: เก่าสุดขึ้นก่อน จะได้ไม่จมหาย ; แท็บอื่น: ใหม่สุดขึ้นก่อน
+    const shown = status === 'pending' ? [...rows].reverse() : rows;
+
+    const stat = (label, value, sub, color, first = false) => (<div style={{ padding: '4px 18px', borderLeft: first ? 'none' : `1px solid ${T.line}`, minWidth: 0 }}>
+      <div style={captionStyle}>{label}</div>
+      <div style={{ color: color || T.ink, fontSize: '22px', fontWeight: 700, marginTop: '2px' }}>{value}</div>
+      {sub && <div style={{ ...captionStyle, fontSize: '11.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
+    </div>);
+    const chip = (active) => ({ border: `1px solid ${active ? T.primary : T.line}`, background: active ? T.primarySoft : T.surface, color: active ? T.primaryDark : T.text, borderRadius: '999px', padding: '7px 12px', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: FONT_STACK });
+
+    return (<>
+      <Card style={{ marginBottom: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', margin: '0 -18px 0 -18px' }}>
+          {stat('ต้องจัดการ', money(sm.pending || 0), byStatus.IN_PROGRESS ? `กำลังดำเนินการ ${money(byStatus.IN_PROGRESS)}` : null, sm.pending ? T.down : T.ink, true)}
+          {stat(`ค้างเกิน ${sm.stale_hours || 24} ชม.`, money(sm.stale || 0), null, sm.stale ? T.down : T.ink)}
+          {stat('เวลาปิดเรื่องเฉลี่ย', formatHoursTh(sm.avg_resolve_hours))}
+          {stat('ร้านที่ค้างมากสุด', sm.top_pending_store ? `${money(sm.top_pending_store.count)} เรื่อง` : '—', sm.top_pending_store?.StoreName)}
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '18px' }}>
+          <select value={storeId} onChange={(e) => setStoreId(e.target.value)} style={{ ...inputStyle, width: 'auto', minWidth: '200px' }}>
+            <option value="">ทุกร้าน</option>
+            {stores.map((st) => <option key={st.StoreId} value={String(st.StoreId)}>{st.StoreName}</option>)}
+          </select>
+          <select value={range} onChange={(e) => setRange(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+            {ISSUE_RANGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+          {range === 'custom' && (<>
+            <input type="date" value={customStart} max={customEnd || undefined} onChange={(e) => setCustomStart(e.target.value)} style={{ ...formDateInputStyle, width: 'auto' }}/>
+            <input type="date" value={customEnd} min={customStart || undefined} onChange={(e) => setCustomEnd(e.target.value)} style={{ ...formDateInputStyle, width: 'auto' }}/>
+          </>)}
+          <select value={typeCode} onChange={(e) => setTypeCode(e.target.value)} style={{ ...inputStyle, width: 'auto' }}>
+            <option value="">ทุกประเภทปัญหา</option>
+            {(sm.types || []).map((t) => <option key={t.TypeCode} value={t.TypeCode}>{t.IssueType}</option>)}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '12px' }}>
+          {ISSUE_STATUS_TABS.map(([id, label]) => (<button key={id} type="button" onClick={() => setStatus(id)} style={chip(status === id)}>
+            {label} ({money(countOf(id))})
+          </button>))}
+        </div>
+      </Card>
+
+      <Card title="รายการรายงานปัญหา" subtitle={status === 'pending' ? 'เรียงเรื่องที่ค้างนานสุดขึ้นก่อน · กดที่แถวเพื่อดูรายละเอียด' : 'เรียงใหม่สุดขึ้นก่อน · กดที่แถวเพื่อดูรายละเอียด'}>
+        {state.loading ? <EmptyState text="กำลังโหลดรายงานปัญหา..."/>
+          : state.error ? <EmptyState text={state.error}/>
+          : shown.length === 0 ? <EmptyState text={status === 'pending' ? 'ไม่มีเรื่องที่ต้องจัดการในช่วงนี้' : 'ไม่พบรายงานปัญหาตามตัวกรอง'}/>
+          : (<div style={{ overflowX: 'auto' }}>
+            <table style={{ ...tableStyle, minWidth: '720px' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>วันที่แจ้ง</th>
+                  <th style={thStyle}>ร้าน</th>
+                  <th style={thStyle}>ปัญหา</th>
+                  <th style={thStyle}>สถานะ</th>
+                  <th style={thRightStyle}>ระยะเวลา</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((i) => (<tr key={i.IssueReportId} onClick={() => setOpenIssueId(i.IssueReportId)} style={{ ...trStyle, cursor: 'pointer' }}>
+                  <td style={{ ...tdStyle, whiteSpace: 'nowrap', color: T.muted }}>{thaiDateTime(i.CreatedAt)}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600, color: T.ink }}>{i.StoreName}</td>
+                  <td style={tdStyle}>
+                    <div style={{ color: T.ink }}>{i.IssueType}</div>
+                    <div style={{ ...captionStyle, maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {i.QueueNo ? `คิว ${i.QueueNo} · ` : ''}{i.Description}
+                    </div>
+                  </td>
+                  <td style={tdStyle}><IssueStatusBadge status={i.IssueStatus}/></td>
+                  <td style={{ ...tdRightStyle, whiteSpace: 'nowrap', color: i.IsStale ? T.down : T.text, fontWeight: i.IsStale ? 700 : 400 }}>
+                    {i.IsOpen ? `ค้างมา ${formatHoursTh(i.AgeHours)}` : `ปิดใน ${formatHoursTh(i.ResolveHours)}`}
+                  </td>
+                </tr>))}
+              </tbody>
+            </table>
+          </div>)}
+      </Card>
+
+      <IssueDetailModal API={API} issueId={openIssueId} onClose={() => setOpenIssueId(null)}/>
+    </>);
+}
 // ===== รายงานปัญหาร้านค้า: ตรวจสอบข้อร้องเรียนของแต่ละร้าน =====
 function StoreIssueReportSection({ ctx, storeId, style }) {
     const { API } = ctx;
     const [state, setState] = useState({ loading: false, error: null, rows: [] });
     const [typeFilter, setTypeFilter] = useState('all');
+    const [openIssueId, setOpenIssueId] = useState(null);
 
     useEffect(() => {
         setTypeFilter('all');
@@ -2466,7 +2668,10 @@ function StoreIssueReportSection({ ctx, storeId, style }) {
       title="รายงานปัญหาจากลูกค้า"
       subtitle="รายงานทั้งหมดของร้านนี้ "
       style={{ margin: 0, ...style }}
-      right={reports.length > 0 ? <Badge tone="warning">{money(reports.length)} รายการ</Badge> : null}
+            right={reports.length > 0 ? (<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <Badge tone="warn">{money(reports.length)} รายการ</Badge>
+        <Button variant="ghost" onClick={() => ctx.navigateTo('issue-reports', storeId)} style={{ padding: '7px 12px', fontSize: '12.5px' }}>ดูในหน้ารายงานปัญหา</Button>
+      </div>) : null}
     >
       {state.loading && <EmptyState text="กำลังโหลดรายงานปัญหา..."/>}
       {!state.loading && state.error && <EmptyState text={state.error}/>} 
@@ -2483,13 +2688,17 @@ function StoreIssueReportSection({ ctx, storeId, style }) {
         </div>
 
         {filteredReports.length > 0 ? (<div style={{ display: 'grid', gap: '10px' }}>
-          {filteredReports.map((report) => (<div key={report.ReportID} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '13px 14px', background: '#FFF' }}>
+                    {filteredReports.map((report) => (<div key={report.ReportID} role="button" tabIndex={0} title="กดเพื่อดูสถานะและรายละเอียด"
+            onClick={() => setOpenIssueId(report.ReportID)} onKeyDown={(e) => { if (e.key === 'Enter') setOpenIssueId(report.ReportID); }}
+            style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '13px 14px', background: '#FFF', cursor: 'pointer' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <strong style={{ color: T.ink, fontSize: '14px' }}>{report.IssueType || 'ไม่ระบุประเภท'}</strong>
                   {report.QueueNo && <Badge tone="neutral">คิว {report.QueueNo}</Badge>}
-                </div>
+                </div>                  <strong style={{ color: T.ink, fontSize: '14px' }}>{report.IssueType || 'ไม่ระบุประเภท'}</strong>
+                  <IssueStatusBadge status={report.IssueStatus}/>
+                  {report.QueueNo && <Badge tone="neutral">คิว {report.QueueNo}</Badge>}
                 <div style={{ ...captionStyle, marginTop: '4px' }}>
                   ผู้แจ้ง: {report.CustomerName || `User ${report.UserId}`}
                   {report.OrderID ? ` · Order #${report.OrderID}` : ''}
@@ -2504,8 +2713,9 @@ function StoreIssueReportSection({ ctx, storeId, style }) {
               <strong>หมายเหตุ:</strong> {report.AdminNote}
             </div>)}
           </div>))}
-        </div>) : <EmptyState text={`ยังไม่มีรายงานประเภท “${typeFilter}”`}/>} 
+                </div>) : <EmptyState text={`ยังไม่มีรายงานประเภท “${typeFilter}”`}/>} 
       </div>)}
+      <IssueDetailModal API={API} issueId={openIssueId} onClose={() => setOpenIssueId(null)}/>
     </Card>);
 }
 const CANCEL_REASON_FALLBACK = 'ไม่ระบุเหตุผล';
@@ -2677,7 +2887,7 @@ function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom
 }
 // ===== ยอดขายรายร้าน: เลือกร้าน ดูยอดขาย และอันดับเมนู =====
 function StoreSalesPage({ ctx }) {
-    const { orders, stores, pushToast, focusStoreId, scrollToStoreIssues, clearScrollToStoreIssues, navigateTo } = ctx;
+    const { orders, stores, pushToast, focusStoreId, navigateTo } = ctx;
     const [storeId, setStoreId] = useState(focusStoreId || '');
     const [historyStores, setHistoryStores] = useState([]);
     useEffect(() => {
@@ -2699,32 +2909,15 @@ function StoreSalesPage({ ctx }) {
         if (focusStoreId) setStoreId(String(focusStoreId));
     }, [focusStoreId]);
     // เมื่อเข้าหน้ายอดขายรายร้านจากการ์ด/รายการทั่วไป ให้กลับไปด้านบนสุด
-    // ยกเว้นการเข้ามาจากรายงานปัญหา ซึ่งต้องเลื่อนไปยังการ์ดรายงานโดยตรง
-    useEffect(() => {
-        if (!focusStoreId || scrollToStoreIssues) return undefined;
+        useEffect(() => {
+        if (!focusStoreId) return undefined;
         const timer = window.setTimeout(() => {
             const main = document.getElementById('executive-main-scroll');
             if (main) main.scrollTo({ top: 0, behavior: 'auto' });
         }, 0);
         return () => window.clearTimeout(timer);
+    
     }, [focusStoreId]);
-    // เลื่อนภายในพื้นที่ main โดยตรง เพื่อไม่ให้ scrollIntoView ไปเลื่อนผิด container
-    // และไม่ใส่ callback จาก ctx ใน dependency เพราะ ctx ถูกสร้างใหม่ทุก render
-    const scrollMainToCard = (elementId) => {
-        const main = document.getElementById('executive-main-scroll');
-        const target = document.getElementById(elementId);
-        if (!main || !target) return;
-        const top = target.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop - 20;
-        main.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-    };
-    useEffect(() => {
-        if (!focusStoreId || !scrollToStoreIssues) return undefined;
-        const timer = window.setTimeout(() => {
-            scrollMainToCard('store-issue-reports');
-            clearScrollToStoreIssues?.();
-        }, 250);
-        return () => window.clearTimeout(timer);
-    }, [focusStoreId, storeId, scrollToStoreIssues]);
     const [anchor, setAnchor] = useState(todayISO());
     const [days, setDays] = useState(1);
     const [customRange, setCustomRange] = useState(false);
