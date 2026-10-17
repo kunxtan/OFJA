@@ -2811,8 +2811,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       return at && toISODate(at) === today;
     });
     return {
-      waiting: count('Verifying_Slip', 'Pending'),
-      cooking: count('Cooking'),
+      // ครัวกดแค่ "ปรุงเสร็จ" : รอดำเนินการ = รอร้านตรวจสลิป ; ร้านรับแล้ว (Pending/Cooking) = กำลังปรุง
+      waiting: count('Verifying_Slip'),
+      cooking: count('Pending', 'Cooking'),
       ready: count('Ready'),
       outOfStock: (products || []).filter(p => p.IsOutOfStock).length,
       todayOrders: todayOrders.length,
