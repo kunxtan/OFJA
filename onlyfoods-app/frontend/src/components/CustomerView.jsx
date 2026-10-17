@@ -1094,12 +1094,23 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const formatBangkokTime = (d) =>
     d.toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false });
 
+  // รับทันที = ไม่มีเวลานัด หรือเวลานัดตรงกับเวลาที่สั่ง (ตอนไม่เลือกเวลา ระบบส่งเวลาปัจจุบันไปเก็บเป็น PickupTime)
+  // ใช้หลักเดียวกับ KitchenView; เผื่อคลาดเคลื่อน 2 นาทีจากเวลาที่ client กับ server สร้างออเดอร์
+  const isImmediatePickup = (pickup, created) => {
+    const pm = String(pickup || "").match(/(\d{1,2}):(\d{2})/);
+    if (!pm) return true;
+    const c = parseBangkokTime(created);
+    if (!c) return false;
+    const [ch, cm] = formatBangkokTime(c).split(":").map(Number);
+    return Math.abs(Number(pm[1]) * 60 + Number(pm[2]) - (ch * 60 + cm)) <= 2;
+  };
+
   // คืน { slots: {orderId: {start, end}}, newOrder: {start, end} }
   // newOrder = ออเดอร์สมมติที่จะต่อท้ายคิว (ใช้กับตะกร้า) เมื่อใส่ extraDishes
   const buildQueueSchedule = (queueOrders, extraDishes = 0) => {
     const now = new Date();
     const list = Array.isArray(queueOrders) ? queueOrders : [];
-    const isScheduled = (o) => Boolean(o.pickup_time); // ออเดอร์นัดเวลาไม่อยู่ในสายคิวทันที
+    const isScheduled = (o) => !isImmediatePickup(o.pickup_time, o.created_at); // ออเดอร์นัดเวลาจริงไม่อยู่ในสายคิวทันที
     const active = list
       .filter((o) => ["PENDING", "COOKING"].includes(String(o.status || "").toUpperCase()) && !isScheduled(o))
       .sort((a, b) => Number(a.order_id) - Number(b.order_id));
@@ -1162,7 +1173,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // โหลดคิวของร้านที่ลูกค้ามีออเดอร์ค้างอยู่ เฉพาะตอนเปิดแท็บคำสั่งซื้อ
   const activeOrderStoreKey = myOrders
-    .filter((o) => ACTIVE_ESTIMATE_STATUSES.includes(orderStatusKey(o)) && !o.PickupTime)
+    .filter((o) => ACTIVE_ESTIMATE_STATUSES.includes(orderStatusKey(o)) && isImmediatePickup(o.PickupTime, o.OrderTime))
     .map((o) => o.StoreId)
     .filter(Boolean)
     .filter((id, i, arr) => arr.indexOf(id) === i)
@@ -1209,7 +1220,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (!ACTIVE_ESTIMATE_STATUSES.includes(status)) return "-";
 
     // ออเดอร์ที่นัดเวลารับไว้ ใช้เวลานัดตามที่ลูกค้าเลือก
-    if (order.PickupTime) return order.PickupTime;
+    if (!isImmediatePickup(order.PickupTime, order.OrderTime)) return order.PickupTime;
 
     const queue = orderQueueEstimates[order.StoreId];
     if (!queue) return "กำลังคำนวณเวลา...";
@@ -2070,7 +2081,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
                     )}
                     {(order.PickupTime || order.pickup_time) && (
-                      <div>เวลารับอาหาร: {order.PickupTime || order.pickup_time || 'รับทันที'}</div>
+                      <div>
+                        เวลารับอาหาร: {isImmediatePickup(order.PickupTime || order.pickup_time, order.OrderTime || order.CreatedAt)
+                          ? 'รับทันที'
+                          : (order.PickupTime || order.pickup_time)}
+                      </div>
                     )}
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
