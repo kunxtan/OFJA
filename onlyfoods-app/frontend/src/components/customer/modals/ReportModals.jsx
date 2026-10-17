@@ -66,6 +66,7 @@ export function ReportModal({
             style={{ width: "100%", padding: "11px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, fontFamily: "inherit" }}
           >
             <option value="อาหารไม่ตรงตามออเดอร์">อาหารไม่ตรงตามออเดอร์</option>
+            <option value="ออเดอร์ถูกยกเลิก / ขอตรวจสอบเหตุผล">ออเดอร์ถูกยกเลิก / ขอตรวจสอบเหตุผล</option>
             <option value="อาหารรอนานเกินกำหนด">อาหารรอนานเกินกำหนด</option>
             <option value="ปัญหาเรื่องการชำระเงิน/สลิป">ปัญหาเรื่องการชำระเงิน/สลิป</option>
             <option value="คุณภาพ/รสชาติอาหาร">คุณภาพ/รสชาติอาหาร</option>

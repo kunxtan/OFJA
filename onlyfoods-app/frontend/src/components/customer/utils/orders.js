@@ -31,3 +31,16 @@ export const previewLateArrival = (order, minutes) => {
   const arrival = new Date(base.getTime() + Number(minutes) * 60000);
   return `${String(arrival.getHours()).padStart(2, "0")}:${String(arrival.getMinutes()).padStart(2, "0")}`;
 };
+
+// ป้ายสถานะออเดอร์ภาษาไทย (สถานะที่ไม่รู้จักแสดงตามที่ backend ส่งมา)
+const ORDER_STATUS_TH = {
+  Verifying_Slip: "รอตรวจสลิป",
+  Pending: "รอร้านทำอาหาร",
+  Cooking: "กำลังทำอาหาร",
+  Ready: "พร้อมรับอาหาร",
+  Completed: "รับอาหารแล้ว",
+  Cancelled: "ถูกยกเลิก",
+  NoShow: "ไม่มารับอาหาร",
+  Awaiting_Top_Up: "รอโอนส่วนต่าง",
+};
+export const getOrderStatusLabel = (status) => ORDER_STATUS_TH[status] || status || "Pending";

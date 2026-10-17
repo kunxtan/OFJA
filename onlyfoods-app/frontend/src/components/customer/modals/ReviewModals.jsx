@@ -1,4 +1,4 @@
-// กลุ่มรีวิว: เขียนรีวิวออเดอร์, ดูรีวิวของร้าน
+// กลุ่มโมดัลรีวิว: เขียนรีวิวออเดอร์, ดูรีวิวของร้าน
 import { COLORS } from "../constants";
 import { CommentIcon, StarIcon } from "../icons";
 

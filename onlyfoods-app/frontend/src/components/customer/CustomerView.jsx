@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
-import { createCartRow, getNotifKey, getOutOfStockItem, previewLateArrival } from "./utils/orders";
+import { createCartRow, getNotifKey, getOrderStatusLabel, getOutOfStockItem, previewLateArrival } from "./utils/orders";
+import { addProductToCart, countCartDishes, decreaseRowQty, increaseRowQty, splitOneFromRow, sumCart } from "./utils/cart";
 import { formatBangkokTime, getCurrentDateTimeForBackend, getCurrentTimeFormatted, secondsUntil } from "./utils/time";
 import { getPickupHours, getPickupRange, isPickupMinuteDisabled, pad2, toMinutes } from "./utils/pickupTime";
 import { COLORS, MAX_FILE_SIZE } from "./constants";
@@ -48,7 +49,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [newSelectedProduct, setNewSelectedProduct] = useState(null);
   const [timeLeft, setTimeLeft] = useState(1800);
 
-  // TOP-UP 
+  // TOP-UP (เปลี่ยนเป็นเมนูที่แพงกว่า -> โอนส่วนต่าง + แนบสลิป)
   const [topUpSlip, setTopUpSlip] = useState(null);
   const [isSubmittingTopUp, setIsSubmittingTopUp] = useState(false);
   const [hiddenTopUpOrderId, setHiddenTopUpOrderId] = useState(null);
@@ -65,7 +66,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   // เวลารับอาหารที่ลูกค้านัด: เก็บ "ชั่วโมง" กับ "นาที" แยกกัน (เช่น "12" กับ "05")
   const [pickupHour, setPickupHour] = useState("");
   const [pickupMinute, setPickupMinute] = useState("");
-  // pickupTime ยังเป็นข้อความ "HH:MM" หรือ "" (= รับทันที)
+  // pickupTime ยังเป็นข้อความ "HH:MM" หรือ "" (= รับทันที) เหมือนเดิม โค้ดส่วนอื่นจึงไม่ต้องแก้
   const pickupTime = pickupHour !== "" && pickupMinute !== "" ? `${pickupHour}:${pickupMinute}` : "";
   const setPickupTime = (value) => {
     const [h = "", m = ""] = String(value || "").split(":");
@@ -138,7 +139,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const res = await fetch(`${apiBase}/api/stores`);
       if (!res.ok) return;
       const allStores = await res.json();
-      // เก็บเฉพาะร้านที่ "ไม่ถูกระงับ" และ "สัญญายังมีผล"
+      // เก็บเฉพาะร้านที่ "ไม่ถูกระงับ" และ "สัญญายังมีผล" (ต้องผ่านทั้งสองเงื่อนไข จึงใช้ &&)
+      // ร้านที่สัญญายังมีผลแต่ปิดชั่วคราว (IsOpen = false) ยังแสดงเป็นการ์ดสีจาง
+      // หน้าผู้บริหาร/เจ้าของร้านยังเห็นครบตามเดิม เพราะกรองเฉพาะฝั่งหน้าลูกค้า
       const data = Array.isArray(allStores)
         ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE")
         : [];
@@ -185,20 +188,27 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const fetchMyOrders = async () => {
     if (!userId) return;
+
     try {
       const res = await fetch(`${apiBase}/api/orders?user_id=${userId}`);
       if (!res.ok) return;
+
       const data = await res.json();
       setMyOrders(data);
+
       setLatePickupOrder((prev) => {
         const updated = { ...prev };
+
         data.forEach((order) => {
           const orderId = order.OrderID ?? order.OrderId ?? order.order_id;
           if (!orderId) return;
+
           const arrival = order.LatePickupArrivalTime;
           let arrivalTime = "";
+
           if (arrival) {
             const date = new Date(arrival);
+
             if (!Number.isNaN(date.getTime())) {
               arrivalTime = date.toLocaleTimeString("th-TH", {
                 timeZone: "Asia/Bangkok",
@@ -232,13 +242,22 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const data = await res.json();
       setNotifs(data);
 
-      // เด้งป๊อปอัพเฉพาะการแจ้งเตือนที่เพิ่งเข้ามาหลังเปิดแอป
+      // เด้งป๊อปอัพเฉพาะการแจ้งเตือนที่เพิ่งเข้ามาหลังเปิดแอป (โหลดครั้งแรกเก็บไว้เฉยๆ ไม่เด้งของเก่า)
       if (Array.isArray(data)) {
         if (seenToastKeysRef.current === null) {
           seenToastKeysRef.current = new Set(data.map((n) => getNotifKey(n)));
         } else {
           const fresh = data.filter((n) => !seenToastKeysRef.current.has(getNotifKey(n)));
           fresh.forEach((n) => seenToastKeysRef.current.add(getNotifKey(n)));
+          // อยู่หน้าการแจ้งเตือนอยู่แล้ว ไม่ต้องเด้งซ้ำ
+          if (fresh.length > 0 && activeTabRef.current !== "notifs") {
+            const incoming = fresh.map((n) => ({
+              key: getNotifKey(n),
+              title: n.Title || "Only Foods",
+              message: n.Message || "",
+            }));
+            setToasts((prev) => [...incoming, ...prev].slice(0, 3));
+          }
         }
       }
     } catch (error) {
@@ -250,12 +269,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/food-court/status`);
       if (!res.ok) return;
+
       const data = await res.json();
+
       setIsFoodCourtOpen(Boolean(data?.is_open));
       setFoodCourtMode(data?.mode || "AUTO");
+
       if (data?.open_time) {
         setFoodCourtOpenTime(data.open_time.slice(0, 5));
       }
+
       if (data?.close_time) {
         setFoodCourtCloseTime(data.close_time.slice(0, 5));
       }
@@ -340,6 +363,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!selectedStore) return undefined;
     fetchProducts();
+    // ร้านกดของหมด/เปิดขาย -> ลูกค้าเห็นภายใน 5 วินาที โดยไม่ต้องกดเข้าร้านใหม่
     const timer = setInterval(fetchProducts, 5000);
     return () => clearInterval(timer);
   }, [selectedStore, apiBase]);
@@ -436,16 +460,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     [stores, selectedStore]
   );
 
-  const cartCount = useMemo(() => cart.length, [cart]);
+  const cartCount = useMemo(() => countCartDishes(cart), [cart]);
 
   const totalAmount = useMemo(
-    () => cart.reduce((sum, item) => sum + Number(item.UnitPrice || 0), 0),
+    () => sumCart(cart),
     [cart]
   );
 
   const filteredStores = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    // แสดงเฉพาะร้านที่สัญญายังมีผล
+    // แสดงเฉพาะร้านที่สัญญายังมีผล (ContractState คำนวณจากวันที่ที่ backend: NONE / UPCOMING / ACTIVE / EXPIRED)
     const contracted = stores.filter((store) => store.ContractState === "ACTIVE");
     if (!keyword) return contracted;
     return contracted.filter((store) => String(store.StoreName || "").toLowerCase().includes(keyword));
@@ -491,7 +515,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         return;
       }
     }
-    setCart((prev) => [...prev, createCartRow(product)]);
+    setCart((prev) => addProductToCart(prev, product));
     setIsCartOpen(true);
   };
 
@@ -500,16 +524,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const increaseQty = (index) => {
-    setCart((prev) => {
-      const item = prev[index];
-      if (!item) return prev;
-      const newItem = createCartRow(item);
-      return [...prev.slice(0, index + 1), newItem, ...prev.slice(index + 1)];
-    });
+    setCart((prev) => increaseRowQty(prev, index));
   };
 
   const decreaseQty = (index) => {
-    setCart((prev) => prev.filter((_, i) => i !== index));
+    setCart((prev) => decreaseRowQty(prev, index));
+  };
+
+  // แยก 1 จานออกจากแถวที่มีหลายจาน เพื่อใส่หมายเหตุต่างจากจานอื่น
+  const splitOneFromCart = (index) => {
+    setCart((prev) => splitOneFromRow(prev, index));
   };
 
   const updateItemNote = (index, note) => {
@@ -907,6 +931,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
+  // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
   const handleSlipChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -958,7 +983,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // ช่วงเวลารับโดยประมาณของตะกร้า (ต่อท้ายคิวที่ค้างอยู่)
   const getCustomerPickupRange = () => {
-    const cartDishCount = cart.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0);
+    const cartDishCount = countCartDishes(cart);
     if (!cartDishCount) return "กำลังคำนวณเวลา...";
     const { newOrder } = buildQueueSchedule(queueEstimateOrders, cartDishCount);
     return formatPickupRange(newOrder.start, newOrder.end);
@@ -1056,7 +1081,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     const orderItems = cart.map((item) => ({
       product_id: Number(item.ProductId),
-      qty: 1,
+      qty: Number(item.qty) || 1,
       unit_price: Number(item.UnitPrice || 0),
       item_note: item.item_note || "",
     }));
@@ -1223,7 +1248,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
 
     setSelectedOrderForReport(order);
-    setIssueType("อาหารไม่ตรงตามออเดอร์");
+    setIssueType(order?.Status === "Cancelled" ? "ออเดอร์ถูกยกเลิก / ขอตรวจสอบเหตุผล" : "อาหารไม่ตรงตามออเดอร์");
     setIssueDescription("");
     setIsReportModalOpen(true);
   };
@@ -1421,8 +1446,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               boxSizing: "border-box",
                               maxWidth: "100%",
                               whiteSpace: "nowrap",
-                              padding: "3px 6px",
-                              fontSize: "10px",
+                              padding: "8px 12px",
+                              minHeight: "36px",
+                              fontSize: "12px",
                               fontWeight: "600",
                               color: COLORS.navy,
                               cursor: "pointer",
@@ -1502,9 +1528,26 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       ) : (
                         <button
                           onClick={() => addToCart(product)}
-                          style={{ width: "42px", height: "42px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, fontSize: "25px", cursor: "pointer", fontWeight: "400" }}
+                          aria-label={`เพิ่ม ${product.ProductName} ลงตะกร้า`}
+                          style={{
+                            width: "44px",
+                            height: "44px",
+                            flexShrink: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            padding: 0,
+                            border: "none",
+                            borderRadius: "50%",
+                            background: COLORS.orange,
+                            color: COLORS.white,
+                            cursor: "pointer",
+                            lineHeight: 0,
+                          }}
                         >
-                          +
+                          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                            <path d="M10 3v14M3 10h14" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+                          </svg>
                         </button>
                       )}
                     </div>
@@ -1702,7 +1745,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       </span>
                     </div>
                     <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "4px 12px", borderRadius: "15px", fontSize: "11px", fontWeight: "800" }}>
-                      {order.Status === "Awaiting_Top_Up" ? "รอโอนส่วนต่าง" : (order.Status || "Pending")}
+                      {getOrderStatusLabel(order.Status)}
                     </span>
                   </div>
 
@@ -1784,6 +1827,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               : null;
             const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
            const canNotifyLatePickup = ["pending", "cooking", "ready"].includes(String(order.Status || "").trim().toLowerCase());
+            const handleReportClick = () => {
+              if (hasReportedIssue) {
+                if (typeof fetchMyIssueReports === "function") fetchMyIssueReports();
+                if (typeof setIsViewReportsModalOpen === "function") setIsViewReportsModalOpen(true);
+              } else {
+                handleOpenReportModal(order);
+              }
+            };
             return (
               <div key={order.OrderID} style={{ ...cardStyle, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", marginBottom: "12px" }}>
@@ -1886,7 +1937,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     )}
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
-                    {order.Status === "Awaiting_Top_Up" ? "รอโอนส่วนต่าง" : (order.Status || "Pending")}
+                    {getOrderStatusLabel(order.Status)}
                   </span>
                 </div>
 
@@ -1963,8 +2014,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                                   }))
                                 }
                                 style={{
-                                  padding: "7px 10px",
-                                  borderRadius: "8px",
+                                  padding: "10px 14px",
+                                  minHeight: "40px",
+                                  borderRadius: "10px",
                                   border: `1px solid ${
                                     selectedMinutes === option.value
                                       ? COLORS.orange
@@ -1975,7 +2027,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                                       ? "#FFF0EB"
                                       : "#FFFFFF",
                                   color: COLORS.navy,
-                                  fontSize: "12px",
+                                  fontSize: "13px",
                                   cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
                                   opacity: lateInfo.count >= 3 ? 0.5 : 1,
                                 }}
@@ -2031,6 +2083,37 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   </div>
                 )}
 
+                {order.Status === "Cancelled" && (
+                  <div style={{ marginTop: "15px" }}>
+                    <div style={{ padding: "12px 14px", borderRadius: "12px", background: "#FFF0ED", border: `1px solid ${COLORS.red}40`, fontSize: "13px", lineHeight: 1.55 }}>
+                      <div style={{ color: COLORS.red, fontWeight: "800", marginBottom: "2px" }}>ออเดอร์นี้ถูกยกเลิก</div>
+                      <div style={{ color: COLORS.navy, overflowWrap: "anywhere" }}>
+                        เหตุผล: {String(order.CancelReason || "").trim() || "ร้านไม่ได้ระบุเหตุผล"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleReportClick}
+                      style={{
+                        width: "100%",
+                        marginTop: "10px",
+                        padding: "12px",
+                        minHeight: "44px",
+                        border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
+                        borderRadius: "12px",
+                        background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED",
+                        color: hasReportedIssue ? COLORS.navy : COLORS.red,
+                        fontSize: "13px",
+                        fontWeight: "800",
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {hasReportedIssue ? "ดูปัญหาของฉัน" : "ไม่เห็นด้วย/มีปัญหา แจ้งปัญหาออเดอร์นี้"}
+                    </button>
+                  </div>
+                )}
+
                 {order.Status === "Completed" && (
                   <div style={{ display: "flex", gap: "10px", marginTop: "15px", width: "100%" }}>
                     <button
@@ -2052,14 +2135,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     </button>
 
                     <button
-                      onClick={() => {
-                        if (hasReportedIssue) {
-                          if (typeof fetchMyIssueReports === "function") fetchMyIssueReports();
-                          if (typeof setIsViewReportsModalOpen === "function") setIsViewReportsModalOpen(true);
-                        } else {
-                          handleOpenReportModal(order);
-                        }
-                      }}
+                      onClick={handleReportClick}
                       style={{
                         flex: 1,
                         padding: "11px",
@@ -2118,7 +2194,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ตะกร้าของฉัน</h2>
               {cart.length > 0 && <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "4px" }}></div>}
             </div>
-            <button onClick={() => setIsCartOpen(false)} style={{ width: "36px", height: "36px", border: "none", borderRadius: "50%", background: COLORS.lightGray, cursor: "pointer", fontSize: "20px" }}>×</button>
+            <button onClick={() => setIsCartOpen(false)} aria-label="ปิดตะกร้า" style={{ width: "40px", height: "40px", border: "none", borderRadius: "50%", background: COLORS.lightGray, cursor: "pointer", fontSize: "20px" }}>×</button>
           </div>
 
           {cart.length === 0 ? (
@@ -2135,17 +2211,33 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       <img src={item.img || item.ImageUrl || "https://via.placeholder.com/80?text=Food"} alt="" style={{ width: "70px", height: "70px", objectFit: "cover", borderRadius: "13px", flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: "900", fontSize: "15px" }}>{item.ProductName}</div>
-                        <div style={{ color: COLORS.orange, fontWeight: "900", marginTop: "3px" }}>{Number(item.UnitPrice).toFixed(2)} ฿</div>
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
-                          <button onClick={() => decreaseQty(index)} style={{ width: "29px", height: "29px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>−</button>
-                          <b>1</b>
-                          <button onClick={() => increaseQty(index)} style={{ width: "29px", height: "29px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>+</button>
+                        <div style={{ color: COLORS.orange, fontWeight: "900", marginTop: "3px" }}>
+                          {Number(item.UnitPrice).toFixed(2)} ฿
+                          {(item.qty || 1) > 1 && (
+                            <span style={{ color: COLORS.gray, fontWeight: "700", fontSize: "12px" }}>
+                              {" "}× {item.qty} = {(Number(item.UnitPrice) * item.qty).toFixed(2)} ฿
+                            </span>
+                          )}
                         </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
+                          <button onClick={() => decreaseQty(index)} aria-label="ลดจำนวน" style={{ width: "36px", height: "36px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>−</button>
+                          <b style={{ minWidth: "20px", textAlign: "center" }}>{item.qty || 1}</b>
+                          <button onClick={() => increaseQty(index)} aria-label="เพิ่มจำนวน" style={{ width: "36px", height: "36px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>+</button>
+                        </div>
+                        {(item.qty || 1) > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => splitOneFromCart(index)}
+                            style={{ marginTop: "8px", padding: "7px 12px", borderRadius: "10px", border: `1px dashed ${COLORS.orange}`, background: "#FFFFFF", color: COLORS.orange, fontSize: "12px", fontWeight: "800", fontFamily: "inherit", cursor: "pointer" }}
+                          >
+                            แยก 1 จานไปใส่รายละเอียดอื่น
+                          </button>
+                        )}
                       </div>
-                      <button onClick={() => removeFromCart(index)} style={{ alignSelf: "flex-start", border: "none", background: "none", cursor: "pointer", fontSize: "16px" }}>×</button>
+                      <button onClick={() => removeFromCart(index)} aria-label="ลบรายการ" style={{ alignSelf: "flex-start", width: "36px", height: "36px", border: "none", background: "none", cursor: "pointer", fontSize: "20px" }}>×</button>
                     </div>
                     <div style={{ marginTop: "13px" }}>
-                      <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: COLORS.navy, marginBottom: "5px" }}>หมายเหตุสำหรับรายการที่ {index + 1}</label>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: COLORS.navy, marginBottom: "5px" }}>หมายเหตุสำหรับรายการที่ {index + 1}{(item.qty || 1) > 1 ? ` (ใช้กับทั้ง ${item.qty} จาน)` : ""}</label>
                       <textarea value={item.item_note || ""} onChange={e => updateItemNote(index, e.target.value)} placeholder="เช่น ไม่เผ็ด, ไม่ใส่ผัก, หวานน้อย" rows={2} maxLength={255} style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, outline: "none", resize: "vertical", fontFamily: "inherit", fontSize: "12px", background: COLORS.white }} />
                       <div style={{ textAlign: "right", fontSize: "10px", color: "#aaa", marginTop: "2px" }}>{(item.item_note || "").length}/255</div>
                     </div>
@@ -2344,7 +2436,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // เวลาที่ครัวน่าจะทำเสร็จถ้าสั่งตอนนี้ ใช้เตือนเมื่อลูกค้านัดเวลาที่เร็วกว่านั้น (เตือนเฉยๆ ไม่บล็อก)
-  const cartDishCount = cart.reduce((sum, item) => sum + (Number(item.Qty) || 1), 0);
+  const cartDishCount = countCartDishes(cart);
   const cartSchedule = cartDishCount ? buildQueueSchedule(queueEstimateOrders, cartDishCount) : null;
   const estimatedReadyTime = cartSchedule
     ? formatBangkokTime(new Date(Math.ceil(cartSchedule.newOrder.end.getTime() / 60000) * 60000))
@@ -2387,17 +2479,26 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
             .customer-store-grid button {
               font-family: 'Sarabun', sans-serif !important;
-              font-size: 6px !important;
+              font-size: 12px !important;
               font-weight: 600 !important;
               line-height: 1.2 !important;
-              boxSizing: "border-box",
-              maxWidth: "100%",
+              box-sizing: border-box !important;
+              max-width: 100% !important;
+              min-height: 36px !important;
+              padding: 8px 12px !important;
               white-space: nowrap !important;
             }
 
-            .customer-store-grid button:last-of-type {
-              font-size: 10px !important;
-              font-weight: 700 !important;
+            /* ปุ่ม/ช่องกรอกบนมือถือ: กดง่าย และ iOS ไม่ซูมหน้าจออัตโนมัติตอนแตะช่องกรอก */
+            .customer-view button,
+            .customer-view select {
+              touch-action: manipulation;
+            }
+
+            .customer-view input,
+            .customer-view select,
+            .customer-view textarea {
+              font-size: 16px !important;
             }
 
             .customer-store-grid {
