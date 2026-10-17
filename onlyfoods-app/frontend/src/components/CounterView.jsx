@@ -115,7 +115,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [cancelModal, setCancelModal] = useState(null); // { order, actionType: 'immediate' | 'window' }
   const [cancelReasonTag, setCancelReasonTag] = useState('วัตถุดิบหมด');
   const [customReason, setCustomReason] = useState('');
-  const [cancelActionChoice, setCancelActionChoice] = useState('immediate'); // 'immediate' หรือ 'window'
+  // แจ้งของหมดรายคิว (แยกจากยกเลิก): เลือกจานที่หมด + ปิดเมนูในร้านด้วย
+  const [outModal, setOutModal] = useState(null); // { order, selected: [OrderItemId], closeMenu }
+  const [outBusy, setOutBusy] = useState(false);
 
   const [nowTick, setNowTick] = useState(Date.now());
   useEffect(() => {
@@ -504,41 +506,48 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }
   };
 
-  // 🔴 เปิด Modal ยกเลิกคำสั่งซื้อ (แทนการใช้ prompt)
-  const openCancelModal = (order, defaultAction = 'immediate') => {
-    const action = isWalkInOrder(order) ? 'immediate' : defaultAction;
+  // ❌ ยกเลิกออเดอร์ (อย่างเดียว ; ของหมดใช้ openOutModal)
+  const openCancelModal = (order) => {
     setCancelModal({ order });
-    setCancelActionChoice(action);
-    setCancelReasonTag(action === 'window' ? 'วัตถุดิบหมด' : 'ลูกค้าขอยกเลิกเอง');
+    setCancelReasonTag('ลูกค้าขอยกเลิกเอง');
     setCustomReason('');
   };
 
-  // 🔴 ยืนยันการยกเลิกจาก Modal
   const handleConfirmCancel = () => {
     if (!cancelModal) return;
     const finalReason = customReason.trim() ? `${cancelReasonTag}: ${customReason.trim()}` : cancelReasonTag;
-    const orderId = cancelModal.order.OrderID;
-    const queueNo = cancelModal.order.QueueNo;
+    updateStatus(cancelModal.order.OrderID, 'Cancelled', finalReason);
+    setCancelModal(null);
+  };
 
-    if (cancelActionChoice === 'window' && !isWalkInOrder(cancelModal.order)) {
-      // เรียก API แจ้งของหมด นับถอยหลัง 30 นาที
-      fetch(`${apiBase}/api/orders/${orderId}/cancel-request`, {
+  // ⚠️ แจ้งของหมด: ลูกค้าออนไลน์เลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที
+  const outItems = (order) => (order?.items || []).filter(i => !i.ItemStatus || i.ItemStatus === 'NORMAL');
+  const openOutModal = (order) => {
+    const items = outItems(order);
+    setOutModal({ order, selected: items.length === 1 ? [items[0].OrderItemId] : [], closeMenu: true });
+  };
+  const toggleOutItem = (id) => setOutModal(m => m && ({
+    ...m, selected: m.selected.includes(id) ? m.selected.filter(x => x !== id) : [...m.selected, id],
+  }));
+  const confirmOrderOut = async () => {
+    if (!outModal || outBusy || !outModal.selected.length) return;
+    const { order, selected, closeMenu } = outModal;
+    setOutBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/cancel-request`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: finalReason, response_window_minutes: 30 })
-      }).then(async res => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          showToast(data.detail || 'ไม่สามารถแจ้งของหมดได้');
-          return;
-        }
-        showToast(`แจ้งลูกค้าคิว ${queueNo} แล้ว (รอเลือกเมนูใหม่ 30 นาที)`);
-        setCancelModal(null);
-        fetchData();
-      }).catch(() => showToast('เชื่อมต่อระบบไม่สำเร็จ'));
-    } else {
-      // ยกเลิกคำสั่งซื้อทันที
-      updateStatus(orderId, 'Cancelled', finalReason);
-      setCancelModal(null);
+        body: JSON.stringify({ reason: 'วัตถุดิบหมด', response_window_minutes: 30, item_ids: selected, close_menu: closeMenu })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.detail || 'ไม่สามารถแจ้งของหมดได้'); return; }
+      const closed = (data.closed_menus || []).length ? ` · ปิดเมนู ${data.closed_menus.join(', ')} แล้ว` : '';
+      showToast(`แจ้งลูกค้าคิว ${order.QueueNo} ให้เปลี่ยนเมนูแล้ว (30 นาที)${closed}`);
+      setOutModal(null);
+      fetchData();
+    } catch {
+      showToast('เชื่อมต่อระบบไม่สำเร็จ');
+    } finally {
+      setOutBusy(false);
     }
   };
 
@@ -799,8 +808,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
     { id: 'display', label: 'จอเรียกคิว (จำลอง)', caption: 'ของจริงเปิดค้างบนทีวีหน้าร้าน', icon: 'tv' },
   ];
 
+  // ของหมดใช้ปุ่ม "ของหมด" แยกต่างหาก จึงไม่มีในเหตุผลยกเลิก
   const quickReasons = [
-    'วัตถุดิบหมด',
     'ลูกค้าขอยกเลิกเอง',
     'ครัวปรุงไม่ทัน / คิวแน่น',
     'สั่งออเดอร์ซ้ำซ้อน',
@@ -1179,12 +1188,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                   {/* ของหมด/ยกเลิกใช้ได้เฉพาะคิวที่ยังไม่เสร็จ */}
                                   {/* walk-in ไม่มีลูกค้าในระบบให้ตอบกลับ จึงยกเลิกได้อย่างเดียว */}
                                   {!isPendingCancel && !isWalkInOrder(o) && ['Pending', 'Cooking'].includes(o.Status) && (
-                                    <button onClick={() => openCancelModal(o, 'window')} className="cv-btn btn-warning-light">
+                                    <button onClick={() => openOutModal(o)} className="cv-btn btn-warning-light">
                                       ⚠️ ของหมด
                                     </button>
                                   )}
                                   {['Pending', 'Cooking', 'Pending_Cancellation', 'Awaiting_Top_Up'].includes(o.Status) && (
-                                    <button onClick={() => openCancelModal(o, 'immediate')} className="cv-btn btn-danger-light">
+                                    <button onClick={() => openCancelModal(o)} className="cv-btn btn-danger-light">
                                       ❌ ยกเลิก
                                     </button>
                                   )}
@@ -1638,6 +1647,38 @@ export default function CounterView({ user, apiBase, onLogout }) {
         </div>
       )}
 
+      {outModal && (
+        <div className="cv-modal-overlay" onClick={() => !outBusy && setOutModal(null)}>
+          <div className="cv-modal cv-out-modal" onClick={e => e.stopPropagation()}>
+            <div className="cv-modal-head">
+              <div><h3>⚠️ แจ้งของหมด · คิว {outModal.order.QueueNo}</h3>
+                <div className="caption">ลูกค้าเลือกเปลี่ยนเมนู หรือยกเลิกรับเงินคืนได้ภายใน 30 นาที</div></div>
+              <button onClick={() => setOutModal(null)} className="cv-modal-close" disabled={outBusy}>✖</button>
+            </div>
+            <div className="out-label">เมนูไหนหมด? (เลือกได้หลายจาน)</div>
+            <div className="out-items">
+              {outItems(outModal.order).map(it => (
+                <label key={it.OrderItemId} className={`out-item ${outModal.selected.includes(it.OrderItemId) ? 'active' : ''}`}>
+                  <input type="checkbox" checked={outModal.selected.includes(it.OrderItemId)} onChange={() => toggleOutItem(it.OrderItemId)} />
+                  <span className="out-name">{it.ProductName} ×{it.Qty}</span>
+                  <span className="out-price">฿{fmtMoney(Number(it.UnitPrice) * Number(it.Qty))}</span>
+                </label>
+              ))}
+            </div>
+            <label className="out-close">
+              <input type="checkbox" checked={outModal.closeMenu} onChange={e => setOutModal(m => ({ ...m, closeMenu: e.target.checked }))} />
+              <span>ปิดเมนูที่เลือกในร้านด้วย (ลูกค้าคนอื่นสั่งไม่ได้จนกว่าจะเปิดขายใหม่ในหน้า Menu &amp; Stock)</span>
+            </label>
+            <div className="modal-footer-btns">
+              <button onClick={() => setOutModal(null)} className="cv-btn btn-ghost" disabled={outBusy}>ยกเลิก</button>
+              <button onClick={confirmOrderOut} className="cv-btn btn-warning-solid" disabled={outBusy || !outModal.selected.length}>
+                {outBusy ? 'กำลังแจ้ง...' : outModal.selected.length ? `⚠️ แจ้งลูกค้าเปลี่ยนเมนู (${outModal.selected.length} จาน)` : 'เลือกจานที่หมดก่อน'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cancelModal && (
         <div className="cv-modal-overlay" onClick={() => setCancelModal(null)}>
           <div className="cv-modal cv-cancel-modal" onClick={e => e.stopPropagation()}>
@@ -1645,7 +1686,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div className="cancel-icon-badge">❌</div>
                 <div>
-                  <h3 style={{ margin: 0 }}>จัดการยกเลิกคำสั่งซื้อ</h3>
+                  <h3 style={{ margin: 0 }}>ยกเลิกออเดอร์</h3>
                   <div className="caption">คิวหมายเลข: <b style={{ color: PALETTE.coral }}>{cancelModal.order.QueueNo}</b></div>
                 </div>
               </div>
@@ -1668,37 +1709,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <span>ยอดเงินที่ชำระแล้ว</span>
                 <span className="receipt-total-val">฿{fmtMoney(cancelModal.order.TotalAmount)}</span>
               </div>
-            </div>
-
-            {/* Action Mode Toggle */}
-            <div className="cancel-action-selector">
-              {!isWalkInOrder(cancelModal.order) && cancelModal.order.Status !== 'Pending_Cancellation' && (
-              <label className={`action-opt ${cancelActionChoice === 'window' ? 'active' : ''}`}>
-                <input
-                  type="radio"
-                  name="cancelAction"
-                  checked={cancelActionChoice === 'window'}
-                  onChange={() => setCancelActionChoice('window')}
-                />
-                <div>
-                  <div className="opt-title">⚠️ แจ้งวัตถุดิบหมด (รอเปลี่ยนเมนู 30 นาที)</div>
-                  <div className="opt-desc">ส่งแจ้งเตือนให้ลูกค้าเลือกเปลี่ยนเมนูหรือกดยกเลิกผ่านแอป</div>
-                </div>
-              </label>
-              )}
-
-              <label className={`action-opt ${cancelActionChoice === 'immediate' ? 'active' : ''}`}>
-                <input
-                  type="radio"
-                  name="cancelAction"
-                  checked={cancelActionChoice === 'immediate'}
-                  onChange={() => setCancelActionChoice('immediate')}
-                />
-                <div>
-                  <div className="opt-title">❌ ขอยกเลิกคำสั่งซื้อทันที</div>
-                  <div className="opt-desc">ตัดคิวออกจากระบบทันที (ติดต่อคืนเงินสดให้ลูกค้า)</div>
-                </div>
-              </label>
             </div>
 
             {/* Quick Reason Chips */}
@@ -1726,13 +1736,19 @@ export default function CounterView({ user, apiBase, onLogout }) {
               />
             </div>
 
+            <div className="cancel-refund-note">
+              {isWalkInOrder(cancelModal.order)
+                ? '💵 ลูกค้า Walk-in: คืนเงินสดให้ลูกค้าที่หน้าร้าน'
+                : '💸 ลูกค้าออนไลน์: ระบบบันทึกคืนเงินให้ฝ่ายบัญชีดำเนินการ และแจ้งลูกค้าให้อัตโนมัติ'}
+            </div>
+
             {/* Footer Buttons */}
             <div className="modal-footer-btns">
               <button onClick={() => setCancelModal(null)} className="cv-btn btn-ghost">
-                ยกเลิก
+                ไม่ยกเลิก
               </button>
               <button onClick={handleConfirmCancel} className="cv-btn btn-danger-solid">
-                {cancelActionChoice === 'window' ? 'ส่งแจ้งเตือนของหมด (30 นาที)' : 'ยืนยันการยกเลิกออเดอร์ทันที'}
+                ❌ ยืนยันยกเลิกออเดอร์
               </button>
             </div>
           </div>
@@ -2213,7 +2229,18 @@ const CV_STYLES = `
 .receipt-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 600; }
 .receipt-total-val { font-size: 18px; color: ${PALETTE.coral}; font-weight: 700; }
 
-.cancel-action-selector { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.cancel-refund-note { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-md); background: ${PALETTE.bgSoft}; font-size: 13px; color: ${PALETTE.dark}; }
+.cv-out-modal { width: 520px; max-width: calc(100vw - 32px); }
+.out-label { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.out-items { display: flex; flex-direction: column; gap: 8px; }
+.out-item { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 14px; border-radius: 12px; border: 2px solid ${PALETTE.border}; background: #fff; cursor: pointer; font-size: 15px; }
+.out-item.active { border-color: ${PALETTE.amber}; background: ${PALETTE.yellowLight}; }
+.out-item input, .out-close input { width: 20px; height: 20px; accent-color: ${PALETTE.amber}; flex-shrink: 0; }
+.out-name { flex: 1; font-weight: 600; }
+.out-price { color: ${PALETTE.textSub}; }
+.out-close { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-size: 13px; color: ${PALETTE.dark}; cursor: pointer; }
+.btn-warning-solid { background: ${PALETTE.amber}; color: #fff; }
+.btn-warning-solid:hover { opacity: .9; }
 .action-opt { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid ${PALETTE.border}; cursor: pointer; transition: all 0.2s ease; background: #fff; }
 .action-opt input { margin-top: 3px; accent-color: ${PALETTE.coral}; }
 .action-opt.active { border-color: ${PALETTE.coral}; background: ${PALETTE.coralLight}; }

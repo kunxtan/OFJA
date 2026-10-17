@@ -433,6 +433,7 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
     now = bangkok_now()
     deadline = now + timedelta(minutes=payload.response_window_minutes)
     reason = payload.reason.strip()
+    closed = []
     with transaction(db):
         with db.cursor() as cur:
             order = lock_order(cur, order_id)
@@ -441,14 +442,41 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
                 raise DomainError(400, "อาหารเสร็จแล้ว ไม่สามารถยกเลิกหรือแจ้งของหมดกับออเดอร์นี้ได้")
             if order["CustomerId"] is None:
                 raise DomainError(400, "ออเดอร์ Walk-in ไม่มีลูกค้าในระบบให้เลือกเมนูใหม่ กรุณาใช้ปุ่มยกเลิกแทน")
+            if payload.item_ids:
+                ids = sorted(set(payload.item_ids))
+                cur.execute(
+                    f"""
+                    SELECT oi.OrderItemId, oi.ProductId, p.ProductName
+                    FROM OrderItem oi JOIN Product p ON p.ProductId = oi.ProductId
+                    WHERE oi.OrderId = %s AND oi.ItemStatus = 'NORMAL' AND oi.OrderItemId IN ({','.join(['%s'] * len(ids))})
+                    """,
+                    [order_id, *ids],
+                )
+                items = cur.fetchall()
+                if len(items) != len(ids):
+                    raise DomainError(400, "รายการอาหารที่เลือกไม่อยู่ในออเดอร์นี้ หรือถูกแจ้งหมดไปแล้ว")
+                cur.execute(
+                    f"UPDATE OrderItem SET ItemStatus = 'OUT_OF_STOCK' WHERE OrderId = %s AND OrderItemId IN ({','.join(['%s'] * len(ids))})",
+                    [order_id, *ids],
+                )
+                names = list(dict.fromkeys(i["ProductName"] for i in items))
+                reason = f"วัตถุดิบหมด: {', '.join(names)}"[:255]
+                if payload.close_menu:
+                    for pid, name in dict.fromkeys((i["ProductId"], i["ProductName"]) for i in items):
+                        cur.execute("UPDATE Product SET IsOutOfStock = TRUE WHERE ProductId = %s AND StoreId = %s AND IsOutOfStock = FALSE",
+                                    (pid, order["StoreId"]))
+                        if cur.rowcount:
+                            closed.append((pid, name))
             do_transition(cur, order, state.PENDING_CANCELLATION, actor_id=user["UserId"], reason=reason,
                           cancel_reason=reason, cancel_deadline=deadline, now=now)
             q = queue_label(order["QueueNo"], order["QueueCode"])
             send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} มีปัญหา",
                        f"คิว {q} มีปัญหา: {reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)", order_id)
         log_audit(db, user["UserId"], "CANCEL_REQUEST", "Order", order_id, None,
-                  {"reason": reason, "store_id": order["StoreId"]})
-    return {"success": True}
+                  {"reason": reason, "store_id": order["StoreId"], "items": payload.item_ids or []})
+        for pid, name in closed:
+            log_audit(db, user["UserId"], "OUT_OF_STOCK", "Product", pid, None, {"name": name, "from_order": order_id})
+    return {"success": True, "reason": reason, "closed_menus": [name for _, name in closed]}
 
 
 # --------------------------------------------------- customer: change / cancel
