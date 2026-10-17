@@ -1919,6 +1919,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       justifyContent: "space-between",
                       alignItems: "center",
                       gap: "12px",
+                      padding: "14px 16px",
+                      borderRadius: "14px",
+                      background: "#FFF7ED",
                     }}
                   >
                     {/* ฝั่งซ้าย: ข้อมูลคิว */}
@@ -2227,7 +2230,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         <div style={{ color: COLORS.orange, fontWeight: "900", marginTop: "3px" }}>{Number(item.UnitPrice).toFixed(2)} ฿</div>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
                           <button onClick={() => decreaseQty(index)} style={{ width: "29px", height: "29px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>−</button>
-                          <b>1</b>
+                          <b>{item.Qty || 1}</b>
                           <button onClick={() => increaseQty(index)} style={{ width: "29px", height: "29px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>+</button>
                         </div>
                       </div>
@@ -2312,7 +2315,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       border: "1px solid #FED7AA",
                     }}
                   >
-                    เวลารับอาหารโดยประมาณ {getOrderPickupRange(order)}
+                    เวลารับอาหารโดยประมาณ {getCustomerPickupRange()}
 
                     <div
                       style={{
