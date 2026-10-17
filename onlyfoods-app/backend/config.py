@@ -14,7 +14,12 @@ DB_PORT = _int("DB_PORT", 3306)
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "onlyfood")
-DB_POOL_SIZE = _int("DB_POOL_SIZE", 10)
+# pool ต้องใหญ่กว่า threadpool ของ FastAPI (40 thread) : ถ้าเล็กกว่า แล้วมี request พร้อมกันเกิน pool
+# thread ที่รอ connection จะกิน thread หมด จน thread ที่ต้องคืน connection (cleanup ของ get_db) ไม่มีที่รัน
+# = backend ค้างถาวร (เคยเกิดจริง: pool 10 + หน้าเว็บยิง request พร้อมกันหลายสิบตัว -> 504 ทั้งเว็บ)
+DB_POOL_SIZE = _int("DB_POOL_SIZE", 50)
+# pool เต็มจริง ๆ : รอได้ไม่เกินนี้ (วินาที) แล้วตอบ 503 แทนการรอไม่มีกำหนด
+DB_POOL_WAIT_SECONDS = _int("DB_POOL_WAIT_SECONDS", 5)
 
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
