@@ -301,7 +301,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/stores`);
       if (!res.ok) return;
-      const data = await res.json();
+      const allStores = await res.json();
+      const data = Array.isArray(allStores) ? allStores.filter((store) => !store.IsSuspended) : [];
       const storesWithReviews = await Promise.all(
         data.map(async (store) => {
           try {
