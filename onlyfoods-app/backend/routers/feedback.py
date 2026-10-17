@@ -498,8 +498,8 @@ def list_issues_for_executive(
 
         by_type: dict = {}
         for i in issues:
-            row = by_type.setdefault(i["TypeCode"], {"TypeCode": i["TypeCode"], "IssueType": i["IssueType"], "count": 0})
-            row["count"] += 1
+                row = by_type.setdefault(i["TypeCode"], {"TypeCode": i["TypeCode"], "IssueType": i["IssueType"], "count": 0})
+                row["count"] += 1
         resolve = [i["ResolveHours"] for i in issues if i["ResolveHours"] is not None]
     summary = {
         "total": len(issues),

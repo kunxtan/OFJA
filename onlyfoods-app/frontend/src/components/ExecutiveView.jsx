@@ -2707,7 +2707,8 @@ function StoreIssueReportSection({ ctx, storeId, style }) {
                  <strong style={{ color: T.ink, fontSize: '14px' }}>{report.IssueType || 'ไม่ระบุประเภท'}</strong>
                   <IssueStatusBadge status={report.IssueStatus}/>
                   {report.QueueNo && <Badge tone="neutral">คิว {report.QueueNo}</Badge>}
-                <div style={{ ...captionStyle, marginTop: '4px' }}> </div>
+                </div>
+                <div style={{ ...captionStyle, marginTop: '4px' }}>
                   ผู้แจ้ง: {report.CustomerName || `User ${report.UserId}`}
                   {report.OrderID ? ` · Order #${report.OrderID}` : ''}
                 </div>
