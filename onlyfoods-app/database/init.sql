@@ -302,6 +302,8 @@ CREATE TABLE Payment (
   RejectReason  VARCHAR(255)     NULL,
   VerifiedBy    INT UNSIGNED     NULL,
   PaidAt        DATETIME         NULL,
+  CashReceived  DECIMAL(10,2)    NULL COMMENT 'walk-in cash: money handed over by the customer',
+  ChangeGiven   DECIMAL(10,2)    NULL COMMENT 'walk-in cash: change returned (CashReceived - Amount)',
   CreatedAt     DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
   ActiveFlag    TINYINT UNSIGNED AS (IF(PaymentType = 'ORDER' AND PaymentStatus <> 'REJECTED', 1, NULL)) STORED,
   PRIMARY KEY (PaymentId),

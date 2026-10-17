@@ -3,6 +3,7 @@
 หมายเหตุ: ไม่มี user_role / performed_by / user_id ของผู้กระทำอีกแล้ว ตัวตนมาจาก JWT เท่านั้น
 ถ้า frontend เก่ายังส่งฟิลด์พวกนี้มา pydantic จะทิ้งโดยไม่ใช้ (extra = ignore)
 """
+from decimal import Decimal
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -163,6 +164,8 @@ class CreateOrderSchema(BaseModel):
     slip_url: Optional[str] = None
     payment_method: Optional[str] = None
     pickup_time: Optional[str] = None
+    # walk-in จ่ายเงินสด: เงินที่รับจากลูกค้า (server คำนวณเงินทอนเอง)
+    cash_received: Optional[Decimal] = Field(default=None, ge=0, le=100000, decimal_places=2)
 
 
 class TopUpSlipSchema(BaseModel):

@@ -2114,7 +2114,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                         <div><div className="k">ร้านค้า</div><div className="v">{detailOrder.StoreName || '-'}</div></div>
                         <div><div className="k">ลูกค้า</div><div className="v">{customerNameOf(detailOrder)}</div></div>
                         <div><div className="k">ผู้กดยกเลิก</div><div className="v">{detailInfo.by} <span className="berry-subtle">· {detailInfo.label}</span></div></div>
-                        <div><div className="k">ช่องทางชำระเงิน</div><div className="v">{detailOrder.PaymentMethod || '-'}</div></div>
+                        <div><div className="k">ช่องทางชำระเงิน</div><div className="v">{detailOrder.PaymentMethod || '-'}
+                          {(() => {
+                            const cash = (detailOrder.Payments || []).find(p => p.CashReceived != null);
+                            return cash ? <span className="berry-subtle"> · รับ ฿{Number(cash.CashReceived).toLocaleString('th-TH')} ทอน ฿{Number(cash.ChangeGiven || 0).toLocaleString('th-TH')}</span> : null;
+                          })()}
+                        </div></div>
                         <div><div className="k">วันที่ / เวลาที่สั่ง</div><div className="v">{fmtDateTh(detailOrder.CreatedAt)} เวลา {fmtTimeOnly(detailOrder.CreatedAt)} น.</div></div>
                         <div>
                           <div className="k">วันที่ / เวลาที่ยกเลิก</div>
