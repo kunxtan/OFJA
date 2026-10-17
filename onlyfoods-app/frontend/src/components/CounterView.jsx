@@ -104,6 +104,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
   const [historyDate, setHistoryDate] = useState(() => dateKey(Date.now()));
   const [pastHistory, setPastHistory] = useState({ date: null, list: [], loading: false });
+  const [historyFilter, setHistoryFilter] = useState('all');
+  const [historyQuery, setHistoryQuery] = useState('');
   const autoPromptedJobsRef = useRef(new Set()); // job ที่เด้ง popup อัตโนมัติไปแล้ว (ปิดแล้วไม่เด้งซ้ำ ยังกดจากแถบเหลืองได้)
   const [noShowModal, setNoShowModal] = useState(null);
   // อาหารพร้อมรับแล้วลูกค้ายังไม่มา: 15 นาที = ระบบเตือนลูกค้าเอง + ป้ายให้พนักงานโทรตาม ;
@@ -678,6 +680,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
       case 'Pending_Cancellation': return 'warning';
       case 'Awaiting_Top_Up': return 'warning';
       case 'NoShow': return 'danger';
+      case 'Cancelled': return 'danger';
+      case 'Completed': return 'success';
       case 'Cooking': return 'coral';
       default: return 'neutral';
     }
@@ -691,6 +695,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
       case 'NoShow': return 'ไม่มารับ (No-Show)';
       case 'Cooking': return 'กำลังปรุง';
       case 'Pending': return 'รอคิวเข้าครัว';
+      case 'Completed': return 'ส่งมอบแล้ว';
+      case 'Cancelled': return 'ยกเลิก';
+      case 'Verifying_Slip': return 'รอตรวจสลิป';
       default: return status;
     }
   };
@@ -785,9 +792,25 @@ export default function CounterView({ user, apiBase, onLogout }) {
     : null;
 
   // วันนี้: ใช้ข้อมูล live ที่ดึงอยู่แล้ว ; วันก่อน ๆ : ดึงเฉพาะวันนั้นตอนเลือก (ดู useEffect ของ pastHistory)
-  const historyOrders = (historyDate === dateKey(nowTick) ? orders : (pastHistory.date === historyDate ? pastHistory.list : []))
+  const historyDay = (historyDate === dateKey(nowTick) ? orders : (pastHistory.date === historyDate ? pastHistory.list : []))
     .filter(o => dateKey(o.CreatedAt) === historyDate)
     .sort((a, b) => (b.OrderID || 0) - (a.OrderID || 0));
+  // ตัวกรองสถานะ + ค้นหา (เลขคิว หรือชื่อลูกค้า)
+  const historyFilters = [
+    { id: 'all', label: 'ทั้งหมด', match: () => true },
+    { id: 'completed', label: 'สำเร็จ', match: (o) => o.Status === 'Completed' },
+    { id: 'cancelled', label: 'ยกเลิก', match: (o) => o.Status === 'Cancelled' },
+    { id: 'noshow', label: 'ไม่มารับ', match: (o) => o.Status === 'NoShow' },
+    { id: 'active', label: 'ยังไม่จบ', match: (o) => !['Completed', 'Cancelled', 'NoShow'].includes(o.Status) },
+  ];
+  const historyFilterNow = historyFilters.find(f => f.id === historyFilter) || historyFilters[0];
+  const historyMatchesQuery = (o) => {
+    const q = historyQuery.trim();
+    if (!q) return true;
+    const name = String(o.CustomerName || o.UserName || (isWalkInOrder(o) ? 'walk-in' : '')).toLowerCase();
+    return queueMatches(o, q) || name.includes(q.toLowerCase());
+  };
+  const historyOrders = historyDay.filter(o => historyFilterNow.match(o) && historyMatchesQuery(o));
   // จอเรียกคิว: แสดงแค่เลขคิว (จอสาธารณะ ไม่โชว์ชื่อ/เบอร์) ; คิวเก่าก่อน
   const DISPLAY_FLASH_MS = 10000;
   const displayCooking = orders.filter(o => ['Pending', 'Cooking'].includes(o.Status)).sort((a, b) => a.OrderID - b.OrderID);
@@ -1275,6 +1298,26 @@ export default function CounterView({ user, apiBase, onLogout }) {
                   <button className="cv-btn btn-ghost" onClick={() => setHistoryDate(dateKey(nowTick))}>วันนี้</button>
                 </div>
               </div>
+              <div className="queue-search">
+                <span className="queue-search-icon">🔍</span>
+                <input
+                  value={historyQuery}
+                  onChange={e => setHistoryQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setHistoryQuery(''); }}
+                  placeholder="ค้นหาเลขคิว เช่น 12 หรือชื่อลูกค้า"
+                  aria-label="ค้นหาประวัติออเดอร์"
+                />
+                {historyQuery.trim() && <button className="cv-btn btn-ghost" onClick={() => setHistoryQuery('')}>ล้าง</button>}
+              </div>
+              <div className="queue-tabs" role="tablist" aria-label="กรองตามสถานะ">
+                {historyFilters.map(f => (
+                  <button key={f.id} role="tab" aria-selected={historyFilter === f.id}
+                    className={`queue-tab ${historyFilter === f.id ? 'active' : ''}`}
+                    onClick={() => setHistoryFilter(f.id)}>
+                    {f.label} <span className="queue-tab-count">{historyDay.filter(f.match).length}</span>
+                  </button>
+                ))}
+              </div>
               <div className="cv-table-wrapper">
                 <table className="cv-table">
                   <thead>
@@ -1290,7 +1333,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
                   </thead>
                   <tbody>
                     {historyOrders.length === 0 ? (
-                      <tr><td colSpan="7" className="empty-state">{pastHistory.loading && pastHistory.date === historyDate ? 'กำลังโหลด...' : 'ไม่มีออเดอร์ในวันที่เลือก'}</td></tr>
+                      <tr><td colSpan="7" className="empty-state">{pastHistory.loading && pastHistory.date === historyDate ? 'กำลังโหลด...'
+                        : historyDay.length === 0 ? 'ไม่มีออเดอร์ในวันที่เลือก'
+                        : historyQuery.trim() ? `ไม่พบ "${historyQuery.trim()}" ในสถานะ "${historyFilterNow.label}"`
+                        : `ไม่มีออเดอร์สถานะ "${historyFilterNow.label}" ในวันที่เลือก`}</td></tr>
                     ) : (
                       historyOrders.map(o => (
                         <tr key={o.OrderID}>
