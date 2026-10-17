@@ -171,6 +171,9 @@ def get_orders(
     # ถ้าตัดที่ 300 รายการ ตัวเลขช่วงเก่าจะผิด จึงให้ค่าเริ่มต้นสูงพอสำหรับขนาดโปรเจกต์
     limit: int = Query(5000, ge=1, le=20000),
     offset: int = Query(0, ge=0),
+    # หน้าร้าน (ดึงทุก 3.5 วิ): live = ออเดอร์ที่ยังไม่จบ + ออเดอร์ของวันนี้ ; ไม่ต้องลากประวัติทั้งร้านมาทุกรอบ
+    scope: Optional[str] = Query(None, pattern="^live$"),
+    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),  # ประวัติรายวัน (YYYY-MM-DD)
     user=Depends(get_current_user),
     db=Depends(get_db),
 ):
@@ -199,6 +202,12 @@ def get_orders(
             raise DomainError(400, "สถานะที่ส่งมาไม่ถูกต้อง")
         where.append("os.StatusCode = %s")
         params.append(code)
+    if scope == "live":
+        where.append("(os.StatusCode NOT IN ('COMPLETED', 'CANCELLED', 'NO_SHOW') OR o.OrderDate = %s)")
+        params.append(bangkok_now().date())
+    if date:
+        where.append("o.OrderDate = %s")
+        params.append(date)
     sql = ORDER_SELECT + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY o.OrderId DESC LIMIT %s OFFSET %s"
     with db.cursor() as cur:
         cur.execute(sql, [*params, limit, offset])

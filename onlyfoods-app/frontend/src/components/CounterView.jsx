@@ -103,6 +103,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
   };
   const [historyDate, setHistoryDate] = useState(() => dateKey(Date.now()));
+  const [pastHistory, setPastHistory] = useState({ date: null, list: [], loading: false });
   const autoPromptedJobsRef = useRef(new Set()); // job ที่เด้ง popup อัตโนมัติไปแล้ว (ปิดแล้วไม่เด้งซ้ำ ยังกดจากแถบเหลืองได้)
   const [noShowModal, setNoShowModal] = useState(null);
   // อาหารพร้อมรับแล้วลูกค้ายังไม่มา: 15 นาที = ระบบเตือนลูกค้าเอง + ป้ายให้พนักงานโทรตาม ;
@@ -174,6 +175,17 @@ export default function CounterView({ user, apiBase, onLogout }) {
     else displayRef.current?.requestFullscreen?.().catch(() => showToast('เบราว์เซอร์นี้เปิดเต็มจอไม่ได้'));
   };
 
+  useEffect(() => {
+    if (activeTab !== 'history' || historyDate === dateKey(Date.now())) return;
+    let cancelled = false;
+    setPastHistory({ date: historyDate, list: [], loading: true });
+    fetch(`${apiBase}/api/orders?store_id=${activeStoreId}&date=${historyDate}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setPastHistory({ date: historyDate, list: Array.isArray(d) ? d : [], loading: false }); })
+      .catch(() => { if (!cancelled) setPastHistory({ date: historyDate, list: [], loading: false }); });
+    return () => { cancelled = true; };
+  }, [activeTab, historyDate, activeStoreId, apiBase]);
+
   const showToast = (msg) => {
     setToast({ show: true, msg });
     clearTimeout(window.__cvToastTimer);
@@ -181,7 +193,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
 
   const fetchData = () => {
-    fetch(`${apiBase}/api/orders?store_id=${activeStoreId}`)
+    // live = ออเดอร์ที่ยังไม่จบ + ของวันนี้ (ไม่ดึงประวัติทั้งร้านทุก 3.5 วิ ; วันก่อน ๆ ดึงตอนเปิดแท็บประวัติ)
+    fetch(`${apiBase}/api/orders?store_id=${activeStoreId}&scope=live`)
       .then(r => r.json())
       .then(d => setOrders(Array.isArray(d) ? d : []))
       .catch(err => console.error("Error orders:", err));
@@ -762,7 +775,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
     ? orders.find(o => ['Completed', 'Cancelled', 'NoShow', 'Verifying_Slip'].includes(o.Status) && queueMatches(o, queueQuery))
     : null;
 
-  const historyOrders = orders
+  // วันนี้: ใช้ข้อมูล live ที่ดึงอยู่แล้ว ; วันก่อน ๆ : ดึงเฉพาะวันนั้นตอนเลือก (ดู useEffect ของ pastHistory)
+  const historyOrders = (historyDate === dateKey(nowTick) ? orders : (pastHistory.date === historyDate ? pastHistory.list : []))
     .filter(o => dateKey(o.CreatedAt) === historyDate)
     .sort((a, b) => (b.OrderID || 0) - (a.OrderID || 0));
   // จอเรียกคิว: แสดงแค่เลขคิว (จอสาธารณะ ไม่โชว์ชื่อ/เบอร์) ; คิวเก่าก่อน
@@ -1267,7 +1281,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                   </thead>
                   <tbody>
                     {historyOrders.length === 0 ? (
-                      <tr><td colSpan="7" className="empty-state">ไม่มีออเดอร์ในวันที่เลือก</td></tr>
+                      <tr><td colSpan="7" className="empty-state">{pastHistory.loading && pastHistory.date === historyDate ? 'กำลังโหลด...' : 'ไม่มีออเดอร์ในวันที่เลือก'}</td></tr>
                     ) : (
                       historyOrders.map(o => (
                         <tr key={o.OrderID}>
