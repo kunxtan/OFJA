@@ -52,6 +52,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [pickupTime, setPickupTime] = useState("");
   const [queueEstimateOrders, setQueueEstimateOrders] = useState([]);
+  const [orderQueueEstimates, setOrderQueueEstimates] = useState({}); // { [storeId]: orders[] } สำหรับหน้าคำสั่งซื้อ
   const [foodCourtOpenTime, setFoodCourtOpenTime] = useState("");
   const [foodCourtCloseTime, setFoodCourtCloseTime] = useState("");
   const [orderNote, setOrderNote] = useState("");
@@ -1052,7 +1053,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!selectedStore || !isCartOpen || pickupTime) {
       setQueueEstimateOrders([]);
-        ;
+      return;
     }
   
     let cancelled = false;
@@ -1104,6 +1105,92 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         date.getMinutes()
       ).padStart(2, "0")}`;
     return `${formatTime(start)}–${formatTime(end)} น.`;
+  };
+
+  // ===== เวลารับโดยประมาณของ "แต่ละออเดอร์" ในหน้าคำสั่งซื้อ =====
+  const ACTIVE_ESTIMATE_STATUSES = ["pending", "cooking"];
+  const orderStatusKey = (order) => String(order?.Status || "").trim().toLowerCase();
+  const orderDishCount = (order) =>
+    (order?.items || []).reduce(
+      (sum, it) => sum + (String(it.ItemStatus || "NORMAL").toUpperCase() === "NORMAL" ? Number(it.Qty) || 0 : 0),
+      0
+    );
+
+  // โหลดคิวของร้านที่ลูกค้ามีออเดอร์ค้างอยู่ เฉพาะตอนเปิดแท็บคำสั่งซื้อ
+  const activeOrderStoreKey = myOrders
+    .filter((o) => ACTIVE_ESTIMATE_STATUSES.includes(orderStatusKey(o)) && !o.PickupTime)
+    .map((o) => o.StoreId)
+    .filter(Boolean)
+    .filter((id, i, arr) => arr.indexOf(id) === i)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (activeTab !== "orders" || !activeOrderStoreKey) return;
+    let cancelled = false;
+    const storeIds = activeOrderStoreKey.split(",");
+    const load = async () => {
+      const entries = await Promise.all(
+        storeIds.map(async (id) => {
+          try {
+            const res = await fetch(`${apiBase}/api/orders/queue-estimate?store_id=${id}`);
+            if (!res.ok) return [id, null];
+            const data = await res.json();
+            return [id, Array.isArray(data.orders) ? data.orders : []];
+          } catch (e) {
+            return [id, null];
+          }
+        })
+      );
+      if (cancelled) return;
+      setOrderQueueEstimates((prev) => {
+        const next = { ...prev };
+        entries.forEach(([id, orders]) => {
+          if (orders) next[id] = orders;
+        });
+        return next;
+      });
+    };
+    load();
+    const interval = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [apiBase, activeTab, activeOrderStoreKey]);
+
+  const getOrderPickupRange = (order) => {
+    const status = orderStatusKey(order);
+    if (status === "ready") return "พร้อมรับแล้ว";
+    if (!ACTIVE_ESTIMATE_STATUSES.includes(status)) return "-";
+
+    // ออเดอร์ที่นัดเวลารับไว้ ใช้เวลานัดตามที่ลูกค้าเลือก
+    if (order.PickupTime) return order.PickupTime;
+
+    const queue = orderQueueEstimates[order.StoreId];
+    if (!queue) return "กำลังคำนวณเวลา...";
+
+    const myId = Number(order.OrderID);
+    const ahead = queue
+      .filter((o) => ["PENDING", "COOKING"].includes(String(o.status || "").toUpperCase()))
+      .filter((o) => Number(o.order_id) < myId);
+    const aheadDishes = ahead.reduce((sum, o) => sum + (Number(o.dish_count) || 0), 0);
+    const myDishes = orderDishCount(order) || 1;
+    const totalDishes = aheadDishes + myDishes;
+    const buffer = totalDishes > 15 ? 1.2 : totalDishes >= 5 ? 1.1 : 1;
+    const totalMinutes = aheadDishes * 4 + myDishes * 4 * buffer;
+
+    // หักเวลาที่ผ่านไปแล้วนับจากตอนสั่ง (OrderTime เป็นเวลา Asia/Bangkok)
+    const placed = order.OrderTime ? new Date(String(order.OrderTime).replace(" ", "T") + "+07:00") : null;
+    const elapsed = placed && !Number.isNaN(placed.getTime()) ? (Date.now() - placed.getTime()) / 60000 : 0;
+    const remaining = Math.max(1, Math.ceil(totalMinutes - Math.max(0, elapsed)));
+
+    const start = new Date();
+    start.setSeconds(0, 0);
+    const end = new Date(start.getTime() + remaining * 60000);
+    const fmt = (d) =>
+      d.toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${fmt(start)}–${fmt(end)} น.`;
   };
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
@@ -1931,10 +2018,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           color: "#F97316",
                         }}
                       >
-                        {order.PickupTime || order.pickup_time || "รับทันที"}
+                        {getOrderPickupRange(order)}
                       </div>
 
-                      {!getCustomerPickupRange() && (
+                      {getOrderPickupRange(order) === "กำลังคำนวณเวลา..." && (
                         <div
                           style={{
                             fontSize: "10px",
