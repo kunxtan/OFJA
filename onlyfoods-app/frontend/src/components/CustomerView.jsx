@@ -1,5 +1,61 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
+
+// ป๊อปอัพแจ้งเตือนที่เด้งขึ้นด้านบนของทุกหน้า หายเองใน 6 วินาที แตะเพื่อไปหน้าการแจ้งเตือน
+function NotifToastItem({ toast, icon, onClose, onOpen }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 6000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast.key]);
+
+  return (
+    <div
+      onClick={onOpen}
+      role="alert"
+      style={{
+        pointerEvents: "auto",
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "12px",
+        padding: "14px 14px 14px 16px",
+        background: "#FFFFFF",
+        borderRadius: "16px",
+        borderLeft: "5px solid #EA580C",
+        boxShadow: "0 12px 32px rgba(42, 44, 65, 0.28)",
+        cursor: "pointer",
+        animation: "notifToastIn 0.3s ease-out",
+        fontFamily: "inherit",
+      }}
+    >
+      <div style={{ color: "#EA580C", flexShrink: 0, marginTop: "1px" }}>{icon}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: "900", fontSize: "14px", color: "#1E293B", marginBottom: "2px" }}>{toast.title}</div>
+        <div style={{ fontSize: "13px", color: "#475569", lineHeight: 1.45, overflowWrap: "anywhere" }}>{toast.message}</div>
+      </div>
+      <button
+        type="button"
+        aria-label="ปิดการแจ้งเตือน"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        style={{
+          border: "none",
+          background: "transparent",
+          color: "#94A3B8",
+          fontSize: "18px",
+          lineHeight: 1,
+          cursor: "pointer",
+          padding: "2px 4px",
+          fontFamily: "inherit",
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
 
 export default function CustomerView({ user, apiBase, onLogout }) {
 
@@ -53,6 +109,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [pickupTime, setPickupTime] = useState("");
   const [queueEstimateOrders, setQueueEstimateOrders] = useState([]);
   const [orderQueueEstimates, setOrderQueueEstimates] = useState({}); // { [storeId]: orders[] } สำหรับหน้าคำสั่งซื้อ
+  const [toasts, setToasts] = useState([]); // ป๊อปอัพแจ้งเตือนที่กำลังแสดง
+  const seenToastKeysRef = useRef(null); // คีย์การแจ้งเตือนที่เห็นแล้ว (null = ยังไม่โหลดครั้งแรก จึงไม่เด้งของเก่า)
+  const activeTabRef = useRef(activeTab); // ให้ fetchNotifs ที่อยู่ใน setInterval อ่านแท็บล่าสุดได้
+  activeTabRef.current = activeTab;
+  useEffect(() => {
+    seenToastKeysRef.current = null;
+    setToasts([]);
+  }, [userId]);
   const [foodCourtOpenTime, setFoodCourtOpenTime] = useState("");
   const [foodCourtCloseTime, setFoodCourtCloseTime] = useState("");
   const [orderNote, setOrderNote] = useState("");
@@ -336,6 +400,25 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       if (!res.ok) return;
       const data = await res.json();
       setNotifs(data);
+
+      // เด้งป๊อปอัพเฉพาะการแจ้งเตือนที่เพิ่งเข้ามาหลังเปิดแอป (โหลดครั้งแรกเก็บไว้เฉยๆ ไม่เด้งของเก่า)
+      if (Array.isArray(data)) {
+        if (seenToastKeysRef.current === null) {
+          seenToastKeysRef.current = new Set(data.map((n) => getNotifKey(n)));
+        } else {
+          const fresh = data.filter((n) => !seenToastKeysRef.current.has(getNotifKey(n)));
+          fresh.forEach((n) => seenToastKeysRef.current.add(getNotifKey(n)));
+          // อยู่หน้าการแจ้งเตือนอยู่แล้ว ไม่ต้องเด้งซ้ำ
+          if (fresh.length > 0 && activeTabRef.current !== "notifs") {
+            const incoming = fresh.map((n) => ({
+              key: getNotifKey(n),
+              title: n.Title || "Only Foods",
+              message: n.Message || "",
+            }));
+            setToasts((prev) => [...incoming, ...prev].slice(0, 3));
+          }
+        }
+      }
     } catch (error) {
       console.error("Error fetching notifications:", error);
     }
@@ -3159,6 +3242,41 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
+  // NOTIFICATION TOASTS (แสดงทุกหน้า)
+  const renderNotifToasts = () => {
+    if (toasts.length === 0) return null;
+    return (
+      <div
+        style={{
+          position: "fixed",
+          top: "max(12px, env(safe-area-inset-top))",
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "min(92vw, 420px)",
+          zIndex: 3000,
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          pointerEvents: "none",
+        }}
+      >
+        <style>{`@keyframes notifToastIn { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+        {toasts.map((toast) => (
+          <NotifToastItem
+            key={toast.key}
+            toast={toast}
+            icon={<NotiIcon />}
+            onClose={() => setToasts((prev) => prev.filter((t) => t.key !== toast.key))}
+            onOpen={() => {
+              setToasts((prev) => prev.filter((t) => t.key !== toast.key));
+              handleSelectTab("notifs");
+            }}
+          />
+        ))}
+      </div>
+    );
+  };
+
   // CUSTOM ALERT DIALOG
   const renderCustomAlert = () => {
     if (!alertData.isOpen) return null;
@@ -3481,6 +3599,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       {renderReportModal()}
       {renderViewReportsModal()}
       {renderCustomAlert()}
+      {renderNotifToasts()}
 
       {isCropModalOpen && cropImage && (
         <div
