@@ -168,16 +168,18 @@ export function TopUpModal({
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.75)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
       <div style={{ background: COLORS.white, width: "min(460px, 100%)", maxHeight: "92vh", overflowY: "auto", borderRadius: "24px", padding: "25px", textAlign: "center" }}>
-        <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>โอนส่วนต่างค่าอาหาร</h3>
+        <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>
+          ออเดอร์คิว #{topUpOrder.QueueNo} ต้องโอนส่วนต่าง
+        </h3>
         <p style={{ color: COLORS.gray, fontSize: "13px", marginTop: "6px" }}>
-          คิว #{topUpOrder.QueueNo} • ร้าน {topUpOrder.StoreName} • เมนูใหม่ราคาสูงกว่าเดิม
+          ร้าน {topUpOrder.StoreName} • เมนูที่เปลี่ยนราคาสูงกว่าเดิม
         </p>
         <div style={{ fontSize: "30px", fontWeight: "900", color: COLORS.orange, margin: "8px 0" }}>{amount.toFixed(2)} ฿</div>
 
         {waitingCheck ? (
           <div style={{ background: "#ECFDF5", color: "#047857", padding: "12px", borderRadius: "12px", fontSize: "14px", fontWeight: "800" }}>
             ส่งสลิปแล้ว รอร้านตรวจสอบ
-            <div style={{ fontSize: "12px", fontWeight: "normal", marginTop: "4px" }}>ร้านจะเริ่มทำอาหารหลังยืนยันสลิป (แนบใหม่ทับได้ถ้าส่งผิดรูป)</div>
+            <div style={{ fontSize: "12px", fontWeight: "normal", marginTop: "4px" }}>ร้านจะเริ่มทำอาหารหลังยืนยันสลิป ถ้าร้านปฏิเสธจะแนบสลิปใหม่ได้</div>
           </div>
         ) : (
           <>
@@ -194,20 +196,27 @@ export function TopUpModal({
           </>
         )}
 
-        <label style={{ display: "block", marginTop: "12px", padding: "12px", border: `2px dashed ${COLORS.border}`, borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "800", color: COLORS.navy }}>
-          {topUpSlip ? "เปลี่ยนรูปสลิป" : waitingCheck ? "แนบสลิปใหม่ (ทับใบเดิม)" : "เลือกรูปสลิปส่วนต่าง"}
-          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleTopUpSlipChange} style={{ display: "none" }} />
-        </label>
-        {topUpSlip && <img src={topUpSlip} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", margin: "10px auto 0", display: "block", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />}
+        {/* แนบแล้วทับไม่ได้จนกว่าร้านจะตรวจ (backend ปฏิเสธ) : ซ่อนช่องแนบระหว่างรอ */}
+        {!waitingCheck && (
+          <>
+            <label style={{ display: "block", marginTop: "12px", padding: "12px", border: `2px dashed ${COLORS.border}`, borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "800", color: COLORS.navy }}>
+              {topUpSlip ? "เปลี่ยนรูปสลิป" : "เลือกรูปสลิปส่วนต่าง"}
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleTopUpSlipChange} style={{ display: "none" }} />
+            </label>
+            {topUpSlip && <img src={topUpSlip} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", margin: "10px auto 0", display: "block", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />}
+          </>
+        )}
 
         <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
-          <button
-            onClick={submitTopUpSlip}
-            disabled={!topUpSlip || isSubmittingTopUp}
-            style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: topUpSlip ? COLORS.green : "#CCCCCC", color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: topUpSlip ? "pointer" : "not-allowed" }}
-          >
-            {isSubmittingTopUp ? "กำลังส่ง..." : "ส่งสลิปส่วนต่าง"}
-          </button>
+          {!waitingCheck && (
+            <button
+              onClick={submitTopUpSlip}
+              disabled={!topUpSlip || isSubmittingTopUp}
+              style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: topUpSlip ? COLORS.green : "#CCCCCC", color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: topUpSlip ? "pointer" : "not-allowed" }}
+            >
+              {isSubmittingTopUp ? "กำลังส่ง..." : "ส่งสลิปส่วนต่าง"}
+            </button>
+          )}
           {!waitingCheck && (
             <button
               onClick={cancelTopUpOrder}

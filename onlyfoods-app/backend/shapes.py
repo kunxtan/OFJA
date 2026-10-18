@@ -61,7 +61,7 @@ def shape_store(row: dict, today=None) -> dict:
 ORDER_SELECT = """
 SELECT o.OrderId AS OrderID, o.OrderId, o.StoreId, o.CustomerId AS UserId, o.CustomerId,
        o.CreatedByStaffId, o.QueueNo, o.TotalAmount, os.StatusCode, os.StatusNameTh,
-       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.PickupReminderAt, o.CancelReason, o.CancelDeadline,
+       o.Note, o.IsWalkIn, o.PickupTime, o.CreatedAt, o.ReadyAt, o.DeliveredAt, o.PickupReminderAt, o.CancelReason, o.CancelDeadline,
        o.LatePickupCount, o.LatePickupMinutes, o.LatePickupArrivalTime,
        s.StoreName, s.QueueCode, u.FullName AS CustomerName, u.Username AS UserName,
        u.Phone AS CustomerPhone, u.Email AS CustomerEmail,

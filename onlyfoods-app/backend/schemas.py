@@ -145,7 +145,8 @@ class ProductUpdateSchema(BaseModel):
 
 
 class NotifyOutStockSchema(BaseModel):
-    response_window_minutes: int = Field(ge=1, le=240)
+    # เวลาที่ให้ลูกค้าตอบใช้ config.OUT_OF_STOCK_RESPONSE_MINUTES เสมอ (client เดิมยังส่งมา ไม่ใช้แล้ว)
+    response_window_minutes: Optional[int] = None
 
 
 class OrderItemSchema(BaseModel):
@@ -184,7 +185,7 @@ class StatusUpdateSchema(BaseModel):
 
 class CancelRequestSchema(BaseModel):
     reason: str = Field(min_length=1, max_length=255)
-    response_window_minutes: int = Field(ge=1, le=240)
+    response_window_minutes: Optional[int] = None  # ไม่ใช้แล้ว ดู NotifyOutStockSchema
     # แจ้งของหมดจากหน้าคิว: จานที่หมด (OrderItemId) -> ลูกค้าเห็นว่าต้องเปลี่ยนจานไหน
     item_ids: Optional[List[int]] = Field(default=None, max_length=50)
     close_menu: bool = False  # ปิดเมนูของจานที่เลือกในร้านด้วย (คนอื่นสั่งไม่ได้)
@@ -246,6 +247,12 @@ class RefundPayoutSchema(BaseModel):
     account_name: Optional[str] = Field(default=None, max_length=100)
     qr_image: Optional[str] = None   # รูปใหม่ (data URL) ; ไม่ส่ง = ใช้ QR เดิม
     remove_qr: bool = False
+
+
+class RefundSlipCheckSchema(BaseModel):
+    """ตรวจสลิปของออเดอร์ที่ถูกบังคับยกเลิกก่อนร้านตรวจ : ผ่าน = คืนเงินต่อได้ ; ไม่ผ่าน = ไม่ต้องคืน"""
+    approved: bool
+    reason: Optional[str] = Field(default="", max_length=255)
 
 
 class RefundDoneSchema(BaseModel):

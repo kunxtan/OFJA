@@ -2,14 +2,14 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 import config
 from auth import require_role
 from db import get_db, transaction
 from errors import DomainError
 from schemas import FoodCourtScheduleSchema
-from services import get_foodcourt, log_audit
+from services import force_cancel_open_orders, get_foodcourt, log_audit, open_orders, queue_summary
 from utils import (bangkok_now, foodcourt_is_open, foodcourt_mode, next_transition, time_to_hhmm,
                    time_to_minutes)
 
@@ -49,9 +49,21 @@ def get_food_court_status(db=Depends(get_db)):
         return _status_payload(get_foodcourt(cur))
 
 
+@router.get("/open-orders")
+def get_food_court_open_orders(user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
+    """ออเดอร์ที่ยังไม่จบทุกร้าน (แสดงในหน้าต่างยืนยันก่อนปิดศูนย์อาหาร)"""
+    with db.cursor() as cur:
+        return open_orders(cur)
+
+
 @router.put("/toggle")
-def toggle_food_court(open: Optional[bool] = None, user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
-    """open=true/false = ตั้งเป็นสถานะนั้น (เป็นอยู่แล้ว = ไม่ทำอะไร) ; ไม่ส่ง = สลับ (client เดิม)"""
+def toggle_food_court(open: Optional[bool] = None,
+                      on_open_orders: Optional[str] = Query(None, pattern="^(finish|cancel)$"),
+                      user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
+    """open=true/false = ตั้งเป็นสถานะนั้น (เป็นอยู่แล้ว = ไม่ทำอะไร) ; ไม่ส่ง = สลับ (client เดิม)
+    ปิดตอนยังมีออเดอร์ค้าง (กฎ PO 1) ต้องเลือก on_open_orders: finish = ทำต่อจนจบ ; cancel = ยกเลิกทั้งหมดและคืนเงิน"""
+    forced = None
+    pending = []
     with transaction(db):
         with db.cursor() as cur:
             cur.execute("SELECT FoodCourtId, OpenTime, CloseTime, ManualOverride, OverrideUntil FROM FoodCourt ORDER BY FoodCourtId LIMIT 1 FOR UPDATE")
@@ -66,6 +78,12 @@ def toggle_food_court(open: Optional[bool] = None, user=Depends(require_role("EX
                         "override_until": payload["override_until"], "unchanged": True,
                         "message": "ศูนย์อาหารเปิดอยู่แล้ว" if current else "ศูนย์อาหารปิดอยู่แล้ว"}
             new_open = not current
+            if not new_open:
+                pending = open_orders(cur)
+                if pending and not on_open_orders:
+                    stores = len({r["store_id"] for r in pending})
+                    raise DomainError(409, f"ยังมีออเดอร์ที่ยังไม่จบ {len(pending)} ออเดอร์ใน {stores} ร้าน "
+                                           f"({queue_summary(pending)}) กรุณาเลือกว่าจะให้ทำต่อจนเสร็จหรือยกเลิกทั้งหมด")
             until = next_transition(fc["OpenTime"], fc["CloseTime"], now)
             cur.execute(
                 "UPDATE FoodCourt SET ManualOverride = %s, OverrideUntil = %s, UpdatedBy = %s, UpdatedAt = %s "
@@ -74,9 +92,16 @@ def toggle_food_court(open: Optional[bool] = None, user=Depends(require_role("EX
             )
             _broadcast(cur, "ศูนย์อาหาร",
                        "ศูนย์อาหารเปิดให้บริการแล้ว" if new_open else "ศูนย์อาหารปิดให้บริการแล้ว")
+            if pending and on_open_orders == "cancel":
+                forced = force_cancel_open_orders(db, cur, None, user["UserId"],
+                                                  "ศูนย์อาหารปิดให้บริการกะทันหัน (ผู้บริหารสั่งปิด)")
+        detail = {"override_until": until}
+        if pending:
+            detail.update(open_orders=len(pending), on_open_orders=on_open_orders, **(forced or {}))
         log_audit(db, user["UserId"], "OPEN_FOOD_COURT" if new_open else "CLOSE_FOOD_COURT", "FoodCourt",
-                  fc["FoodCourtId"], None, {"override_until": until})
+                  fc["FoodCourtId"], None, detail)
     return {
+        **({"forced": forced} if forced else {}),
         "success": True, "is_open": new_open, "mode": "OPEN" if new_open else "CLOSED",
         "override_until": until.strftime("%Y-%m-%d %H:%M:%S"),
         "message": "เปิดศูนย์อาหารเรียบร้อยแล้ว" if new_open else "ปิดศูนย์อาหารเรียบร้อยแล้ว",

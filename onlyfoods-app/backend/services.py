@@ -147,15 +147,23 @@ def lock_order(cur, order_id: int) -> dict:
 
 
 def do_transition(cur, order: dict, new_code: str, *, actor_id: Optional[int], reason: Optional[str] = None,
-                  system: bool = False, cancel_reason=_KEEP, cancel_deadline=_KEEP, now=None) -> None:
-    """เปลี่ยนสถานะ 1 ขั้น + log ใน OrderStatusLog (ต้องเรียกหลัง lock_order ใน transaction เดียวกัน)"""
+                  system: bool = False, cancel_reason=_KEEP, cancel_deadline=_KEEP, now=None,
+                  force: bool = False) -> None:
+    """เปลี่ยนสถานะ 1 ขั้น + log ใน OrderStatusLog (ต้องเรียกหลัง lock_order ใน transaction เดียวกัน)
+    force=True ใช้กับการบังคับยกเลิกของผู้บริหารเท่านั้น (ยกเลิกได้จากทุกสถานะที่ยังไม่จบ)"""
     old_code = order["StatusCode"]
-    state.assert_transition(old_code, new_code)
+    if force and new_code == state.CANCELLED:
+        state.assert_force_cancel(old_code)
+    else:
+        state.assert_transition(old_code, new_code)
     now = now or bangkok_now()
     sets = ["StatusId = %s"]
     args = [status_id(cur, new_code)]
     if new_code == state.READY:
         sets.append("ReadyAt = %s")
+        args.append(now)
+    elif new_code == state.COMPLETED:
+        sets.append("DeliveredAt = %s")
         args.append(now)
     if cancel_reason is not _KEEP:
         sets.append("CancelReason = %s")
@@ -177,6 +185,8 @@ def do_transition(cur, order: dict, new_code: str, *, actor_id: Optional[int], r
     order["StatusCode"] = new_code
     if new_code == state.READY:
         order["ReadyAt"] = now
+    elif new_code == state.COMPLETED:
+        order["DeliveredAt"] = now
 
 
 def log_first_status(cur, order_id: int, code: str, actor_id: Optional[int]) -> None:
@@ -301,6 +311,73 @@ def refund_full_cancel(cur, order_id: int, reason: str) -> Decimal:
     return total
 
 
+def refund_force_cancel(cur, order_id: int, reason: str) -> tuple:
+    """ผู้บริหารบังคับยกเลิก: คืนเงินทุกอย่างที่ลูกค้าจ่ายหรือแนบสลิปมาแล้ว คืน (ยอดที่ยืนยันแล้ว, ยอดที่สลิปยังไม่ได้ตรวจ)
+    - การชำระที่ยืนยันแล้ว -> คืนตามปกติ
+    - แนบสลิปแล้วแต่ร้านยังไม่ตรวจ (ค่าอาหาร หรือส่วนต่าง) -> สร้างรายการคืนเงินไว้ แต่การชำระยังเป็น PENDING
+      ร้านต้องตรวจสลิปก่อน (PUT /refunds/{id}/slip-check) ถึงจะกดคืนเงินได้ กันคืนเงินให้สลิปปลอม
+    - ยังไม่ได้แนบสลิป (ส่วนต่างที่ยังไม่โอน) -> ปิดรายการทิ้ง"""
+    cur.execute(
+        "SELECT PaymentId, PaymentType, Amount, SlipImageUrl FROM Payment "
+        "WHERE OrderId = %s AND PaymentStatus = 'PENDING' ORDER BY PaymentId FOR UPDATE",
+        (order_id,),
+    )
+    unverified = Decimal(0)
+    for pay in cur.fetchall():
+        if pay["SlipImageUrl"]:
+            remaining = Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"])
+            if remaining > 0:
+                create_refund(cur, pay["PaymentId"], "FULL_CANCEL", remaining, reason)
+                unverified += remaining
+        else:
+            cur.execute("UPDATE Payment SET PaymentStatus = 'REJECTED', RejectReason = %s WHERE PaymentId = %s",
+                        (f"ยกเลิกก่อนชำระ: {reason}"[:255], pay["PaymentId"]))
+    return refund_full_cancel(cur, order_id, reason), unverified
+
+
+def open_orders(cur, store_id: Optional[int] = None) -> List[dict]:
+    """ออเดอร์ที่ยังไม่จบ (ร้านเดียว หรือทั้งศูนย์อาหารถ้าไม่ส่ง store_id) ใช้แสดงในหน้าต่างยืนยันปิดร้าน"""
+    sql = """
+        SELECT o.OrderId, o.StoreId, o.QueueNo, s.QueueCode, s.StoreName, os.StatusCode
+        FROM `Order` o
+        JOIN OrderStatus os ON os.StatusId = o.StatusId
+        JOIN Store s ON s.StoreId = o.StoreId
+        WHERE os.IsTerminal = FALSE
+    """
+    args: list = []
+    if store_id is not None:
+        sql += " AND o.StoreId = %s"
+        args.append(store_id)
+    cur.execute(sql + " ORDER BY o.StoreId, o.OrderId", args)
+    return [{"order_id": r["OrderId"], "store_id": r["StoreId"], "store_name": r["StoreName"],
+             "queue": queue_label(r["QueueNo"], r["QueueCode"]), "status": r["StatusCode"],
+             "status_label": state.legacy_status(r["StatusCode"])} for r in cur.fetchall()]
+
+
+def queue_summary(rows: List[dict], limit: int = 10) -> str:
+    """เลขคิวจาก open_orders() เป็นข้อความสั้น ๆ (แสดงไม่เกิน limit คิว)"""
+    labels = [r["queue"] for r in rows]
+    more = len(labels) - limit
+    return ", ".join(labels[:limit]) + (f" และอีก {more} คิว" if more > 0 else "")
+
+
+def force_cancel_open_orders(db, cur, store_id: Optional[int], actor_id: int, reason: str) -> dict:
+    """ยกเลิกทุกออเดอร์ที่ยังไม่จบ + สร้างรายการคืนเงิน + แจ้งลูกค้า (ทีละออเดอร์ ล็อกแถวก่อนเสมอ)"""
+    now = bangkok_now()
+    cancelled, refunded, unverified = 0, Decimal(0), Decimal(0)
+    for row in open_orders(cur, store_id):
+        order = lock_order(cur, row["order_id"])
+        if order["StatusCode"] in state.TERMINAL:
+            continue  # จบไประหว่างรอล็อก
+        do_transition(cur, order, state.CANCELLED, actor_id=actor_id, reason=reason,
+                      cancel_reason=reason, cancel_deadline=None, now=now, force=True)
+        r, u = apply_status_effects(db, cur, order, state.CANCELLED, actor_id, reason, force=True)
+        cancelled += 1
+        refunded += r
+        unverified += u
+    return {"cancelled": cancelled, "refund_total": refunded, "unverified_total": unverified}
+
+
 # ------------------------------------------------------------- top-up (ส่วนต่าง)
 def pending_top_up(cur, order_id: int) -> Optional[dict]:
     """รายการโอนส่วนต่างที่ยังรออยู่ (มีได้ทีละ 1 รายการ) ; ล็อกแถวไว้"""
@@ -383,25 +460,31 @@ _MESSAGES = {
 
 
 def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Optional[int],
-                         reason: Optional[str]) -> None:
-    """ผลข้างเคียงหลังเปลี่ยนสถานะ: งานพิมพ์, คืนเงิน, แจ้งเตือนลูกค้า, audit"""
+                         reason: Optional[str], force: bool = False) -> tuple:
+    """ผลข้างเคียงหลังเปลี่ยนสถานะ: งานพิมพ์, คืนเงิน, แจ้งเตือนลูกค้า, audit
+    force=True = ผู้บริหารบังคับยกเลิก (คืนเงินรวมสลิปที่ยังไม่ได้ตรวจด้วย) ; คืน (ยอดคืนที่ยืนยันแล้ว, ยอดสลิปที่ยังไม่ตรวจ)"""
     oid = order["OrderId"]
     q = queue_label(order["QueueNo"], order.get("QueueCode"))
     if final_code == state.READY:
         queue_print_job(cur, oid)
     if final_code in _PRINT_SKIP_REASON:
         skip_queued_print_jobs(cur, oid, _PRINT_SKIP_REASON[final_code])
-    refunded = Decimal(0)
-    if final_code == state.CANCELLED:
+    refunded = unverified = Decimal(0)
+    if final_code == state.CANCELLED and force:
+        refunded, unverified = refund_force_cancel(cur, oid, reason or "ยกเลิกออเดอร์")
+    elif final_code == state.CANCELLED:
         close_pending_top_ups(cur, oid, "ออเดอร์ถูกยกเลิกก่อนโอนส่วนต่าง")
         refunded = refund_full_cancel(cur, oid, reason or "ยกเลิกออเดอร์")
-        if refunded > 0:
-            logger.info("refund created order=%s amount=%s", oid, refunded)
+    if refunded + unverified > 0:
+        logger.info("refund created order=%s amount=%s unverified=%s", oid, refunded, unverified)
     if order.get("CustomerId"):
         if final_code == state.CANCELLED:
             text = f"ออเดอร์คิว {q} ถูกยกเลิก" + (f": {reason}" if reason else "")
             if refunded > 0:
                 text += f" — กรุณารับเงินคืน {refunded:.2f} บาท ที่ร้าน {order.get('StoreName') or ''} โดยแจ้งเลขคิว {q}"
+            if unverified > 0:
+                text += (f" — สลิปยอด {unverified:.2f} บาท ร้านยังไม่ได้ตรวจ ร้านจะตรวจสลิปก่อนแล้วจึงคืนเงิน "
+                         f"(ดูสถานะได้ที่รายการคืนเงิน)")
             ntype = "ORDER_STATUS"
         elif final_code == state.READY:
             text, ntype = f"ออเดอร์คิว {q} {_MESSAGES[final_code]}", "QUEUE_CALLED"
@@ -413,7 +496,8 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
             send_notif(db, order["CustomerId"], ntype, f"คิว {q}", text, oid)
     action = "CANCEL_ORDER" if final_code == state.CANCELLED else "UPDATE_STATUS"
     log_audit(db, actor_id, action, "Order", oid, None,
-              {"status": final_code, "store_id": order["StoreId"], "reason": reason})
+              {"status": final_code, "store_id": order["StoreId"], "reason": reason, **({"forced": True} if force else {})})
+    return refunded, unverified
 
 # -------------------------------------------------------------------- contract
 def open_order_count(cur, store_id: int) -> int:
@@ -465,10 +549,11 @@ def purge_expired_stores(db, purge_after_days: int) -> int:
 
 
 # ------------------------------------------------------------------ food court
-def get_foodcourt(cur) -> dict:
+def get_foodcourt(cur, share_lock: bool = False) -> dict:
+    """share_lock=True (ตอนสร้างออเดอร์) : รอถ้าผู้บริหารกำลังกดปิดศูนย์อาหารอยู่ ; สร้างออเดอร์พร้อมกันหลายคนไม่ต้องรอกัน"""
     cur.execute(
         "SELECT FoodCourtId, FoodCourtName, OpenTime, CloseTime, ManualOverride, OverrideUntil "
-        "FROM FoodCourt ORDER BY FoodCourtId LIMIT 1"
+        "FROM FoodCourt ORDER BY FoodCourtId LIMIT 1" + (" FOR SHARE" if share_lock else "")
     )
     row = cur.fetchone()
     if not row:

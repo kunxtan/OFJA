@@ -254,6 +254,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         background: pending ? "#FEF3C7" : "#D1FAE5", color: pending ? "#92400E" : "#065F46", fontWeight: "700" }}>
         {pending ? (
           <>💸 รอรับเงินคืน {sum.pending.toFixed(2)} ฿ ที่ร้าน {order.StoreName}
+            {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.SlipUnverified) && (
+              <div style={{ fontWeight: "500", fontSize: "12px" }}>
+                ร้านกำลังตรวจสลิปที่คุณแนบ (ออเดอร์ถูกยกเลิกก่อนร้านตรวจ) ตรวจเสร็จแล้วจึงคืนเงินได้
+              </div>
+            )}
             <div style={{ fontWeight: "500", fontSize: "12px" }}>
               {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER")
                 ? "เลือกให้เจ้าของร้านโอนคืนแล้ว รอร้านดำเนินการ"
@@ -1832,6 +1837,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                   <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "8px" }}>
                     เวลาสั่งซื้อ: {order.OrderTime || order.order_time || order.CreatedAt || "-"}
+                    {order.DeliveredAt && <> • รับอาหารเมื่อ: {String(order.DeliveredAt).replace("T", " ").slice(0, 16)}</>}
                   </div>
 
                   {order.items && order.items.length > 0 && (

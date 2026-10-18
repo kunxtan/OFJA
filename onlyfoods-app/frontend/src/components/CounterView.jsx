@@ -565,7 +565,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     setCancelModal(null);
   };
 
-  // ⚠️ แจ้งของหมด: ลูกค้าออนไลน์เลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที
+  // ⚠️ แจ้งของหมด: ลูกค้าออนไลน์เลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 15 นาที
   const outItems = (order) => (order?.items || []).filter(i => !i.ItemStatus || i.ItemStatus === 'NORMAL');
   const openOutModal = (order) => {
     const items = outItems(order);
@@ -581,12 +581,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/cancel-request`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'วัตถุดิบหมด', response_window_minutes: 30, item_ids: selected, close_menu: closeMenu })
+        body: JSON.stringify({ reason: 'วัตถุดิบหมด', item_ids: selected, close_menu: closeMenu })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { showToast(data.detail || 'ไม่สามารถแจ้งของหมดได้'); return; }
       const closed = (data.closed_menus || []).length ? ` · ปิดเมนู ${data.closed_menus.join(', ')} แล้ว` : '';
-      showToast(`แจ้งลูกค้าคิว ${order.QueueNo} ให้เปลี่ยนเมนูแล้ว (30 นาที)${closed}`);
+      showToast(`แจ้งลูกค้าคิว ${order.QueueNo} ให้เปลี่ยนเมนูแล้ว (15 นาที)${closed}`);
       setOutModal(null);
       fetchData();
     } catch {
@@ -641,7 +641,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
       if (notify && notifiable.length) {
         const res = await fetch(`${apiBase}/api/products/${product.ProductId}/notify-out-of-stock`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ response_window_minutes: 30 })
+          body: JSON.stringify({})
         });
         const data = await res.json().catch(() => ({}));
         msg = res.ok
@@ -1368,6 +1368,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                     <tr>
                       <th>คิว</th>
                       <th>เวลาสั่ง</th>
+                      <th>ส่งมอบเมื่อ</th>
                       <th>ลูกค้า</th>
                       <th>รายการอาหาร</th>
                       <th>ยอดรวม</th>
@@ -1377,7 +1378,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                   </thead>
                   <tbody>
                     {historyOrders.length === 0 ? (
-                      <tr><td colSpan="7" className="empty-state">{pastHistory.loading && pastHistory.date === historyDate ? 'กำลังโหลด...'
+                      <tr><td colSpan="8" className="empty-state">{pastHistory.loading && pastHistory.date === historyDate ? 'กำลังโหลด...'
                         : historyDay.length === 0 ? 'ไม่มีออเดอร์ในวันที่เลือก'
                         : historyQuery.trim() ? `ไม่พบ "${historyQuery.trim()}" ในสถานะ "${historyFilterNow.label}"`
                         : `ไม่มีออเดอร์สถานะ "${historyFilterNow.label}" ในวันที่เลือก`}</td></tr>
@@ -1389,6 +1390,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                             {isWalkInOrder(o) && <span className="walkin-tag">Walk-in</span>}
                           </td>
                           <td>{o.CreatedAt ? new Date(o.CreatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                          <td>{o.DeliveredAt ? new Date(o.DeliveredAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                           <td>{o.CustomerName || o.UserName || 'ลูกค้า Walk-in'}</td>
                           <td>{o.items?.map(i => `${i.ProductName} (x${i.Qty})`).join(', ')}</td>
                           <td className="bold">฿{fmtMoney(o.TotalAmount)}</td>
@@ -1691,7 +1693,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="stock-queue-list">
                   {stockModal.notifiable.map(o => <span key={o.OrderID} className="stock-queue">{o.QueueNo}</span>)}
                 </div>
-                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ (ลูกค้ามารับเงินคืนที่ร้าน)</small>
+                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 15 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ (ลูกค้ามารับเงินคืนที่ร้าน)</small>
               </div>
             ) : (
               <p className="stock-none">ไม่มีออเดอร์ลูกค้าออนไลน์ที่ต้องแจ้ง</p>
@@ -1745,7 +1747,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
           <div className="cv-modal cv-out-modal" onClick={e => e.stopPropagation()}>
             <div className="cv-modal-head">
               <div><h3>⚠️ แจ้งของหมด · คิว {outModal.order.QueueNo}</h3>
-                <div className="caption">ลูกค้าเลือกเปลี่ยนเมนู หรือยกเลิกรับเงินคืนได้ภายใน 30 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ</div></div>
+                <div className="caption">ลูกค้าเลือกเปลี่ยนเมนู หรือยกเลิกรับเงินคืนได้ภายใน 15 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ</div></div>
               <button onClick={() => setOutModal(null)} className="cv-modal-close" disabled={outBusy}>✖</button>
             </div>
             <div className="out-label">เมนูไหนหมด? (เลือกได้หลายจาน)</div>
