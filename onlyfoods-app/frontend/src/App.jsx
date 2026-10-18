@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { startPolling } from './utils/polling';
 import AccountantView from './components/AccountantView';
 import CounterView from './components/CounterView';
 import CustomerView from './components/customer/CustomerView';
@@ -229,10 +230,8 @@ export default function App() {
     fetchStores();
     fetchProducts();
 
-    // Auto Polling: ดึงสถานะเปิด-ปิดโรงอาหารจากฝั่ง Exec แบบ Realtime ทุกๆ 5 วินาที
-    const statusInterval = setInterval(() => {
-      fetchFoodCourtStatus();
-    }, 5000);
+    // ดึงสถานะเปิด-ปิดศูนย์อาหารซ้ำ (หยุดเมื่อแท็บซ่อน ; เดิมทุก 5 วิตลอดเวลาทุกบทบาท)
+    const stopStatusPolling = startPolling(fetchFoodCourtStatus, 15000);
 
     const script = document.createElement('script');
     script.src = 'https://accounts.google.com/gsi/client';
@@ -248,7 +247,7 @@ export default function App() {
     };
     document.body.appendChild(script);
 
-    return () => clearInterval(statusInterval);
+    return () => stopStatusPolling();
   }, []);
 
   // 🟠 แสงส้มตามเมาส์บนพื้นหลัง (อัปเดตผ่าน CSS variable + rAF ไม่ re-render React)
