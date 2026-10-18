@@ -69,7 +69,9 @@ def login(data: LoginSchema, db=Depends(get_db)):
                 log_audit(db, row["UserId"], "ACCOUNT_LOCKED" if locked else "LOGIN_FAIL", "AUTH",
                           row["UserId"], None, {"failed_count": count})
             else:
-                log_audit(db, None, "LOGIN_FAIL", "AUTH", username[:50], None, {"reason": "unknown_username"})
+                # ชื่อที่ไม่มีในระบบ อาจเป็นรหัสผ่านที่พิมพ์ผิดช่อง : เก็บแบบปิดบางส่วน (AuditLog ลบ/แก้ไม่ได้)
+                log_audit(db, None, "LOGIN_FAIL", "AUTH", f"{username[:2]}***({len(username)})", None,
+                          {"reason": "unknown_username"})
         raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 
     if not row["IsActive"]:
