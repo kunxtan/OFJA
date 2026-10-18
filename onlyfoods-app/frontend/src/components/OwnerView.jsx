@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { startPolling } from '../utils/polling';
+import { useHistoryNav } from '../utils/historyNav';
 import { createPortal } from 'react-dom';
 import { RefundActionModals, STATUS_TH as REFUND_STATUS_TH, payoutLabel } from './RefundLog';
+import AuthImage, { openFile } from './AuthImage';
 
 /* ============================================================
    OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า (Executive Theme Colors)
@@ -2165,9 +2167,9 @@ function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
                   return (
                     <div key={p.PaymentId} className="nd-card sh-pay">
                       {p.SlipUrl ? (
-                        <a className="sh-slip" href={p.SlipUrl} target="_blank" rel="noopener noreferrer" title="เปิดสลิปขนาดเต็ม">
-                          <img src={p.SlipUrl} alt="สลิปการโอน" />
-                        </a>
+                        <button type="button" className="sh-slip" onClick={() => openFile(apiBase, p.SlipUrl)} title="เปิดสลิปขนาดเต็ม">
+                          <AuthImage apiBase={apiBase} src={p.SlipUrl} alt="สลิปการโอน" />
+                        </button>
                       ) : (
                         <span className="sh-slip none"><Icon name={p.MethodCode === 'CASH' ? 'coin' : 'receipt'} size={20} /></span>
                       )}
@@ -2365,10 +2367,15 @@ function ReviewCard({ review, onPhoto }) {
 
       <footer className="rv-order">
         <div className="rv-order-meta">
-          <span className="rv-queue">คิว {r.QueueNo}</span>
-          <span>สั่งเมื่อ {thaiDateTime(r.OrderedAt)}</span>
-          <span>฿{fmtMoney(r.TotalAmount)}</span>
-          <span className="rv-time" title={thaiDateTime(r.CreatedAt, true)}>รีวิว {timeAgo(r.CreatedAt)}</span>
+          {/* M15: ร้านไม่เห็นเลขคิว/ยอด/เวลาเป๊ะ (backend ไม่ส่งมา) เหลือวัน + ช่วงเวลา ; ผู้บริหารยังเห็นครบ */}
+          {r.QueueNo && <span className="rv-queue">คิว {r.QueueNo}</span>}
+          {r.OrderedAt
+            ? <span>สั่งเมื่อ {thaiDateTime(r.OrderedAt)}</span>
+            : r.OrderedDate && <span>สั่งวันที่ {thaiDate(r.OrderedDate)}{r.OrderedPeriod ? ` ช่วง${r.OrderedPeriod}` : ''}</span>}
+          {r.TotalAmount != null && <span>฿{fmtMoney(r.TotalAmount)}</span>}
+          {r.CreatedPeriod
+            ? <span className="rv-time">รีวิววันที่ {thaiDate(r.CreatedAt)} ช่วง{r.CreatedPeriod}</span>
+            : <span className="rv-time" title={thaiDateTime(r.CreatedAt, true)}>รีวิว {timeAgo(r.CreatedAt)}</span>}
         </div>
         {r.items?.length > 0 && (
           <div className="rv-items">
@@ -2519,12 +2526,14 @@ function IssueCard({ issue, busy, onAction }) {
 
       <p className="is-quote">{i.Description}</p>
 
-      {i.OrderID ? (
+      {(i.HasOrder ?? i.OrderID) ? (
         <div className="is-order">
           <div className="is-order-meta">
-            <span className="rv-queue">คิว {i.QueueNo}</span>
-            <span>สั่ง {thaiDateTime(i.OrderedAt, true)}</span>
-            {i.TotalAmount !== null && <span>฿{fmtMoney(i.TotalAmount)}</span>}
+            {i.QueueNo && <span className="rv-queue">คิว {i.QueueNo}</span>}
+            {i.OrderedAt
+              ? <span>สั่ง {thaiDateTime(i.OrderedAt, true)}</span>
+              : i.OrderedDate && <span>สั่งวันที่ {thaiDate(i.OrderedDate)}{i.OrderedPeriod ? ` ช่วง${i.OrderedPeriod}` : ''}</span>}
+            {i.TotalAmount != null && <span>฿{fmtMoney(i.TotalAmount)}</span>}
             {i.OrderStatusNameTh && <span className="is-order-status">{i.OrderStatusNameTh}</span>}
             {i.ReadyMinutes !== null && (
               <span className={`is-ready ${i.TypeCode === 'SLOW_SERVICE' ? 'hl' : ''}`}><Icon name="clock" size={12} /> สั่ง → เรียกคิว {formatDuration(i.ReadyMinutes)}</span>
@@ -2637,6 +2646,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const storePeriod = resolvePeriod({ anchor: storeAnchor, days: storeDays, custom: customRange, customStart, customEnd });
   
   const [page, setPage] = useState('dashboard');
+  useHistoryNav(page, (hash) => {
+    const p = hash ?? 'dashboard';
+    if (!['dashboard', 'menu', 'history', 'staff', 'refunds', 'reviews', 'issues'].includes(p)) return false;
+    setPage(p);
+    return true;
+  });
   
   // มือถือ (≤768px): ปิดแถบเมนูไว้ก่อน ; จอใหญ่: เปิดไว้
   const isMobileWidth = () => typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -2868,6 +2883,25 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       setUnreadCancels(ids.filter(id => !seenCancelIdsRef.current.has(id)).length);
     }
   }, [cancels, page]);
+
+  // ป้ายตัวเลขเมนูคืนเงิน = รายการรอคืน "ใหม่ที่ยังไม่ได้เปิดดู" (เปิดหน้าแล้วหาย)
+  // จำในเบราว์เซอร์ต่อร้าน : รีเฟรช/เข้าใหม่แล้วรายการที่เคยดูไม่เด้งกลับ ; จำนวนที่ยังค้างดูได้จาก caption ของเมนู
+  const seenRefundsKey = `owner.seenRefunds.${storeId}`;
+  const [seenRefundIds, setSeenRefundIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(seenRefundsKey) || '[]')); } catch { return new Set(); }
+  });
+  const unseenRefundCount = useMemo(
+    () => refunds.filter(r => r.RefundStatus === 'PENDING' && !seenRefundIds.has(r.RefundId)).length,
+    [refunds, seenRefundIds],
+  );
+  useEffect(() => {
+    if (page !== 'refunds' || !loaded.refunds) return;
+    // เก็บเฉพาะรายการที่ยังรอคืน : คืนแล้วไม่ต้องจำ ไฟล์ไม่โตเรื่อย ๆ
+    const pendingIds = refunds.filter(r => r.RefundStatus === 'PENDING').map(r => r.RefundId);
+    if (pendingIds.every(id => seenRefundIds.has(id)) && seenRefundIds.size === pendingIds.length) return;
+    setSeenRefundIds(new Set(pendingIds));
+    try { localStorage.setItem(seenRefundsKey, JSON.stringify(pendingIds)); } catch { /* ไม่เป็นไร */ }
+  }, [page, refunds, loaded.refunds, seenRefundIds, seenRefundsKey]);
 
   const markAllRead = async () => {
     setUnreadCancels(0);
@@ -3230,7 +3264,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history', badge: unreadCancels > 0 ? unreadCancels : null },
     { id: 'reviews', label: 'Customer Reviews', caption: 'รีวิวจากลูกค้า', icon: 'star' },
     { id: 'issues', label: 'Issue Reports', caption: 'ประวัติการแจ้งปัญหา', icon: 'alert' },
-    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: 'รอคืน / คืนแล้ว', icon: 'coin', badge: pendingRefundCount || null },
+    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: pendingRefundCount ? `รอคืน ${pendingRefundCount} รายการ` : 'รอคืน / คืนแล้ว', icon: 'coin', badge: unseenRefundCount || null },
   ];
   const navById = Object.fromEntries(navItemsAll.map(n => [n.id, n]));
   const navGroups = [
@@ -4441,7 +4475,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   </div>
                 </PageHeader>
 
-                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมลของคนรีวิว</div>
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบไม่แสดงชื่อ เบอร์ เลขคิว หรือยอดของออเดอร์ที่รีวิว เห็นแค่เมนู วันที่ และช่วงเวลา (ลูกค้าคนเดียวกันใช้รหัสเดิม)</div>
 
                 <div className="rv-overview">
                   <section className="rv-score">
@@ -4520,7 +4554,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   </div>
                   <div className="mm-search">
                     <Icon name="search" size={16} />
-                    <input value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} placeholder="ค้นหาในความเห็น ชื่อเมนู หรือเลขคิว..." aria-label="ค้นหารีวิว" />
+                    <input value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} placeholder="ค้นหาในความเห็น หรือชื่อเมนู..." aria-label="ค้นหารีวิว" />
                     {reviewSearch && <button type="button" onClick={() => setReviewSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>}
                   </div>
                 </div>
@@ -4787,9 +4821,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                                       {r.PayoutMethod === 'TRANSFER' ? 'โอนคืน' : 'คืนเงินแล้ว'}
                                     </button>
                                   ) : r.TransferSlipUrl ? (
-                                    <a className="rr-btn ghost" href={`${apiBase}${r.TransferSlipUrl}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+                                    <button type="button" className="rr-btn ghost" onClick={stop(() => openFile(apiBase, r.TransferSlipUrl))}>
                                       <Icon name="eye" size={14} /> สลิปโอน
-                                    </a>
+                                    </button>
                                   ) : (
                                     <span className="sh-chevron"><Icon name="arrowRight" size={16} /></span>
                                   )}
@@ -4854,7 +4888,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   <span className={`op-count-chip ${pending ? 'danger' : ''}`}>{pending ? `ต้องจัดการ ${fmtMoney(pending)} เรื่อง` : `${fmtMoney(issues.length)} รายการ`}</span>
                 </PageHeader>
 
-                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อผู้แจ้งแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมล ตอบกลับลูกค้าได้ผ่านปุ่มในแต่ละเรื่อง</div>
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบไม่แสดงชื่อ เบอร์ หรือเลขคิวของผู้แจ้ง เห็นแค่เมนู วันที่ และช่วงเวลาของออเดอร์ ตอบกลับลูกค้าได้ผ่านปุ่มในแต่ละเรื่อง</div>
 
                 <div className="sf-stats">
                   {kpis.map(k => (
@@ -6493,7 +6527,7 @@ body, html {
 .sh-cancel-reason { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: var(--berry-red-light); color: var(--berry-red); font-size: 12.5px; font-weight: 600; }
 
 .sh-pay { display: flex; gap: 12px; align-items: flex-start; }
-.sh-slip { width: 64px; height: 84px; min-width: 64px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); }
+.sh-slip { width: 64px; height: 84px; min-width: 64px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); padding: 0; cursor: pointer; }
 .sh-slip img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s ease; }
 .sh-slip:hover img { transform: scale(1.06); }
 .sh-slip.none { height: 64px; }

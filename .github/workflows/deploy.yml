@@ -86,6 +86,12 @@ jobs:
           # กันค้าง: รอล็อกตารางได้ไม่เกิน 60 วิ, ปิด migration ค้างจากรอบก่อน และ connection ที่ถือตารางค้าง (ดูในไฟล์)
           DC="sudo docker compose -f $COMPOSE_FILE_NAME" bash database/apply_migrations.sh
 
+      - name: Limit app database user
+        run: |
+          cd "$APP_DIR/onlyfoods-app"
+          # L26 : user ที่ backend ใช้ (MYSQL_USER) ได้แค่ SELECT/INSERT/UPDATE/DELETE ; migration ยังใช้ root
+          DC="sudo docker compose -f $COMPOSE_FILE_NAME" bash database/restrict_app_user.sh
+
       - name: Build and start
         run: |
           set -e
@@ -94,6 +100,17 @@ jobs:
           # up -d --build จะสร้างใหม่เฉพาะ service ที่เปลี่ยน และไม่แตะ volume ข้อมูล
           # --remove-orphans : ลบ container ที่ไม่มีในไฟล์แล้ว (เช่น certbot จากรอบก่อน)
           sudo docker compose -f "$COMPOSE_FILE_NAME" up -d --build --remove-orphans
+          # nginx.conf ถูก mount เป็นไฟล์เดี่ยว : git pull เขียนไฟล์ใหม่ (inode ใหม่) แต่ container ยังเห็นไฟล์เก่า
+          # และ up -d ไม่สร้าง proxy ใหม่เพราะ image ไม่เปลี่ยน -> ถ้าไฟล์ในเครื่องกับใน container ไม่ตรงกัน
+          # ให้ตรวจ config ใหม่ก่อน (ผิด = ไม่แตะ proxy ตัวเดิม) แล้วค่อยรีสตาร์ท proxy (เว็บสะดุด ~1 วินาที)
+          want=$(sha256sum nginx.conf | cut -d' ' -f1)
+          have=$(sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T proxy sha256sum /etc/nginx/nginx.conf 2>/dev/null | cut -d' ' -f1 || true)
+          if [ "$want" != "$have" ]; then
+            echo "nginx.conf เปลี่ยน -> ตรวจ config แล้วรีสตาร์ท proxy"
+            sudo docker run --rm --network "$(sudo docker compose -f "$COMPOSE_FILE_NAME" ps -q proxy | xargs -r sudo docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}')" \
+              -v "$PWD/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.27-alpine nginx -t
+            sudo docker compose -f "$COMPOSE_FILE_NAME" up -d --force-recreate --no-deps proxy
+          fi
           sudo docker compose -f "$COMPOSE_FILE_NAME" ps
           sudo docker image prune -f
 

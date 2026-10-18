@@ -142,6 +142,14 @@ _NAME_TITLES = {"คุณ", "นาย", "นาง", "นางสาว", "�
 _THAI_LEADING_VOWELS = "เแโใไ"
 
 
+def day_period(value) -> Optional[str]:
+    """ช่วงเวลาของวันแบบหยาบ (ให้ร้านเห็นแค่ช่วง ไม่เห็นเวลาเป๊ะที่จับคู่กับออเดอร์ได้)"""
+    if not value:
+        return None
+    h = value.hour
+    return "เช้า" if h < 11 else "เที่ยง" if h < 14 else "บ่าย" if h < 17 else "เย็น"
+
+
 def mask_person_name(name: Optional[str]) -> str:
     """ชื่อคนรีวิวแบบย่อ (ไม่ระบุตัวตน): 'คุณ สมหมาย ใจดี' -> 'สม*** จ.' ; 'ยูฟ่า (ลูกค้า VIP)' -> 'ยู***'
     ตัดคำนำหน้า/ข้อความในวงเล็บ ; นามสกุลเหลือตัวอักษรแรก (ข้ามสระหน้า เ แ โ ใ ไ)"""
@@ -181,6 +189,10 @@ _MAGIC = {
     "webp": (b"RIFF",),
     "gif": (b"GIF87a", b"GIF89a"),
 }
+
+
+# โฟลเดอร์รูปที่เปิดสาธารณะที่ /uploads/<folder>/ ; โฟลเดอร์อื่น (slips, refunds) เปิดผ่าน /api/files เท่านั้น
+PUBLIC_UPLOAD_FOLDERS = ("products", "stores", "profiles", "reviews")
 
 
 def save_image(value: Optional[str], folder: str, upload_dir: Optional[str] = None, *,

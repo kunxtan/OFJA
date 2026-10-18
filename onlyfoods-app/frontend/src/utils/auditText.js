@@ -76,7 +76,10 @@ export const AUDIT_VERBS = {
     CREATE_ISSUE: 'ลูกค้าแจ้งปัญหา',
     UPDATE_ISSUE: 'อัปเดตรายงานปัญหา',
     REFUND_SLIP_APPROVE: 'ตรวจสลิปผ่าน (ออเดอร์ที่ถูกบังคับยกเลิก)',
-    REFUND_SLIP_REJECT: 'ตรวจสลิปไม่ผ่าน (ออเดอร์ที่ถูกบังคับยกเลิก)'
+    REFUND_SLIP_REJECT: 'ตรวจสลิปไม่ผ่าน (ออเดอร์ที่ถูกบังคับยกเลิก)',
+    BAN_USER: 'ระงับบัญชีลูกค้า',
+    UNBAN_USER: 'เปิดใช้งานบัญชีลูกค้า',
+    GOOGLE_LINK: 'เชื่อมบัญชีกับ Google'
 };
 
 export const auditCodesMatching = (keyword) => Object.keys(AUDIT_VERBS)
@@ -146,8 +149,11 @@ const AUDIT_DETAIL = {
     OUT_OF_STOCK: (p) => [auditQuote(p.name), p.from_order ? `(จากออเดอร์ #${p.from_order})` : ''],
     BACK_IN_STOCK: (p) => [auditQuote(p.name)],
     OUT_OF_STOCK_NOTIFY: (p) => [auditQuote(p.name), p.orders ? `${p.orders} ออเดอร์` : ''],
-    LOGIN: (p) => [p.method === 'google' ? 'ด้วย Google' : ''],
-    LOGIN_FAIL: (p, log) => [p.reason === 'unknown_username' ? `ไม่พบชื่อผู้ใช้ ${auditQuote(log.EntityId)}` : p.failed_count ? `รหัสผ่านไม่ถูกต้อง (ครั้งที่ ${p.failed_count})` : ''],
+    LOGIN: (p) => [p.method === 'google' ? 'ด้วย Google' : p.method === 'google_link' ? 'ด้วย Google (เพิ่งเชื่อมบัญชี)' : ''],
+    BAN_USER: (p) => [who(p), why(p.reason)],
+    UNBAN_USER: (p) => [who(p), p.reason ? `หมายเหตุ: ${p.reason}` : ''],
+    GOOGLE_LINK: (p) => [p.email ? `อีเมล ${p.email}` : ''],
+    LOGIN_FAIL: (p, log) => [p.reason === 'unknown_username' ? `ไม่พบชื่อผู้ใช้ ${auditQuote(log.EntityId)}` : p.failed_count ? `รหัสผ่านไม่ถูกต้อง (ครั้งที่ ${p.failed_count})` : 'รหัสผ่านไม่ถูกต้อง', p.throttled_seconds ? `ต้องรอ ${p.throttled_seconds} วินาทีก่อนลองใหม่` : ''],
     ACCOUNT_LOCKED: (p) => [p.failed_count ? `ใส่รหัสผ่านผิด ${p.failed_count} ครั้ง` : ''],
     CREATE_STAFF: (p) => [who(p), AUDIT_ROLE_TH[p.role] ? `ตำแหน่ง${AUDIT_ROLE_TH[p.role]}` : ''],
     UPDATE_STAFF: (p) => [AUDIT_ROLE_TH[p.role] ? `เปลี่ยนตำแหน่งเป็น${AUDIT_ROLE_TH[p.role]}` : ''],

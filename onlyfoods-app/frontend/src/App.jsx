@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { startPolling } from './utils/polling';
+import { savedUser, saveUser } from './authFetch.js';
+import { clearHistoryNav } from './utils/historyNav';
 import AccountantView from './components/AccountantView';
 import CounterView from './components/CounterView';
 import CustomerView from './components/customer/CustomerView';
@@ -205,7 +207,10 @@ function decodeJwtPayload(token) {
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
+  // refresh แล้วไม่หลุด : กู้ผู้ใช้จาก sessionStorage (มี token อยู่เท่านั้น ; token ใช้ไม่ได้แล้ว backend ตอบ 401 -> กลับหน้า login)
+  const [currentUser, setCurrentUser] = useState(() => savedUser());
+  // เข้าสู่ระบบด้วย Google แต่อีเมลนี้มีบัญชีที่ใช้รหัสผ่านอยู่แล้ว : { credential, username, message, password, error, busy }
+  const [googleLink, setGoogleLink] = useState(null);
   const [stores, setStores] = useState([]);
   const [products, setProducts] = useState([]);
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
@@ -226,9 +231,18 @@ export default function App() {
   const API_BASE = import.meta.env.VITE_API_URL || window.location.origin;
 
   
+  useEffect(() => { saveUser(currentUser); }, [currentUser]);
+
+  const logout = () => {
+    window.dispatchEvent(new Event('auth:logout'));  // authFetch.js ทิ้ง token + ข้อมูลใน sessionStorage
+    clearHistoryNav();
+    setCurrentUser(null);
+  };
+
   // token ใช้ไม่ได้แล้ว (สัญญาร้านหมด / บัญชีถูกระงับ / หมดอายุ) -> กลับหน้า login พร้อมข้อความจาก backend (ดู authFetch.js)
   useEffect(() => {
     const onExpired = (e) => {
+      clearHistoryNav();
       setCurrentUser(null);
       setAuthTab('login');
       setAuthError(e.detail || 'กรุณาเข้าสู่ระบบใหม่');
@@ -337,36 +351,75 @@ export default function App() {
     return roleMap[role] || role || 'Customer';
   };
 
+  // ผลเข้าสู่ระบบด้วย Google (จาก /api/auth/google หรือ /api/auth/google/link)
+  const applyGoogleLogin = (data, credential) => {
+    const payload = decodeJwtPayload(credential);  // ชื่อ/รูปไว้เติมฟอร์มโปรไฟล์เท่านั้น (ตัวตนจริง server ตรวจกับ Google)
+    const user = data.user;
+    setCurrentUser({
+      UserId: user.UserId, id: user.UserId,
+      username: user.Username,
+      role: mapRole(user.Role),
+      FullName: user.FullName, name: user.FullName || user.Username,
+      Phone: user.Phone
+    });
+    if (data.is_profile_incomplete) {
+      setProfileForm({ full_name: user.FullName || payload.name || '', phone: '', profile_img: payload.picture || '' });
+      setShowProfileModal(true);
+    }
+  };
+
+  const googleLogin = async (credential, createNew = false) => {
+    const res = await fetch(`${API_BASE}/api/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: credential, create_new: createNew })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 409 && data.link_required) {
+      // ไม่ผูกให้เอง: ต้องใส่รหัสผ่านของบัญชีเดิมก่อน (กันคนสมัครด้วยอีเมลของคนอื่นแล้วรอให้เจ้าของจริงผูก Google ให้)
+      setGoogleLink({ credential, username: data.username, message: data.detail, password: '', error: '', busy: false });
+      return;
+    }
+    if (!res.ok) throw new Error(apiErrorText(data, 'เข้าสู่ระบบด้วย Google ไม่สำเร็จ'));
+    setGoogleLink(null);
+    applyGoogleLogin(data, credential);
+  };
+
   const handleGoogleResponse = async (response) => {
     try {
-      // อ่านชื่อ/รูปจาก token ไว้เติมฟอร์มโปรไฟล์เท่านั้น (ตัวตนจริงให้ server ตรวจกับ Google เอง)
-      const payload = decodeJwtPayload(response.credential);
-
-      const res = await fetch(`${API_BASE}/api/auth/google`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id_token: response.credential })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail);
-
-      const user = data.user;
-      const finalRole = mapRole(user.Role);
-
-      setCurrentUser({
-        UserId: user.UserId, id: user.UserId,
-        username: user.Username,
-        role: finalRole,
-        FullName: user.FullName, name: user.FullName || user.Username,
-        Phone: user.Phone
-      });
-
-      if (data.is_profile_incomplete) {
-        setProfileForm({ full_name: user.FullName || payload.name || '', phone: '', profile_img: payload.picture || '' });
-        setShowProfileModal(true);
-      }
+      await googleLogin(response.credential);
     } catch (err) {
       alert(`Google Auth Error: ${err.message}`);
+    }
+  };
+
+  const submitGoogleLink = async (e) => {
+    e.preventDefault();
+    if (!googleLink || googleLink.busy) return;
+    setGoogleLink(g => ({ ...g, busy: true, error: '' }));
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/google/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: googleLink.credential, password: googleLink.password })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(apiErrorText(data, 'เชื่อมบัญชีไม่สำเร็จ'));
+      const credential = googleLink.credential;
+      setGoogleLink(null);
+      applyGoogleLogin(data, credential);
+    } catch (err) {
+      setGoogleLink(g => g && ({ ...g, busy: false, error: err.message }));
+    }
+  };
+
+  const createSeparateGoogleAccount = async () => {
+    if (!googleLink || googleLink.busy) return;
+    setGoogleLink(g => ({ ...g, busy: true, error: '' }));
+    try {
+      await googleLogin(googleLink.credential, true);
+    } catch (err) {
+      setGoogleLink(g => g && ({ ...g, busy: false, error: err.message }));
     }
   };
 
@@ -1094,12 +1147,49 @@ export default function App() {
         </div>
       ) : (
         <div style={{ width: '100%', minHeight: '100vh', background: '#F8FAFC', padding: 0, margin: 0 }}>
-          {currentUser.role === 'Customer' && <CustomerView user={currentUser} apiBase={API_BASE} stores={stores} products={products} foodCourtOpen={foodCourtOpen} onLogout={() => setCurrentUser(null)} />}
-          {currentUser.role === 'Kitchen' && <KitchenView user={currentUser} apiBase={API_BASE} onLogout={() => setCurrentUser(null)} />}
-          {currentUser.role === 'Front' && <CounterView user={currentUser} apiBase={API_BASE} stores={stores} onLogout={() => setCurrentUser(null)} />}
-          {currentUser.role === 'Owner' && <OwnerView user={currentUser} apiBase={API_BASE} onLogout={() => setCurrentUser(null)} />}
-          {currentUser.role === 'Accountant' && <AccountantView user={currentUser} apiBase={API_BASE} onLogout={() => setCurrentUser(null)} />}
-          {currentUser.role === 'Executive' && <ExecutiveView user={currentUser} apiBase={API_BASE} onStatusChange={fetchFoodCourtStatus} onLogout={() => setCurrentUser(null)} />}
+          {currentUser.role === 'Customer' && <CustomerView user={currentUser} apiBase={API_BASE} stores={stores} products={products} foodCourtOpen={foodCourtOpen} onLogout={logout} />}
+          {currentUser.role === 'Kitchen' && <KitchenView user={currentUser} apiBase={API_BASE} onLogout={logout} />}
+          {currentUser.role === 'Front' && <CounterView user={currentUser} apiBase={API_BASE} stores={stores} onLogout={logout} />}
+          {currentUser.role === 'Owner' && <OwnerView user={currentUser} apiBase={API_BASE} onLogout={logout} />}
+          {currentUser.role === 'Accountant' && <AccountantView user={currentUser} apiBase={API_BASE} onLogout={logout} />}
+          {currentUser.role === 'Executive' && <ExecutiveView user={currentUser} apiBase={API_BASE} onStatusChange={fetchFoodCourtStatus} onLogout={logout} />}
+        </div>
+      )}
+
+      {/* Google: อีเมลนี้มีบัญชีที่ใช้รหัสผ่านอยู่แล้ว -> ใส่รหัสเดิมเพื่อเชื่อม หรือสร้างบัญชีแยก */}
+      {googleLink && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(8px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px'
+        }}>
+          <form onSubmit={submitGoogleLink} className="modal-pop" role="dialog" aria-modal="true" aria-labelledby="google-link-title" style={{
+            backgroundColor: PALETTE.white, padding: '32px 28px', borderRadius: '24px',
+            width: '100%', maxWidth: '380px', boxShadow: '0 20px 40px rgba(0,0,0,0.12)',
+            color: PALETTE.slateText, boxSizing: 'border-box', position: 'relative',
+            border: `1.5px solid ${PALETTE.borderOrange}`
+          }}>
+            <button type="button" aria-label="ปิด" onClick={() => !googleLink.busy && setGoogleLink(null)} style={{
+              position: 'absolute', right: '18px', top: '18px', background: 'none', border: 'none',
+              color: PALETTE.subText, cursor: 'pointer', fontSize: '18px', fontWeight: 700
+            }}>✕</button>
+            <h3 id="google-link-title" style={{ margin: '0 0 8px 0', fontSize: '19px', fontWeight: 800, textAlign: 'center' }}>เชื่อมบัญชีกับ Google</h3>
+            <p style={{ fontSize: '13px', color: PALETTE.subText, margin: '0 0 16px', lineHeight: 1.6, textAlign: 'center' }}>{googleLink.message}</p>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }} htmlFor="google-link-password">
+              รหัสผ่านของบัญชี {googleLink.username}
+            </label>
+            <input id="google-link-password" type="password" autoFocus autoComplete="current-password" value={googleLink.password}
+              onChange={e => setGoogleLink(g => ({ ...g, password: e.target.value }))} disabled={googleLink.busy}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '12px 14px', borderRadius: '12px', border: `1.5px solid ${PALETTE.borderOrange}`, fontSize: '15px', fontFamily: 'inherit' }} />
+            {googleLink.error && <div role="alert" style={{ color: '#B91C1C', fontSize: '13px', marginTop: '10px' }}>{googleLink.error}</div>}
+            <button type="submit" className="btn-primary" disabled={googleLink.busy || !googleLink.password} style={{ marginTop: '16px' }}>
+              {googleLink.busy ? 'กำลังตรวจสอบ...' : 'ยืนยันรหัสผ่านและเชื่อม Google'}
+            </button>
+            <button type="button" className="link-btn" onClick={createSeparateGoogleAccount} disabled={googleLink.busy}
+              style={{ display: 'block', margin: '14px auto 0', background: 'none', border: 'none', color: PALETTE.subText, fontSize: '13px', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}>
+              ไม่ใช่บัญชีของฉัน / จำรหัสไม่ได้ — สร้างบัญชีใหม่ด้วย Google
+            </button>
+          </form>
         </div>
       )}
 

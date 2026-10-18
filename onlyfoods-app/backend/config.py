@@ -36,8 +36,7 @@ MAX_IMAGE_BYTES = _int("MAX_IMAGE_BYTES", 5 * 1024 * 1024)
 TIMEZONE = os.getenv("TZ", "Asia/Bangkok")
 
 MIN_PASSWORD_LENGTH = 8
-MAX_FAILED_LOGINS = 5
-LOCK_MINUTES = 15
+# ใส่รหัสผิด: ดู throttle.py (รอเพิ่มขึ้นเรื่อย ๆ ต่อ IP+username ไม่ล็อกบัญชี)
 
 # อาหารพร้อมรับ (READY) แล้วลูกค้ายังไม่มา:
 #  - ครบ PICKUP_REMINDER_MINUTES : ระบบเตือนลูกค้าอัตโนมัติ 1 ครั้ง + หน้าร้านขึ้นป้ายให้โทรหาลูกค้า
@@ -53,6 +52,8 @@ LATE_PICKUP_CHOICES = (15, 30, 60, 120)
 # ร้านแจ้งของหมด: ลูกค้ามีเวลาเปลี่ยนเมนู/ยกเลิกกี่นาที เลยแล้วระบบยกเลิก+คืนเงินให้อัตโนมัติ (กฎ PO 2.3)
 OUT_OF_STOCK_RESPONSE_MINUTES = 15
 MAX_LATE_PICKUP_UPDATES = 3
+# เรียกคิวซ้ำ (หน้าร้าน) : กดซ้ำคิวเดิมได้อีกครั้งหลังผ่านไปกี่วินาที (กันแจ้งเตือนรัวใส่ลูกค้า)
+RECALL_COOLDOWN_SECONDS = 20
 
 
 # ร้านที่หมดสัญญาแล้วไม่ถูกกด "หมดสัญญา" เพื่อเปิดสัญญารอบใหม่ภายในกี่วัน จะถูกลบ (soft delete) อัตโนมัติ

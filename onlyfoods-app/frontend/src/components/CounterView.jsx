@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { startPolling } from '../utils/polling';
+import { useHistoryNav } from '../utils/historyNav';
+import { printReceipt } from '../utils/receiptPrint';
 import RefundLog from './RefundLog';
+import { newRequestKey, applyServerPrices } from '../utils/requestKey';
+import AuthImage, { openFile } from './AuthImage';
 
 // โทนสีเดิมของ Counter & Theme กลาง
 const PALETTE = {
@@ -77,6 +81,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [orderNote, setOrderNote] = useState('');
 
   const [activeTab, setActiveTab] = useState('orders');
+  useHistoryNav(activeTab, (hash) => {
+    const tab = hash ?? 'orders';
+    if (!['orders', 'walkin', 'history', 'menu', 'refunds', 'reports', 'display'].includes(tab)) return false;
+    setActiveTab(tab);
+    return true;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
@@ -102,6 +112,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [queueTab, setQueueTab] = useState('ready');
   const [queueQuery, setQueueQuery] = useState('');
   const [handoverBusy, setHandoverBusy] = useState(null);
+  const [recallBusy, setRecallBusy] = useState(null);
   const queueSearchRef = useRef(null);
   // Walk-in POS: ขั้นตอนชำระเงิน (เงินสด = กรอกเงินที่รับ + เงินทอน ; QR/TrueMoney = ลูกค้าโอนต่อหน้า พนักงานกดยืนยัน)
   const [payOpen, setPayOpen] = useState(false);
@@ -400,6 +411,26 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }
   };
 
+  // เรียกคิวซ้ำ (เฉพาะคิวที่พร้อมรับ) : ส่งแจ้งเตือนเข้าแอปลูกค้าอีกครั้ง + จอเรียกคิวกระพริบ/มีเสียงใหม่
+  const recallQueue = async (order) => {
+    if (recallBusy) return;
+    setRecallBusy(order.OrderID);
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/recall`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(apiErr(res, data, 'เรียกคิวซ้ำไม่สำเร็จ')); return; }
+      readySeenRef.current?.set(order.OrderID, Date.now());
+      if (displaySound) playChime();
+      showToast(data.notified
+        ? `📢 เรียกคิว ${order.QueueNo} อีกครั้งแล้ว (ส่งแจ้งเตือนเข้าแอปลูกค้า)`
+        : `📢 เรียกคิว ${order.QueueNo} อีกครั้งแล้ว (ลูกค้า walk-in ไม่มีแอป — จอเรียกคิวกระพริบให้)`);
+    } catch {
+      showToast('เชื่อมต่อระบบออเดอร์ไม่สำเร็จ');
+    } finally {
+      setRecallBusy(null);
+    }
+  };
+
   const buildPrintData = (order) => ({
     orderId: order.OrderID,
     queueNo: order.QueueNo,
@@ -484,7 +515,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
       const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/print`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ print_type: type, printer: 'MOCK_PRINTER_01', user_role: 'Front Staff' })
+        body: JSON.stringify({ print_type: type, printer: 'BROWSER_80MM', user_role: 'Front Staff' })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -505,11 +536,15 @@ export default function CounterView({ user, apiBase, onLogout }) {
         const s = norm((server.items || []).map(i => [i.product, Number(i.qty), Number(i.unit_price)]));
         if (l !== s) diffs.push('เมนู/จำนวน/ราคา');
       }
+      // พิมพ์จากข้อมูลที่ backend บันทึกไว้ (ใบเสร็จ 80mm ผ่านหน้าต่างพิมพ์ของเบราว์เซอร์)
+      const opened = server && printReceipt({ storeName: currentStore?.StoreName, data: server, reprint: type === 'REPRINT' });
       if (diffs.length) {
         console.warn('[PRINT_LOG] ข้อมูลไม่ตรงกัน:', diffs, { local, server });
         showToast(`⚠️ พิมพ์แล้ว แต่ข้อมูลไม่ตรงกับออเดอร์: ${diffs.join(', ')}`);
+      } else if (!opened) {
+        showToast(`บันทึกการพิมพ์คิว ${order.QueueNo} แล้ว แต่เปิดหน้าต่างพิมพ์ไม่ได้ — กดพิมพ์ซ้ำอีกครั้ง`);
       } else {
-        showToast(type === 'REPRINT' ? `พิมพ์ซ้ำคิว ${order.QueueNo} สำเร็จ (ข้อมูลตรงกับออเดอร์)` : `พิมพ์ใบคิว ${order.QueueNo} สำเร็จ (ข้อมูลตรงกับออเดอร์)`);
+        showToast(type === 'REPRINT' ? `พิมพ์ซ้ำคิว ${order.QueueNo} (ข้อมูลตรงกับออเดอร์)` : `พิมพ์ใบคิว ${order.QueueNo} (ข้อมูลตรงกับออเดอร์)`);
       }
       setPrintConfirmOrder(null);
       fetchData();
@@ -658,6 +693,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }
   };
 
+  const walkInKeyRef = useRef(null);
+  useEffect(() => { walkInKeyRef.current = null; }, [cart]);
   const addToCart = (p) => setCart([...cart, { ...p, note: '' }]);
   const removeFromCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
   const updateCartNote = (idx, note) => {
@@ -677,6 +714,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const openPayment = () => {
     const why = walkInBlocked();
     if (why) return showToast(why);
+    walkInKeyRef.current = newRequestKey();   // M6: กดยืนยันซ้ำ / เน็ตหลุด = ได้คิวเดิม ไม่เปิดคิวซ้ำ
     setPayMethod('Cash'); setCashInput(''); setPayOpen(true);
   };
   const cashReceived = Math.round(Number(cashInput || 0) * 100) / 100; // backend รับทศนิยมไม่เกิน 2 ตำแหน่ง
@@ -701,10 +739,19 @@ export default function CounterView({ user, apiBase, onLogout }) {
           note: orderNote || 'Walk-in',
           payment_method: payMethod,
           cash_received: payMethod === 'Cash' ? cashReceived : null,
+          expected_total: Math.round(totalAmount * 100) / 100,
+          client_request_id: walkInKeyRef.current || (walkInKeyRef.current = newRequestKey()),
         })
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.price_changed) {
+        // ราคาเมนูเปลี่ยน : อัปเดตตะกร้า (useEffect ล้างรหัสคำขอ) แล้วให้พนักงานแจ้งยอดใหม่กับลูกค้าก่อนกดอีกครั้ง
+        setCart(prev => applyServerPrices(prev, data.items));
+        showToast(`ราคาเมนูเปลี่ยน ยอดใหม่ ฿${fmtMoney(data.total)} กรุณาแจ้งลูกค้าแล้วกดยืนยันอีกครั้ง`, 'error');
+        return;
+      }
       if (!res.ok) { showToast(`สั่งซื้อไม่สำเร็จ: ${apiErrorText(data, `HTTP ${res.status}`)}`, 'error'); return; }
+      walkInKeyRef.current = null;
       // ยอดเงินทอนค้างไว้จนพนักงานกดปิด (เดิมขึ้นแค่ toast 2.6 วิ ทอนไม่ทันอ่าน)
       setLastSale({ queue: data.queue_no, method: payMethod, change: Math.max(0, cashChange), received: cashReceived, total: totalAmount });
       setPayOpen(false); setCart([]); setOrderNote(''); setCashInput('');
@@ -732,7 +779,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const getStatusLabel = (status) => {
     switch (status) {
       case 'Ready': return 'พร้อมเสิร์ฟ';
-      case 'Pending_Cancellation': return 'รอเปลี่ยนเมนู (30น.)';
+      case 'Pending_Cancellation': return 'รอเปลี่ยนเมนู (15น.)';
       case 'Awaiting_Top_Up': return 'รอลูกค้าโอนส่วนต่าง';
       case 'NoShow': return 'ไม่มารับ (No-Show)';
       case 'Cooking': return 'กำลังปรุง';
@@ -1059,7 +1106,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                             <td>
                               {slipToCheck(o) ? (
                                 <div onClick={() => setViewingSlip(o)} className="slip-thumb">
-                                  <img src={slipToCheck(o)} alt="Slip" />
+                                  <AuthImage apiBase={apiBase} src={slipToCheck(o)} alt="Slip" />
                                   <span>ตรวจสลิป + รายการอาหาร</span>
                                 </div>
                               ) : <span style={{ color: PALETTE.red, fontWeight: 'bold' }}>ไม่มีสลิป</span>}
@@ -1136,10 +1183,16 @@ export default function CounterView({ user, apiBase, onLogout }) {
                       </div>
                     </div>
                     {handoverOrder.Status === 'Ready' ? (
-                      <button className="cv-btn btn-success cv-btn-lg" disabled={handoverBusy === handoverOrder.OrderID}
-                        onClick={() => handOver(handoverOrder)}>
-                        {handoverBusy === handoverOrder.OrderID ? 'กำลังบันทึก...' : `✅ ส่งมอบ ${handoverOrder.QueueNo}`}
-                      </button>
+                      <div className="handover-actions">
+                        <button className="cv-btn btn-ghost cv-btn-lg" disabled={recallBusy === handoverOrder.OrderID}
+                          onClick={() => recallQueue(handoverOrder)} title="แจ้งเตือนลูกค้าอีกครั้ง + จอเรียกคิวกระพริบ">
+                          📢 เรียกคิวซ้ำ
+                        </button>
+                        <button className="cv-btn btn-success cv-btn-lg" disabled={handoverBusy === handoverOrder.OrderID}
+                          onClick={() => handOver(handoverOrder)}>
+                          {handoverBusy === handoverOrder.OrderID ? 'กำลังบันทึก...' : `✅ ส่งมอบ ${handoverOrder.QueueNo}`}
+                        </button>
+                      </div>
                     ) : (
                       <div className="handover-wait">ยังส่งมอบไม่ได้ — แจ้งลูกค้าว่าอาหาร{getStatusLabel(handoverOrder.Status)}</div>
                     )}
@@ -1232,6 +1285,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                     <>
                                       <button onClick={() => handOver(o)} className="cv-btn btn-success" disabled={handoverBusy === o.OrderID}>
                                         ✅ ส่งมอบอาหาร
+                                      </button>
+                                      <button onClick={() => recallQueue(o)} className="cv-btn btn-ghost" disabled={recallBusy === o.OrderID}
+                                        title="แจ้งเตือนลูกค้าอีกครั้ง + จอเรียกคิวกระพริบ">
+                                        📢 เรียกคิวซ้ำ
                                       </button>
                                       <button
                                         onClick={() => openNoShowModal(o)}
@@ -1579,7 +1636,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
         <div className="cv-modal-overlay" onClick={() => setPrintConfirmOrder(null)}>
           <div className="cv-modal cv-print-modal" onClick={e => e.stopPropagation()}>
             <div className="cv-modal-head">
-              <div><h3>🖨️ ยืนยันการพิมพ์</h3><div className="caption">ตรวจข้อมูลสำคัญก่อนส่งไปยัง Mock Printer</div></div>
+              <div><h3>🖨️ ยืนยันการพิมพ์</h3><div className="caption">ยืนยันแล้วจะเปิดหน้าต่างพิมพ์ใบคิว (กระดาษ 80mm)</div></div>
               <button onClick={() => setPrintConfirmOrder(null)} className="cv-modal-close">✖</button>
             </div>
             {printConfirmOrder.order ? (
@@ -1874,20 +1931,20 @@ export default function CounterView({ user, apiBase, onLogout }) {
               )}
             </div>
 
-            {slipToCheck(viewingSlip) ? <img src={slipToCheck(viewingSlip)} alt="Slip" className="slip-full-img" /> : <div className="empty-state">ไม่มีรูปสลิป</div>}
+            {slipToCheck(viewingSlip) ? <AuthImage apiBase={apiBase} src={slipToCheck(viewingSlip)} alt="Slip" className="slip-full-img" /> : <div className="empty-state">ไม่มีรูปสลิป</div>}
 
             {/* สลิปทุกใบของออเดอร์นี้ (ค่าอาหาร + ส่วนต่าง รวมใบที่ถูกปฏิเสธ) */}
             {(viewingSlip.Payments || []).filter(p => p.SlipUrl).length > 1 && (
               <div className="slip-history">
                 <div className="receipt-title">สลิปทั้งหมดของออเดอร์นี้</div>
                 {(viewingSlip.Payments || []).filter(p => p.SlipUrl).map(p => (
-                  <a key={p.PaymentId} href={p.SlipUrl} target="_blank" rel="noreferrer" className="slip-history-item">
-                    <img src={p.SlipUrl} alt="Slip" />
+                  <button type="button" key={p.PaymentId} onClick={() => openFile(apiBase, p.SlipUrl)} className="slip-history-item">
+                    <AuthImage apiBase={apiBase} src={p.SlipUrl} alt="Slip" />
                     <span>
                       {p.PaymentType === 'TOP_UP' ? 'ส่วนต่าง' : 'ค่าอาหาร'} ฿{fmtMoney(p.Amount)}<br />
                       {p.PaymentStatus === 'VERIFIED' ? '✅ ยืนยันแล้ว' : p.PaymentStatus === 'REJECTED' ? `❌ ${p.RejectReason || 'ปฏิเสธ'}` : '⏳ รอตรวจ'}
                     </span>
-                  </a>
+                  </button>
                 ))}
               </div>
             )}
@@ -2163,6 +2220,7 @@ const CV_STYLES = `
 .handover-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 16px 18px; margin-bottom: 14px; border-radius: 14px; border: 2px solid ${PALETTE.border}; background: ${PALETTE.bgSoft}; }
 .handover-card.ready { border-color: ${PALETTE.green}; background: ${PALETTE.greenLight}; }
 .handover-main { display: flex; gap: 16px; align-items: center; min-width: 0; }
+.handover-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .handover-queue { font-size: 34px; font-weight: 800; font-family: 'Roboto', monospace; color: ${PALETTE.dark}; }
 .handover-name { font-size: 17px; font-weight: 700; color: ${PALETTE.dark}; }
 .handover-items { font-size: 14px; color: ${PALETTE.textSub}; margin: 2px 0 6px; }
@@ -2327,7 +2385,7 @@ const CV_STYLES = `
 .pickup-warning .pickup-phone { display: block; font-size: 18px; letter-spacing: .5px; color: #B45309; user-select: all; }
 .pickup-warning .pickup-sub { display: block; font-size: 11px; font-weight: 500; color: #9A6B2F; }
 .slip-history { margin-bottom: 16px; }
-.slip-history-item { display: inline-flex; align-items: center; gap: 8px; margin: 6px 12px 0 0; font-size: 12px; color: inherit; text-decoration: none; }
+.slip-history-item { display: inline-flex; align-items: center; gap: 8px; margin: 6px 12px 0 0; font-size: 12px; color: inherit; text-decoration: none; background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; text-align: left; }
 .slip-history-item img { width: 42px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid ${PALETTE.border}; }
 .slip-full-img { width: 100%; max-height: 55vh; object-fit: contain; border-radius: var(--radius-md); border: 1px solid ${PALETTE.border}; margin-bottom: 16px; }
 .cv-customer-info .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid ${PALETTE.border}; font-size: 14px; }

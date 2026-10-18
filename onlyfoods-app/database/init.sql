@@ -246,9 +246,13 @@ CREATE TABLE `Order` (
   CancelReason      VARCHAR(255)      NULL,
   CancelDeadline    DATETIME          NULL COMMENT 'after this, customer self-cancel is refused',
   CreatedAt         DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  RequestActorId    INT UNSIGNED      NULL COMMENT 'who sent ClientRequestId (customer, or staff for walk-in)',
+  ClientRequestId   VARCHAR(64)       NULL COMMENT 'Idempotency-Key of the checkout attempt',
+  RequestFingerprint CHAR(64)         NULL COMMENT 'sha256 of the cart sent with ClientRequestId',
   OrderDate         DATE AS (DATE(CreatedAt)) STORED,
   PRIMARY KEY (OrderId),
   UNIQUE KEY uk_order_queue (StoreId, OrderDate, QueueNo),
+  UNIQUE KEY uk_order_client_request (RequestActorId, ClientRequestId),
   KEY ix_order_customer (CustomerId),
   KEY ix_order_staff (CreatedByStaffId),
   KEY ix_order_status (StatusId),
@@ -471,6 +475,16 @@ CREATE TABLE OrderStatusLog (
 -- Covers login events too (EntityType = 'AUTH'), and price history
 -- through OldValue / NewValue - that is why there is no separate
 -- SecurityLog or ProductPriceHistory table.
+-- failed logins counted per (IP + username) and per username across IPs (routers/auth.py throttle)
+CREATE TABLE LoginThrottle (
+  ThrottleKey  CHAR(64)          NOT NULL COMMENT 'sha256 of "ip|<ip>|<username>" or "user|<username>" (no raw IP/username stored)',
+  FailCount    SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  BlockedUntil DATETIME          NULL,
+  LastFailAt   DATETIME          NOT NULL,
+  PRIMARY KEY (ThrottleKey),
+  KEY ix_throttle_lastfail (LastFailAt)
+) ENGINE=InnoDB;
+
 CREATE TABLE AuditLog (
   AuditLogId  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   PerformedBy INT UNSIGNED    NULL,
