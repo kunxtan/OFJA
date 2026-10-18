@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 
-from auth import assert_store_access, hash_password, require_role
+from auth import STORE_SCOPED, assert_store_access, get_optional_user, hash_password, require_role
 from db import get_db, transaction
 from errors import DomainError
 from schemas import ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema
@@ -94,13 +94,27 @@ def _name_taken(cur, name: str, except_id: Optional[int] = None) -> bool:
     return cur.fetchone() is not None
 
 
+# ข้อมูลภายในของร้าน (ผู้ติดต่อ / วันสัญญา) : เห็นเฉพาะผู้บริหาร บัญชี และบัญชีของร้านนั้นเอง
+_STORE_PRIVATE_FIELDS = ("ContactName", "ContactPhone", "ContactLine", "ContactEmail", "ContractStartDate",
+                         "CurrentContractStartDate", "ContractEndDate", "ContractDaysLeft", "AutoDeleteInDays",
+                         "OpenOrderCount", "IsClearingOrders")
+
+
 @router.get("")
-def get_stores(db=Depends(get_db)):
-    """รายการร้านสำหรับลูกค้า (เปิดสาธารณะ ไม่รวมร้านที่ถูกลบ)"""
+def get_stores(viewer=Depends(get_optional_user), db=Depends(get_db)):
+    """รายการร้าน (เปิดสาธารณะ ไม่รวมร้านที่ถูกลบ) ; ข้อมูลผู้ติดต่อ/สัญญาไม่ส่งให้คนทั่วไป"""
+    role = viewer["RoleCode"] if viewer else None
+    own_store = viewer.get("StoreId") if viewer and role in STORE_SCOPED else None
     with db.cursor() as cur:
         cur.execute(STORE_SELECT + " WHERE s.IsDeleted = FALSE ORDER BY s.StoreId")
         today = bangkok_now().date()
-        return [shape_store(r, today) for r in cur.fetchall()]
+        rows = [shape_store(r, today) for r in cur.fetchall()]
+    if role not in ("EXECUTIVE", "ACCOUNTANT"):
+        for r in rows:
+            if own_store is None or int(r["StoreId"]) != int(own_store):
+                for f in _STORE_PRIVATE_FIELDS:
+                    r.pop(f, None)
+    return rows
 
 
 @router.get("/history")

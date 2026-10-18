@@ -103,6 +103,17 @@ def shape_order(row: dict) -> dict:
     return row
 
 
+# ข้อมูลติดต่อลูกค้าเท่าที่แต่ละบทบาทต้องใช้ : ครัวไม่ต้องเห็นเบอร์/อีเมล ; หน้าร้านใช้เบอร์โทรตามลูกค้า แต่ไม่ต้องเห็นอีเมล
+_HIDDEN_CONTACTS = {"KITCHEN_STAFF": ("CustomerPhone", "CustomerEmail"), "FRONT_STAFF": ("CustomerEmail",)}
+
+
+def redact_order_contacts(orders: List[Dict], role: str) -> List[Dict]:
+    for o in orders:
+        for f in _HIDDEN_CONTACTS.get(role, ()):
+            o.pop(f, None)
+    return orders
+
+
 def attach_items(cur, orders: List[Dict]) -> List[Dict]:
     """ดึงรายการอาหารของทุกออเดอร์ด้วย query เดียว (ไม่ใช่ N+1)"""
     for o in orders:

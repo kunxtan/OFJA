@@ -1707,7 +1707,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div className="info-row"><span>คิว</span><b>{noShowModal.QueueNo}</b></div>
               <div className="info-row"><span>ลูกค้า</span><b>{noShowModal.CustomerName || 'ลูกค้า Walk-in'}</b></div>
               <div className="info-row"><span>โทรศัพท์</span><b>{noShowModal.CustomerPhone || '-'}</b></div>
-              <div className="info-row"><span>อีเมล</span><b>{noShowModal.CustomerEmail || '-'}</b></div>
               <div className="info-row"><span>รอมาแล้ว</span><b>{getElapsedLabel(noShowModal.ReadyAt)}</b></div>
               {noShowModal.LatePickupArrivalTime && (
                 <div className="info-row"><span>ลูกค้าแจ้งจะมาถึง</span><b>{fmtClock(noShowModal.LatePickupArrivalTime)} น.</b></div>

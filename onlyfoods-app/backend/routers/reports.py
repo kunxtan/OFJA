@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from auth import STORE_SCOPED, require_role
 from db import get_db
 from errors import DomainError
-from shapes import ORDER_SELECT, shape_order
+from shapes import ORDER_SELECT, redact_order_contacts, shape_order
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -64,7 +64,7 @@ def get_cancellations(store_id: Optional[int] = None, limit: int = Query(500, ge
     params.append(limit)
     with db.cursor() as cur:
         cur.execute(sql, params)
-        return [shape_order(r) for r in cur.fetchall()]
+        return redact_order_contacts([shape_order(r) for r in cur.fetchall()], user["RoleCode"])
 
 
 def _details(entity_type: str, entity_id, new_value, old_value) -> str:

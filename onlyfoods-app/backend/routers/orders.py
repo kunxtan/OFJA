@@ -15,7 +15,7 @@ from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchem
 from services import (add_top_up, assert_slip_not_reused, reduce_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
                       lock_order, log_audit, log_first_status, notify_menu_out_of_stock, pending_top_up,
                       refund_price_diff, send_notif, status_id)
-from shapes import ORDER_SELECT, attach_items, order_people, shape_order
+from shapes import ORDER_SELECT, attach_items, order_people, redact_order_contacts, shape_order
 from utils import (bangkok_now, clean_text, contract_active, foodcourt_is_open, parse_pickup_time,
                    queue_label, save_image)
 
@@ -217,7 +217,7 @@ def get_orders(
     sql = ORDER_SELECT + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY o.OrderId DESC LIMIT %s OFFSET %s"
     with db.cursor() as cur:
         cur.execute(sql, [*params, limit, offset])
-        orders = [shape_order(r) for r in cur.fetchall()]
+        orders = redact_order_contacts([shape_order(r) for r in cur.fetchall()], role)
         return attach_items(cur, orders)
 
 

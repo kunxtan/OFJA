@@ -1,4 +1,5 @@
 """รหัสผ่าน (bcrypt), JWT, และ dependency ตรวจสิทธิ์"""
+import hashlib
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -71,12 +72,18 @@ def verify_password(password: str, password_hash: Optional[str]) -> bool:
         return False
 
 
-def create_token(user_id: int) -> str:
+def password_version(password_hash: Optional[str]) -> str:
+    """ลายนิ้วมือสั้น ๆ ของรหัสผ่านปัจจุบัน ใส่ไว้ใน token : เปลี่ยน/รีเซ็ตรหัสแล้ว token เก่าใช้ไม่ได้ทันที"""
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:12]
+
+
+def create_token(user_id: int, password_hash: Optional[str] = None) -> str:
     # ต้องเป็นเวลา UTC แบบมี tzinfo : ถ้าส่ง datetime ไม่มี tzinfo (เวลาไทย) PyJWT จะอ่านเป็น UTC
     # แล้ว iat จะล้ำอนาคต 7 ชม. ทำให้ token ใหม่ถูกปฏิเสธเป็น 401
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
+        "pwv": password_version(password_hash),
         "iat": now,
         "exp": now + timedelta(hours=config.JWT_EXPIRE_HOURS),
     }
@@ -99,6 +106,7 @@ def get_current_user(
     try:
         payload = jwt.decode(creds.credentials, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM])
         user_id = int(payload["sub"])
+        token_pwv = payload.get("pwv")
     except jwt.ExpiredSignatureError:
         raise _unauthorized("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่")
     except (jwt.InvalidTokenError, KeyError, ValueError):
@@ -107,7 +115,7 @@ def get_current_user(
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive,
+            SELECT u.UserId, u.Username, u.FullName, u.StoreId, u.IsActive, u.PasswordHash,
                                       r.RoleCode, COALESCE(s.IsDeleted, 0) AS StoreIsDeleted,
                    """ + STORE_CONTRACT_COLUMNS + """
             FROM `User` u
@@ -121,6 +129,10 @@ def get_current_user(
         user = cur.fetchone()
     if not user or not user["IsActive"] or user["StoreIsDeleted"]:
         raise _unauthorized("บัญชีนี้ใช้งานไม่ได้")
+    # token ที่ออกก่อนเปลี่ยน/รีเซ็ตรหัสผ่าน (token รุ่นเก่าที่ไม่มี pwv ยอมให้ใช้จนหมดอายุ 12 ชม.)
+    if token_pwv is not None and token_pwv != password_version(user.pop("PasswordHash", None)):
+        raise _unauthorized("รหัสผ่านถูกเปลี่ยนแล้ว กรุณาเข้าสู่ระบบใหม่")
+    user.pop("PasswordHash", None)
     access = contract_access(user)
     if access == ACCESS_LOCKED:
                 # หมดสัญญา (และเคลียร์ออเดอร์ครบแล้ว) = token ที่ล็อกอินค้างไว้ใช้ไม่ได้ทันที -> frontend เด้งไปหน้า login
@@ -131,6 +143,17 @@ def get_current_user(
         if access == ACCESS_CLEARING and not _CLEARING_WRITE_PATHS.match(request.url.path):
             raise HTTPException(status_code=403, detail=CONTRACT_CLEARING_MESSAGE)
     return user
+
+
+def get_optional_user(request: Request, creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+                      db=Depends(get_db)) -> Optional[dict]:
+    """endpoint สาธารณะที่แสดงข้อมูลเพิ่มให้คนที่ล็อกอินแล้ว : ไม่มี token/ token ใช้ไม่ได้ = None (ไม่ error)"""
+    if creds is None:
+        return None
+    try:
+        return get_current_user(request, creds, db)
+    except HTTPException:
+        return None
 
 
 def require_role(*role_codes: str):
