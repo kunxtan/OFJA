@@ -817,3 +817,31 @@ def report_late_pickup(order_id: int, payload: LatePickupSchema,
     return {"success": True, "order_id": order_id, "minutes": payload.minutes,
             "arrival_time": arrival.isoformat(), "count": used + 1,
             "remaining": config.MAX_LATE_PICKUP_UPDATES - used - 1}
+
+
+@router.post("/{order_id}/recall")
+def recall_order(order_id: int, user=Depends(require_role("FRONT_STAFF", "KITCHEN_STAFF", "STORE_OWNER")),
+                 db=Depends(get_db)):
+    """เรียกคิวซ้ำ : ลูกค้ายังไม่มารับ -> ส่งแจ้งเตือน "เรียกคิว" เข้าแอปอีกครั้ง (walk-in ไม่มีบัญชี = เรียกที่จออย่างเดียว)"""
+    with transaction(db):
+        with db.cursor() as cur:
+            order = lock_order(cur, order_id)
+            assert_store_access(user, order["StoreId"])
+            if order["StatusCode"] != state.READY:
+                raise DomainError(400, "เรียกคิวซ้ำได้เฉพาะออเดอร์ที่พร้อมรับ")
+            cur.execute(
+                """
+                SELECT 1 FROM AuditLog WHERE EntityType = 'Order' AND EntityId = %s AND ActionCode = 'RECALL_QUEUE'
+                  AND CreatedAt > NOW() - INTERVAL %s SECOND LIMIT 1
+                """,
+                (str(order_id), config.RECALL_COOLDOWN_SECONDS),
+            )
+            if cur.fetchone():
+                raise DomainError(429, f"เพิ่งเรียกคิวนี้ไป รอ {config.RECALL_COOLDOWN_SECONDS} วินาทีแล้วค่อยเรียกอีกครั้ง")
+            q = queue_label(order["QueueNo"], order["QueueCode"])
+            notified = bool(order["CustomerId"])
+            send_notif(db, order["CustomerId"], "QUEUE_CALLED", f"เรียกคิว {q}",
+                       f"📢 เรียกคิว {q} อีกครั้ง อาหารพร้อมแล้ว กรุณามารับที่ร้าน", order_id)
+        log_audit(db, user["UserId"], "RECALL_QUEUE", "Order", order_id, None,
+                  {"queue": q, "store_id": order["StoreId"], "notified": notified})
+    return {"success": True, "order_id": order_id, "queue_no": q, "notified": notified}

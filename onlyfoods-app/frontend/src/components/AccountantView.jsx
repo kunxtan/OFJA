@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { startPolling } from '../utils/polling';
+import { useHistoryNav } from '../utils/historyNav';
 import RefundLog from './RefundLog';
 import { AUDIT_VERBS, formatAuditDetails } from '../utils/auditText';
 import { xlsxCol, xmlEsc, zipStore } from '../utils/xlsxWriter';
@@ -1018,6 +1019,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [loading, setLoading] = useState(true);
 
   const [page, setPage] = useState('dashboard');
+  useHistoryNav(page, (hash) => {
+    const p = hash ?? 'dashboard';
+    if (!['dashboard', 'sales', 'cancel', 'refunds', 'audit', 'report'].includes(p)) return false;
+    setPage(p);
+    return true;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768);
   const [toast, setToast] = useState({ show: false, msg: '' });
   
