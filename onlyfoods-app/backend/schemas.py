@@ -235,3 +235,19 @@ class FoodCourtScheduleSchema(BaseModel):
 
 class LatePickupSchema(BaseModel):
     minutes: int  # ต้องเป็นค่าใน config.LATE_PICKUP_CHOICES (ตรวจใน endpoint)
+
+
+class RefundPayoutSchema(BaseModel):
+    """ลูกค้าเลือกวิธีรับเงินคืน : CASH = มารับที่ร้าน, TRANSFER = ให้เจ้าของร้านโอนให้"""
+    method: str = Field(pattern="^(CASH|TRANSFER)$")
+    kind: Optional[str] = Field(default=None, max_length=10)
+    bank: Optional[str] = Field(default=None, max_length=60)
+    account_no: Optional[str] = Field(default=None, max_length=30)
+    account_name: Optional[str] = Field(default=None, max_length=100)
+    qr_image: Optional[str] = None
+
+
+class RefundDoneSchema(BaseModel):
+    """ร้านจ่ายเงินคืนแล้ว : CASH หรือ TRANSFER (ต้องแนบสลิปโอน)"""
+    method: str = Field(default="CASH", pattern="^(CASH|TRANSFER)$")
+    slip_image: Optional[str] = None
