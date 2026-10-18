@@ -191,6 +191,18 @@ function Food({ cls, d = 10, r = 0, delay = '0s', dur = '6s', children }) {
   );
 }
 
+// JWT ใช้ base64url และชื่อเป็น UTF-8 (ชื่อไทย) : atob() ตรง ๆ จะพัง
+function decodeJwtPayload(token) {
+  try {
+    const b64 = String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+    const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return {};
+  }
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [stores, setStores] = useState([]);
@@ -328,17 +340,13 @@ export default function App() {
 
   const handleGoogleResponse = async (response) => {
     try {
-      const payload = JSON.parse(atob(response.credential.split('.')[1]));
-      
+      // อ่านชื่อ/รูปจาก token ไว้เติมฟอร์มโปรไฟล์เท่านั้น (ตัวตนจริงให้ server ตรวจกับ Google เอง)
+      const payload = decodeJwtPayload(response.credential);
+
       const res = await fetch(`${API_BASE}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id_token: response.credential, // เซิร์ฟเวอร์ตรวจกับ Google เอง ไม่เชื่อ google_id/email ที่ client ส่ง
-          google_id: payload.sub,
-          email: payload.email,
-          name: payload.name
-        })
+        body: JSON.stringify({ id_token: response.credential })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail);

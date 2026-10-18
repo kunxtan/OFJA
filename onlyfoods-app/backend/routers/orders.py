@@ -54,6 +54,10 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
     method_code = _resolve_payment_method(data.payment_method, is_staff)
     now = bangkok_now()
     pickup = parse_pickup_time(data.pickup_time, now)
+    # เวลานัดรับต้องอยู่ในวันนี้ และไม่ย้อนอดีต (เผื่อนาฬิกาเครื่องคลาด 10 นาที)
+    # เดิมรับได้ทุกค่า เช่นปี 2099 -> ปุ่ม "ลูกค้าไม่มารับ" กดไม่ได้ตลอด ร้านเคลียร์ออเดอร์ไม่ได้
+    if pickup and (pickup < now - timedelta(minutes=10) or pickup.date() != now.date()):
+        raise DomainError(400, "เวลารับอาหารต้องเป็นเวลาวันนี้ที่ยังไม่ผ่านไป กรุณาเลือกเวลาใหม่ หรือกด \"รับทันที\"")
 
     with transaction(db):
         with db.cursor() as cur:
