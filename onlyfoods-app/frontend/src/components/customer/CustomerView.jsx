@@ -1411,8 +1411,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         opacity: isStoreUnavailable ? 0.6 : 1,
                         transition: "transform 0.2s, box-shadow 0.2s",
                         display: "flex",
-                        flexDirection: "column",
-                        justify: "space-between"
+                        flexDirection: "column"
                       }}
                       onMouseEnter={(e) => {
                         if (!store.IsSuspended) {
@@ -1427,14 +1426,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         }
                       }}
                     >
-                      <div>
+                      <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
                         <img
                           src={store.ImageUrl || "https://via.placeholder.com/400x200?text=Store+Image"}
                           alt={store.StoreName}
                           style={{ width: "100%", height: "160px", objectFit: "cover", borderRadius: "15px", marginBottom: "12px" }}
                         />
                         <div style={{ fontSize: "18px", fontWeight: "900", marginBottom: "4px" }}>{store.StoreName}</div>
-                        <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "10px" }}>
+                        <div style={{ fontSize: "12px", color: COLORS.gray, marginBottom: "10px", flex: 1 }}>
                           {store.Description || "ร้านอาหารอร่อย คุณภาพดี ศูนย์อาหาร KMITL"}
                         </div>
 
