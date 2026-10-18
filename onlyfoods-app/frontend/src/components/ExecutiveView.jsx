@@ -475,12 +475,20 @@ function CardIconBox({ icon, background, color = '#FFFFFF', size = 44 }) {
 // เตือนอัตรายกเลิก : เกิน 10% (เท่ากับ 10 ไม่เตือน) ; ไม่มีออเดอร์ = N/A ไม่เตือน
 const CANCEL_ALERT_RATE = 10;
 const isCancelAlert = (rate) => rate !== null && rate !== undefined && rate > CANCEL_ALERT_RATE;
-function CancelAlertBanner({ children, style }) {
-    return (<div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px 14px', borderRadius: T.radiusMd, background: T.redSoft, color: T.down, fontSize: '13px', fontWeight: 600, lineHeight: 1.6, ...style }}>
-      <Icon name="alert" size={17} color={T.down} style={{ marginTop: '2px' }}/>
+// แถบเตือนบรรทัดเดียว : danger = มีปัญหาแล้ว (แดง) · warn = เตือนให้เตรียมตัว (เหลือง)
+function AlertBanner({ tone = 'danger', children, style }) {
+    const color = tone === 'warn' ? '#9A6400' : T.down;
+    return (<div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px 14px', borderRadius: T.radiusMd, background: tone === 'warn' ? T.accentSoft : T.redSoft, color, fontSize: '13px', fontWeight: 600, lineHeight: 1.6, ...style }}>
+      <Icon name="alert" size={17} color={color} style={{ marginTop: '2px' }}/>
       <div style={{ minWidth: 0 }}>{children}</div>
     </div>);
 }
+// สัญญาใกล้หมด : ยังใช้ได้อยู่ (ACTIVE) และเหลือไม่เกิน 30 วัน (ใช้ทั้ง Dashboard / จัดการร้าน / ยอดขายรายร้าน / ติดตามสัญญา)
+const CONTRACT_SOON_DAYS = 30;
+const isContractSoon = (store) => store?.ContractState === 'ACTIVE'
+    && store.ContractDaysLeft !== null && store.ContractDaysLeft !== undefined
+    && Number(store.ContractDaysLeft) <= CONTRACT_SOON_DAYS;
+const contractLeftLabel = (days) => (Number(days) === 0 ? 'หมดคืนนี้' : `เหลือ ${days} วัน`);
 function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hint, hasPreviousData = null, highlight, variant, icon = 'trend', tone = 'blue', size = 'md', invertDelta = false }) {
     const hasDelta = delta !== null && delta !== undefined;
     const showComparison = hasDelta;
@@ -1757,6 +1765,9 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         suspended: stores.filter((s) => s.IsSuspended).length,
         total: stores.length
     }), [stores]);
+    // สัญญาที่ต้องดู (แถบเหลืองบนสุดของ Dashboard)
+    const contractSoonStores = stores.filter(isContractSoon).sort((a, b) => a.ContractDaysLeft - b.ContractDaysLeft);
+    const contractExpiredStores = stores.filter((s) => s.ContractState === 'EXPIRED');
     const cancelAlertStores = report.storeRows
         .filter((s) => isCancelAlert(s.cancelRate))
         .sort((a, b) => b.cancelRate - a.cancelRate);
@@ -1889,6 +1900,15 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
     }
 };
     return (<>
+      {(contractSoonStores.length > 0 || contractExpiredStores.length > 0) && (<AlertBanner tone="warn" style={{ marginBottom: '16px' }}>
+        {contractSoonStores.length > 0 && <>สัญญาใกล้หมด {money(contractSoonStores.length)} ร้าน ({contractSoonStores.map((s) => `${s.StoreName} ${contractLeftLabel(s.ContractDaysLeft)}`).join(', ')})</>}
+        {contractSoonStores.length > 0 && contractExpiredStores.length > 0 && ' · '}
+        {contractExpiredStores.length > 0 && <>หมดสัญญาแล้ว {money(contractExpiredStores.length)} ร้าน ({contractExpiredStores.map((s) => s.StoreName).join(', ')})</>}
+        {' — '}
+        <button type="button" onClick={() => navigateTo('contract-tracking')} style={{ border: 'none', background: 'transparent', padding: 0, color: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
+          ดูหน้าติดตามสัญญา →
+        </button>
+      </AlertBanner>)}
 
       <div
         className="of-control-status-grid"
@@ -2122,7 +2142,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
       </div>
 
       <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
-        {cancelAlertStores.length > 0 && (<CancelAlertBanner style={{ marginBottom: '12px' }}>
+        {cancelAlertStores.length > 0 && (<AlertBanner style={{ marginBottom: '12px' }}>
           {money(cancelAlertStores.length)} ร้านอัตรายกเลิกเกิน {CANCEL_ALERT_RATE}% ในช่วงนี้:{' '}
           {cancelAlertStores.map((s, i) => (<span key={s.StoreId}>
             {i > 0 && ', '}
@@ -2130,7 +2150,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
               {s.StoreName}
             </button> ({s.cancelRate.toFixed(2)}%)
           </span>))}
-        </CancelAlertBanner>)}
+        </AlertBanner>)}
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
             <thead>
@@ -3030,7 +3050,7 @@ function StoreSalesPage({ ctx }) {
             return { label: `หมดสัญญาแล้ว ${Math.abs(days)} วัน`, tone: 'danger', detail: `หมดเมื่อ ${endText} 23:59 น. กดเพื่อเปิดสัญญารอบใหม่` };
         if (days === 0)
             return { label: 'หมดคืนนี้ 23:59 น.', tone: 'danger', detail: 'ถ้าร้านต่อสัญญาแล้ว ให้แก้วันสิ้นสุดก่อนเวลานี้' };
-        if (days <= 30)
+        if (days <= CONTRACT_SOON_DAYS)
             return { label: `เหลือ ${days} วัน`, tone: 'warn', detail: `ใกล้หมดสัญญา สิ้นสุด ${endText} 23:59 น.` };
         return { label: `เหลือ ${days} วัน`, tone: 'ok', detail: `สัญญามีผลถึง ${endText} 23:59 น.` };
     };
@@ -3325,9 +3345,9 @@ function StoreSalesPage({ ctx }) {
             </div>
           </Card>
 
-          {isCancelAlert(report.now.cancelRate) && (<CancelAlertBanner style={{ marginBottom: '16px' }}>
+          {isCancelAlert(report.now.cancelRate) && (<AlertBanner style={{ marginBottom: '16px' }}>
             อัตรายกเลิกของร้านนี้ {report.now.cancelRate.toFixed(2)}% เกินเกณฑ์ {CANCEL_ALERT_RATE}% ในช่วงที่เลือก ({money(report.now.cancelledCount)} จาก {money(report.now.cancelledCount + report.now.completedCount)} ออเดอร์)
-          </CancelAlertBanner>)}
+          </AlertBanner>)}
 
           <div className="of-kpi-hero">
             <KpiCard label="ยอดขายสุทธิ" value={money(report.now.sales)} unit="บาท" delta={changePct(report.now.sales, report.before.sales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} highlight icon="trend"/>
@@ -4676,7 +4696,10 @@ function StoreManagePage({ ctx }) {
                                                {s.ContractState === 'EXPIRED'
                             ? <Badge tone="danger">{s.IsClearingOrders ? 'หมดสัญญา · เคลียร์ออเดอร์' : 'หมดสัญญา'}</Badge>
                             : <Badge tone={s.IsOpen ? 'ok' : 'neutral'}>{s.IsOpen ? 'เปิด' : 'ปิด'}</Badge>}
-                        {s.ContractState === 'UPCOMING' && <Badge tone="neutral">ยังไม่เริ่มสัญญา</Badge>}
+                         {s.ContractState === 'UPCOMING' && <Badge tone="neutral">ยังไม่เริ่มสัญญา</Badge>}
+                        {isContractSoon(s) && (<button type="button" onClick={() => navigateTo('contract-tracking', s.StoreId)} title="สัญญาใกล้หมด กดเพื่อไปจัดการสัญญา" style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: FONT_STACK }}>
+                          <Badge tone="warn">{contractLeftLabel(s.ContractDaysLeft)}</Badge>
+                        </button>)}
                         {s.ContractState === 'NONE' && <Badge tone="warn">ไม่มีสัญญา</Badge>}
                         {Boolean(s.IsSuspended) && <Badge tone="danger">ระงับสิทธิ์</Badge>}
                       </div>
