@@ -24,6 +24,14 @@ class RegisterSchema(BaseModel):
 
 class GoogleAuthSchema(BaseModel):
     id_token: str = Field(min_length=20)
+    # อีเมลนี้มีบัญชีที่ใช้รหัสผ่านอยู่แล้ว แต่ไม่ใช่ของเรา (หรือจำรหัสไม่ได้) -> สร้างบัญชี Google แยกใหม่
+    create_new: bool = False
+
+
+class GoogleLinkSchema(BaseModel):
+    """ผูก Google กับบัญชีเดิมที่ใช้อีเมลเดียวกัน : ต้องพิสูจน์ว่าเป็นเจ้าของบัญชีด้วยรหัสผ่านเดิม"""
+    id_token: str = Field(min_length=20)
+    password: str = Field(min_length=1, max_length=200)
 
 
 class ChangePasswordSchema(BaseModel):
@@ -71,6 +79,12 @@ class StaffUpdateSchema(BaseModel):
 
 class StaffActiveSchema(BaseModel):
     is_active: bool
+
+
+class CustomerActiveSchema(BaseModel):
+    """ผู้บริหารระงับ/เปิดบัญชีลูกค้า : ระงับต้องใส่เหตุผล (เก็บใน AuditLog)"""
+    is_active: bool
+    reason: Optional[str] = Field(default="", max_length=255)
 
 
 class StaffEraseSchema(BaseModel):

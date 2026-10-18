@@ -7,13 +7,13 @@ from fastapi import APIRouter, Depends
 from auth import assert_store_access, get_current_user, hash_password, require_role
 from db import get_db, transaction
 from errors import DomainError
-from schemas import (AccountCreateSchema, AccountUpdateSchema, AdminResetPasswordSchema,
+from schemas import (AccountCreateSchema, AccountUpdateSchema, AdminResetPasswordSchema, CustomerActiveSchema,
                      CompleteProfileSchema, StaffActiveSchema, StaffCreateSchema, StaffEraseSchema,
                      StaffUpdateSchema, UpdateProfileSchema)
 from services import is_duplicate_key, log_audit
 from shapes import USER_SELECT, shape_user
 from state import STORE_ROLES, legacy_role, role_code_from_input
-from utils import (bangkok_now, delete_upload, mask_email, mask_phone, save_image, validate_email,
+from utils import (bangkok_now, clean_text, delete_upload, mask_email, mask_phone, save_image, validate_email,
                    validate_password, validate_phone, validate_username)
 
 router = APIRouter(prefix="/api", tags=["users"])
@@ -120,7 +120,7 @@ def get_customer_profile(
 @router.get("/executive/customers")
 def search_customers(search: Optional[str] = None, user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
     sql = """
-        SELECT u.UserId, u.Username, u.FullName, u.Email, u.Phone
+        SELECT u.UserId, u.Username, u.FullName, u.Email, u.Phone, u.IsActive
         FROM `User` u JOIN Role r ON r.RoleId = u.RoleId WHERE r.RoleCode = 'CUSTOMER'
     """
     params = []
@@ -139,9 +139,34 @@ def search_customers(search: Optional[str] = None, user=Depends(require_role("EX
         rows = cur.fetchall()
     for r in rows:
         r["Role"] = "Customer"
+        r["IsActive"] = bool(r["IsActive"])
         r["Email"] = mask_email(r["Email"])
         r["Phone"] = mask_phone(r["Phone"])
     return rows
+
+
+@router.put("/executive/customers/{user_id}/active")
+def set_customer_active(user_id: int, data: CustomerActiveSchema,
+                        user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
+    """ระงับบัญชีลูกค้า (เช่น สั่งแล้วไม่มารับซ้ำ ๆ / ใช้สลิปปลอม) หรือเปิดกลับ
+    ระงับแล้ว token ที่ใช้อยู่ใช้ไม่ได้ทันที (ทุก request อ่าน IsActive จาก DB) ; ออเดอร์เดิมยังอยู่ครบ"""
+    reason = clean_text(data.reason)
+    if not data.is_active and not reason:
+        raise DomainError(400, "กรุณาระบุเหตุผลที่ระงับบัญชี")
+    with transaction(db):
+        with db.cursor() as cur:
+            cur.execute("SELECT u.UserId, u.Username, u.IsActive, r.RoleCode FROM `User` u "
+                        "JOIN Role r ON r.RoleId = u.RoleId WHERE u.UserId = %s FOR UPDATE", (user_id,))
+            target = cur.fetchone()
+            if not target or target["RoleCode"] != "CUSTOMER":
+                raise DomainError(404, "ไม่พบบัญชีลูกค้านี้")
+            if bool(target["IsActive"]) == data.is_active:
+                return {"success": True, "is_active": data.is_active, "unchanged": True}
+            cur.execute("UPDATE `User` SET IsActive = %s WHERE UserId = %s", (data.is_active, user_id))
+        log_audit(db, user["UserId"], "UNBAN_USER" if data.is_active else "BAN_USER", "User", user_id,
+                  {"is_active": not data.is_active},
+                  {"is_active": data.is_active, "username": target["Username"], "reason": reason or None})
+    return {"success": True, "is_active": data.is_active}
 
 
 @router.put("/executive/users/{user_id}/reset-password")

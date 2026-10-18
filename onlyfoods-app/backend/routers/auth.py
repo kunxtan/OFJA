@@ -1,17 +1,17 @@
 """Login / สมัครสมาชิก / Google / เปลี่ยนรหัสผ่าน"""
 import logging
 import re
-from datetime import timedelta
-
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 import config
+import throttle
 from auth import (CONTRACT_EXPIRED_MESSAGE, STORE_CONTRACT_COLUMNS, contract_access, create_token,
                   get_current_user, hash_password, verify_password)
 from db import get_db, transaction
 from errors import DomainError
-from schemas import ChangePasswordSchema, GoogleAuthSchema, LoginSchema, RegisterSchema
-from services import is_duplicate_key, log_audit
+from schemas import ChangePasswordSchema, GoogleAuthSchema, GoogleLinkSchema, LoginSchema, RegisterSchema
+from services import is_duplicate_key, log_audit, request_ip
 from shapes import USER_SELECT, shape_user
 from utils import (ACCESS_LOCKED, bangkok_now, validate_email, validate_password, validate_phone,
                    validate_username)
@@ -25,6 +25,35 @@ def _load_user(cur, user_id: int) -> dict:
     return shape_user(cur.fetchone())
 
 
+def _too_many(seconds: int) -> HTTPException:
+    return HTTPException(status_code=429, detail=throttle.wait_message(seconds),
+                         headers={"Retry-After": str(seconds)})
+
+
+def _check_password(db, username: str, password: str, password_hash, user_id, now) -> None:
+    """ตรวจรหัสผ่านพร้อมจำกัดการเดา (login และการผูก Google ใช้ร่วมกัน) ; ผิด = 401 หรือ 429 ถ้าต้องรอ"""
+    ip = request_ip.get()
+    with db.cursor() as cur:
+        wait = throttle.retry_after(cur, ip, username, now)
+    if wait:
+        raise _too_many(wait)
+    if verify_password(password, password_hash):
+        return
+    # บันทึกความพยายามที่ล้มเหลว (commit ก่อนแล้วค่อยตอบ)
+    with transaction(db):
+        with db.cursor() as cur:
+            wait = throttle.record_failure(cur, ip, username, now)
+        if user_id:
+            log_audit(db, user_id, "LOGIN_FAIL", "AUTH", user_id, None, {"throttled_seconds": wait or None})
+        else:
+            # ชื่อที่ไม่มีในระบบ อาจเป็นรหัสผ่านที่พิมพ์ผิดช่อง : เก็บแบบปิดบางส่วน (AuditLog ลบ/แก้ไม่ได้)
+            log_audit(db, None, "LOGIN_FAIL", "AUTH", f"{username[:2]}***({len(username)})", None,
+                      {"reason": "unknown_username"})
+    if wait:
+        raise _too_many(wait)
+    raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+
+
 @router.post("/login")
 def login(data: LoginSchema, db=Depends(get_db)):
     now = bangkok_now()
@@ -32,7 +61,7 @@ def login(data: LoginSchema, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT u.UserId, u.PasswordHash, u.IsActive, u.FailedLoginCount, u.LockedUntil, u.StoreId,
+            SELECT u.UserId, u.PasswordHash, u.IsActive, u.StoreId,
             r.RoleCode, COALESCE(s.IsDeleted, 0) AS StoreIsDeleted,
             """ + STORE_CONTRACT_COLUMNS + """
             FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
@@ -44,47 +73,19 @@ def login(data: LoginSchema, db=Depends(get_db)):
         )
         row = cur.fetchone()
 
-    if row and row["LockedUntil"] and row["LockedUntil"] > now:
-        minutes = int((row["LockedUntil"] - now).total_seconds() // 60) + 1
-        raise HTTPException(status_code=423, detail=f"บัญชีถูกล็อกชั่วคราวจากการใส่รหัสผ่านผิดหลายครั้ง กรุณาลองใหม่ใน {minutes} นาที")
-
-    if not verify_password(data.password, row["PasswordHash"] if row else None):
-        # บันทึกความพยายามที่ล้มเหลว (commit ก่อนแล้วค่อยตอบ 401)
-        with transaction(db):
-            if row:
-                count = int(row["FailedLoginCount"]) + 1
-                locked = count >= config.MAX_FAILED_LOGINS
-                with db.cursor() as cur:
-                    # ลำดับ SET สำคัญ: LockedUntil ต้องอ่านค่านับก่อนถูกรีเซ็ต
-                    cur.execute(
-                        """
-                        UPDATE `User`
-                        SET LockedUntil = IF(FailedLoginCount + 1 >= %s, %s, LockedUntil),
-                            FailedLoginCount = IF(FailedLoginCount + 1 >= %s, 0, FailedLoginCount + 1)
-                        WHERE UserId = %s
-                        """,
-                        (config.MAX_FAILED_LOGINS, now + timedelta(minutes=config.LOCK_MINUTES),
-                         config.MAX_FAILED_LOGINS, row["UserId"]),
-                    )
-                log_audit(db, row["UserId"], "ACCOUNT_LOCKED" if locked else "LOGIN_FAIL", "AUTH",
-                          row["UserId"], None, {"failed_count": count})
-            else:
-                # ชื่อที่ไม่มีในระบบ อาจเป็นรหัสผ่านที่พิมพ์ผิดช่อง : เก็บแบบปิดบางส่วน (AuditLog ลบ/แก้ไม่ได้)
-                log_audit(db, None, "LOGIN_FAIL", "AUTH", f"{username[:2]}***({len(username)})", None,
-                          {"reason": "unknown_username"})
-        raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+    _check_password(db, username, data.password, row["PasswordHash"] if row else None,
+                    row["UserId"] if row else None, now)
 
     if not row["IsActive"]:
-        raise HTTPException(status_code=403, detail="บัญชีนี้ถูกปิดใช้งาน")
+        raise HTTPException(status_code=403, detail="บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ")
     if row["StoreIsDeleted"]:
         raise HTTPException(status_code=403, detail="ร้านค้านี้ถูกลบแล้ว ไม่สามารถเข้าสู่ระบบได้")
     if contract_access(row) == ACCESS_LOCKED:
         raise HTTPException(status_code=403, detail=CONTRACT_EXPIRED_MESSAGE)
-    
+
     with transaction(db):
-        if row["FailedLoginCount"] or row["LockedUntil"]:
-            with db.cursor() as cur:
-                cur.execute("UPDATE `User` SET FailedLoginCount = 0, LockedUntil = NULL WHERE UserId = %s", (row["UserId"],))
+        with db.cursor() as cur:
+            throttle.clear(cur, request_ip.get(), username)
         log_audit(db, row["UserId"], "LOGIN", "AUTH", row["UserId"], None, {"method": "password"})
     with db.cursor() as cur:
         user = _load_user(cur, row["UserId"])
@@ -178,8 +179,7 @@ def _unique_username(cur, email: str) -> str:
         candidate = f"{base[:16]}{n}"
 
 
-@router.post("/auth/google")
-def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
+def _verify_google(id_token: str) -> dict:
     """ตรวจ id_token กับ Google ฝั่ง server (ห้ามเชื่อ google_id/email ที่ client ส่งมาเอง)"""
     if not config.GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=503, detail="ยังไม่ได้ตั้งค่า Google Login บนเซิร์ฟเวอร์ (GOOGLE_CLIENT_ID)")
@@ -187,35 +187,57 @@ def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
         from google.auth.transport import requests as google_requests
         from google.oauth2 import id_token as google_id_token
 
-        claims = google_id_token.verify_oauth2_token(data.id_token, google_requests.Request(), config.GOOGLE_CLIENT_ID)
+        claims = google_id_token.verify_oauth2_token(id_token, google_requests.Request(), config.GOOGLE_CLIENT_ID)
     except ValueError:
         raise HTTPException(status_code=401, detail="Google token ไม่ถูกต้องหรือหมดอายุ")
     if not claims.get("email") or not claims.get("email_verified"):
         raise HTTPException(status_code=401, detail="อีเมล Google ยังไม่ได้รับการยืนยัน")
+    return claims
 
+
+_GOOGLE_USER_SQL = """
+    SELECT u.UserId, u.Username, u.IsActive, u.PasswordHash, r.RoleCode FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
+"""
+
+
+def _google_login_payload(db, user_id: int, method: str) -> dict:
+    log_audit(db, user_id, "LOGIN", "AUTH", user_id, None, {"method": method})
+    with db.cursor() as cur:
+        user = _load_user(cur, user_id)
+        token = _token_for(cur, user_id)
+    return {
+        "user": user,
+        "is_profile_incomplete": not bool(user.get("Phone")),
+        "access_token": token,
+        "token_type": "bearer",
+    }
+
+
+@router.post("/auth/google")
+def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
+    """เข้าสู่ระบบด้วย Google
+    - GoogleId นี้ผูกกับบัญชีอยู่แล้ว -> เข้าบัญชีนั้น
+    - อีเมลตรงกับบัญชีลูกค้าที่ใช้รหัสผ่าน (ยังไม่ผูก Google) -> ไม่ผูกให้เอง (H7: อีเมลของบัญชีเดิมไม่เคยถูกยืนยัน
+      ใครก็สมัครด้วยอีเมลคนอื่นได้) ตอบ 409 link_required ให้ใส่รหัสผ่านเดิมที่ POST /auth/google/link
+      หรือส่ง create_new=true เพื่อสร้างบัญชี Google แยก
+    - ไม่มีบัญชี -> สร้างบัญชีลูกค้าใหม่"""
+    claims = _verify_google(data.id_token)
     google_id, email = claims["sub"], claims["email"]
     with transaction(db):
         with db.cursor() as cur:
-            cur.execute(
-                """
-                SELECT u.UserId, u.IsActive, r.RoleCode FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
-                WHERE u.GoogleId = %s FOR UPDATE
-                """,
-                (google_id,),
-            )
+            cur.execute(_GOOGLE_USER_SQL + " WHERE u.GoogleId = %s FOR UPDATE", (google_id,))
             row = cur.fetchone()
-            if not row:
-                # ผูกกับบัญชีลูกค้าเดิมที่ใช้อีเมลเดียวกัน (เฉพาะ CUSTOMER เท่านั้น ไม่ผูกกับบัญชีพนักงาน)
-                cur.execute(
-                    """
-                    SELECT u.UserId, u.IsActive, r.RoleCode FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
-                    WHERE u.Email = %s AND r.RoleCode = 'CUSTOMER' AND u.GoogleId IS NULL FOR UPDATE
-                    """,
-                    (email,),
-                )
-                row = cur.fetchone()
-                if row:
-                    cur.execute("UPDATE `User` SET GoogleId = %s WHERE UserId = %s", (google_id, row["UserId"]))
+            if not row and not data.create_new:
+                cur.execute(_GOOGLE_USER_SQL + " WHERE u.Email = %s AND r.RoleCode = 'CUSTOMER' AND u.GoogleId IS NULL "
+                            "AND u.PasswordHash IS NOT NULL AND u.IsActive = TRUE ORDER BY u.UserId LIMIT 1", (email,))
+                existing = cur.fetchone()
+                if existing:
+                    return JSONResponse(status_code=409, content={
+                        "detail": f"อีเมล {email} มีบัญชีอยู่แล้ว (ชื่อผู้ใช้ {existing['Username']}) "
+                                  f"ใส่รหัสผ่านของบัญชีนั้นเพื่อเชื่อมกับ Google หรือสร้างบัญชีใหม่แยก",
+                        "link_required": True,
+                        "username": existing["Username"],
+                    })
             if not row:
                 picture = claims.get("picture")
                 cur.execute(
@@ -230,15 +252,33 @@ def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
                 user_id = cur.lastrowid
             else:
                 if not row["IsActive"]:
-                    raise DomainError(403, "บัญชีนี้ถูกปิดใช้งาน")
+                    raise DomainError(403, "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ")
                 user_id = row["UserId"]
-        log_audit(db, user_id, "LOGIN", "AUTH", user_id, None, {"method": "google"})
+        return _google_login_payload(db, user_id, "google")
+
+
+@router.post("/auth/google/link")
+def google_link(data: GoogleLinkSchema, db=Depends(get_db)):
+    """ผูก Google กับบัญชีลูกค้าเดิมที่อีเมลตรงกัน หลังใส่รหัสผ่านเดิมถูก (จำกัดการเดารหัสแบบเดียวกับ login)"""
+    claims = _verify_google(data.id_token)
+    google_id, email = claims["sub"], claims["email"]
+    now = bangkok_now()
     with db.cursor() as cur:
-        user = _load_user(cur, user_id)
-        token = _token_for(cur, user_id)
-    return {
-        "user": user,
-        "is_profile_incomplete": not bool(user.get("Phone")),
-        "access_token": token,
-        "token_type": "bearer",
-    }
+        cur.execute(_GOOGLE_USER_SQL + " WHERE u.GoogleId = %s", (google_id,))
+        if cur.fetchone():
+            raise DomainError(400, "บัญชี Google นี้เชื่อมกับบัญชีอื่นอยู่แล้ว")
+        cur.execute(_GOOGLE_USER_SQL + " WHERE u.Email = %s AND r.RoleCode = 'CUSTOMER' AND u.GoogleId IS NULL "
+                    "AND u.PasswordHash IS NOT NULL AND u.IsActive = TRUE ORDER BY u.UserId LIMIT 1", (email,))
+        row = cur.fetchone()
+    if not row:
+        raise DomainError(404, "ไม่พบบัญชีที่ใช้อีเมลนี้ให้เชื่อม")
+    _check_password(db, row["Username"], data.password, row["PasswordHash"], row["UserId"], now)
+    with transaction(db):
+        with db.cursor() as cur:
+            cur.execute("UPDATE `User` SET GoogleId = %s WHERE UserId = %s AND GoogleId IS NULL",
+                        (google_id, row["UserId"]))
+            if cur.rowcount != 1:
+                raise DomainError(409, "บัญชีนี้เพิ่งเชื่อมกับ Google อื่นไป กรุณาลองใหม่")
+            throttle.clear(cur, request_ip.get(), row["Username"])
+        log_audit(db, row["UserId"], "GOOGLE_LINK", "User", row["UserId"], None, {"email": email})
+        return _google_login_payload(db, row["UserId"], "google_link")

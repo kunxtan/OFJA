@@ -36,8 +36,7 @@ MAX_IMAGE_BYTES = _int("MAX_IMAGE_BYTES", 5 * 1024 * 1024)
 TIMEZONE = os.getenv("TZ", "Asia/Bangkok")
 
 MIN_PASSWORD_LENGTH = 8
-MAX_FAILED_LOGINS = 5
-LOCK_MINUTES = 15
+# ใส่รหัสผิด: ดู throttle.py (รอเพิ่มขึ้นเรื่อย ๆ ต่อ IP+username ไม่ล็อกบัญชี)
 
 # อาหารพร้อมรับ (READY) แล้วลูกค้ายังไม่มา:
 #  - ครบ PICKUP_REMINDER_MINUTES : ระบบเตือนลูกค้าอัตโนมัติ 1 ครั้ง + หน้าร้านขึ้นป้ายให้โทรหาลูกค้า
