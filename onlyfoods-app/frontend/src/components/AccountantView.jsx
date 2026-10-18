@@ -366,7 +366,9 @@ function buildStoreSummary(stores, orders, rangeStart) {
     if (!RECORDED_STATUSES.includes(st)) return;
     if (!map[o.StoreId]) map[o.StoreId] = blank(o.StoreId, o.StoreName || `ร้าน #${o.StoreId}`, false);
     const row = map[o.StoreId];
-    const amount = Number(o.TotalAmount || 0);
+    // ยกเลิกเพราะสลิปถูกปฏิเสธ = ร้านไม่เคยรับเงินนี้ : ไม่นับเข้ายอด (เดิมทำให้ GROSS สูงเกินจริง)
+    const neverPaid = st === 'Cancelled' && o.PaymentStatus === 'REJECTED';
+    const amount = neverPaid ? 0 : Number(o.TotalAmount || 0);
     row.totalOrders += 1;
     row.grossSales += amount;
     if (isSettled(o)) row.completedOrders += 1;
@@ -1482,7 +1484,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       return;
     }
 
-    const csv = [header, ...rows].map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    // ข้อความที่ขึ้นต้นด้วย = + - @ จะถูก Excel ตีเป็นสูตร (เช่นชื่อร้าน/เหตุผลที่ผู้ใช้พิมพ์) : ใส่ ' นำหน้ากันไว้
+    const cell = (v) => { const t = String(v ?? ''); return typeof v === 'string' && /^[=+\-@\t\r]/.test(t) ? `'${t}` : t; };
+    const csv = [header, ...rows].map(r => r.map(v => `"${cell(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     downloadBlob(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }), `${fileBase}.csv`);
     showToast('ส่งออกรายงานเป็นไฟล์ CSV สำเร็จ');
   };

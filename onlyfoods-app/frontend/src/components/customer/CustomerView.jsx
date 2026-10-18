@@ -135,6 +135,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setAlertData({ isOpen: true, title, message, type, onConfirm });
   };
 
+  // กดซ้ำระหว่างรอคำตอบ = ไม่ยิงซ้ำ (เดิมแจ้งมาช้าเสียโควตา 2 ครั้ง / รีวิวซ้ำ)
+  const busyRef = useRef(new Set());
+  const once = async (key, fn) => {
+    if (busyRef.current.has(key)) return undefined;
+    busyRef.current.add(key);
+    try {
+      return await fn();
+    } finally {
+      busyRef.current.delete(key);
+    }
+  };
+
   const fetchStores = async () => {
     try {
       const res = await fetch(`${apiBase}/api/stores`);
@@ -2110,7 +2122,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                             </div>
                           )}
                           <button
-                            onClick={() => handleLatePickup(order, selectedMinutes)}
+                            onClick={() => once(`late-${order.OrderID}`, () => handleLatePickup(order, selectedMinutes))}
                             disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
                             style={{
                               width: "100%",
@@ -2741,7 +2753,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         setReviewComment={setReviewComment}
         reviewImagePreview={reviewImagePreview}
         handleReviewImageChange={handleReviewImageChange}
-        submitReview={submitReview}
+        submitReview={() => once("review", submitReview)}
       />
       <OutOfStockModal
         outOfStockOrder={outOfStockOrder}
@@ -2749,7 +2761,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         timeLeft={timeLeft}
         isChangeMenuMode={isChangeMenuMode}
         setIsChangeMenuMode={setIsChangeMenuMode}
-        handleCancelOutOfStockOrder={handleCancelOutOfStockOrder}
+        handleCancelOutOfStockOrder={(reason) => customAlert(
+          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ คุณจะได้รับเงินคืนที่ร้าน (หรือเลือกให้ร้านโอนคืนได้)", "warning",
+          () => once("cancel-oos", () => handleCancelOutOfStockOrder(reason)))}
         setNewSelectedProduct={setNewSelectedProduct}
         newSelectedProduct={newSelectedProduct}
         handleChangeOrderMenu={handleChangeOrderMenu}
@@ -2772,7 +2786,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         handleTopUpSlipChange={handleTopUpSlipChange}
         submitTopUpSlip={submitTopUpSlip}
         isSubmittingTopUp={isSubmittingTopUp}
-        cancelTopUpOrder={cancelTopUpOrder}
+        cancelTopUpOrder={() => customAlert(
+          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ คุณจะได้รับเงินค่าอาหารคืนที่ร้าน", "warning",
+          () => once("cancel-topup", cancelTopUpOrder))}
         setHiddenTopUpOrderId={setHiddenTopUpOrderId}
       />
       <StoreReviewsModal

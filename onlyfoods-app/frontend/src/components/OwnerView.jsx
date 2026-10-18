@@ -2836,26 +2836,26 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     };
   }, [history, products, refunds]);
 
+  // ยกเลิกใหม่ที่ยังไม่ได้ดู : เทียบด้วยเลขออเดอร์ (เดิมเทียบจำนวนรายการ ซึ่งตันที่ 500 ตาม limit แล้วไม่เตือนอีกเลย)
+  const seenCancelIdsRef = useRef(null);
   useEffect(() => {
-    if (!isFirstFetch.current && cancels.length > knownCancelsCount) {
-      if (page !== 'history') {
-        setUnreadCancels(cancels.length - knownCancelsCount);
-      } else {
-        setKnownCancelsCount(cancels.length);
-      }
+    const ids = cancels.map(c => c.OrderID);
+    if (seenCancelIdsRef.current === null) {
+      if (!isFirstFetch.current) seenCancelIdsRef.current = new Set(ids); // ของที่มีอยู่ตอนเปิดหน้า = ดูแล้ว
+      return;
     }
-  }, [cancels.length, page, knownCancelsCount]);
-
-  useEffect(() => {
     if (page === 'history') {
+      ids.forEach(id => seenCancelIdsRef.current.add(id));
       setUnreadCancels(0);
-      setKnownCancelsCount(cancels.length);
+    } else {
+      setUnreadCancels(ids.filter(id => !seenCancelIdsRef.current.has(id)).length);
     }
-  }, [page, cancels.length]);
+  }, [cancels, page]);
 
   const markAllRead = async () => {
     setUnreadCancels(0);
     setKnownCancelsCount(cancels.length);
+    if (seenCancelIdsRef.current) cancels.forEach(c => seenCancelIdsRef.current.add(c.OrderID));
     if (uid && unreadNotifs > 0) {
       setNotifications(prev => prev.map(n => ({ ...n, IsRead: true })));
       setUnreadNotifs(0);

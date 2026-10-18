@@ -386,7 +386,9 @@ function saveBlob(blob, filename) {
 }
 function exportCsv(filename, rows) {
     const escape = (v) => {
-        const s = v === null || v === undefined ? '' : String(v);
+        let s = v === null || v === undefined ? '' : String(v);
+        // ข้อความที่ขึ้นต้นด้วย = + - @ จะถูก Excel ตีเป็นสูตร : ใส่ ' นำหน้า (ตัวเลขติดลบไม่แตะ)
+        if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const csv = rows.map((r) => r.map(escape).join(',')).join('\r\n');
@@ -4571,7 +4573,7 @@ function StoreManagePage({ ctx }) {
         const ok = await ask({
             title: 'ลบร้านค้าออกจากระบบ',
             message: `ยืนยันลบร้าน "${store.StoreName}" ออกจากระบบใช่หรือไม่`,
-            warning: 'เมนูของร้านจะถูกลบไปด้วย และถ้าร้านนี้เคยมีออเดอร์ ระบบจะไม่ยอมให้ลบ (ให้ใช้ระงับสิทธิ์แทน)',
+            warning: 'ร้านและเมนูจะหายจากหน้าลูกค้า แต่ประวัติออเดอร์และยอดขายยังเก็บไว้ ; ถ้ายังมีออเดอร์หรือเงินคืนลูกค้าค้างอยู่ ระบบจะไม่ยอมให้ลบ (ถ้าแค่อยากหยุดขายชั่วคราว ให้ใช้ระงับสิทธิ์แทน)',
             confirmText: 'ลบร้านค้า',
             danger: true
         });
