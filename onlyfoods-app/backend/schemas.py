@@ -222,7 +222,7 @@ class IssueUpdateSchema(BaseModel):
 
 
 class CreateIssueReportSchema(BaseModel):
-    order_id: Optional[int] = None
+    order_id: Optional[int] = Field(default=None, ge=1)  # 0 เคยทำให้ INSERT ชน FK แล้วได้ 500
     store_id: int
     issue_type: str = Field(max_length=100)
     description: Optional[str] = Field(default="", max_length=1000)

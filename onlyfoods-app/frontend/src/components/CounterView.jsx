@@ -26,7 +26,19 @@ const PALETTE = {
 // ออเดอร์ walk-in (ไม่มีบัญชีลูกค้า) : backend ส่ง IsWalkIn เป็น 0/1
 const isWalkInOrder = (o) => Boolean(Number(o?.IsWalkIn)) || !o?.UserId;
 
-const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+// ข้อความ error จาก backend : detail เป็นข้อความ หรือรายการ (422 ของ pydantic) -> ไม่ให้ขึ้น [object Object]
+const apiErrorText = (data, fallback) => {
+  if (typeof data?.detail === 'string') return data.detail;
+  if (Array.isArray(data?.detail)) return data.detail.map(d => d?.msg).filter(Boolean).join(', ') || fallback;
+  return fallback;
+};
+// ชนิดของ toast จากข้อความ (เดิมขึ้น ✓ สีเขียวทุกข้อความ แม้เป็น error)
+const toastKind = (msg) => {
+  const t = String(msg || '');
+  if (/ไม่สำเร็จ|ไม่ได้|ไม่สามารถ|ผิดพลาด|ไม่พอ|ไม่พบ|กรุณา|error|HTTP|⚠️|❌|🔒/i.test(t)) return 'error';
+  return 'success';
+};
 
 function Icon({ name, size = 20 }) {
   const paths = {
@@ -96,6 +108,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [payMethod, setPayMethod] = useState('Cash');
   const [cashInput, setCashInput] = useState('');
   const [payBusy, setPayBusy] = useState(false);
+  const [lastSale, setLastSale] = useState(null); // { queue, method, change, received, total } หลังออกคิว walk-in
   // จอเรียกคิว (จำลอง): คิวที่เพิ่งพร้อมจะกระพริบ + เสียงติ๊ง ; เห็นครั้งแรกตอนเปิดหน้าไม่นับว่า "ใหม่"
   const [displaySound, setDisplaySound] = useState(true);
   const [displayFull, setDisplayFull] = useState(false);
@@ -197,10 +210,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
     return () => { cancelled = true; };
   }, [activeTab, historyDate, activeStoreId, apiBase]);
 
-  const showToast = (msg) => {
-    setToast({ show: true, msg });
+  const showToast = (msg, kind) => {
+    const k = kind || toastKind(msg);
+    setToast({ show: true, msg, kind: k });
     clearTimeout(window.__cvToastTimer);
-    window.__cvToastTimer = setTimeout(() => setToast({ show: false, msg: '' }), 2600);
+    // error ค้างไว้นานกว่า ให้อ่านทัน
+    window.__cvToastTimer = setTimeout(() => setToast({ show: false, msg: '' }), k === 'error' ? 6000 : 2600);
   };
 
   const fetchData = () => {
@@ -314,21 +329,25 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const currentStore = stores.find(s => s.StoreId === activeStoreId);
 
   // --- Handlers ---
+  const verifyingRef = useRef(new Set()); // กดซ้ำระหว่างรอคำตอบ = ไม่ยิงซ้ำ (ครั้งที่ 2 เคยขึ้น error ทับข้อความสำเร็จ)
   const verifySlip = (id, approved, reason = '') => {
+    if (verifyingRef.current.has(id)) return;
+    verifyingRef.current.add(id);
     fetch(`${apiBase}/api/orders/${id}/verify-slip`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approved, reason })
     }).then(async res => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(data.detail || 'ไม่สามารถตรวจสอบสลิปได้');
+        showToast(apiErrorText(data, 'ไม่สามารถตรวจสอบสลิปได้'), 'error');
         return;
       }
       showToast(approved ? 'อนุมัติสลิปแล้ว ส่งคิวเข้าครัว' : 'ปฏิเสธสลิปแล้ว');
       setViewingSlip(null);
       setRejectSlipModal(null);
       fetchData();
-    }).catch(() => showToast('เชื่อมต่อระบบตรวจสลิปไม่สำเร็จ'));
+    }).catch(() => showToast('เชื่อมต่อระบบตรวจสลิปไม่สำเร็จ'))
+      .finally(() => verifyingRef.current.delete(id));
   };
 
   const openRejectSlip = (order) => {
@@ -660,7 +679,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     if (why) return showToast(why);
     setPayMethod('Cash'); setCashInput(''); setPayOpen(true);
   };
-  const cashReceived = Number(cashInput || 0);
+  const cashReceived = Math.round(Number(cashInput || 0) * 100) / 100; // backend รับทศนิยมไม่เกิน 2 ตำแหน่ง
   const cashChange = cashReceived - totalAmount;
   const cashEnough = cashInput !== '' && cashChange >= -0.001;
   const addCash = (n) => setCashInput(v => String(Number(v || 0) + n));
@@ -685,10 +704,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
         })
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { showToast(`สั่งซื้อไม่สำเร็จ: ${data.detail || `HTTP ${res.status}`}`); return; }
-      showToast(payMethod === 'Cash'
-        ? `ออกคิว ${data.queue_no} แล้ว · ทอน ฿${fmtMoney(Math.max(0, cashChange))}`
-        : `ออกคิว ${data.queue_no} แล้ว · รับโอน ฿${fmtMoney(totalAmount)}`);
+      if (!res.ok) { showToast(`สั่งซื้อไม่สำเร็จ: ${apiErrorText(data, `HTTP ${res.status}`)}`, 'error'); return; }
+      // ยอดเงินทอนค้างไว้จนพนักงานกดปิด (เดิมขึ้นแค่ toast 2.6 วิ ทอนไม่ทันอ่าน)
+      setLastSale({ queue: data.queue_no, method: payMethod, change: Math.max(0, cashChange), received: cashReceived, total: totalAmount });
       setPayOpen(false); setCart([]); setOrderNote(''); setCashInput('');
       fetchData(); setActiveTab('orders');
     } catch {
@@ -1930,9 +1948,26 @@ export default function CounterView({ user, apiBase, onLogout }) {
         </div>
       )}
 
+      {lastSale && (
+        <div className="cv-modal-overlay" onClick={() => setLastSale(null)}>
+          <div className="cv-modal" role="dialog" aria-modal="true" aria-label="ออกคิวแล้ว" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
+            <h3 style={{ margin: '4px 0 8px' }}>✅ ออกคิว {lastSale.queue} แล้ว</h3>
+            {lastSale.method === 'Cash' ? (
+              <>
+                <div style={{ color: PALETTE.textSub }}>รับเงิน ฿{fmtMoney(lastSale.received)} · ยอด ฿{fmtMoney(lastSale.total)}</div>
+                <div style={{ fontSize: 40, fontWeight: 900, color: PALETTE.green, margin: '12px 0' }}>ทอน ฿{fmtMoney(lastSale.change)}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 22, fontWeight: 800, margin: '12px 0' }}>รับโอน ฿{fmtMoney(lastSale.total)}</div>
+            )}
+            <button type="button" className="cv-btn btn-success cv-btn-lg" style={{ width: '100%' }} autoFocus onClick={() => setLastSale(null)}>ทอนเงินแล้ว / ปิด</button>
+          </div>
+        </div>
+      )}
+
       {/* ===== TOAST ===== */}
-      <div className={`cv-toast ${toast.show ? 'show' : ''}`}>
-        <span className="toast-icon"><Icon name="check" size={16} /></span>
+      <div className={`cv-toast ${toast.show ? 'show' : ''} ${toast.kind === 'error' ? 'error' : ''}`} role={toast.kind === 'error' ? 'alert' : 'status'}>
+        <span className="toast-icon">{toast.kind === 'error' ? '!' : <Icon name="check" size={16} />}</span>
         <span>{toast.msg}</span>
       </div>
     </div>
@@ -2342,6 +2377,8 @@ const CV_STYLES = `
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .cv-toast.show { opacity: 1; transform: translateY(0); }
+.cv-toast.error { border-color: ${PALETTE.red}; }
+.cv-toast.error .toast-icon { background: ${PALETTE.redLight}; color: ${PALETTE.red}; font-weight: 900; }
 .toast-icon { background: ${PALETTE.greenLight}; color: ${PALETTE.green}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
 
 .bold { font-weight: 600; }
