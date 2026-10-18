@@ -808,6 +808,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     if (!editName.trim()) return customAlert("กรุณากรอกชื่อ-นามสกุล", "", "warning");
     if (!editPhone.trim()) return customAlert("กรุณากรอกเบอร์โทรศัพท์", "", "warning");
+    if (!/^\d{10}$/.test(editPhone.trim())) return customAlert("เบอร์โทรศัพท์ไม่ถูกต้อง", "กรุณากรอกตัวเลข 10 หลัก", "warning");
 
     try {
       const res = await fetch(`${apiBase}/api/users/profile`, {
@@ -1714,9 +1715,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <label style={{ display: "block", fontSize: "13px", fontWeight: "800", marginBottom: "5px" }}>เบอร์โทรศัพท์</label>
               <input
                 type="tel"
+                inputMode="numeric"
+                pattern="[0-9]{10}"
+                maxLength={10}
                 value={editPhone}
-                onChange={(e) => setEditPhone(e.target.value)}
-                placeholder="08X-XXX-XXXX"
+                onChange={(e) => setEditPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                placeholder="08XXXXXXXX"
                 style={{ width: "100%", padding: "10px 14px", borderRadius: "10px", border: `1px solid ${COLORS.border}`, boxSizing: "border-box", fontFamily: "inherit" }}
                 required
               />
@@ -2179,9 +2183,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           )}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
-                          <button onClick={() => decreaseQty(index)} aria-label="ลดจำนวน" style={{ width: "36px", height: "36px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>−</button>
-                          <b style={{ minWidth: "20px", textAlign: "center" }}>{item.qty || 1}</b>
-                          <button onClick={() => increaseQty(index)} aria-label="เพิ่มจำนวน" style={{ width: "36px", height: "36px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, fontSize: "18px", fontWeight: "900", cursor: "pointer" }}>+</button>
+                          <button onClick={() => decreaseQty(index)} aria-label="ลดจำนวน" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, width: "36px", height: "36px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, cursor: "pointer" }}>
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M3 8h10"/></svg>
+                          </button>
+                          <b style={{ minWidth: "20px", textAlign: "center", lineHeight: 1 }}>{item.qty || 1}</b>
+                          <button onClick={() => increaseQty(index)} aria-label="เพิ่มจำนวน" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, width: "36px", height: "36px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, cursor: "pointer" }}>
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M3 8h10M8 3v10"/></svg>
+                          </button>
                         </div>
                         {(item.qty || 1) > 1 && (
                           <button
@@ -2193,7 +2201,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           </button>
                         )}
                       </div>
-                      <button onClick={() => removeFromCart(index)} aria-label="ลบรายการ" style={{ alignSelf: "flex-start", width: "36px", height: "36px", border: "none", background: "none", cursor: "pointer", fontSize: "20px" }}>×</button>
+                      <button onClick={() => removeFromCart(index)} aria-label="ลบรายการ" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, alignSelf: "flex-start", width: "36px", height: "36px", border: "none", background: "none", color: COLORS.navy, cursor: "pointer" }}>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg>
+                      </button>
                     </div>
                     <div style={{ marginTop: "13px" }}>
                       <label style={{ display: "block", fontSize: "12px", fontWeight: "800", color: COLORS.navy, marginBottom: "5px" }}>หมายเหตุสำหรับรายการที่ {index + 1}{(item.qty || 1) > 1 ? ` (ใช้กับทั้ง ${item.qty} จาน)` : ""}</label>
