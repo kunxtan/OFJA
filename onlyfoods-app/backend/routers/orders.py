@@ -1,9 +1,13 @@
 """ออเดอร์: สร้าง, ดู, เปลี่ยนสถานะ, ยกเลิก, เปลี่ยนเมนู"""
+import hashlib
+import json
+import re
 from datetime import timedelta
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
+from fastapi.responses import JSONResponse
 
 import config
 import state
@@ -11,8 +15,8 @@ from auth import STORE_SCOPED, assert_store_access, get_current_user, require_ro
 from db import get_db, transaction
 from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
-                     LatePickupSchema, StatusUpdateSchema, TopUpSlipSchema)
-from services import (add_top_up, assert_slip_not_reused, reduce_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
+                     LatePickupSchema, QuoteOrderSchema, StatusUpdateSchema, TopUpSlipSchema)
+from services import (add_top_up, assert_slip_not_reused, is_duplicate_key, reduce_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
                       lock_order, log_audit, log_first_status, notify_menu_out_of_stock, pending_top_up,
                       refund_price_diff, send_notif, status_id)
 from shapes import ORDER_SELECT, attach_items, order_people, redact_order_contacts, shape_order
@@ -43,9 +47,108 @@ def _resolve_payment_method(raw: Optional[str], walk_in: bool) -> str:
 
 
 # ------------------------------------------------------------------- create
+REQUEST_REPLAY_HOURS = 24
+_REQUEST_KEY = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+
+def _price_items(cur, store_id: int, items) -> tuple:
+    """ราคาจริงจากตาราง Product (ไม่เชื่อราคาจาก client) คืน (ยอดรวม, แถวสำหรับ insert, รายการสำหรับแสดง)"""
+    wanted = sorted({i.product_id for i in items})
+    cur.execute(
+        f"""
+        SELECT ProductId, ProductName, UnitPrice, IsOutOfStock FROM Product
+        WHERE StoreId = %s AND IsDeleted = FALSE AND ProductId IN ({','.join(['%s'] * len(wanted))})
+        """,
+        [store_id, *wanted],
+    )
+    products = {p["ProductId"]: p for p in cur.fetchall()}
+    total, rows, lines = Decimal(0), [], []
+    for item in items:
+        prod = products.get(item.product_id)
+        if not prod:
+            raise DomainError(400, f"ไม่พบสินค้า ID {item.product_id} ในร้านนี้")
+        if prod["IsOutOfStock"]:
+            raise DomainError(400, f"สินค้า '{prod['ProductName']}' หมด")
+        price = Decimal(prod["UnitPrice"])
+        total += price * item.qty
+        rows.append((item.product_id, item.qty, price, clean_text(item.item_note or item.note)))
+        lines.append({"product_id": item.product_id, "name": prod["ProductName"], "unit_price": float(price),
+                      "qty": item.qty, "line_total": float(price * item.qty)})
+    return total, rows, lines
+
+
+@router.post("/quote")
+def quote_order(data: QuoteOrderSchema, user=Depends(require_role("CUSTOMER", "FRONT_STAFF", "STORE_OWNER")),
+                db=Depends(get_db)):
+    """M5: ยอดจริงตอนนี้ (ก่อนแสดง QR ให้โอน) ราคาเมนูเปลี่ยนหลังลูกค้าใส่ตะกร้า = หน้าจออัปเดตยอดก่อนโอน"""
+    with db.cursor() as cur:
+        cur.execute("SELECT IsOpen, IsSuspended, IsDeleted FROM Store WHERE StoreId = %s", (data.store_id,))
+        store = cur.fetchone()
+        if not store or store["IsDeleted"]:
+            raise DomainError(404, "ไม่พบร้านค้านี้")
+        total, _, lines = _price_items(cur, data.store_id, data.items)
+    return {"total": float(total), "items": lines, "store_open": bool(store["IsOpen"]) and not store["IsSuspended"]}
+
+
+def _request_fingerprint(data: CreateOrderSchema) -> str:
+    """ลายนิ้วมือของตะกร้า : รหัสคำขอเดิมแต่ตะกร้าไม่เหมือนเดิม = ไม่ใช่การส่งซ้ำ (ไม่รวมรูปสลิป)"""
+    body = {
+        "store": data.store_id, "walk_in": bool(data.is_walk_in), "method": data.payment_method,
+        "pickup": data.pickup_time, "cash": str(data.cash_received) if data.cash_received is not None else None,
+        "items": sorted((i.product_id, i.qty, (i.item_note or i.note or "").strip()) for i in data.items),
+    }
+    return hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _replay_request(db, actor_id: int, key: str, fingerprint: str, now):
+    """คำขอซ้ำ (กดจ่ายซ้ำ / เน็ตหลุดแล้วส่งใหม่) : คืนออเดอร์เดิม ; ไม่เคยมี = None"""
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT o.OrderId, o.QueueNo, o.TotalAmount, o.CreatedAt, o.RequestFingerprint, s.QueueCode "
+            "FROM `Order` o JOIN Store s ON s.StoreId = o.StoreId WHERE o.RequestActorId = %s AND o.ClientRequestId = %s",
+            (actor_id, key),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    if row["RequestFingerprint"] != fingerprint:
+        raise DomainError(422, "รหัสคำขอนี้ใช้กับตะกร้าอื่นไปแล้ว กรุณากดสั่งซื้อใหม่อีกครั้ง")
+    if row["CreatedAt"] < now - timedelta(hours=REQUEST_REPLAY_HOURS):
+        raise DomainError(409, "รหัสคำขอนี้หมดอายุแล้ว กรุณากดสั่งซื้อใหม่อีกครั้ง")
+    return {"success": True, "order_id": row["OrderId"], "queue_no": queue_label(row["QueueNo"], row["QueueCode"]),
+            "total": float(row["TotalAmount"]), "duplicate": True}
+
+
+class _DuplicateRequest(DomainError):
+    """อีกคำขอที่ใช้รหัสเดียวกันสร้างออเดอร์ไปแล้ว (ส่งพร้อมกัน) ; เป็น DomainError เพื่อให้ transaction() rollback แล้วส่งต่อ
+    (ไม่แปลงเป็น 500) จากนั้น create_order คืนออเดอร์ที่สร้างไปแล้ว"""
+
+    def __init__(self):
+        super().__init__(409, "คำขอนี้กำลังสร้างออเดอร์อยู่ กรุณารอสักครู่")
+
+
 @router.post("")
 def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", "FRONT_STAFF", "STORE_OWNER")),
-                 db=Depends(get_db)):
+                 db=Depends(get_db), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+    key = data.client_request_id or idempotency_key
+    if key is not None and not _REQUEST_KEY.match(key):
+        raise DomainError(400, "Idempotency-Key ไม่ถูกต้อง (ตัวอักษร/ตัวเลข/ขีด 8-64 ตัว)")
+    fingerprint = _request_fingerprint(data) if key else None
+    if key:
+        replay = _replay_request(db, user["UserId"], key, fingerprint, bangkok_now())
+        if replay:
+            return replay
+    try:
+        return _create_order(data, user, db, key, fingerprint)
+    except _DuplicateRequest:
+        # ส่งซ้ำพร้อมกัน 2 คำขอ : อีกคำขอสร้างไปแล้ว (ชน unique) -> คืนออเดอร์นั้น
+        replay = _replay_request(db, user["UserId"], key, fingerprint, bangkok_now())
+        if replay:
+            return replay
+        raise
+
+
+def _create_order(data: CreateOrderSchema, user: dict, db, key: Optional[str], fingerprint: Optional[str]):
     is_staff = user["RoleCode"] != "CUSTOMER"
     if is_staff != bool(data.is_walk_in):
         raise DomainError(403, "พนักงานสร้างได้เฉพาะออเดอร์ Walk-in และลูกค้าสร้างได้เฉพาะออเดอร์ออนไลน์")
@@ -84,28 +187,16 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
             if not store["IsOpen"]:
                 raise DomainError(400, f"ร้าน '{store['StoreName']}' ปิดทำการอยู่ขณะนี้")
 
-            wanted = sorted({i.product_id for i in data.items})
-            cur.execute(
-                f"""
-                SELECT ProductId, ProductName, UnitPrice, IsOutOfStock FROM Product
-                WHERE StoreId = %s AND IsDeleted = FALSE AND ProductId IN ({','.join(['%s'] * len(wanted))})
-                """,
-                [data.store_id, *wanted],
-            )
-            products = {p["ProductId"]: p for p in cur.fetchall()}
-            total = Decimal(0)
-            rows = []
-            for item in data.items:
-                prod = products.get(item.product_id)
-                if not prod:
-                    raise DomainError(400, f"ไม่พบสินค้า ID {item.product_id} ในร้านนี้")
-                if prod["IsOutOfStock"]:
-                    raise DomainError(400, f"สินค้า '{prod['ProductName']}' หมด")
-                price = Decimal(prod["UnitPrice"])  # ราคาจริงจาก DB เสมอ ไม่เชื่อราคาจาก client
-                total += price * item.qty
-                rows.append((item.product_id, item.qty, price, clean_text(item.item_note or item.note)))
+            total, rows, lines = _price_items(cur, data.store_id, data.items)
             if total <= 0:
                 raise DomainError(400, "ยอดรวมออเดอร์ต้องมากกว่า 0 บาท")
+            if data.expected_total is not None and Decimal(data.expected_total).quantize(Decimal("0.01")) != total:
+                # ราคาเปลี่ยนหลังลูกค้าเห็นยอด (เช่น QR ที่โอนไปเป็นยอดเก่า) : ไม่สร้างออเดอร์ ให้หน้าจออัปเดตแล้วยืนยันใหม่
+                return JSONResponse(status_code=409, content={
+                    "detail": f"ราคาเมนูเปลี่ยนแล้ว ยอดที่ถูกต้องคือ {total:,.2f} บาท "
+                              f"(หน้าจอแสดง {Decimal(data.expected_total):,.2f} บาท) กรุณาตรวจยอดแล้วสั่งใหม่",
+                    "price_changed": True, "total": float(total), "items": lines,
+                })
             cash_received = change_given = None
             if is_staff and method_code == "CASH":
                 if data.cash_received is None:
@@ -120,17 +211,24 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
             initial = state.PENDING if is_staff else state.VERIFYING_SLIP
 
             def insert_order(queue_no: int) -> int:
-                cur.execute(
-                    """
-                    INSERT INTO `Order` (StoreId, CustomerId, CreatedByStaffId, StatusId, QueueNo, TotalAmount,
-                                         Note, IsWalkIn, PickupTime, CreatedAt)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    # ส่ง CreatedAt เอง : คอลัมน์ OrderDate (generated) คำนวณจาก CreatedAt และ MySQL 8.0.32
-                    # คำนวณก่อนใส่ DEFAULT CURRENT_TIMESTAMP จึงได้ '0000-00-00' ถ้าไม่ระบุค่า
-                    (data.store_id, customer_id, staff_id, status_id(cur, initial), queue_no, total,
-                     clean_text(data.note), is_staff, pickup, bangkok_now()),
-                )
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO `Order` (StoreId, CustomerId, CreatedByStaffId, StatusId, QueueNo, TotalAmount,
+                                             Note, IsWalkIn, PickupTime, CreatedAt,
+                                             RequestActorId, ClientRequestId, RequestFingerprint)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        # ส่ง CreatedAt เอง : คอลัมน์ OrderDate (generated) คำนวณจาก CreatedAt และ MySQL 8.0.32
+                        # คำนวณก่อนใส่ DEFAULT CURRENT_TIMESTAMP จึงได้ '0000-00-00' ถ้าไม่ระบุค่า
+                        (data.store_id, customer_id, staff_id, status_id(cur, initial), queue_no, total,
+                         clean_text(data.note), is_staff, pickup, bangkok_now(),
+                         user["UserId"] if key else None, key, fingerprint),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    if key and is_duplicate_key(exc) and "uk_order_client_request" in str(exc):
+                        raise _DuplicateRequest() from exc
+                    raise
                 return cur.lastrowid
 
             order_id, queue_no = insert_with_queue_retry(cur, data.store_id, insert_order)

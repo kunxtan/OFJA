@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { startPolling } from "../../utils/polling";
 import Cropper from "react-easy-crop";
+import { newRequestKey, applyServerPrices } from "../../utils/requestKey";
 import { createCartRow, getNotifKey, getOrderStatusLabel, getOutOfStockItem, previewLateArrival, summarizeRefunds } from "./utils/orders";
 import { addProductToCart, countCartDishes, decreaseRowQty, increaseRowQty, splitOneFromRow, sumCart } from "./utils/cart";
 import { formatBangkokTime, getCurrentDateTimeForBackend, getCurrentTimeFormatted, secondsUntil } from "./utils/time";
@@ -75,6 +76,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [queueEstimateOrders, setQueueEstimateOrders] = useState([]);
   const [orderQueueEstimates, setOrderQueueEstimates] = useState({}); // { [storeId]: orders[] } สำหรับหน้าคำสั่งซื้อ
   const [toasts, setToasts] = useState([]); // ป๊อปอัพแจ้งเตือนที่กำลังแสดง
+  const orderRequestKeyRef = useRef(null); // รหัสคำขอของการกดจ่ายครั้งนี้ (M6) ; ตะกร้าเปลี่ยน = รหัสใหม่
   const seenToastKeysRef = useRef(null); // คีย์การแจ้งเตือนที่เห็นแล้ว (null = ยังไม่โหลดครั้งแรก จึงไม่เด้งของเก่า)
   const activeTabRef = useRef(activeTab); // ให้ fetchNotifs ที่อยู่ใน setInterval อ่านแท็บล่าสุดได้
   activeTabRef.current = activeTab;
@@ -871,13 +873,33 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const isPickupInPast = () =>
     Boolean(pickupTime) && toMinutes(pickupTime) < toMinutes(formatBangkokTime(new Date()));
 
-  const handleProceedToPayment = () => {
+  useEffect(() => { orderRequestKeyRef.current = null; }, [cart, pickupTime, paymentMethod]);
+
+  // M5: ราคาเมนูอาจเปลี่ยนหลังใส่ตะกร้า -> ถามยอดจริงก่อนแสดง QR (ไม่งั้นลูกค้าโอนผิดยอด)
+  const priceChanged = (items, total) => {
+    setCart((prev) => applyServerPrices(prev, items));
+    customAlert("ราคาเมนูเปลี่ยนแล้ว", `ยอดที่ถูกต้องคือ ${Number(total).toFixed(2)} บาท กรุณาตรวจตะกร้าแล้วกดชำระเงินอีกครั้ง`, "warning");
+  };
+
+  const handleProceedToPayment = async () => {
     if (!checkFoodCourtOrderTime()) return;
     if (isPickupInPast()) {
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
     }
     if (cart.length === 0) return customAlert("กรุณาเลือกอาหารลงตะกร้าก่อนสั่งซื้อ", "", "error");
     if (!cartStoreId) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
+    try {
+      const res = await fetch(`${apiBase}/api/orders/quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store_id: cartStoreId, items: cart.map((item) => ({ product_id: Number(item.ProductId), qty: Number(item.qty) || 1 })) }),
+      });
+      const quote = await res.json().catch(() => ({}));
+      if (!res.ok) return customAlert(quote.detail || "ตรวจสอบราคาไม่สำเร็จ", "", "error");
+      if (Math.abs(Number(quote.total) - totalAmount) > 0.001) return priceChanged(quote.items, quote.total);
+    } catch {
+      return customAlert("เชื่อมต่อระบบไม่สำเร็จ กรุณาลองใหม่", "", "error");
+    }
     setIsCartOpen(false);
     setIsPaymentModalOpen(true);
   };
@@ -1119,6 +1141,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       note: orderNote || "",
       pickup_time: finalPickupTime,
       order_time: currentOrderTime,
+      expected_total: Number(totalAmount.toFixed(2)),
+      // กดซ้ำ / เน็ตหลุดแล้วกดใหม่ด้วยตะกร้าเดิม = ได้ออเดอร์เดิมกลับ ไม่สร้างซ้ำ
+      client_request_id: orderRequestKeyRef.current || (orderRequestKeyRef.current = newRequestKey()),
     };
 
     setIsSubmittingOrder(true);
@@ -1129,7 +1154,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         body: JSON.stringify(orderData),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.price_changed) {
+        setIsPaymentModalOpen(false);
+        setIsCartOpen(true);
+        return priceChanged(data.items, data.total);
+      }
       if (!res.ok) return customAlert(data.detail || "ไม่สามารถสั่งซื้อได้", "", "error");
+      orderRequestKeyRef.current = null;
 
       // รับทันที -> แสดงช่วงเวลาโดยประมาณเหมือนในตะกร้า / นัดเวลา -> แสดงเวลานัด
       const pickupLabel = pickupTime ? finalPickupTime : (getCustomerPickupRange() || displayOrderTime);

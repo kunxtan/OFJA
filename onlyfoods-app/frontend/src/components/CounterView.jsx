@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { startPolling } from '../utils/polling';
 import RefundLog from './RefundLog';
+import { newRequestKey, applyServerPrices } from '../utils/requestKey';
 
 // โทนสีเดิมของ Counter & Theme กลาง
 const PALETTE = {
@@ -658,6 +659,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }
   };
 
+  const walkInKeyRef = useRef(null);
+  useEffect(() => { walkInKeyRef.current = null; }, [cart]);
   const addToCart = (p) => setCart([...cart, { ...p, note: '' }]);
   const removeFromCart = (idx) => setCart(cart.filter((_, i) => i !== idx));
   const updateCartNote = (idx, note) => {
@@ -677,6 +680,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const openPayment = () => {
     const why = walkInBlocked();
     if (why) return showToast(why);
+    walkInKeyRef.current = newRequestKey();   // M6: กดยืนยันซ้ำ / เน็ตหลุด = ได้คิวเดิม ไม่เปิดคิวซ้ำ
     setPayMethod('Cash'); setCashInput(''); setPayOpen(true);
   };
   const cashReceived = Math.round(Number(cashInput || 0) * 100) / 100; // backend รับทศนิยมไม่เกิน 2 ตำแหน่ง
@@ -701,10 +705,19 @@ export default function CounterView({ user, apiBase, onLogout }) {
           note: orderNote || 'Walk-in',
           payment_method: payMethod,
           cash_received: payMethod === 'Cash' ? cashReceived : null,
+          expected_total: Math.round(totalAmount * 100) / 100,
+          client_request_id: walkInKeyRef.current || (walkInKeyRef.current = newRequestKey()),
         })
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.price_changed) {
+        // ราคาเมนูเปลี่ยน : อัปเดตตะกร้า (useEffect ล้างรหัสคำขอ) แล้วให้พนักงานแจ้งยอดใหม่กับลูกค้าก่อนกดอีกครั้ง
+        setCart(prev => applyServerPrices(prev, data.items));
+        showToast(`ราคาเมนูเปลี่ยน ยอดใหม่ ฿${fmtMoney(data.total)} กรุณาแจ้งลูกค้าแล้วกดยืนยันอีกครั้ง`, 'error');
+        return;
+      }
       if (!res.ok) { showToast(`สั่งซื้อไม่สำเร็จ: ${apiErrorText(data, `HTTP ${res.status}`)}`, 'error'); return; }
+      walkInKeyRef.current = null;
       // ยอดเงินทอนค้างไว้จนพนักงานกดปิด (เดิมขึ้นแค่ toast 2.6 วิ ทอนไม่ทันอ่าน)
       setLastSale({ queue: data.queue_no, method: payMethod, change: Math.max(0, cashChange), received: cashReceived, total: totalAmount });
       setPayOpen(false); setCart([]); setOrderNote(''); setCashInput('');
@@ -732,7 +745,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const getStatusLabel = (status) => {
     switch (status) {
       case 'Ready': return 'พร้อมเสิร์ฟ';
-      case 'Pending_Cancellation': return 'รอเปลี่ยนเมนู (30น.)';
+      case 'Pending_Cancellation': return 'รอเปลี่ยนเมนู (15น.)';
       case 'Awaiting_Top_Up': return 'รอลูกค้าโอนส่วนต่าง';
       case 'NoShow': return 'ไม่มารับ (No-Show)';
       case 'Cooking': return 'กำลังปรุง';

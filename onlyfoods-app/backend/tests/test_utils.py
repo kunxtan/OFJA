@@ -282,3 +282,17 @@ def test_queue_summary_limits_list():
     rows = [{"queue": f"A{i:03d}"} for i in range(1, 13)]
     assert queue_summary(rows[:2]) == "A001, A002"
     assert queue_summary(rows) == "A001, A002, A003, A004, A005, A006, A007, A008, A009, A010 และอีก 2 คิว"
+
+
+def test_order_request_fingerprint():
+    from routers.orders import _request_fingerprint
+    from schemas import CreateOrderSchema
+    base = {"store_id": 1, "items": [{"product_id": 2, "qty": 1}, {"product_id": 3, "qty": 2, "item_note": "ไม่เผ็ด"}],
+            "payment_method": "PromptPay", "slip_url": "data:a"}
+    fp = _request_fingerprint(CreateOrderSchema(**base))
+    # ลำดับรายการ / รูปสลิปต่างกัน = ตะกร้าเดิม
+    same = dict(base, items=list(reversed(base["items"])), slip_url="data:b")
+    assert _request_fingerprint(CreateOrderSchema(**same)) == fp
+    # จำนวนต่างกัน = คนละตะกร้า
+    other = dict(base, items=[{"product_id": 2, "qty": 2}, base["items"][1]])
+    assert _request_fingerprint(CreateOrderSchema(**other)) != fp

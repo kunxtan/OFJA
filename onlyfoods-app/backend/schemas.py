@@ -181,6 +181,16 @@ class CreateOrderSchema(BaseModel):
     pickup_time: Optional[str] = None
     # walk-in จ่ายเงินสด: เงินที่รับจากลูกค้า (server คำนวณเงินทอนเอง)
     cash_received: Optional[Decimal] = Field(default=None, ge=0, le=100000, decimal_places=2)
+    # M5: ยอดที่ลูกค้า/พนักงานเห็นบนหน้าจอตอนกดจ่าย ไม่ตรงกับราคาจริงตอนนี้ = 409 ให้ยืนยันยอดใหม่ (ไม่ส่ง = ไม่เทียบ)
+    expected_total: Optional[Decimal] = Field(default=None, ge=0, le=1000000, decimal_places=2)
+    # M6: รหัสสุ่มประจำการกดจ่ายแต่ละครั้ง (หรือส่งใน header Idempotency-Key) ส่งซ้ำ = ได้ออเดอร์เดิมกลับ
+    client_request_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9-]{8,64}$")
+
+
+class QuoteOrderSchema(BaseModel):
+    """ถามราคาจริงก่อนแสดง QR ให้ลูกค้าโอน (ไม่สร้างออเดอร์)"""
+    store_id: int
+    items: List[OrderItemSchema] = Field(min_length=1, max_length=50)
 
 
 class TopUpSlipSchema(BaseModel):
