@@ -256,3 +256,22 @@ def test_queue_code_validation_and_next_free():
     assert utils.next_free_queue_code([]) == "A"
     assert utils.next_free_queue_code(["A", "B", "D"]) == "C"
     assert utils.next_free_queue_code([chr(c) for c in range(65, 91)]) == "AA"
+
+
+def test_save_image_rejects_foreign_or_reused_paths(tmp_path):
+    """path ของรูปเดิมใช้ได้เฉพาะโฟลเดอร์เดียวกัน ; สลิป/QR ต้องเป็นรูปใหม่เสมอ (กันเอาสลิป/รูปของคนอื่นมาใช้หรือลบ)"""
+    import pytest
+    from errors import DomainError
+    from utils import image_digest, save_image
+    menu = "/uploads/products/" + "a" * 32 + ".png"
+    assert save_image(menu, "products", str(tmp_path)) == menu
+    with pytest.raises(DomainError):
+        save_image(menu, "refunds", str(tmp_path))
+    with pytest.raises(DomainError):
+        save_image("/uploads/slips/" + "b" * 32 + ".png", "slips", str(tmp_path), new_only=True)
+    with pytest.raises(DomainError):
+        save_image("https://example.com/x.png", "slips", str(tmp_path), new_only=True)
+    png = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 20).decode()
+    assert save_image(png, "slips", str(tmp_path), new_only=True).startswith("/uploads/slips/")
+    assert image_digest(png) == image_digest(png) and len(image_digest(png)) == 64
+    assert image_digest("/uploads/slips/x.png") is None

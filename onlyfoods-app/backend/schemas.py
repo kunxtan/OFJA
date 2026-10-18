@@ -244,7 +244,8 @@ class RefundPayoutSchema(BaseModel):
     bank: Optional[str] = Field(default=None, max_length=60)
     account_no: Optional[str] = Field(default=None, max_length=30)
     account_name: Optional[str] = Field(default=None, max_length=100)
-    qr_image: Optional[str] = None
+    qr_image: Optional[str] = None   # รูปใหม่ (data URL) ; ไม่ส่ง = ใช้ QR เดิม
+    remove_qr: bool = False
 
 
 class RefundDoneSchema(BaseModel):

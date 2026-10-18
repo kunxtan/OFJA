@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import state
 from errors import DomainError
-from utils import bangkok_now, queue_label
+from utils import bangkok_now, image_digest, queue_label
 
 logger = logging.getLogger("onlyfood")
 
@@ -260,13 +260,34 @@ def create_refund(cur, payment_id: int, refund_type: str, amount: Decimal, reaso
     return cur.lastrowid
 
 
-def refund_price_diff(cur, order_id: int, amount: Decimal, reason: str, order_item_id: int) -> bool:
-    """เปลี่ยนเป็นเมนูที่ถูกกว่า -> คืนส่วนต่างจากการชำระที่ยังเหลือยอดพอ (ค่าอาหารก่อน) ; ยังไม่จ่าย = ไม่ต้องคืน"""
+def assert_slip_not_reused(cur, slip_value: Optional[str], own_payment_id: Optional[int] = None) -> Optional[str]:
+    """สลิปรูปเดียวกัน (เนื้อไฟล์ตรงกัน) ห้ามใช้กับการชำระเงินอื่นที่ยังรอตรวจหรือยืนยันแล้ว ; คืน hash ไว้บันทึก
+    (สลิปที่ร้านเคยปฏิเสธแนบใหม่ได้ เผื่อร้านปฏิเสธผิด)"""
+    digest = image_digest(slip_value)
+    if not digest:
+        return None
+    cur.execute(
+        "SELECT PaymentId FROM Payment WHERE SlipHash = %s AND PaymentStatus IN ('PENDING','VERIFIED') "
+        "AND PaymentId <> %s LIMIT 1",
+        (digest, own_payment_id or 0),
+    )
+    if cur.fetchone():
+        raise DomainError(400, "สลิปนี้เคยถูกใช้ชำระเงินแล้ว กรุณาแนบสลิปของการโอนครั้งนี้")
+    return digest
+
+
+def refund_price_diff(cur, order_id: int, amount: Decimal, reason: str, order_item_id: int) -> Decimal:
+    """เปลี่ยนเป็นเมนูที่ถูกกว่า -> คืนส่วนต่างจากการชำระที่ยืนยันแล้ว (ค่าอาหารก่อน แล้วค่อยส่วนต่างที่โอนเพิ่ม)
+    ใบเดียวไม่พอก็แบ่งคืนจากหลายใบ ; คืนยอดที่สร้างรายการคืนจริง (ยังไม่จ่าย = 0)"""
+    left = amount
     for pay in verified_payments(cur, order_id, lock=True):
-        if Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"]) >= amount:
-            create_refund(cur, pay["PaymentId"], "PRICE_DIFF", amount, reason, order_item_id)
-            return True
-    return False
+        if left <= 0:
+            break
+        part = min(left, Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"]))
+        if part > 0:
+            create_refund(cur, pay["PaymentId"], "PRICE_DIFF", part, reason, order_item_id)
+            left -= part
+    return amount - left
 
 
 def refund_full_cancel(cur, order_id: int, reason: str) -> Decimal:
@@ -381,13 +402,17 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
 
 # -------------------------------------------------------------------- contract
 def open_order_count(cur, store_id: int) -> int:
-    """ออเดอร์ของร้านที่ยังไม่จบ (ใช้กันไม่ให้ตัดสัญญา/ลบร้านทั้งที่ลูกค้ายังรออาหารหรือรอเงินคืน)"""
+    """งานค้างของร้าน = ออเดอร์ที่ยังไม่จบ + เงินคืนที่ยังไม่ได้คืนลูกค้า
+    (ใช้กันไม่ให้ลบร้าน/ปิดบัญชีร้าน ทั้งที่ลูกค้ายังรออาหารหรือรอเงินคืน)"""
     cur.execute(
         """
-        SELECT COUNT(*) AS n FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
-        WHERE o.StoreId = %s AND os.IsTerminal = FALSE
+        SELECT (SELECT COUNT(*) FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
+                WHERE o.StoreId = %s AND os.IsTerminal = FALSE)
+             + (SELECT COUNT(*) FROM Refund rf JOIN Payment p ON p.PaymentId = rf.PaymentId
+                JOIN `Order` o ON o.OrderId = p.OrderId
+                WHERE o.StoreId = %s AND rf.RefundStatus = 'PENDING') AS n
         """,
-        (store_id,),
+        (store_id, store_id),
     )
     return int(cur.fetchone()["n"])
 

@@ -138,12 +138,16 @@ def delete_product(product_id: int, user=Depends(require_role("STORE_OWNER", "EX
 
 
 @router.put("/{product_id}/toggle-stock")
-def toggle_stock(product_id: int, user=Depends(require_role("FRONT_STAFF", "KITCHEN_STAFF", "STORE_OWNER")),
-                 db=Depends(get_db)):
+def toggle_stock(product_id: int, out_of_stock: Optional[bool] = None,
+                 user=Depends(require_role("FRONT_STAFF", "KITCHEN_STAFF", "STORE_OWNER")), db=Depends(get_db)):
+    """out_of_stock=true/false = ตั้งเป็นสถานะนั้น (ถ้าเป็นอยู่แล้วไม่ทำอะไร กันกดซ้ำจากหน้าจอเก่าแล้วกลับด้าน) ;
+    ไม่ส่ง = สลับ (client เดิม)"""
     with transaction(db):
         with db.cursor() as cur:
             prod = _product_for_update(cur, product_id)
             assert_store_access(user, prod["StoreId"])
+            if out_of_stock is not None and bool(out_of_stock) == bool(prod["IsOutOfStock"]):
+                return {"success": True, "is_out_of_stock": bool(prod["IsOutOfStock"]), "unchanged": True}
             out_of_stock = not bool(prod["IsOutOfStock"])
             cur.execute("UPDATE Product SET IsOutOfStock = %s WHERE ProductId = %s", (out_of_stock, product_id))
             if out_of_stock:

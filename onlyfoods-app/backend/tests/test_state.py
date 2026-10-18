@@ -182,3 +182,14 @@ def test_late_pickup_after_pickup_time_counts_from_now():
     now = datetime(2026, 1, 1, 12, 20, 0, 500)
     assert state.late_pickup_arrival(now, pickup, 15) == datetime(2026, 1, 1, 12, 35)
     assert state.late_pickup_arrival(now, None, 30) == datetime(2026, 1, 1, 12, 50)  # รับทันที (ไม่ได้นัดเวลา)
+
+
+def test_status_endpoint_cannot_skip_money_checks():
+    """เงินต้องผ่านการตรวจ: รอตรวจสลิป/รอโอนส่วนต่าง/รอเปลี่ยนเมนู ออกได้เฉพาะทางที่กำหนด"""
+    for cur, target in (("VERIFYING_SLIP", "PENDING"), ("VERIFYING_SLIP", "CANCELLED"), ("VERIFYING_SLIP", "Cancelled"),
+                        ("AWAITING_TOP_UP", "PENDING"), ("PENDING_CANCELLATION", "PENDING"),
+                        ("PENDING_CANCELLATION", "Pending")):
+        with pytest.raises(DomainError):
+            state.plan_status_change(cur, target, "STORE_OWNER")
+    assert state.plan_status_change("AWAITING_TOP_UP", "Cancelled", "FRONT_STAFF") == ["CANCELLED"]
+    assert state.plan_status_change("PENDING_CANCELLATION", "Cancelled", "FRONT_STAFF") == ["CANCELLED"]
