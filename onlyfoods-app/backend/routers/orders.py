@@ -12,7 +12,7 @@ from db import get_db, transaction
 from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
                      LatePickupSchema, StatusUpdateSchema, TopUpSlipSchema)
-from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
+from services import (add_top_up, assert_slip_not_reused, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
                       lock_order, log_audit, log_first_status, notify_menu_out_of_stock, pending_top_up,
                       refund_price_diff, send_notif, status_id)
 from shapes import ORDER_SELECT, attach_items, order_people, shape_order
@@ -146,10 +146,12 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
                     (order_id, method["MethodId"], total, user["UserId"], now, cash_received, change_given),
                 )
             else:
-                slip = save_image(data.slip_url, "slips")  # slip_placeholder.png ฯลฯ -> None (ร้านจะเห็นว่าไม่มีสลิป)
+                slip_hash = assert_slip_not_reused(cur, data.slip_url)
+                slip = save_image(data.slip_url, "slips", new_only=True)  # slip_placeholder.png ฯลฯ -> None (ร้านจะเห็นว่าไม่มีสลิป)
                 cur.execute(
-                    "INSERT INTO Payment (OrderId, MethodId, Amount, PaymentStatus, SlipImageUrl) VALUES (%s, %s, %s, 'PENDING', %s)",
-                    (order_id, method["MethodId"], total, slip),
+                    "INSERT INTO Payment (OrderId, MethodId, Amount, PaymentStatus, SlipImageUrl, SlipHash) "
+                    "VALUES (%s, %s, %s, 'PENDING', %s, %s)",
+                    (order_id, method["MethodId"], total, slip, slip_hash if slip else None),
                 )
             log_first_status(cur, order_id, initial, user["UserId"])
 
@@ -549,7 +551,7 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             )
             diff = (old_price - new_price) * int(old["Qty"])
             top_up_due = Decimal(0)
-            diff_refunded = False
+            diff_refunded = Decimal(0)
             if diff > 0:  # ถูกลง -> คืนส่วนต่าง (ลูกค้ามารับเงินที่หน้าร้าน)
                 diff_refunded = refund_price_diff(cur, order_id, diff,
                                                   f"ส่วนต่างราคา {old['ProductName']} -> {new['ProductName']}",
@@ -580,7 +582,7 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             if pending:
                 msg += f" กรุณาโอนส่วนต่าง {top_up_due:.2f} บาท และแนบสลิป"
             if diff_refunded:
-                msg += f" รับเงินส่วนต่างคืน {diff:.2f} บาท ที่ร้านโดยแจ้งเลขคิว {q}"
+                msg += f" รับเงินส่วนต่างคืน {diff_refunded:.2f} บาท ที่ร้านโดยแจ้งเลขคิว {q}"
             send_notif(db, user["UserId"], "ORDER_STATUS", f"คิว {q} เปลี่ยนเมนู", msg, order_id)
         log_audit(db, user["UserId"], "CUSTOMER_CHANGE_ITEM", "Order", order_id,
                   {"product": old["ProductName"], "price": old_price},
@@ -610,10 +612,12 @@ def upload_top_up_slip(order_id: int, payload: TopUpSlipSchema,
             pay = pending_top_up(cur, order_id)
             if not pay:
                 raise DomainError(400, "ไม่พบยอดส่วนต่างที่ต้องโอน")
-            slip = save_image(payload.slip_url, "slips")
+            slip_hash = assert_slip_not_reused(cur, payload.slip_url, pay["PaymentId"])
+            slip = save_image(payload.slip_url, "slips", new_only=True)
             if not slip:
                 raise DomainError(400, "กรุณาแนบรูปสลิป")
-            cur.execute("UPDATE Payment SET SlipImageUrl = %s WHERE PaymentId = %s", (slip, pay["PaymentId"]))
+            cur.execute("UPDATE Payment SET SlipImageUrl = %s, SlipHash = %s WHERE PaymentId = %s",
+                        (slip, slip_hash, pay["PaymentId"]))
         log_audit(db, user["UserId"], "UPLOAD_TOP_UP_SLIP", "Payment", pay["PaymentId"], None,
                   {"order_id": order_id, "amount": pay["Amount"], "store_id": order["StoreId"]})
     return {"success": True, "amount": float(pay["Amount"])}

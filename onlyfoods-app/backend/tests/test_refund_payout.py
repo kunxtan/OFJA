@@ -10,7 +10,7 @@ from utils import mask_account, validate_payout
 def test_promptpay_phone_or_national_id():
     assert validate_payout("PROMPTPAY", None, "081-234-5678", None)["account_no"] == "0812345678"
     assert validate_payout("promptpay", None, "1234567890123", "สมชาย")["account_no"] == "1234567890123"
-    for bad in ("", "12345", "1234567890", "08123456789", "abc"):
+    for bad in ("", "12345", "1234567890", "08123456789", "081234567", "abc"):
         with pytest.raises(DomainError):
             validate_payout("PROMPTPAY", None, bad, None)
 
@@ -40,3 +40,19 @@ def test_only_owner_can_transfer_and_slip_is_required():
     with pytest.raises(DomainError) as e:
         mark_refund_done(1, RefundDoneSchema(method="TRANSFER"), user=owner, db=None)
     assert e.value.status_code == 400 and "สลิป" in e.value.detail
+
+
+def test_price_diff_is_split_across_payments(monkeypatch):
+    """ค่าอาหาร 50 + โอนส่วนต่าง 50 แล้วเปลี่ยนเป็นจาน 10 บาท : ส่วนต่าง 90 ต้องคืนครบ (ใบละไม่พอ -> แบ่งคืนสองใบ)"""
+    from decimal import Decimal
+    import services
+    pays = [{"PaymentId": 1, "Amount": Decimal("50")}, {"PaymentId": 2, "Amount": Decimal("50")}]
+    made = []
+    monkeypatch.setattr(services, "verified_payments", lambda cur, oid, lock=False: pays)
+    monkeypatch.setattr(services, "refunded_total", lambda cur, pid: Decimal("0"))
+    monkeypatch.setattr(services, "create_refund", lambda cur, pid, kind, amt, reason, item: made.append((pid, amt)))
+    assert services.refund_price_diff(None, 1, Decimal("90"), "x", 7) == Decimal("90")
+    assert made == [(1, Decimal("50")), (2, Decimal("40"))]
+    made.clear()
+    monkeypatch.setattr(services, "verified_payments", lambda cur, oid, lock=False: [])
+    assert services.refund_price_diff(None, 1, Decimal("20"), "x", 7) == Decimal("0") and made == []

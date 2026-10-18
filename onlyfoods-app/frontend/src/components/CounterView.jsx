@@ -584,7 +584,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
 
   const setStockFlag = async (product) => {
-    const res = await fetch(`${apiBase}/api/products/${product.ProductId}/toggle-stock`, { method: 'PUT' });
+    const res = await fetch(`${apiBase}/api/products/${product.ProductId}/toggle-stock?out_of_stock=${!product.IsOutOfStock}`, { method: 'PUT' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
   };

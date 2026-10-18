@@ -209,18 +209,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [payoutError, setPayoutError] = useState("");
 
   const savePayout = async (body) => {
-    const pending = (refundsByOrder[payoutOrder.OrderID] || []).filter((r) => r.RefundStatus === "PENDING");
+    // backend ใช้วิธีรับเงินชุดเดียวกับเงินคืนที่รอคืนทุกรายการของออเดอร์นี้ (ส่งครั้งเดียวพอ)
+    const first = (refundsByOrder[payoutOrder.OrderID] || []).find((r) => r.RefundStatus === "PENDING");
+    if (!first) return;
     setPayoutSaving(true);
     setPayoutError("");
     try {
-      for (const r of pending) {
-        const res = await fetch(`${apiBase}/api/refunds/${r.RefundId}/payout`, {
-          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(typeof data.detail === "string" ? data.detail : "บันทึกไม่สำเร็จ");
-        }
+      const res = await fetch(`${apiBase}/api/refunds/${first.RefundId}/payout`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.detail === "string" ? data.detail : "บันทึกไม่สำเร็จ");
       }
       setPayoutOrder(null);
       await fetchMyRefunds();

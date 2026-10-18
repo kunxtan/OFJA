@@ -2916,7 +2916,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const toggleStore = async () => {
     try {
-      const res = await fetch(`${apiBase}/api/stores/${storeId}/toggle`, { method: 'PUT' });
+      const res = await fetch(`${apiBase}/api/stores/${storeId}/toggle?open=${!dash.IsOpen}`, { method: 'PUT' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         showToast(data.detail || data.message || 'ไม่สามารถเปลี่ยนสถานะร้านได้');
@@ -2958,7 +2958,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     }
     setBulkBusy(true);
     const results = await Promise.allSettled(
-      targets.map(p => fetch(`${apiBase}/api/products/${p.ProductId}/toggle-stock`, { method: 'PUT' })
+      targets.map(p => fetch(`${apiBase}/api/products/${p.ProductId}/toggle-stock?out_of_stock=${makeOut}`, { method: 'PUT' })
         .then(res => { if (!res.ok) throw new Error(p.ProductName); return p; }))
     );
     setBulkBusy(false);
@@ -2979,7 +2979,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const toggleStock = async (id, pName, isOutOfStock) => {
     try {
-      const res = await fetch(`${apiBase}/api/products/${id}/toggle-stock`, { method: 'PUT' });
+      const res = await fetch(`${apiBase}/api/products/${id}/toggle-stock?out_of_stock=${!isOutOfStock}`, { method: 'PUT' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(typeof data.detail === 'string' ? data.detail : 'อัปเดตสถานะไม่สำเร็จ');

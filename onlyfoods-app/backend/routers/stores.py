@@ -259,7 +259,7 @@ def delete_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Depe
                 raise DomainError(400, "ร้านค้านี้ถูกลบไปแล้ว")
             pending = open_order_count(cur, store_id)
             if pending:
-                raise DomainError(400, f"ร้านนี้ยังมีออเดอร์ค้างอยู่ {pending} รายการ กรุณาจัดการออเดอร์ให้เสร็จก่อนลบร้าน")
+                raise DomainError(400, f"ร้านนี้ยังมีออเดอร์หรือเงินคืนลูกค้าค้างอยู่ {pending} รายการ กรุณาจัดการให้เสร็จก่อนลบร้าน")
             cur.execute("UPDATE Store SET IsDeleted = TRUE, DeletedAt = %s, IsOpen = FALSE WHERE StoreId = %s",
                         (bangkok_now(), store_id))
         log_audit(db, user["UserId"], "DELETE_STORE", "Store", store_id, {"name": store["StoreName"]}, None)
@@ -267,7 +267,9 @@ def delete_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Depe
 
 
 @router.put("/{store_id}/toggle")
-def toggle_store(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+def toggle_store(store_id: int, open: Optional[bool] = None,
+                 user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """open=true/false = ตั้งเป็นสถานะนั้น (เป็นอยู่แล้ว = ไม่ทำอะไร) ; ไม่ส่ง = สลับ (client เดิม)"""
     assert_store_access(user, store_id)
     with transaction(db):
         with db.cursor() as cur:
@@ -284,7 +286,11 @@ def toggle_store(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUT
                 raise DomainError(404, "ไม่พบร้านค้า")
             state = contract_state(store["StartDate"], store["EndDate"])
             # ใช้สถานะ "เปิดจริง" (กดเปิดไว้ + สัญญามีผล) เป็นตัวตั้ง กดแล้วจึงตรงกับที่หน้าจอแสดง
-            new_open = not (bool(store["IsOpen"]) and state == CONTRACT_ACTIVE)
+            current = bool(store["IsOpen"]) and state == CONTRACT_ACTIVE
+            if open is not None and bool(open) == current:
+                return {"success": True, "is_open": current, "unchanged": True,
+                        "message": "ร้านเปิดอยู่แล้ว" if current else "ร้านปิดอยู่แล้ว"}
+            new_open = not current
             if new_open:
                 if state == CONTRACT_EXPIRED:
                     raise DomainError(400, "สัญญาร้านหมดอายุแล้ว ไม่สามารถเปิดร้านได้")

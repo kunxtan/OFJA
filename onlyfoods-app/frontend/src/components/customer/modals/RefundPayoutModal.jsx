@@ -22,7 +22,10 @@ export default function RefundPayoutModal({ order, refunds, onClose, onSave, sav
   const [bank, setBank] = useState(first.PayoutBank || "");
   const [accountNo, setAccountNo] = useState(first.PayoutAccountNo || "");
   const [accountName, setAccountName] = useState(first.PayoutAccountName || "");
-  const [qr, setQr] = useState(null);
+  const [qr, setQr] = useState(null);                       // รูปใหม่ที่เลือก
+  const [removeQr, setRemoveQr] = useState(false);          // ลบ QR เดิมที่เคยแนบ
+  const hasOldQr = refunds.some((r) => r.HasPayoutQr);
+  const locked = refunds.some((r) => r.PayoutLocked);       // เจ้าของร้านเปิดดูบัญชีเพื่อโอนแล้ว แก้ไม่ได้
   const [localError, setLocalError] = useState("");
 
   const pickQr = async (e) => {
@@ -45,7 +48,9 @@ export default function RefundPayoutModal({ order, refunds, onClose, onSave, sav
         if (!accountName.trim()) { setLocalError("กรุณากรอกชื่อบัญชี"); return; }
       }
     }
-    onSave({ method, kind, bank: kind === "BANK" ? bank : null, account_no: accountNo, account_name: accountName, qr_image: qr });
+    // ไม่ได้เลือกรูปใหม่ = backend ใช้ QR เดิมต่อ (ไม่หายตอนแก้ชื่อบัญชี)
+    onSave({ method, kind, bank: kind === "BANK" ? bank : null, account_no: accountNo, account_name: accountName,
+      qr_image: qr, remove_qr: !qr && removeQr });
   };
 
   const shownError = localError || error;
@@ -90,6 +95,12 @@ export default function RefundPayoutModal({ order, refunds, onClose, onSave, sav
             <label style={label} htmlFor="rp-name">ชื่อบัญชี{kind === "PROMPTPAY" ? " (ไม่บังคับ)" : ""}</label>
             <input id="rp-name" style={field} maxLength={100} value={accountName} onChange={(e) => setAccountName(e.target.value)} />
             <label style={label} htmlFor="rp-qr">แนบรูป QR รับเงิน (ไม่บังคับ)</label>
+            {hasOldQr && !qr && (
+              <label style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "13px", marginBottom: "6px" }}>
+                <span>✅ มีรูป QR เดิมแนบไว้แล้ว</span>
+                <input type="checkbox" checked={removeQr} onChange={(e) => setRemoveQr(e.target.checked)} /> ลบรูปเดิม
+              </label>
+            )}
             <input id="rp-qr" type="file" accept="image/*" onChange={pickQr} />
             {qr && <img src={qr} alt="QR ที่เลือก" style={{ display: "block", maxWidth: "140px", marginTop: "8px", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />}
             <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "10px", lineHeight: 1.5 }}>
@@ -98,11 +109,16 @@ export default function RefundPayoutModal({ order, refunds, onClose, onSave, sav
           </div>
         )}
 
+        {locked && (
+          <div role="status" style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#E0F2FE", color: "#0369A1", fontWeight: "700", fontSize: "13px" }}>
+            ร้านกำลังดำเนินการโอนเงินคืนให้คุณแล้ว จึงเปลี่ยนวิธีรับเงินไม่ได้ หากต้องการเปลี่ยน กรุณาติดต่อร้าน
+          </div>
+        )}
         {shownError && <div role="alert" style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#FFF0ED", color: COLORS.red, fontWeight: "700", fontSize: "13px" }}>{shownError}</div>}
 
         <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
           <button type="button" onClick={onClose} disabled={saving} style={{ flex: 1, padding: "13px", borderRadius: "14px", border: `1.5px solid ${COLORS.border}`, background: COLORS.white, fontWeight: "700", cursor: "pointer" }}>ปิด</button>
-          <button type="button" onClick={submit} disabled={saving} style={{ flex: 2, padding: "13px", borderRadius: "14px", border: "none", background: COLORS.orange, color: COLORS.white, fontWeight: "800", cursor: "pointer" }}>
+          <button type="button" onClick={submit} disabled={saving || locked} style={{ flex: 2, padding: "13px", borderRadius: "14px", border: "none", background: COLORS.orange, color: COLORS.white, fontWeight: "800", cursor: "pointer" }}>
             {saving ? "กำลังบันทึก…" : "บันทึกวิธีรับเงินคืน"}
           </button>
         </div>

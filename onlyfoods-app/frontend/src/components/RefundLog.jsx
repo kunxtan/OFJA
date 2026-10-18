@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // 💸 รายการคืนเงิน (ใช้ร่วมกันหลายหน้า)
 //  ลูกค้ามารับเงินคืนที่หน้าร้าน : ยกเลิกออเดอร์ / เปลี่ยนเป็นเมนูที่ถูกกว่า -> "รอคืน" (ไม่นับเป็นรายได้แล้ว)
@@ -94,6 +94,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
   const [slip, setSlip] = useState(null);               // { name, dataUrl }
   const [payInfo, setPayInfo] = useState(null);         // ข้อมูลบัญชีเต็มของลูกค้า (เจ้าของเปิดดู -> audit)
   const [payInfoError, setPayInfoError] = useState('');
+  const openRefundRef = useRef(null);                   // แถวที่เปิดอยู่ : คำตอบที่มาช้าของแถวอื่นต้องไม่ทับ
   const [flash, setFlash] = useState('');
 
   const load = useCallback(async () => {
@@ -161,13 +162,15 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
     const transfer = isOwner && r.PayoutMethod === 'TRANSFER';
     setPayMethod(transfer ? 'TRANSFER' : 'CASH');
     setConfirming(r);
+    openRefundRef.current = r.RefundId;
     if (!transfer) return;
     try {
       const res = await fetch(`${apiBase}/api/refunds/${r.RefundId}/payout-info`);
       if (!res.ok) throw new Error(await readError(res, 'โหลดข้อมูลบัญชีลูกค้าไม่สำเร็จ'));
-      setPayInfo(await res.json());
+      const info = await res.json();
+      if (openRefundRef.current === r.RefundId && info.refund_id === r.RefundId) setPayInfo(info);
     } catch (err) {
-      setPayInfoError(err.message || 'โหลดข้อมูลบัญชีลูกค้าไม่สำเร็จ');
+      if (openRefundRef.current === r.RefundId) setPayInfoError(err.message || 'โหลดข้อมูลบัญชีลูกค้าไม่สำเร็จ');
     }
   };
 
@@ -382,7 +385,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
             {confirmError && <div className="rf-error" role="alert">{confirmError}</div>}
             <div className="rf-modal-actions">
               <button type="button" className="rf-btn rf-btn-ghost" onClick={() => setConfirming(null)} disabled={busy}>ยกเลิก</button>
-              <button type="button" className="rf-btn rf-btn-primary" onClick={confirmRefund} disabled={busy || (payMethod === 'TRANSFER' && !slip)} autoFocus>
+              <button type="button" className="rf-btn rf-btn-primary" onClick={confirmRefund} disabled={busy || (payMethod === 'TRANSFER' && (!slip || !payInfo))}>
                 {busy ? 'กำลังบันทึก…' : (payMethod === 'TRANSFER' ? 'โอนแล้ว ยืนยัน' : 'จ่ายเงินแล้ว ยืนยัน')}
               </button>
             </div>
@@ -445,7 +448,7 @@ const RF_STYLES = `
 .rf-badge.done { background: ${C.greenSoft}; color: ${C.green}; }
 .rf-badge.failed { background: ${C.redSoft}; color: ${C.red}; }
 .rf-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 2000; }
-.rf-modal { background: ${C.bg}; border-radius: 16px; padding: 22px; width: 100%; max-width: 420px; box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
+.rf-modal { background: ${C.bg}; border-radius: 16px; padding: 22px; width: 100%; max-width: 420px; max-height: calc(100vh - 32px); overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
 .rf-modal h4 { margin: 0 0 6px; font-size: 17px; }
 .rf-modal-amount { font-size: 30px; font-weight: 800; color: ${C.primaryDark}; margin-bottom: 10px; }
 .rf-modal-list { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0 0 12px; font-size: 14px; }
