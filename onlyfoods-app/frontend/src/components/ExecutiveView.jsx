@@ -1801,7 +1801,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         const summary = summarize(bucketOrders);
 
         return [
-            bucket.label,
+            bucket.key,  // CSV ใช้วันที่เต็ม 2026-10-01 : Excel ทุกภาษาอ่านถูก (01/10 จะถูกแปลงเป็น 10-Jan ใน Excel แบบเดือน/วัน)
             summary.completedCount,
             summary.cancelledCount,
             Math.round(summary.grossSales),
@@ -3090,7 +3090,8 @@ function StoreSalesPage({ ctx }) {
         'ยอดขายสุทธิ (บาท)',
         'อัตราการยกเลิก'],
     ...salesTimelineRows.map((row) => [
-        row.label,
+        (customRange ? effectiveDays : days) === 1 ? 
+        row.label : row.key,  // รายวัน: วันที่เต็ม 2026-10-01 กัน Excel สลับวัน/เดือน
         row.completedCount,
         row.cancelledCount,
         Math.round(row.grossSales),
