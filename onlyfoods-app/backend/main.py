@@ -13,7 +13,8 @@ from fastapi.staticfiles import StaticFiles
 import config
 from errors import DomainError
 import jobs
-from routers import (auth as auth_routes, feedback, foodcourt, notifications, orders, payments, printing,
+from utils import PUBLIC_UPLOAD_FOLDERS
+from routers import (auth as auth_routes, feedback, files, foodcourt, notifications, orders, payments, printing,
                      products, reports, stores, users)
 from services import request_ip
 
@@ -76,11 +77,15 @@ async def validation_error_handler(_: Request, exc: RequestValidationError):
 
 
 for module in (auth_routes, users, stores, foodcourt, products, orders, payments, printing, feedback,
-               notifications, reports):
+               notifications, reports, files):
     app.include_router(module.router)
 
+# รูปสาธารณะ (เมนู/ร้าน/โปรไฟล์/รีวิว) เปิดตรงได้ ; สลิปและข้อมูลคืนเงินต้องผ่าน /api/files ที่เช็คสิทธิ์ (L25)
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
+for folder in PUBLIC_UPLOAD_FOLDERS:
+    os.makedirs(os.path.join(config.UPLOAD_DIR, folder), exist_ok=True)
+    app.mount(f"/uploads/{folder}", StaticFiles(directory=os.path.join(config.UPLOAD_DIR, folder)),
+              name=f"uploads-{folder}")
 
 
 @app.get("/api/health", include_in_schema=False)

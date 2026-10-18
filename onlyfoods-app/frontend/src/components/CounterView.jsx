@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { startPolling } from '../utils/polling';
 import RefundLog from './RefundLog';
+import AuthImage, { openFile } from './AuthImage';
 
 // โทนสีเดิมของ Counter & Theme กลาง
 const PALETTE = {
@@ -1059,7 +1060,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                             <td>
                               {slipToCheck(o) ? (
                                 <div onClick={() => setViewingSlip(o)} className="slip-thumb">
-                                  <img src={slipToCheck(o)} alt="Slip" />
+                                  <AuthImage apiBase={apiBase} src={slipToCheck(o)} alt="Slip" />
                                   <span>ตรวจสลิป + รายการอาหาร</span>
                                 </div>
                               ) : <span style={{ color: PALETTE.red, fontWeight: 'bold' }}>ไม่มีสลิป</span>}
@@ -1874,20 +1875,20 @@ export default function CounterView({ user, apiBase, onLogout }) {
               )}
             </div>
 
-            {slipToCheck(viewingSlip) ? <img src={slipToCheck(viewingSlip)} alt="Slip" className="slip-full-img" /> : <div className="empty-state">ไม่มีรูปสลิป</div>}
+            {slipToCheck(viewingSlip) ? <AuthImage apiBase={apiBase} src={slipToCheck(viewingSlip)} alt="Slip" className="slip-full-img" /> : <div className="empty-state">ไม่มีรูปสลิป</div>}
 
             {/* สลิปทุกใบของออเดอร์นี้ (ค่าอาหาร + ส่วนต่าง รวมใบที่ถูกปฏิเสธ) */}
             {(viewingSlip.Payments || []).filter(p => p.SlipUrl).length > 1 && (
               <div className="slip-history">
                 <div className="receipt-title">สลิปทั้งหมดของออเดอร์นี้</div>
                 {(viewingSlip.Payments || []).filter(p => p.SlipUrl).map(p => (
-                  <a key={p.PaymentId} href={p.SlipUrl} target="_blank" rel="noreferrer" className="slip-history-item">
-                    <img src={p.SlipUrl} alt="Slip" />
+                  <button type="button" key={p.PaymentId} onClick={() => openFile(apiBase, p.SlipUrl)} className="slip-history-item">
+                    <AuthImage apiBase={apiBase} src={p.SlipUrl} alt="Slip" />
                     <span>
                       {p.PaymentType === 'TOP_UP' ? 'ส่วนต่าง' : 'ค่าอาหาร'} ฿{fmtMoney(p.Amount)}<br />
                       {p.PaymentStatus === 'VERIFIED' ? '✅ ยืนยันแล้ว' : p.PaymentStatus === 'REJECTED' ? `❌ ${p.RejectReason || 'ปฏิเสธ'}` : '⏳ รอตรวจ'}
                     </span>
-                  </a>
+                  </button>
                 ))}
               </div>
             )}
@@ -2327,7 +2328,7 @@ const CV_STYLES = `
 .pickup-warning .pickup-phone { display: block; font-size: 18px; letter-spacing: .5px; color: #B45309; user-select: all; }
 .pickup-warning .pickup-sub { display: block; font-size: 11px; font-weight: 500; color: #9A6B2F; }
 .slip-history { margin-bottom: 16px; }
-.slip-history-item { display: inline-flex; align-items: center; gap: 8px; margin: 6px 12px 0 0; font-size: 12px; color: inherit; text-decoration: none; }
+.slip-history-item { display: inline-flex; align-items: center; gap: 8px; margin: 6px 12px 0 0; font-size: 12px; color: inherit; text-decoration: none; background: none; border: 0; padding: 0; font-family: inherit; cursor: pointer; text-align: left; }
 .slip-history-item img { width: 42px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid ${PALETTE.border}; }
 .slip-full-img { width: 100%; max-height: 55vh; object-fit: contain; border-radius: var(--radius-md); border: 1px solid ${PALETTE.border}; margin-bottom: 16px; }
 .cv-customer-info .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid ${PALETTE.border}; font-size: 14px; }

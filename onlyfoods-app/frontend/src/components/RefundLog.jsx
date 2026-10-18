@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 //  isOwner     : เจ้าของร้านเท่านั้นที่โอนคืนได้ (เห็นข้อมูลบัญชีลูกค้า + แนบสลิปโอนบังคับ) ; หน้าร้านจ่ายเงินสดได้อย่างเดียว
 //  showStore   : บัญชี/ผู้บริหาร เห็นทุกร้าน -> แสดงคอลัมน์ร้าน + ตัวกรองร้าน + ส่งออก CSV
 import { startPolling } from '../utils/polling';
+import AuthImage, { openFile } from './AuthImage';
 
 const C = {
   primary: '#FF6B00',
@@ -239,7 +240,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
                 <td>
                   <span className={`rf-method ${(r.RefundStatus === 'DONE' ? r.PaidMethod : r.PayoutMethod) === 'TRANSFER' ? 'transfer' : ''}`}>{payoutLabel(r)}</span>
                   {r.RefundStatus === 'PENDING' && r.PayoutMethod === 'TRANSFER' && r.PayoutBank && <div className="rf-sub">{r.PayoutBank}</div>}
-                  {r.TransferSlipUrl && <div><a className="rf-link" href={`${apiBase}${r.TransferSlipUrl}`} target="_blank" rel="noreferrer">ดูสลิปโอน</a></div>}
+                  {r.TransferSlipUrl && <div><button type="button" className="rf-link" onClick={() => openFile(apiBase, r.TransferSlipUrl)}>ดูสลิปโอน</button></div>}
                 </td>
                 <td>
                   <span className={`rf-badge ${String(r.RefundStatus).toLowerCase()}`}>{STATUS_TH[r.RefundStatus] || r.RefundStatus}</span>
@@ -353,7 +354,7 @@ function SlipCheckModal({ apiBase, row: checking, onClose, onDone }) {
           <dt>สลิป</dt><dd>{checking.PaymentType === 'TOP_UP' ? 'ส่วนต่างค่าอาหาร' : 'ค่าอาหาร'}</dd>
         </dl>
         {checking.PaymentSlipUrl
-          ? <a href={`${apiBase}${checking.PaymentSlipUrl}`} target="_blank" rel="noreferrer"><img className="rf-slip-preview" src={`${apiBase}${checking.PaymentSlipUrl}`} alt="สลิปที่ลูกค้าแนบ" /></a>
+          ? <button type="button" className="rf-link" onClick={() => openFile(apiBase, checking.PaymentSlipUrl)}><AuthImage apiBase={apiBase} className="rf-slip-preview" src={checking.PaymentSlipUrl} alt="สลิปที่ลูกค้าแนบ" /></button>
           : <div className="rf-sub">ไม่พบรูปสลิป</div>}
         <p className="rf-modal-note">
           ออเดอร์นี้ถูกยกเลิกตอนร้านยังไม่ได้ตรวจสลิป เช็คว่ายอดเข้าบัญชีร้านจริงก่อน
@@ -458,7 +459,7 @@ function ConfirmRefundModal({ apiBase, isOwner, row: confirming, onClose, onDone
                   <button type="button" className="rf-link" onClick={() => navigator.clipboard?.writeText(payInfo.account_no)}> คัดลอก</button>
                 </dd>
                 {payInfo.account_name && (<><dt>ชื่อบัญชี</dt><dd>{payInfo.account_name}</dd></>)}
-                {payInfo.qr_image && (<><dt>QR</dt><dd><img className="rf-qr" src={`${apiBase}${payInfo.qr_image}`} alt="QR รับเงินของลูกค้า" /></dd></>)}
+                {payInfo.qr_image && (<><dt>QR</dt><dd><AuthImage apiBase={apiBase} className="rf-qr" src={payInfo.qr_image} alt="QR รับเงินของลูกค้า" /></dd></>)}
               </dl>
             )}
             <div className="rf-method-pick" role="radiogroup" aria-label="วิธีคืนเงิน">
