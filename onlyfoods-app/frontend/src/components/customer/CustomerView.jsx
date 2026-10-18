@@ -1420,6 +1420,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                             display: "flex", 
                             alignItems: "center", 
                             justifyContent: "space-between", 
+                            flexWrap: "wrap",
+                            gap: "8px",
                             background: "#FFF9F0", 
                             padding: "8px 12px", 
                             borderRadius: "12px", 
@@ -1438,6 +1440,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           </div>
 
                           <button
+                            className="customer-review-btn"
                             onClick={(e) => handleOpenStoreReviews(e, store)}
                             style={{
                               background: COLORS.white,
@@ -2489,7 +2492,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               white-space: nowrap !important;
             }
 
-            /* ปุ่ม/ช่องกรอกบนมือถือ: กดง่าย และ iOS ไม่ซูมหน้าจออัตโนมัติตอนแตะช่องกรอก */
+            /* ปุ่ม/ช่องกรอกบนมือถือ */
             .customer-view button,
             .customer-view select {
               touch-action: manipulation;
@@ -2532,13 +2535,42 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               padding: 18px !important;
               min-height: 135px !important;
             }
+
+            /* ส่วนหัว */
+            .customer-header-brand {
+              flex: 1 0 100% !important;
+            }
+
+            .customer-header-search {
+              min-width: 0 !important;
+              flex: 1 1 0 !important;
+            }
+
+            .customer-profile-chip {
+              flex: 0 0 auto !important;
+              margin-left: auto !important;
+            }
+
+            .customer-review-btn {
+              flex: 1 1 100% !important;
+            }
+          }
+
+          @media (max-width: 480px) {
+            .customer-profile-name {
+              display: none !important;
+            }
+
+            .customer-profile-chip {
+              padding: 5px !important;
+            }
           }
         `}
       </style>
       <div style={containerStyle}>
         {/* HEADER BAR */}
         <header style={headerStyle}>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div className="customer-header-brand" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <div style={logoStyle} onClick={() => handleSelectTab("menu")}>
               Only<span style={{ color: COLORS.orange }}>Foods</span>
             </div>
@@ -2574,6 +2606,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           {activeTab === "menu" && (
             <input
               type="text"
+              className="customer-header-search"
               placeholder={viewMode === "stores" ? " ค้นหาร้านอาหาร..." : " ค้นหาเมนูอาหาร..."}
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -2581,7 +2614,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
             />
           )}
 
-          <div onClick={() => handleSelectTab("profile")} style={profileStyle}>
+          <div className="customer-profile-chip" onClick={() => handleSelectTab("profile")} style={profileStyle}>
             <div style={avatarStyle}>
               {profileImage ? (
                 <img src={profileImage} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -2589,7 +2622,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 <UserIcon/>
               )}
             </div>
-            <div>
+            <div className="customer-profile-name">
               <div style={{ fontSize: "13px", fontWeight: "800" }}>{fullName}</div>
             </div>
           </div>
