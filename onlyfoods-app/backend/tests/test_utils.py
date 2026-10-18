@@ -282,3 +282,12 @@ def test_queue_summary_limits_list():
     rows = [{"queue": f"A{i:03d}"} for i in range(1, 13)]
     assert queue_summary(rows[:2]) == "A001, A002"
     assert queue_summary(rows) == "A001, A002, A003, A004, A005, A006, A007, A008, A009, A010 และอีก 2 คิว"
+
+
+def test_day_period_buckets():
+    from datetime import datetime
+    from utils import day_period
+    at = lambda h: datetime(2026, 10, 18, h, 30)
+    assert [day_period(at(h)) for h in (8, 10, 11, 13, 14, 16, 17, 20)] == \
+        ["เช้า", "เช้า", "เที่ยง", "เที่ยง", "บ่าย", "บ่าย", "เย็น", "เย็น"]
+    assert day_period(None) is None
