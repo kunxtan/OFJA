@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { startPolling } from '../utils/polling';
 
 const PALETTE = {
   coral: '#FF724C',
@@ -250,8 +251,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!user) return;
     fetchData();
-    const interval = setInterval(fetchData, 3000);
-    return () => clearInterval(interval);
+    return startPolling(fetchData, 3000);
   }, [user, fetchData]);
 
   // Logic คำนวณเวลาแบบ Chained Queue + Dynamic Buffer

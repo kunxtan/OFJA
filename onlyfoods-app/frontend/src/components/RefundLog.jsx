@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 //  canConfirm  : หน้าร้าน/เจ้าของร้าน กด "คืนเงินแล้ว" ได้ (backend ตรวจสิทธิ์และร้านซ้ำอีกชั้น)
 //  isOwner     : เจ้าของร้านเท่านั้นที่โอนคืนได้ (เห็นข้อมูลบัญชีลูกค้า + แนบสลิปโอนบังคับ) ; หน้าร้านจ่ายเงินสดได้อย่างเดียว
 //  showStore   : บัญชี/ผู้บริหาร เห็นทุกร้าน -> แสดงคอลัมน์ร้าน + ตัวกรองร้าน + ส่งออก CSV
+import { startPolling } from '../utils/polling';
+
 const C = {
   primary: '#FF6B00',
   primaryDark: '#C2410C',
@@ -114,8 +116,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
   useEffect(() => {
     load();
     if (!pollMs) return undefined;
-    const t = setInterval(load, pollMs);
-    return () => clearInterval(t);
+    return startPolling(load, pollMs);
   }, [load, pollMs]);
 
   useEffect(() => {
