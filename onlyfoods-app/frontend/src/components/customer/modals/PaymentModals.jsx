@@ -169,12 +169,15 @@ export function TopUpModal({
     <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.75)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
       <div style={{ background: COLORS.white, width: "min(460px, 100%)", maxHeight: "92vh", overflowY: "auto", borderRadius: "24px", padding: "25px", textAlign: "center" }}>
         <h3 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: COLORS.navy }}>
-          ออเดอร์คิว #{topUpOrder.QueueNo} ต้องโอนส่วนต่าง
+          โอนเพิ่มค่าอาหาร คิว #{topUpOrder.QueueNo}
         </h3>
-        <p style={{ color: COLORS.gray, fontSize: "13px", marginTop: "6px" }}>
-          ร้าน {topUpOrder.StoreName} • เมนูที่เปลี่ยนราคาสูงกว่าเดิม
-        </p>
+        <p style={{ color: COLORS.gray, fontSize: "13px", marginTop: "6px" }}>ร้าน {topUpOrder.StoreName}</p>
         <div style={{ fontSize: "30px", fontWeight: "900", color: COLORS.orange, margin: "8px 0" }}>{amount.toFixed(2)} ฿</div>
+        {/* อธิบายว่าทำไมต้องโอน (ลูกค้าหลายคนไม่เข้าใจคำว่า "ส่วนต่าง") */}
+        <div style={{ background: "#FFF7ED", color: COLORS.navy, padding: "10px 12px", borderRadius: "12px", fontSize: "13px", textAlign: "left", lineHeight: 1.55, marginBottom: "10px" }}>
+          เมนูเดิมของคุณหมด และคุณเลือกเปลี่ยนเป็นเมนูที่<b>ราคาสูงกว่า</b> จึงต้องโอนเพิ่มเฉพาะส่วนที่แพงขึ้น {amount.toFixed(2)} บาท
+          ร้านจะเริ่มทำอาหารหลังตรวจสลิปนี้ ถ้าไม่อยากจ่ายเพิ่ม กดยกเลิกออเดอร์ด้านล่างได้ (ได้เงินค่าอาหารที่จ่ายไว้คืน)
+        </div>
 
         {waitingCheck ? (
           <div style={{ background: "#ECFDF5", color: "#047857", padding: "12px", borderRadius: "12px", fontSize: "14px", fontWeight: "800" }}>
@@ -200,7 +203,7 @@ export function TopUpModal({
         {!waitingCheck && (
           <>
             <label style={{ display: "block", marginTop: "12px", padding: "12px", border: `2px dashed ${COLORS.border}`, borderRadius: "12px", cursor: "pointer", fontSize: "13px", fontWeight: "800", color: COLORS.navy }}>
-              {topUpSlip ? "เปลี่ยนรูปสลิป" : "เลือกรูปสลิปส่วนต่าง"}
+              {topUpSlip ? "เปลี่ยนรูปสลิป" : "แนบสลิปที่โอนเพิ่ม"}
               <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleTopUpSlipChange} style={{ display: "none" }} />
             </label>
             {topUpSlip && <img src={topUpSlip} alt="Slip Preview" style={{ width: "120px", maxHeight: "160px", objectFit: "contain", margin: "10px auto 0", display: "block", borderRadius: "10px", border: `1px solid ${COLORS.border}` }} />}
@@ -214,7 +217,7 @@ export function TopUpModal({
               disabled={!topUpSlip || isSubmittingTopUp}
               style={{ width: "100%", padding: "14px", border: "none", borderRadius: "14px", background: topUpSlip ? COLORS.green : "#CCCCCC", color: COLORS.white, fontWeight: "900", fontSize: "15px", cursor: topUpSlip ? "pointer" : "not-allowed" }}
             >
-              {isSubmittingTopUp ? "กำลังส่ง..." : "ส่งสลิปส่วนต่าง"}
+              {isSubmittingTopUp ? "กำลังส่ง..." : "ส่งสลิปที่โอนเพิ่ม"}
             </button>
           )}
           {!waitingCheck && (

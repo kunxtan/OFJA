@@ -865,30 +865,6 @@ function SearchableStorePicker({ stores, value, onChange }) {
         </div>)}
     </div>);
 }
-function MenuRankList({ rows, tone = 'primary', emptyText }) {
-    if (!rows.length)
-        return <EmptyState text={emptyText || 'ยังไม่มีข้อมูลเมนู'} minHeight="120px"/>;
-    const maxValue = Math.max(...rows.map((r) => r.qty), 1);
-    return (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
-      {rows.map((r) => (<div key={r.name}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-            <span style={{ color: T.text, fontSize: '13px' }}>{r.name}</span>
-            <strong style={{ color: T.ink, fontSize: '13px', whiteSpace: 'nowrap' }}>
-              {money(r.qty)} รายการ
-            </strong>
-          </div>
-          <div style={{ height: '8px', background: T.trackSoft, borderRadius: '999px', marginTop: '5px' }}>
-            <div style={{
-                height: '100%',
-                width: `${Math.max((r.qty / maxValue) * 100, 3)}%`,
-                borderRadius: '999px',
-                background: tone === 'primary' ? T.primary : T.accent
-            }}/>
-          </div>
-          
-        </div>))}
-    </div>);
-}
 // ===== หน้าหลัก Executive: โหลดข้อมูล เมนู แจ้งเตือน และควบคุมศูนย์อาหาร =====
 export default function ExecutiveView({ apiBase, user, onLogout }) {
     const API = apiBase || 'http://localhost:8000';
@@ -3111,7 +3087,6 @@ function StoreSalesPage({ ctx }) {
         const previous = orders.filter((o) => inRange(o, prevBounds, storeId));
         const now = summarize(current);
         const before = summarize(previous);
-        const menus = summarizeMenus(now.settled);
         return {
             now,
             before, current,
@@ -3119,14 +3094,6 @@ function StoreSalesPage({ ctx }) {
             buckets: customRange
                 ? buildBucketsForRange(now.settled, customStart, customEnd)
                 : buildBuckets(now.settled, anchor, days),
-            bestMenus: menus.slice(0, 2),
-            // เมนูขายได้น้อยต้องไม่ซ้ำกับรายการขายดี
-            // ถ้ามีข้อมูลไม่พอสำหรับเปรียบเทียบ จะได้เป็น [] และ UI เดิมจะแสดง empty state
-            worstMenus: menus
-                .filter((menu) => !menus.slice(0, 2).some((best) => best.name === menu.name))
-                .reverse()
-                .slice(0, 2),
-            menuCount: menus.length
         };
     }, [orders, storeId, anchor, days, customRange, customStart, customEnd]);
     const effectiveStart = customRange ? customStart : toISODate(new Date(new Date(`${anchor}T00:00:00`).setDate(new Date(`${anchor}T00:00:00`).getDate() - days + 1)));
@@ -3418,14 +3385,7 @@ function StoreSalesPage({ ctx }) {
             <SalesLineChart buckets={report.buckets} showStoreDetail={false}/>
           </Card>
 
-          <div style={{ ...chartGridStyle, marginBottom: '16px' }}>
-            <Card title="เมนูขายดี 2 อันดับแรก" >
-              <MenuRankList rows={report.bestMenus} emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้"/>
-            </Card>
-            <Card title="เมนูที่ขายได้น้อย 2 อันดับ" >
-              <MenuRankList rows={report.worstMenus} tone="accent" emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้"/>
-            </Card>
-          </div>
+          {/* PO: เจ้าของโรงอาหารไม่ต้องการดูอันดับเมนูขายดี/ขายน้อย จึงไม่แสดงการ์ดอันดับเมนู */}
           <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
             <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={`${store.StoreName} · ${periodLabel}`} showStore={false} style={{ marginTop: 0 }}/>
             <StoreReviewSection ctx={ctx} storeId={storeId}/>

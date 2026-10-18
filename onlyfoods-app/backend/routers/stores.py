@@ -17,8 +17,8 @@ from auth import STORE_SCOPED, assert_store_access, get_optional_user, hash_pass
 from db import get_db, transaction
 from errors import DomainError
 from schemas import ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema
-from services import (force_cancel_open_orders, get_foodcourt, is_duplicate_key, log_audit, open_order_count,
-                      open_orders, queue_summary)
+from services import (force_cancel_open_orders, get_foodcourt, is_duplicate_key, log_audit, notify_owners_closed_by_executive,
+                      notify_store_owners, open_order_count, open_orders, queue_summary)
 from shapes import STORE_SELECT, shape_store
 from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, add_years_minus_one_day,
                    bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
@@ -342,6 +342,13 @@ def toggle_store(store_id: int, open: Optional[bool] = None,
             if not new_open and pending and on_open_orders == "cancel":
                 forced = force_cancel_open_orders(db, cur, store_id, user["UserId"],
                                                   "ร้านปิดให้บริการกะทันหัน (ผู้บริหารสั่งปิด)")
+            # ผู้บริหารปิดร้านแทน : เจ้าของร้านต้องรู้ทันที (พร้อมบอกว่าออเดอร์ค้างจะเป็นอย่างไร)
+            if not new_open and user["RoleCode"] == "EXECUTIVE":
+                if pending:
+                    notify_owners_closed_by_executive(db, pending, on_open_orders, "ผู้บริหารปิดร้านของคุณ")
+                else:
+                    notify_store_owners(db, store_id, "SYSTEM", "ร้านถูกปิดโดยผู้บริหาร",
+                                        "ผู้บริหารปิดร้านของคุณ ร้านจะไม่รับออเดอร์ใหม่จนกว่าจะเปิดอีกครั้ง")
         detail = {"name": store["StoreName"]}
         if not new_open and pending:
             detail.update(open_orders=len(pending), on_open_orders=on_open_orders, **(forced or {}))

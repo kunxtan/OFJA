@@ -9,7 +9,8 @@ from auth import require_role
 from db import get_db, transaction
 from errors import DomainError
 from schemas import FoodCourtScheduleSchema
-from services import force_cancel_open_orders, get_foodcourt, log_audit, open_orders, queue_summary
+from services import (force_cancel_open_orders, get_foodcourt, log_audit, notify_owners_closed_by_executive, open_orders,
+                      queue_summary)
 from utils import (bangkok_now, foodcourt_is_open, foodcourt_mode, next_transition, time_to_hhmm,
                    time_to_minutes)
 
@@ -95,6 +96,8 @@ def toggle_food_court(open: Optional[bool] = None,
             if pending and on_open_orders == "cancel":
                 forced = force_cancel_open_orders(db, cur, None, user["UserId"],
                                                   "ศูนย์อาหารปิดให้บริการกะทันหัน (ผู้บริหารสั่งปิด)")
+            if pending:
+                notify_owners_closed_by_executive(db, pending, on_open_orders, "ผู้บริหารปิดศูนย์อาหาร")
         detail = {"override_until": until}
         if pending:
             detail.update(open_orders=len(pending), on_open_orders=on_open_orders, **(forced or {}))
