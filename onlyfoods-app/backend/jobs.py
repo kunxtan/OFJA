@@ -90,19 +90,29 @@ def auto_cancel_reason(cancel_reason: Optional[str]) -> str:
     return (f"{base} ({cancel_reason})" if cancel_reason else base)[:255]
 
 
+# ออเดอร์ที่ยกเลิกอัตโนมัติไม่สำเร็จ : เว้นไว้ก่อน (ไม่ลองทุก 30 วิไม่จบ และไม่ให้กินโควตา LIMIT จนออเดอร์อื่นไม่ถูกยกเลิก)
+AUTO_CANCEL_RETRY_MINUTES = 10
+_auto_cancel_retry_at: dict = {}
+
+
 def cancel_expired_requests(db, now: Optional[datetime] = None) -> int:
     """ยกเลิกออเดอร์ PENDING_CANCELLATION ที่เลยเส้นตายแล้ว คืนจำนวนที่ยกเลิก (1 ออเดอร์ = 1 transaction)"""
     now = now or bangkok_now()
+    for oid in [k for k, t in _auto_cancel_retry_at.items() if t <= now]:
+        _auto_cancel_retry_at.pop(oid, None)
+    skip = sorted(_auto_cancel_retry_at)
+    skip_sql = f" AND o.OrderId NOT IN ({', '.join(['%s'] * len(skip))})" if skip else ""
     with db.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT o.OrderId FROM `Order` o
             JOIN OrderStatus os ON os.StatusId = o.StatusId
             WHERE os.StatusCode = 'PENDING_CANCELLATION' AND o.CancelDeadline IS NOT NULL AND o.CancelDeadline <= %s
+            {skip_sql}
             ORDER BY o.CancelDeadline
             LIMIT 200
             """,
-            (now,),
+            (now, *skip),
         )
         due = [r["OrderId"] for r in cur.fetchall()]
     db.rollback()
@@ -125,9 +135,11 @@ def cancel_expired_requests(db, now: Optional[datetime] = None) -> int:
             cancelled += 1
         except DomainError as exc:  # เช่นมีสลิปส่วนต่างที่ยังไม่ตรวจ: ปล่อยให้พนักงานจัดการ
             db.rollback()
-            logger.warning("auto-cancel skipped order=%s: %s", oid, exc)
+            _auto_cancel_retry_at[oid] = now + timedelta(minutes=AUTO_CANCEL_RETRY_MINUTES)
+            logger.warning("auto-cancel skipped order=%s (retry in %s min): %s", oid, AUTO_CANCEL_RETRY_MINUTES, exc)
         except Exception:  # noqa: BLE001 - ออเดอร์หนึ่งพัง ไม่ให้กระทบออเดอร์อื่น
             db.rollback()
+            _auto_cancel_retry_at[oid] = now + timedelta(minutes=AUTO_CANCEL_RETRY_MINUTES)
             logger.exception("auto-cancel failed order=%s", oid)
     return cancelled
 
