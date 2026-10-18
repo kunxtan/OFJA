@@ -2366,10 +2366,15 @@ function ReviewCard({ review, onPhoto }) {
 
       <footer className="rv-order">
         <div className="rv-order-meta">
-          <span className="rv-queue">คิว {r.QueueNo}</span>
-          <span>สั่งเมื่อ {thaiDateTime(r.OrderedAt)}</span>
-          <span>฿{fmtMoney(r.TotalAmount)}</span>
-          <span className="rv-time" title={thaiDateTime(r.CreatedAt, true)}>รีวิว {timeAgo(r.CreatedAt)}</span>
+          {/* M15: ร้านไม่เห็นเลขคิว/ยอด/เวลาเป๊ะ (backend ไม่ส่งมา) เหลือวัน + ช่วงเวลา ; ผู้บริหารยังเห็นครบ */}
+          {r.QueueNo && <span className="rv-queue">คิว {r.QueueNo}</span>}
+          {r.OrderedAt
+            ? <span>สั่งเมื่อ {thaiDateTime(r.OrderedAt)}</span>
+            : r.OrderedDate && <span>สั่งวันที่ {thaiDate(r.OrderedDate)}{r.OrderedPeriod ? ` ช่วง${r.OrderedPeriod}` : ''}</span>}
+          {r.TotalAmount != null && <span>฿{fmtMoney(r.TotalAmount)}</span>}
+          {r.CreatedPeriod
+            ? <span className="rv-time">รีวิววันที่ {thaiDate(r.CreatedAt)} ช่วง{r.CreatedPeriod}</span>
+            : <span className="rv-time" title={thaiDateTime(r.CreatedAt, true)}>รีวิว {timeAgo(r.CreatedAt)}</span>}
         </div>
         {r.items?.length > 0 && (
           <div className="rv-items">
@@ -2520,12 +2525,14 @@ function IssueCard({ issue, busy, onAction }) {
 
       <p className="is-quote">{i.Description}</p>
 
-      {i.OrderID ? (
+      {(i.HasOrder ?? i.OrderID) ? (
         <div className="is-order">
           <div className="is-order-meta">
-            <span className="rv-queue">คิว {i.QueueNo}</span>
-            <span>สั่ง {thaiDateTime(i.OrderedAt, true)}</span>
-            {i.TotalAmount !== null && <span>฿{fmtMoney(i.TotalAmount)}</span>}
+            {i.QueueNo && <span className="rv-queue">คิว {i.QueueNo}</span>}
+            {i.OrderedAt
+              ? <span>สั่ง {thaiDateTime(i.OrderedAt, true)}</span>
+              : i.OrderedDate && <span>สั่งวันที่ {thaiDate(i.OrderedDate)}{i.OrderedPeriod ? ` ช่วง${i.OrderedPeriod}` : ''}</span>}
+            {i.TotalAmount != null && <span>฿{fmtMoney(i.TotalAmount)}</span>}
             {i.OrderStatusNameTh && <span className="is-order-status">{i.OrderStatusNameTh}</span>}
             {i.ReadyMinutes !== null && (
               <span className={`is-ready ${i.TypeCode === 'SLOW_SERVICE' ? 'hl' : ''}`}><Icon name="clock" size={12} /> สั่ง → เรียกคิว {formatDuration(i.ReadyMinutes)}</span>
@@ -4461,7 +4468,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   </div>
                 </PageHeader>
 
-                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมลของคนรีวิว</div>
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบไม่แสดงชื่อ เบอร์ เลขคิว หรือยอดของออเดอร์ที่รีวิว เห็นแค่เมนู วันที่ และช่วงเวลา (ลูกค้าคนเดียวกันใช้รหัสเดิม)</div>
 
                 <div className="rv-overview">
                   <section className="rv-score">
@@ -4540,7 +4547,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   </div>
                   <div className="mm-search">
                     <Icon name="search" size={16} />
-                    <input value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} placeholder="ค้นหาในความเห็น ชื่อเมนู หรือเลขคิว..." aria-label="ค้นหารีวิว" />
+                    <input value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} placeholder="ค้นหาในความเห็น หรือชื่อเมนู..." aria-label="ค้นหารีวิว" />
                     {reviewSearch && <button type="button" onClick={() => setReviewSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>}
                   </div>
                 </div>
@@ -4874,7 +4881,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   <span className={`op-count-chip ${pending ? 'danger' : ''}`}>{pending ? `ต้องจัดการ ${fmtMoney(pending)} เรื่อง` : `${fmtMoney(issues.length)} รายการ`}</span>
                 </PageHeader>
 
-                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบแสดงชื่อผู้แจ้งแบบย่อ และไม่แสดงเบอร์โทรหรืออีเมล ตอบกลับลูกค้าได้ผ่านปุ่มในแต่ละเรื่อง</div>
+                <div className="rv-privacy"><Icon name="lock" size={15} /> เพื่อความเป็นส่วนตัวของลูกค้า ระบบไม่แสดงชื่อ เบอร์ หรือเลขคิวของผู้แจ้ง เห็นแค่เมนู วันที่ และช่วงเวลาของออเดอร์ ตอบกลับลูกค้าได้ผ่านปุ่มในแต่ละเรื่อง</div>
 
                 <div className="sf-stats">
                   {kpis.map(k => (

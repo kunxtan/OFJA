@@ -299,3 +299,12 @@ def test_protected_file_rules():
     qr = lambda u: _allowed(u, 7, 1, ("STORE_OWNER",), ())
     owner = {"RoleCode": "STORE_OWNER", "UserId": 6, "StoreId": 1}
     assert [qr(u) for u in (cust, owner, staff, acc)] == [True, True, False, False]
+
+
+def test_day_period_buckets():
+    from datetime import datetime
+    from utils import day_period
+    at = lambda h: datetime(2026, 10, 18, h, 30)
+    assert [day_period(at(h)) for h in (8, 10, 11, 13, 14, 16, 17, 20)] == \
+        ["เช้า", "เช้า", "เที่ยง", "เที่ยง", "บ่าย", "บ่าย", "เย็น", "เย็น"]
+    assert day_period(None) is None
