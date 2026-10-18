@@ -269,7 +269,8 @@ export default function KitchenView({ user, apiBase, onLogout }) {
 
     if (!isImmediate) {
       const pDate = parseDate(pickupStr);
-      if (pDate) return { targetDate: pDate, isImmediate: false };
+      // เวลานัดห่างจากเวลาสั่งไม่เกิน 2 นาที = รับทันที (ออเดอร์เก่าที่ส่งเวลาจากนาฬิกาเครื่องลูกค้ามา)
+      if (pDate && Math.abs(pDate.getTime() - created.getTime()) > 2 * 60000) return { targetDate: pDate, isImmediate: false };
     }
 
     const pendingOrdersBefore = orderList

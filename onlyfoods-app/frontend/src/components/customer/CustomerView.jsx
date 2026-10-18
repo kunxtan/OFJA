@@ -524,6 +524,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
     [stores, selectedStore]
   );
+  // ร้านของสินค้าในตะกร้า (ตะกร้ามีได้ร้านเดียว) : สั่ง/ประเมินคิว/ตรวจร้านเปิด ต้องใช้ร้านนี้ ไม่ใช่ร้านที่กำลังเปิดดูอยู่
+  const cartStoreId = cart.length ? Number(cart[0].StoreId || cart[0].store_id) || null : null;
+  const cartStore = useMemo(
+    () => stores.find((store) => Number(store.StoreId) === Number(cartStoreId)) || {},
+    [stores, cartStoreId]
+  );
 
   const cartCount = useMemo(() => countCartDishes(cart), [cart]);
 
@@ -914,7 +920,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
     }
     if (cart.length === 0) return customAlert("กรุณาเลือกอาหารลงตะกร้าก่อนสั่งซื้อ", "", "error");
-    if (!selectedStore) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
+    if (!cartStoreId) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
     setIsCartOpen(false);
     setIsPaymentModalOpen(true);
   };
@@ -1021,7 +1027,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // โหลดเฉพาะข้อมูลคิวที่จำเป็นสำหรับประเมินเวลารอให้ลูกค้า
   useEffect(() => {
-    if (!selectedStore || !isCartOpen) {
+    if (!cartStoreId || !isCartOpen) {
       setQueueEstimateOrders([]);
       return;
     }
@@ -1029,7 +1035,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     let cancelled = false;
     const loadQueueEstimate = async () => {
       try {
-        const res = await fetch(`${apiBase}/api/orders/queue-estimate?store_id=${selectedStore}`);
+        const res = await fetch(`${apiBase}/api/orders/queue-estimate?store_id=${cartStoreId}`);
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled) setQueueEstimateOrders(Array.isArray(data.orders) ? data.orders : []);
@@ -1044,7 +1050,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [apiBase, selectedStore, isCartOpen]);
+  }, [apiBase, cartStoreId, isCartOpen]);
 
   // ช่วงเวลารับโดยประมาณของตะกร้า (ต่อท้ายคิวที่ค้างอยู่)
   const getCustomerPickupRange = () => {
@@ -1142,7 +1148,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     const currentOrderTime = getCurrentDateTimeForBackend();
     const displayOrderTime = getCurrentTimeFormatted();
-    const finalPickupTime = pickupTime ? `${pickupTime} น.` : displayOrderTime;
+    // รับทันที = ไม่ส่งเวลา (เดิมส่งเวลาจากนาฬิกาเครื่องลูกค้า ถ้าคลาดหรือข้ามนาที ครัวจะนับเป็นออเดอร์นัดเวลา)
+    const finalPickupTime = pickupTime ? `${pickupTime} น.` : null;
 
     const orderItems = cart.map((item) => ({
       product_id: Number(item.ProductId),
@@ -1152,7 +1159,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }));
 
     const orderData = {
-      store_id: Number(selectedStore),
+      store_id: cartStoreId,
       user_id: userId,
       items: orderItems,
       payment_method: paymentMethod,
@@ -1173,7 +1180,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       if (!res.ok) return customAlert(data.detail || "ไม่สามารถสั่งซื้อได้", "", "error");
 
       // รับทันที -> แสดงช่วงเวลาโดยประมาณเหมือนในตะกร้า / นัดเวลา -> แสดงเวลานัด
-      const pickupLabel = pickupTime ? finalPickupTime : getCustomerPickupRange();
+      const pickupLabel = pickupTime ? finalPickupTime : (getCustomerPickupRange() || displayOrderTime);
       customAlert(
         `สั่งซื้อสำเร็จ!`,
         `หมายเลขคิว: ${data.queue_no || "-"}\nเวลาที่สั่ง: ${displayOrderTime}\nเวลารับอาหารโดยประมาณ: ${pickupLabel}`
@@ -1995,13 +2002,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     {(order.OrderTime || order.CreatedAt || order.order_time) && (
                       <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
                     )}
-                    {(order.PickupTime || order.pickup_time) && (
-                      <div>
-                        เวลารับอาหาร: {isImmediatePickup(order.PickupTime || order.pickup_time, order.OrderTime || order.CreatedAt)
-                          ? 'รับทันที'
-                          : (order.PickupTime || order.pickup_time)}
-                      </div>
-                    )}
+                    <div>
+                      เวลารับอาหาร: {isImmediatePickup(order.PickupTime || order.pickup_time, order.OrderTime || order.CreatedAt)
+                        ? 'รับทันที'
+                        : (order.PickupTime || order.pickup_time)}
+                    </div>
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
                     {getOrderStatusLabel(order.Status)}
@@ -2460,14 +2465,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                 <button 
                   onClick={handleProceedToPayment} 
-                  disabled={!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen}
+                  disabled={!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen}
                   style={{
                     width: "100%", padding: "15px", marginTop: "15px", border: "none", borderRadius: "15px", 
-                    background: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
-                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
+                    background: (!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
+                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
                   }}
                 >
-                  {activeStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !activeStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
+                  {cartStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !cartStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
                 </button>
               </div>
             </>

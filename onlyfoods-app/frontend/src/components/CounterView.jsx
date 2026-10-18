@@ -76,6 +76,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [reportCancellations, setReportCancellations] = useState([]);
   const [viewingCustomer, setViewingCustomer] = useState(null);
   const [toast, setToast] = useState({ show: false, msg: '' });
+  const [liveError, setLiveError] = useState(''); // ดึงคิวไม่สำเร็จ : คงข้อมูลเดิมไว้ แล้วขึ้นแถบเตือน
 
   // ===== Print / Recall / No-Show controls =====
   const [printerStatus, setPrinterStatus] = useState('READY'); // READY | OFFLINE (Mock)
@@ -203,19 +204,22 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   const fetchData = () => {
     // live = ออเดอร์ที่ยังไม่จบ + ของวันนี้ (ไม่ดึงประวัติทั้งร้านทุก 3.5 วิ ; วันก่อน ๆ ดึงตอนเปิดแท็บประวัติ)
-    fetch(`${apiBase}/api/orders?store_id=${activeStoreId}&scope=live`)
-      .then(r => r.json())
-      .then(d => setOrders(Array.isArray(d) ? d : []))
-      .catch(err => console.error("Error orders:", err));
+    // server error ชั่วคราว : ห้ามล้างรายการเป็นว่าง (คิวหายทั้งจอ แล้วพอกลับมาทุกคิวกระพริบ/มีเสียงพร้อมกัน)
+    const getList = (url, opts) => fetch(url, opts).then(async r => {
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !Array.isArray(d)) throw new Error(`HTTP ${r.status}`);
+      return d;
+    });
+    getList(`${apiBase}/api/orders?store_id=${activeStoreId}&scope=live`)
+      .then(d => { setOrders(d); setLiveError(''); })
+      .catch(err => { console.error("Error orders:", err); setLiveError('ดึงรายการคิวล่าสุดไม่สำเร็จ กำลังลองใหม่… (ข้อมูลบนจออาจไม่อัปเดต)'); });
 
-    fetch(`${apiBase}/api/products?store_id=${activeStoreId}`)
-      .then(r => r.json())
-      .then(d => setProducts(Array.isArray(d) ? d : []))
+    getList(`${apiBase}/api/products?store_id=${activeStoreId}`)
+      .then(setProducts)
       .catch(err => console.error("Error products:", err));
 
-    fetch(`${apiBase}/api/print-jobs/pending?store_id=${activeStoreId}`, { cache: 'no-store' })
-      .then(r => r.ok ? r.json() : [])
-      .then(d => setPendingPrintJobs(Array.isArray(d) ? d : []))
+    getList(`${apiBase}/api/print-jobs/pending?store_id=${activeStoreId}`, { cache: 'no-store' })
+      .then(setPendingPrintJobs)
       .catch(err => console.error("Error print jobs:", err));
 
     fetchPendingRefunds();
@@ -947,6 +951,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
         {/* ===== CONTENT AREA ===== */}
         <main className="cv-content">
+          {liveError && <div role="alert" className="cv-live-error">⚠️ {liveError}</div>}
           {pendingPrintJobs.length > 0 && (
             <div className="cv-print-alert">
               <div>
@@ -2053,6 +2058,7 @@ const CV_STYLES = `
 
 /* ---------- Content / Cards ---------- */
 .cv-content { flex: 1; padding: 24px; overflow-y: auto; }
+.cv-live-error { margin-bottom: 14px; padding: 10px 14px; border-radius: 12px; background: #FEE2E2; color: #991B1B; font-weight: 700; font-size: 14px; }
 .cv-stack { display: flex; flex-direction: column; gap: 24px; }
 .cv-card {
   background: ${PALETTE.white}; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);

@@ -2746,19 +2746,22 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       if (d && Array.isArray(d.issues)) { setIssues(d.issues); setIssuesSummary(d.summary); markLoaded('issues'); }
     }).catch(err => console.error(err));
     
+    // ตอบ error (เช่น 500 ชั่วคราว) : คงข้อมูลเดิมไว้ ไม่ให้หน้าพังหรือ KPI/ลิ้นชักเงินสดกลายเป็น 0
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
-      .then(r => r.json())
+      .then(r => (r.ok ? r.json() : null))
       .then(data => {
+        if (!Array.isArray(data)) return;
         setCancels(data);
         if (isFirstFetch.current) {
           setKnownCancelsCount(data.length);
           isFirstFetch.current = false;
         }
-      });
+      })
+      .catch(err => console.error(err));
 
-    fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => r.json()).then(d => { setProducts(Array.isArray(d) ? d : []); markLoaded('products'); }).catch(err => console.error(err));
-    fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => r.json()).then(d => { setHistory(Array.isArray(d) ? d : []); markLoaded('history'); }).catch(err => console.error(err));
-    fetch(`${apiBase}/api/stores/${storeId}/staff?include_inactive=true`).then(r => r.json()).then(d => { setStaffList(Array.isArray(d) ? d : []); markLoaded('staff'); }).catch(err => console.error(err));
+    fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => (r.ok ? r.json() : null)).then(d => { if (Array.isArray(d)) { setProducts(d); markLoaded('products'); } }).catch(err => console.error(err));
+    fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => (r.ok ? r.json() : null)).then(d => { if (Array.isArray(d)) { setHistory(d); markLoaded('history'); } }).catch(err => console.error(err));
+    fetch(`${apiBase}/api/stores/${storeId}/staff?include_inactive=true`).then(r => (r.ok ? r.json() : null)).then(d => { if (Array.isArray(d)) { setStaffList(d); markLoaded('staff'); } }).catch(err => console.error(err));
 
     if (uid) {
       fetch(`${apiBase}/api/notifications/${uid}`)
