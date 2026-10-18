@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { startPolling } from './utils/polling';
 import { savedUser, saveUser } from './authFetch.js';
+import { clearHistoryNav } from './utils/historyNav';
 import AccountantView from './components/AccountantView';
 import CounterView from './components/CounterView';
 import CustomerView from './components/customer/CustomerView';
@@ -234,12 +235,14 @@ export default function App() {
 
   const logout = () => {
     window.dispatchEvent(new Event('auth:logout'));  // authFetch.js ทิ้ง token + ข้อมูลใน sessionStorage
+    clearHistoryNav();
     setCurrentUser(null);
   };
 
   // token ใช้ไม่ได้แล้ว (สัญญาร้านหมด / บัญชีถูกระงับ / หมดอายุ) -> กลับหน้า login พร้อมข้อความจาก backend (ดู authFetch.js)
   useEffect(() => {
     const onExpired = (e) => {
+      clearHistoryNav();
       setCurrentUser(null);
       setAuthTab('login');
       setAuthError(e.detail || 'กรุณาเข้าสู่ระบบใหม่');

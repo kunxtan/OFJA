@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { startPolling } from '../utils/polling';
+import { useHistoryNav } from '../utils/historyNav';
 import { createPortal } from 'react-dom';
 import { RefundActionModals, STATUS_TH as REFUND_STATUS_TH, payoutLabel } from './RefundLog';
 
@@ -2637,6 +2638,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const storePeriod = resolvePeriod({ anchor: storeAnchor, days: storeDays, custom: customRange, customStart, customEnd });
   
   const [page, setPage] = useState('dashboard');
+  useHistoryNav(page, (hash) => {
+    const p = hash ?? 'dashboard';
+    if (!['dashboard', 'menu', 'history', 'staff', 'refunds', 'reviews', 'issues'].includes(p)) return false;
+    setPage(p);
+    return true;
+  });
   
   // มือถือ (≤768px): ปิดแถบเมนูไว้ก่อน ; จอใหญ่: เปิดไว้
   const isMobileWidth = () => typeof window !== 'undefined' && window.innerWidth <= 768;

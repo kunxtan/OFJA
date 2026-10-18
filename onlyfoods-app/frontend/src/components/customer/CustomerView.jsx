@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { startPolling } from "../../utils/polling";
+import { useHistoryNav } from "../../utils/historyNav";
 import Cropper from "react-easy-crop";
 import { createCartRow, getNotifKey, getOrderStatusLabel, getOutOfStockItem, previewLateArrival, summarizeRefunds } from "./utils/orders";
 import { addProductToCart, countCartDishes, decreaseRowQty, increaseRowQty, splitOneFromRow, sumCart } from "./utils/cart";
@@ -60,6 +61,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [search, setSearch] = useState("");
   const [selectedStore, setSelectedStore] = useState(null);
   const [viewMode, setViewMode] = useState("stores");
+  // ปุ่มย้อนกลับ : #menu (รายชื่อร้าน) / #menu/store (เมนูของร้าน) / #orders / #notifs / #profile
+  useHistoryNav(activeTab === "menu" && viewMode === "products" ? "menu/store" : activeTab, (hash) => {
+    if (hash === null) hash = "menu";
+    const [tab, sub] = hash.split("/");
+    if (!["menu", "orders", "notifs", "profile"].includes(tab)) return false;
+    if (sub === "store" && !selectedStore) return false;
+    handleSelectTab(tab);
+    if (sub === "store") setViewMode("products");
+    return true;
+  });
 
   // CART & ORDER FORM STATE
   const [cart, setCart] = useState([]);

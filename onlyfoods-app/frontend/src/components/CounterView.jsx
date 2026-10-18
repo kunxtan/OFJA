@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { startPolling } from '../utils/polling';
+import { useHistoryNav } from '../utils/historyNav';
+import { printReceipt } from '../utils/receiptPrint';
 import RefundLog from './RefundLog';
 
 // โทนสีเดิมของ Counter & Theme กลาง
@@ -77,6 +79,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [orderNote, setOrderNote] = useState('');
 
   const [activeTab, setActiveTab] = useState('orders');
+  useHistoryNav(activeTab, (hash) => {
+    const tab = hash ?? 'orders';
+    if (!['orders', 'walkin', 'history', 'menu', 'refunds', 'reports', 'display'].includes(tab)) return false;
+    setActiveTab(tab);
+    return true;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
@@ -102,6 +110,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [queueTab, setQueueTab] = useState('ready');
   const [queueQuery, setQueueQuery] = useState('');
   const [handoverBusy, setHandoverBusy] = useState(null);
+  const [recallBusy, setRecallBusy] = useState(null);
   const queueSearchRef = useRef(null);
   // Walk-in POS: ขั้นตอนชำระเงิน (เงินสด = กรอกเงินที่รับ + เงินทอน ; QR/TrueMoney = ลูกค้าโอนต่อหน้า พนักงานกดยืนยัน)
   const [payOpen, setPayOpen] = useState(false);
@@ -400,6 +409,26 @@ export default function CounterView({ user, apiBase, onLogout }) {
     }
   };
 
+  // เรียกคิวซ้ำ (เฉพาะคิวที่พร้อมรับ) : ส่งแจ้งเตือนเข้าแอปลูกค้าอีกครั้ง + จอเรียกคิวกระพริบ/มีเสียงใหม่
+  const recallQueue = async (order) => {
+    if (recallBusy) return;
+    setRecallBusy(order.OrderID);
+    try {
+      const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/recall`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(apiErr(res, data, 'เรียกคิวซ้ำไม่สำเร็จ')); return; }
+      readySeenRef.current?.set(order.OrderID, Date.now());
+      if (displaySound) playChime();
+      showToast(data.notified
+        ? `📢 เรียกคิว ${order.QueueNo} อีกครั้งแล้ว (ส่งแจ้งเตือนเข้าแอปลูกค้า)`
+        : `📢 เรียกคิว ${order.QueueNo} อีกครั้งแล้ว (ลูกค้า walk-in ไม่มีแอป — จอเรียกคิวกระพริบให้)`);
+    } catch {
+      showToast('เชื่อมต่อระบบออเดอร์ไม่สำเร็จ');
+    } finally {
+      setRecallBusy(null);
+    }
+  };
+
   const buildPrintData = (order) => ({
     orderId: order.OrderID,
     queueNo: order.QueueNo,
@@ -484,7 +513,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
       const res = await fetch(`${apiBase}/api/orders/${order.OrderID}/print`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ print_type: type, printer: 'MOCK_PRINTER_01', user_role: 'Front Staff' })
+        body: JSON.stringify({ print_type: type, printer: 'BROWSER_80MM', user_role: 'Front Staff' })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -505,11 +534,15 @@ export default function CounterView({ user, apiBase, onLogout }) {
         const s = norm((server.items || []).map(i => [i.product, Number(i.qty), Number(i.unit_price)]));
         if (l !== s) diffs.push('เมนู/จำนวน/ราคา');
       }
+      // พิมพ์จากข้อมูลที่ backend บันทึกไว้ (ใบเสร็จ 80mm ผ่านหน้าต่างพิมพ์ของเบราว์เซอร์)
+      const opened = server && printReceipt({ storeName: currentStore?.StoreName, data: server, reprint: type === 'REPRINT' });
       if (diffs.length) {
         console.warn('[PRINT_LOG] ข้อมูลไม่ตรงกัน:', diffs, { local, server });
         showToast(`⚠️ พิมพ์แล้ว แต่ข้อมูลไม่ตรงกับออเดอร์: ${diffs.join(', ')}`);
+      } else if (!opened) {
+        showToast(`บันทึกการพิมพ์คิว ${order.QueueNo} แล้ว แต่เปิดหน้าต่างพิมพ์ไม่ได้ — กดพิมพ์ซ้ำอีกครั้ง`);
       } else {
-        showToast(type === 'REPRINT' ? `พิมพ์ซ้ำคิว ${order.QueueNo} สำเร็จ (ข้อมูลตรงกับออเดอร์)` : `พิมพ์ใบคิว ${order.QueueNo} สำเร็จ (ข้อมูลตรงกับออเดอร์)`);
+        showToast(type === 'REPRINT' ? `พิมพ์ซ้ำคิว ${order.QueueNo} (ข้อมูลตรงกับออเดอร์)` : `พิมพ์ใบคิว ${order.QueueNo} (ข้อมูลตรงกับออเดอร์)`);
       }
       setPrintConfirmOrder(null);
       fetchData();
@@ -1136,10 +1169,16 @@ export default function CounterView({ user, apiBase, onLogout }) {
                       </div>
                     </div>
                     {handoverOrder.Status === 'Ready' ? (
-                      <button className="cv-btn btn-success cv-btn-lg" disabled={handoverBusy === handoverOrder.OrderID}
-                        onClick={() => handOver(handoverOrder)}>
-                        {handoverBusy === handoverOrder.OrderID ? 'กำลังบันทึก...' : `✅ ส่งมอบ ${handoverOrder.QueueNo}`}
-                      </button>
+                      <div className="handover-actions">
+                        <button className="cv-btn btn-ghost cv-btn-lg" disabled={recallBusy === handoverOrder.OrderID}
+                          onClick={() => recallQueue(handoverOrder)} title="แจ้งเตือนลูกค้าอีกครั้ง + จอเรียกคิวกระพริบ">
+                          📢 เรียกคิวซ้ำ
+                        </button>
+                        <button className="cv-btn btn-success cv-btn-lg" disabled={handoverBusy === handoverOrder.OrderID}
+                          onClick={() => handOver(handoverOrder)}>
+                          {handoverBusy === handoverOrder.OrderID ? 'กำลังบันทึก...' : `✅ ส่งมอบ ${handoverOrder.QueueNo}`}
+                        </button>
+                      </div>
                     ) : (
                       <div className="handover-wait">ยังส่งมอบไม่ได้ — แจ้งลูกค้าว่าอาหาร{getStatusLabel(handoverOrder.Status)}</div>
                     )}
@@ -1232,6 +1271,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
                                     <>
                                       <button onClick={() => handOver(o)} className="cv-btn btn-success" disabled={handoverBusy === o.OrderID}>
                                         ✅ ส่งมอบอาหาร
+                                      </button>
+                                      <button onClick={() => recallQueue(o)} className="cv-btn btn-ghost" disabled={recallBusy === o.OrderID}
+                                        title="แจ้งเตือนลูกค้าอีกครั้ง + จอเรียกคิวกระพริบ">
+                                        📢 เรียกคิวซ้ำ
                                       </button>
                                       <button
                                         onClick={() => openNoShowModal(o)}
@@ -1579,7 +1622,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
         <div className="cv-modal-overlay" onClick={() => setPrintConfirmOrder(null)}>
           <div className="cv-modal cv-print-modal" onClick={e => e.stopPropagation()}>
             <div className="cv-modal-head">
-              <div><h3>🖨️ ยืนยันการพิมพ์</h3><div className="caption">ตรวจข้อมูลสำคัญก่อนส่งไปยัง Mock Printer</div></div>
+              <div><h3>🖨️ ยืนยันการพิมพ์</h3><div className="caption">ยืนยันแล้วจะเปิดหน้าต่างพิมพ์ใบคิว (กระดาษ 80mm)</div></div>
               <button onClick={() => setPrintConfirmOrder(null)} className="cv-modal-close">✖</button>
             </div>
             {printConfirmOrder.order ? (
@@ -2163,6 +2206,7 @@ const CV_STYLES = `
 .handover-card { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 16px 18px; margin-bottom: 14px; border-radius: 14px; border: 2px solid ${PALETTE.border}; background: ${PALETTE.bgSoft}; }
 .handover-card.ready { border-color: ${PALETTE.green}; background: ${PALETTE.greenLight}; }
 .handover-main { display: flex; gap: 16px; align-items: center; min-width: 0; }
+.handover-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .handover-queue { font-size: 34px; font-weight: 800; font-family: 'Roboto', monospace; color: ${PALETTE.dark}; }
 .handover-name { font-size: 17px; font-weight: 700; color: ${PALETTE.dark}; }
 .handover-items { font-size: 14px; color: ${PALETTE.textSub}; margin: 2px 0 6px; }

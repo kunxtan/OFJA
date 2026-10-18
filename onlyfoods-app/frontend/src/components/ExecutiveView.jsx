@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { startPolling } from '../utils/polling';
+import { useHistoryNav } from '../utils/historyNav';
 import { AUDIT_VERBS, auditCodesMatching, formatAuditDetails } from '../utils/auditText';
 import Cropper from 'react-easy-crop';
 import * as XLSX from 'xlsx';
@@ -929,6 +930,13 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const isNarrow = useIsNarrow();
     const isPhone = useIsNarrow(640);
     const [activeMenu, setActiveMenu] = useState('overview');
+    useHistoryNav(activeMenu, (hash) => {
+        const m = hash ?? 'overview';
+        if (!['overview', 'store-manage', 'store-accounts', 'store-sales', 'contract-tracking', 'customer-info',
+              'issue-reports', 'refund-log', 'audit-history'].includes(m)) return false;
+        setActiveMenu(m);
+        return true;
+    });
     // [CROSS-NAV] เก็บร้านที่ผู้บริหารคลิกมาจากอีกหน้า เพื่อเปิดรายละเอียดร้านเดิมต่อเนื่อง
     const [focusStoreId, setFocusStoreId] = useState('');
     const [sidebarOpen, setSidebarOpen] = useState(true);
