@@ -299,6 +299,7 @@ CREATE TABLE Payment (
   Amount        DECIMAL(10,2)    NOT NULL COMMENT 'amount actually paid (stored, not derived)',
   PaymentStatus ENUM('PENDING','VERIFIED','REJECTED') NOT NULL DEFAULT 'PENDING',
   SlipImageUrl  VARCHAR(500)     NULL,
+  SlipHash      CHAR(64)         NULL COMMENT 'sha256 of the slip image (reuse check)',
   RejectReason  VARCHAR(255)     NULL,
   VerifiedBy    INT UNSIGNED     NULL,
   PaidAt        DATETIME         NULL,
@@ -312,6 +313,7 @@ CREATE TABLE Payment (
   KEY ix_payment_verifiedby (VerifiedBy),
   KEY ix_payment_status (PaymentStatus),
   KEY ix_payment_order_type (OrderId, PaymentType, PaymentStatus),
+  KEY ix_payment_sliphash (SlipHash),
   CONSTRAINT fk_payment_order      FOREIGN KEY (OrderId)    REFERENCES `Order` (OrderId)             ON UPDATE CASCADE,
   CONSTRAINT fk_payment_method     FOREIGN KEY (MethodId)   REFERENCES PaymentMethod (MethodId)      ON UPDATE CASCADE,
   CONSTRAINT fk_payment_verifiedby FOREIGN KEY (VerifiedBy) REFERENCES `User` (UserId)               ON UPDATE CASCADE,
@@ -331,11 +333,20 @@ CREATE TABLE Refund (
   Amount       DECIMAL(10,2)   NOT NULL COMMENT 'stored, not derived',
   Reason       VARCHAR(255)    NULL,
   RefundStatus ENUM('PENDING','DONE','FAILED') NOT NULL DEFAULT 'PENDING',
+  PayoutMethod      ENUM('CASH','TRANSFER')  NOT NULL DEFAULT 'CASH' COMMENT 'customer choice',
+  PayoutKind        ENUM('PROMPTPAY','BANK') NULL,
+  PayoutBank        VARCHAR(60)  NULL,
+  PayoutAccountNo   VARCHAR(20)  NULL COMMENT 'PromptPay id or bank account; wiped when DONE',
+  PayoutAccountName VARCHAR(100) NULL,
+  PayoutQrUrl       VARCHAR(500) NULL,
+  PayoutLockedAt    DATETIME     NULL COMMENT 'owner opened the payout details',
+  PaidMethod        ENUM('CASH','TRANSFER') NULL COMMENT 'how the shop really paid',
+  TransferSlipUrl   VARCHAR(500) NULL,
   RefundedBy   INT UNSIGNED    NULL,
   RequestedAt  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   RefundedAt   DATETIME        NULL,
   PRIMARY KEY (RefundId),
-  UNIQUE KEY uk_refund_orderitem (OrderItemId) COMMENT '0..1 : 0..1 with OrderItem',
+  KEY ix_refund_orderitem (OrderItemId),
   KEY ix_refund_payment (PaymentId),
   KEY ix_refund_refundedby (RefundedBy),
   CONSTRAINT fk_refund_payment    FOREIGN KEY (PaymentId)   REFERENCES Payment (PaymentId)     ON UPDATE CASCADE,
@@ -612,19 +623,23 @@ JOIN `Order` o ON o.OrderId = r.OrderId
 GROUP BY o.StoreId;
 
 -- Money actually kept per order = everything verified (food + top-ups)
--- minus refunds already paid back. One row per order: the refund sums are
--- grouped per payment first so a join never multiplies the totals.
+-- minus refunds, both paid back (DONE) and waiting for the customer to collect
+-- at the counter (PENDING): a refund is never revenue. One row per order: the
+-- refund sums are grouped per payment first so a join never multiplies the totals.
 CREATE OR REPLACE VIEW v_order_net AS
 SELECT
   p.OrderId,
   SUM(p.Amount)                                  AS PaidAmount,
   COALESCE(SUM(rf.Refunded), 0)                  AS RefundedAmount,
-  SUM(p.Amount) - COALESCE(SUM(rf.Refunded), 0)  AS NetAmount
+  COALESCE(SUM(rf.Pending), 0)                   AS PendingRefundAmount,
+  SUM(p.Amount) - COALESCE(SUM(rf.Refunded), 0) - COALESCE(SUM(rf.Pending), 0) AS NetAmount
 FROM Payment p
 LEFT JOIN (
-  SELECT PaymentId, SUM(Amount) AS Refunded
+  SELECT PaymentId,
+         SUM(CASE WHEN RefundStatus = 'DONE' THEN Amount ELSE 0 END)    AS Refunded,
+         SUM(CASE WHEN RefundStatus = 'PENDING' THEN Amount ELSE 0 END) AS Pending
   FROM Refund
-  WHERE RefundStatus = 'DONE'
+  WHERE RefundStatus IN ('DONE', 'PENDING')
   GROUP BY PaymentId
 ) rf ON rf.PaymentId = p.PaymentId
 WHERE p.PaymentStatus = 'VERIFIED'

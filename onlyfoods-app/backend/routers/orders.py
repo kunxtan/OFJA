@@ -12,10 +12,10 @@ from db import get_db, transaction
 from errors import DomainError
 from schemas import (CancelRequestSchema, CreateOrderSchema, CustomerCancelSchema, CustomerChangeItemSchema,
                      LatePickupSchema, StatusUpdateSchema, TopUpSlipSchema)
-from services import (add_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
-                      lock_order, log_audit, log_first_status, pending_top_up, refund_price_diff, send_notif,
-                      status_id)
-from shapes import ORDER_SELECT, attach_items, order_people, shape_order
+from services import (add_top_up, assert_slip_not_reused, reduce_top_up, apply_status_effects, do_transition, get_foodcourt, insert_with_queue_retry,
+                      lock_order, log_audit, log_first_status, notify_menu_out_of_stock, pending_top_up,
+                      refund_price_diff, send_notif, status_id)
+from shapes import ORDER_SELECT, attach_items, order_people, redact_order_contacts, shape_order
 from utils import (bangkok_now, clean_text, contract_active, foodcourt_is_open, parse_pickup_time,
                    queue_label, save_image)
 
@@ -54,6 +54,10 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
     method_code = _resolve_payment_method(data.payment_method, is_staff)
     now = bangkok_now()
     pickup = parse_pickup_time(data.pickup_time, now)
+    # เวลานัดรับต้องอยู่ในวันนี้ และไม่ย้อนอดีต (เผื่อนาฬิกาเครื่องคลาด 10 นาที)
+    # เดิมรับได้ทุกค่า เช่นปี 2099 -> ปุ่ม "ลูกค้าไม่มารับ" กดไม่ได้ตลอด ร้านเคลียร์ออเดอร์ไม่ได้
+    if pickup and (pickup < now - timedelta(minutes=10) or pickup.date() != now.date()):
+        raise DomainError(400, "เวลารับอาหารต้องเป็นเวลาวันนี้ที่ยังไม่ผ่านไป กรุณาเลือกเวลาใหม่ หรือกด \"รับทันที\"")
 
     with transaction(db):
         with db.cursor() as cur:
@@ -146,10 +150,12 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
                     (order_id, method["MethodId"], total, user["UserId"], now, cash_received, change_given),
                 )
             else:
-                slip = save_image(data.slip_url, "slips")  # slip_placeholder.png ฯลฯ -> None (ร้านจะเห็นว่าไม่มีสลิป)
+                slip_hash = assert_slip_not_reused(cur, data.slip_url)
+                slip = save_image(data.slip_url, "slips", new_only=True)  # slip_placeholder.png ฯลฯ -> None (ร้านจะเห็นว่าไม่มีสลิป)
                 cur.execute(
-                    "INSERT INTO Payment (OrderId, MethodId, Amount, PaymentStatus, SlipImageUrl) VALUES (%s, %s, %s, 'PENDING', %s)",
-                    (order_id, method["MethodId"], total, slip),
+                    "INSERT INTO Payment (OrderId, MethodId, Amount, PaymentStatus, SlipImageUrl, SlipHash) "
+                    "VALUES (%s, %s, %s, 'PENDING', %s, %s)",
+                    (order_id, method["MethodId"], total, slip, slip_hash if slip else None),
                 )
             log_first_status(cur, order_id, initial, user["UserId"])
 
@@ -211,7 +217,7 @@ def get_orders(
     sql = ORDER_SELECT + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY o.OrderId DESC LIMIT %s OFFSET %s"
     with db.cursor() as cur:
         cur.execute(sql, [*params, limit, offset])
-        orders = [shape_order(r) for r in cur.fetchall()]
+        orders = redact_order_contacts([shape_order(r) for r in cur.fetchall()], role)
         return attach_items(cur, orders)
 
 
@@ -436,6 +442,18 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
     closed = []
     with transaction(db):
         with db.cursor() as cur:
+            if payload.item_ids and payload.close_menu:
+                # ล็อกเมนูก่อนออเดอร์ ให้ลำดับเดียวกับ notify-out-of-stock (เมนู -> ออเดอร์) กัน deadlock
+                ids = sorted(set(payload.item_ids))
+                cur.execute(
+                    f"SELECT DISTINCT ProductId FROM OrderItem WHERE OrderId = %s "
+                    f"AND OrderItemId IN ({','.join(['%s'] * len(ids))})",
+                    [order_id, *ids],
+                )
+                pids = sorted(r["ProductId"] for r in cur.fetchall())
+                if pids:
+                    cur.execute(f"SELECT ProductId FROM Product WHERE ProductId IN ({','.join(['%s'] * len(pids))}) "
+                                f"ORDER BY ProductId FOR UPDATE", pids)
             order = lock_order(cur, order_id)
             assert_store_access(user, order["StoreId"])
             if order["StatusCode"] in (state.COOKED, state.READY):
@@ -471,10 +489,12 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
                           cancel_reason=reason, cancel_deadline=deadline, now=now)
             q = queue_label(order["QueueNo"], order["QueueCode"])
             send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} มีปัญหา",
-                       f"คิว {q} มีปัญหา: {reason} (กรุณายืนยันใน {payload.response_window_minutes} นาที)", order_id)
+                       f"คิว {q} มีปัญหา: {reason} กรุณาเปลี่ยนเมนูหรือยกเลิกภายใน {payload.response_window_minutes} นาที "
+                       f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติและคืนเงินที่ร้าน", order_id)
         log_audit(db, user["UserId"], "CANCEL_REQUEST", "Order", order_id, None,
                   {"reason": reason, "store_id": order["StoreId"], "items": payload.item_ids or []})
         for pid, name in closed:
+            notify_menu_out_of_stock(db, order["StoreId"], name, user["RoleCode"])
             log_audit(db, user["UserId"], "OUT_OF_STOCK", "Product", pid, None, {"name": name, "from_order": order_id})
     return {"success": True, "reason": reason, "closed_menus": [name for _, name in closed]}
 
@@ -512,10 +532,17 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
                 FROM OrderItem oi JOIN Product p ON p.ProductId = oi.ProductId
                 WHERE oi.OrderId = %s AND oi.ItemStatus IN ('NORMAL', 'OUT_OF_STOCK')
             """
+            # มีจานที่ร้านแจ้งหมด = เปลี่ยนได้เฉพาะจานเหล่านั้น (กันเปลี่ยนจานที่ครัวทำแล้วเพื่อรับเงินคืน)
+            cur.execute("SELECT COUNT(*) AS n FROM OrderItem WHERE OrderId = %s AND ItemStatus = 'OUT_OF_STOCK'",
+                        (order_id,))
+            if cur.fetchone()["n"]:
+                base = base.replace("oi.ItemStatus IN ('NORMAL', 'OUT_OF_STOCK')", "oi.ItemStatus = 'OUT_OF_STOCK'")
             old = None
             if payload.detail_id:
                 cur.execute(base + " AND oi.OrderItemId = %s", (order_id, payload.detail_id))
                 old = cur.fetchone()
+                if not old:  # ระบุจานมาแล้วไม่ใช่จานที่หมด : ห้ามเดาไปเปลี่ยนจานอื่นแทน
+                    raise DomainError(400, "เปลี่ยนได้เฉพาะจานที่ร้านแจ้งว่าหมด")
             if not old and payload.product_id:
                 cur.execute(base + " AND oi.ProductId = %s ORDER BY oi.OrderItemId LIMIT 1", (order_id, payload.product_id))
                 old = cur.fetchone()
@@ -547,9 +574,15 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             )
             diff = (old_price - new_price) * int(old["Qty"])
             top_up_due = Decimal(0)
-            if diff > 0:  # ถูกลง -> คืนส่วนต่าง
-                refund_price_diff(cur, order_id, diff,
-                                  f"ส่วนต่างราคา {old['ProductName']} -> {new['ProductName']}", old["OrderItemId"])
+            diff_refunded = Decimal(0)
+            netted = Decimal(0)
+            if diff > 0:  # ถูกลง -> หักกับส่วนต่างที่ยังค้างโอนก่อน (ไม่ต้องโอนแล้วค่อยรับคืน) เหลือค่อยคืนเงิน
+                netted = reduce_top_up(cur, order_id, diff, f"หักลบกับส่วนต่างที่ถูกลง ({new['ProductName']})")
+                remaining = diff - netted
+                if remaining > 0:
+                    diff_refunded = refund_price_diff(cur, order_id, remaining,
+                                                      f"ส่วนต่างราคา {old['ProductName']} -> {new['ProductName']}",
+                                                      old["OrderItemId"])
             elif diff < 0:  # แพงขึ้น -> ลูกค้าต้องโอนเพิ่ม (รวมกับส่วนต่างที่ยังไม่โอนของรายการอื่น)
                 top_up_due = add_top_up(cur, order_id, -diff)
 
@@ -573,8 +606,14 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
                               cancel_reason=None, cancel_deadline=None, now=now)
             q = queue_label(order["QueueNo"], order["QueueCode"])
             msg = f"คิว {q} เปลี่ยนเมนูจาก '{old['ProductName']}' เป็น '{new['ProductName']}' เรียบร้อยแล้ว"
-            if pending:
+            if pending and still_out:  # ยังมีจานหมดเหลือ : โอนส่วนต่างรวมทีเดียวหลังเปลี่ยนครบ
+                msg += f" ยังมีจานที่หมดอีก {still_out} รายการ กรุณาเปลี่ยนให้ครบก่อน แล้วจึงโอนส่วนต่างรวม"
+            elif pending:
                 msg += f" กรุณาโอนส่วนต่าง {top_up_due:.2f} บาท และแนบสลิป"
+            if netted:
+                msg += f" หักลบกับส่วนต่างที่ต้องโอนแล้ว {netted:.2f} บาท"
+            if diff_refunded:
+                msg += f" รับเงินส่วนต่างคืน {diff_refunded:.2f} บาท ที่ร้านโดยแจ้งเลขคิว {q}"
             send_notif(db, user["UserId"], "ORDER_STATUS", f"คิว {q} เปลี่ยนเมนู", msg, order_id)
         log_audit(db, user["UserId"], "CUSTOMER_CHANGE_ITEM", "Order", order_id,
                   {"product": old["ProductName"], "price": old_price},
@@ -595,7 +634,8 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
 @router.put("/{order_id}/top-up-slip")
 def upload_top_up_slip(order_id: int, payload: TopUpSlipSchema,
                        user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
-    """ลูกค้าแนบสลิปโอนส่วนต่าง (แนบใหม่ทับได้จนกว่าร้านจะตรวจ ; ใบที่ถูกปฏิเสธยังเก็บไว้ทุกใบ)"""
+    """ลูกค้าแนบสลิปโอนส่วนต่าง 1 ใบต่อรอบ : แนบแล้วทับไม่ได้ (กันร้านอนุมัติสลิปที่ไม่เคยเห็น)
+    ถ้าร้านปฏิเสธ ระบบเปิดรายการใหม่ให้แนบใหม่ได้ ; ใบที่ถูกปฏิเสธยังเก็บไว้ทุกใบ"""
     with transaction(db):
         with db.cursor() as cur:
             order = _customer_own_order(cur, order_id, user)
@@ -604,10 +644,14 @@ def upload_top_up_slip(order_id: int, payload: TopUpSlipSchema,
             pay = pending_top_up(cur, order_id)
             if not pay:
                 raise DomainError(400, "ไม่พบยอดส่วนต่างที่ต้องโอน")
-            slip = save_image(payload.slip_url, "slips")
+            if pay["SlipImageUrl"]:
+                raise DomainError(400, "แนบสลิปส่วนต่างไปแล้ว กรุณารอร้านตรวจสอบ (ถ้าร้านปฏิเสธจะแนบใหม่ได้)")
+            slip_hash = assert_slip_not_reused(cur, payload.slip_url, pay["PaymentId"])
+            slip = save_image(payload.slip_url, "slips", new_only=True)
             if not slip:
                 raise DomainError(400, "กรุณาแนบรูปสลิป")
-            cur.execute("UPDATE Payment SET SlipImageUrl = %s WHERE PaymentId = %s", (slip, pay["PaymentId"]))
+            cur.execute("UPDATE Payment SET SlipImageUrl = %s, SlipHash = %s WHERE PaymentId = %s",
+                        (slip, slip_hash, pay["PaymentId"]))
         log_audit(db, user["UserId"], "UPLOAD_TOP_UP_SLIP", "Payment", pay["PaymentId"], None,
                   {"order_id": order_id, "amount": pay["Amount"], "store_id": order["StoreId"]})
     return {"success": True, "amount": float(pay["Amount"])}

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from auth import STORE_SCOPED, require_role
 from db import get_db
 from errors import DomainError
-from shapes import ORDER_SELECT, shape_order
+from shapes import ORDER_SELECT, redact_order_contacts, shape_order
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -28,7 +28,7 @@ def _scope_store(user: dict, store_id: Optional[int]) -> Optional[int]:
 @router.get("/reports/dashboard")
 def get_dashboard(store_id: Optional[int] = None, user=Depends(require_role(*_REPORT_ROLES)), db=Depends(get_db)):
     """เฉพาะออเดอร์ที่จบแบบ COMPLETED / NO_SHOW (v_order_net)
-    gross_sales = เงินที่รับจริง (ค่าอาหาร + ส่วนต่างที่โอนเพิ่ม) ; net_sales = gross - เงินที่ฝ่ายบัญชีคืนแล้ว
+    gross_sales = เงินที่รับจริง (ค่าอาหาร + ส่วนต่างที่โอนเพิ่ม) ; net_sales = gross - เงินคืน (คืนแล้ว + รอลูกค้ามารับ)
     (ใช้ยอดรับจริง ไม่ใช่ TotalAmount เพราะหลังเปลี่ยนเมนูถูกลง TotalAmount ลดก่อนคืนเงินจริง ทำให้ net > gross)"""
     sid = _scope_store(user, store_id)
     sql = """
@@ -64,7 +64,7 @@ def get_cancellations(store_id: Optional[int] = None, limit: int = Query(500, ge
     params.append(limit)
     with db.cursor() as cur:
         cur.execute(sql, params)
-        return [shape_order(r) for r in cur.fetchall()]
+        return redact_order_contacts([shape_order(r) for r in cur.fetchall()], user["RoleCode"])
 
 
 def _details(entity_type: str, entity_id, new_value, old_value) -> str:
@@ -85,7 +85,7 @@ def _details(entity_type: str, entity_id, new_value, old_value) -> str:
 _AUDIT_GROUPS = (
     ("store", ("STORE", "SUSPEND")),
     ("account", ("ACCOUNT", "USER", "STAFF", "PASSWORD")),
-    ("payment", ("SLIP", "PAYMENT")),
+    ("payment", ("SLIP", "PAYMENT", "REFUND")),
     ("order", ("ORDER", "CANCEL", "STATUS", "QUEUE", "PRINT")),
 )
 

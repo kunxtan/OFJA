@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { startPolling } from "../../utils/polling";
 import Cropper from "react-easy-crop";
-import { createCartRow, getNotifKey, getOrderStatusLabel, getOutOfStockItem, previewLateArrival } from "./utils/orders";
+import { createCartRow, getNotifKey, getOrderStatusLabel, getOutOfStockItem, previewLateArrival, summarizeRefunds } from "./utils/orders";
 import { addProductToCart, countCartDishes, decreaseRowQty, increaseRowQty, splitOneFromRow, sumCart } from "./utils/cart";
 import { formatBangkokTime, getCurrentDateTimeForBackend, getCurrentTimeFormatted, secondsUntil } from "./utils/time";
 import { getPickupHours, getPickupRange, isPickupMinuteDisabled, pad2, toMinutes } from "./utils/pickupTime";
@@ -9,6 +10,7 @@ import { buildQueueSchedule, canEstimateOrder, countOrderDishes, formatPickupRan
 import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, logoStyle, pageStyle, profileStyle, searchStyle } from "./styles";
 import { BigUserIcon, CameraIcon, CartIcon, CartIconPlus, HiIcon, HomeIcon, NoodleBowlArt, NotiIcon, OrderIcon, SparkleArt, StarIcon, ThaiTeaArt, UserIcon } from "./icons";
 import { PaymentModal, TopUpModal, OutOfStockModal } from "./modals/PaymentModals";
+import RefundPayoutModal from "./modals/RefundPayoutModal";
 import { ReviewModal, StoreReviewsModal } from "./modals/ReviewModals";
 import { ReportModal, ViewReportsModal } from "./modals/ReportModals";
 import NotifToasts from "./NotifToasts";
@@ -134,6 +136,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setAlertData({ isOpen: true, title, message, type, onConfirm });
   };
 
+  // กดซ้ำระหว่างรอคำตอบ = ไม่ยิงซ้ำ (เดิมแจ้งมาช้าเสียโควตา 2 ครั้ง / รีวิวซ้ำ)
+  const busyRef = useRef(new Set());
+  const once = async (key, fn) => {
+    if (busyRef.current.has(key)) return undefined;
+    busyRef.current.add(key);
+    try {
+      return await fn();
+    } finally {
+      busyRef.current.delete(key);
+    }
+  };
+
   const fetchStores = async () => {
     try {
       const res = await fetch(`${apiBase}/api/stores`);
@@ -184,6 +198,77 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     } catch (error) {
       console.error("Error fetching products:", error);
     }
+  };
+
+  // เงินคืนของฉัน (ยกเลิก/เปลี่ยนเป็นเมนูที่ถูกกว่า) : { OrderId: [refund, ...] } -> ป้าย "รอรับเงินคืนที่ร้าน" ในออเดอร์
+  const [refundsByOrder, setRefundsByOrder] = useState({});
+  const fetchMyRefunds = async () => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`${apiBase}/api/refunds?limit=500`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      const map = {};
+      data.forEach((r) => { (map[r.OrderId] = map[r.OrderId] || []).push(r); });
+      setRefundsByOrder(map);
+    } catch (error) {
+      console.error("Error fetching refunds:", error);
+    }
+  };
+
+  const [payoutOrder, setPayoutOrder] = useState(null); // ออเดอร์ที่กำลังเลือกวิธีรับเงินคืน
+  const [payoutSaving, setPayoutSaving] = useState(false);
+  const [payoutError, setPayoutError] = useState("");
+
+  const savePayout = async (body) => {
+    // backend ใช้วิธีรับเงินชุดเดียวกับเงินคืนที่รอคืนทุกรายการของออเดอร์นี้ (ส่งครั้งเดียวพอ)
+    const first = (refundsByOrder[payoutOrder.OrderID] || []).find((r) => r.RefundStatus === "PENDING");
+    if (!first) return;
+    setPayoutSaving(true);
+    setPayoutError("");
+    try {
+      const res = await fetch(`${apiBase}/api/refunds/${first.RefundId}/payout`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.detail === "string" ? data.detail : "บันทึกไม่สำเร็จ");
+      }
+      setPayoutOrder(null);
+      await fetchMyRefunds();
+      customAlert("บันทึกแล้ว", body.method === "TRANSFER" ? "เจ้าของร้านจะโอนเงินคืนเข้าบัญชีของคุณ คุณจะได้รับแจ้งเตือนเมื่อโอนแล้ว" : `รับเงินสดที่ร้านโดยแจ้งเลขคิว ${payoutOrder.QueueNo}`, "success");
+    } catch (error) {
+      setPayoutError(error.message || "บันทึกไม่สำเร็จ");
+    } finally {
+      setPayoutSaving(false);
+    }
+  };
+
+  const renderRefundNote = (order) => {
+    const sum = summarizeRefunds(refundsByOrder[order.OrderID]);
+    if (!sum.pending && !sum.done) return null;
+    const pending = sum.pending > 0;
+    return (
+      <div role="status" style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "12px", fontSize: "13px", lineHeight: 1.5,
+        background: pending ? "#FEF3C7" : "#D1FAE5", color: pending ? "#92400E" : "#065F46", fontWeight: "700" }}>
+        {pending ? (
+          <>💸 รอรับเงินคืน {sum.pending.toFixed(2)} ฿ ที่ร้าน {order.StoreName}
+            <div style={{ fontWeight: "500", fontSize: "12px" }}>
+              {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER")
+                ? "เลือกให้เจ้าของร้านโอนคืนแล้ว รอร้านดำเนินการ"
+                : `แจ้งเลขคิว #${order.QueueNo} กับพนักงานหน้าร้านเพื่อรับเงินคืน หรือเลือกให้ร้านโอนให้`}
+            </div>
+            <button type="button" onClick={() => { setPayoutError(""); setPayoutOrder(order); }}
+              style={{ marginTop: "8px", padding: "8px 14px", borderRadius: "10px", border: "none", background: "#92400E", color: "#fff", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+              เลือกวิธีรับเงินคืน
+            </button></>
+        ) : (
+          <>✅ รับเงินคืนแล้ว {sum.done.toFixed(2)} ฿{sum.doneAt ? ` · ${new Date(String(sum.doneAt).replace(" ", "T")).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}` : ""}</>
+        )}
+        {pending && sum.done > 0 && <div style={{ fontWeight: "500", fontSize: "12px" }}>รับคืนไปแล้ว {sum.done.toFixed(2)} ฿</div>}
+      </div>
+    );
   };
 
   const fetchMyOrders = async () => {
@@ -322,17 +407,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     fetchStores();
     fetchMyOrders();
+    fetchMyRefunds();
     fetchNotifs();
     fetchFoodCourtStatus();
 
-    const interval = setInterval(() => {
-      fetchStores();
-      fetchMyOrders();
-      fetchNotifs();
-      fetchFoodCourtStatus();
-    }, 5000);
+    // ออเดอร์/แจ้งเตือนต้องสด (5 วิ) ; ร้าน/เงินคืนเปลี่ยนไม่บ่อย (30 วิ) ; สถานะศูนย์อาหารมีตัวดึงทุก 30 วิแยกอยู่แล้ว
+    const stopLive = startPolling(() => Promise.allSettled([fetchMyOrders(), fetchNotifs()]), 5000);
+    const stopSlow = startPolling(() => Promise.allSettled([fetchStores(), fetchMyRefunds()]), 30000);
 
-    return () => clearInterval(interval);
+    return () => { stopLive(); stopSlow(); };
   }, [userId, apiBase]);
 
   useEffect(() => {
@@ -364,8 +447,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (!selectedStore) return undefined;
     fetchProducts();
     // ร้านกดของหมด/เปิดขาย -> ลูกค้าเห็นภายใน 5 วินาที โดยไม่ต้องกดเข้าร้านใหม่
-    const timer = setInterval(fetchProducts, 5000);
-    return () => clearInterval(timer);
+    return startPolling(fetchProducts, 10000);
   }, [selectedStore, apiBase]);
 
   useEffect(() => {
@@ -393,23 +475,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   }, [myOrders]);
 
+  // นับถอยหลังอย่างเดียว : เลยเวลาแล้ว backend (jobs.py) เป็นคนยกเลิกให้ แม้ลูกค้าจะปิดแอปอยู่
   useEffect(() => {
-    let timer = null;
-    if (outOfStockOrder) {
-      setTimeLeft(secondsUntil(outOfStockOrder.CancelDeadline));
-      timer = setInterval(() => {
-        setTimeLeft((prevTime) => {
-          if (prevTime <= 1) {
-            clearInterval(timer);
-            handleCancelOutOfStockOrder("หมดเวลาเลือกเมนูทดแทนภายใน 30 นาที ระบบยกเลิกออเดอร์อัตโนมัติ");
-            return 0;
-          }
-          return prevTime - 1;
-        });
-      }, 1000);
-    }
-    return () => { if (timer) clearInterval(timer); };
-  }, [outOfStockOrder?.OrderID]);
+    if (!outOfStockOrder) return undefined;
+    const tick = () => setTimeLeft(secondsUntil(outOfStockOrder.CancelDeadline));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [outOfStockOrder?.OrderID, outOfStockOrder?.CancelDeadline]);
 
   useEffect(() => {
     if (notifs.length > 0 && !isInitialized) {
@@ -447,17 +520,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     fetchFoodCourtStatus();
 
-    const interval = setInterval(
-      fetchFoodCourtStatus,
-      30000
-    );
-
-    return () => clearInterval(interval);
+    return startPolling(fetchFoodCourtStatus, 30000);
   }, [apiBase]);
 
   const activeStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
     [stores, selectedStore]
+  );
+  // ร้านของสินค้าในตะกร้า (ตะกร้ามีได้ร้านเดียว) : สั่ง/ประเมินคิว/ตรวจร้านเปิด ต้องใช้ร้านนี้ ไม่ใช่ร้านที่กำลังเปิดดูอยู่
+  const cartStoreId = cart.length ? Number(cart[0].StoreId || cart[0].store_id) || null : null;
+  const cartStore = useMemo(
+    () => stores.find((store) => Number(store.StoreId) === Number(cartStoreId)) || {},
+    [stores, cartStoreId]
   );
 
   const cartCount = useMemo(() => countCartDishes(cart), [cart]);
@@ -550,7 +624,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         body: JSON.stringify({ user_id: userId, reason: customReason }),
       });
       if (res.ok) {
-        customAlert("สำเร็จ", "ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบกำลังดำเนินการคืนเงิน", "success");
+        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `กรุณารับเงินคืนที่ร้าน ${outOfStockOrder.StoreName || ""} โดยแจ้งเลขคิว ${outOfStockOrder.QueueNo}`, "success");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
@@ -659,7 +733,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        customAlert("สำเร็จ", "ยกเลิกคำสั่งซื้อเรียบร้อยแล้ว ระบบกำลังดำเนินการคืนเงิน", "success");
+        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `กรุณารับเงินคืนที่ร้าน ${topUpOrder.StoreName || ""} โดยแจ้งเลขคิว ${topUpOrder.QueueNo}`, "success");
         setTopUpSlip(null);
         await fetchMyOrders();
       } else {
@@ -849,7 +923,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
     }
     if (cart.length === 0) return customAlert("กรุณาเลือกอาหารลงตะกร้าก่อนสั่งซื้อ", "", "error");
-    if (!selectedStore) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
+    if (!cartStoreId) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
     setIsCartOpen(false);
     setIsPaymentModalOpen(true);
   };
@@ -956,7 +1030,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   // โหลดเฉพาะข้อมูลคิวที่จำเป็นสำหรับประเมินเวลารอให้ลูกค้า
   useEffect(() => {
-    if (!selectedStore || !isCartOpen) {
+    if (!cartStoreId || !isCartOpen) {
       setQueueEstimateOrders([]);
       return;
     }
@@ -964,7 +1038,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     let cancelled = false;
     const loadQueueEstimate = async () => {
       try {
-        const res = await fetch(`${apiBase}/api/orders/queue-estimate?store_id=${selectedStore}`);
+        const res = await fetch(`${apiBase}/api/orders/queue-estimate?store_id=${cartStoreId}`);
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled) setQueueEstimateOrders(Array.isArray(data.orders) ? data.orders : []);
@@ -974,12 +1048,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
   
     loadQueueEstimate();
-    const interval = setInterval(loadQueueEstimate, 5000);
+    const stop = startPolling(loadQueueEstimate, 10000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      stop();
     };
-  }, [apiBase, selectedStore, isCartOpen]);
+  }, [apiBase, cartStoreId, isCartOpen]);
 
   // ช่วงเวลารับโดยประมาณของตะกร้า (ต่อท้ายคิวที่ค้างอยู่)
   const getCustomerPickupRange = () => {
@@ -1025,10 +1099,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       });
     };
     load();
-    const interval = setInterval(load, 5000);
+    const stop = startPolling(load, 10000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      stop();
     };
   }, [apiBase, activeTab, activeOrderStoreKey]);
 
@@ -1077,7 +1151,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     const currentOrderTime = getCurrentDateTimeForBackend();
     const displayOrderTime = getCurrentTimeFormatted();
-    const finalPickupTime = pickupTime ? `${pickupTime} น.` : displayOrderTime;
+    // รับทันที = ไม่ส่งเวลา (เดิมส่งเวลาจากนาฬิกาเครื่องลูกค้า ถ้าคลาดหรือข้ามนาที ครัวจะนับเป็นออเดอร์นัดเวลา)
+    const finalPickupTime = pickupTime ? `${pickupTime} น.` : null;
 
     const orderItems = cart.map((item) => ({
       product_id: Number(item.ProductId),
@@ -1087,7 +1162,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }));
 
     const orderData = {
-      store_id: Number(selectedStore),
+      store_id: cartStoreId,
       user_id: userId,
       items: orderItems,
       payment_method: paymentMethod,
@@ -1108,7 +1183,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       if (!res.ok) return customAlert(data.detail || "ไม่สามารถสั่งซื้อได้", "", "error");
 
       // รับทันที -> แสดงช่วงเวลาโดยประมาณเหมือนในตะกร้า / นัดเวลา -> แสดงเวลานัด
-      const pickupLabel = pickupTime ? finalPickupTime : getCustomerPickupRange();
+      const pickupLabel = pickupTime ? finalPickupTime : (getCustomerPickupRange() || displayOrderTime);
       customAlert(
         `สั่งซื้อสำเร็จ!`,
         `หมายเลขคิว: ${data.queue_no || "-"}\nเวลาที่สั่ง: ${displayOrderTime}\nเวลารับอาหารโดยประมาณ: ${pickupLabel}`
@@ -1770,6 +1845,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     </div>
                   )}
 
+                  {renderRefundNote(order)}
+
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", paddingTop: "10px", borderTop: `1px solid ${COLORS.border}` }}>
                     <div>
                       <span style={{ fontSize: "12px", color: COLORS.gray }}>ราคารวม: </span>
@@ -1931,13 +2008,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     {(order.OrderTime || order.CreatedAt || order.order_time) && (
                       <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
                     )}
-                    {(order.PickupTime || order.pickup_time) && (
-                      <div>
-                        เวลารับอาหาร: {isImmediatePickup(order.PickupTime || order.pickup_time, order.OrderTime || order.CreatedAt)
-                          ? 'รับทันที'
-                          : (order.PickupTime || order.pickup_time)}
-                      </div>
-                    )}
+                    <div>
+                      เวลารับอาหาร: {isImmediatePickup(order.PickupTime || order.pickup_time, order.OrderTime || order.CreatedAt)
+                        ? 'รับทันที'
+                        : (order.PickupTime || order.pickup_time)}
+                    </div>
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
                     {getOrderStatusLabel(order.Status)}
@@ -1962,6 +2037,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <span>ยอดรวม</span>
                   <span style={{ color: COLORS.orange, fontSize: "18px" }}>{Number(order.TotalAmount || 0).toFixed(2)} ฿</span>
                 </div>
+                {renderRefundNote(order)}
 
  
                 {/* แจ้งร้านว่าจะมารับช้า */}
@@ -2045,7 +2121,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                             </div>
                           )}
                           <button
-                            onClick={() => handleLatePickup(order, selectedMinutes)}
+                            onClick={() => once(`late-${order.OrderID}`, () => handleLatePickup(order, selectedMinutes))}
                             disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
                             style={{
                               width: "100%",
@@ -2395,14 +2471,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                 <button 
                   onClick={handleProceedToPayment} 
-                  disabled={!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen}
+                  disabled={!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen}
                   style={{
                     width: "100%", padding: "15px", marginTop: "15px", border: "none", borderRadius: "15px", 
-                    background: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
-                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (!isFoodCourtOpen || activeStore.IsSuspended || !activeStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
+                    background: (!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
+                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
                   }}
                 >
-                  {activeStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !activeStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
+                  {cartStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !cartStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
                 </button>
               </div>
             </>
@@ -2706,7 +2782,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         setReviewComment={setReviewComment}
         reviewImagePreview={reviewImagePreview}
         handleReviewImageChange={handleReviewImageChange}
-        submitReview={submitReview}
+        submitReview={() => once("review", submitReview)}
       />
       <OutOfStockModal
         outOfStockOrder={outOfStockOrder}
@@ -2714,11 +2790,23 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         timeLeft={timeLeft}
         isChangeMenuMode={isChangeMenuMode}
         setIsChangeMenuMode={setIsChangeMenuMode}
-        handleCancelOutOfStockOrder={handleCancelOutOfStockOrder}
+        handleCancelOutOfStockOrder={(reason) => customAlert(
+          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ คุณจะได้รับเงินคืนที่ร้าน (หรือเลือกให้ร้านโอนคืนได้)", "warning",
+          () => once("cancel-oos", () => handleCancelOutOfStockOrder(reason)))}
         setNewSelectedProduct={setNewSelectedProduct}
         newSelectedProduct={newSelectedProduct}
         handleChangeOrderMenu={handleChangeOrderMenu}
       />
+      {payoutOrder && (
+        <RefundPayoutModal
+          order={payoutOrder}
+          refunds={(refundsByOrder[payoutOrder.OrderID] || []).filter((r) => r.RefundStatus === "PENDING")}
+          onClose={() => setPayoutOrder(null)}
+          onSave={savePayout}
+          saving={payoutSaving}
+          error={payoutError}
+        />
+      )}
       <TopUpModal
         topUpOrder={topUpOrder}
         outOfStockOrder={outOfStockOrder}
@@ -2727,7 +2815,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         handleTopUpSlipChange={handleTopUpSlipChange}
         submitTopUpSlip={submitTopUpSlip}
         isSubmittingTopUp={isSubmittingTopUp}
-        cancelTopUpOrder={cancelTopUpOrder}
+        cancelTopUpOrder={() => customAlert(
+          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ คุณจะได้รับเงินค่าอาหารคืนที่ร้าน", "warning",
+          () => once("cancel-topup", cancelTopUpOrder))}
         setHiddenTopUpOrderId={setHiddenTopUpOrderId}
       />
       <StoreReviewsModal

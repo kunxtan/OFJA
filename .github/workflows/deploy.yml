@@ -65,12 +65,23 @@ jobs:
           # ทุกไฟล์รันซ้ำได้ (เช็คก่อนแก้ ไม่ลบข้อมูล) ; รันก่อน backend ใหม่สตาร์ท
           # ยังไม่มี db (ติดตั้งครั้งแรก) = ข้าม เพราะ init.sql สร้างให้ครบแล้ว
           sudo docker compose -f "$COMPOSE_FILE_NAME" up -d db
-          for i in $(seq 1 30); do
-            sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent' && break
-            echo "รอ db... ($i/30)"; sleep 5
+          db_ok=0
+          for i in $(seq 1 60); do
+            if sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent'; then
+              db_ok=1; break
+            fi
+            echo "รอ db... ($i/60)"; sleep 5
           done
-          if ! sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "USE onlyfood; SELECT 1 FROM Store LIMIT 1"' > /dev/null 2>&1; then
-            echo "ยังไม่มีฐาน onlyfood (init.sql กำลังสร้าง) - ข้าม migration"; exit 0
+          # ต่อ db ไม่ได้ = หยุด deploy (เดิมข้าม migration แล้วไปต่อ -> backend ใหม่ทำงานบน schema เก่า = error 500)
+          if [ "$db_ok" != 1 ]; then
+            echo "::error::ต่อฐานข้อมูลไม่ได้ภายใน 5 นาที หยุด deploy (ดู log ของ container db)"; exit 1
+          fi
+          # มีตาราง Store แล้ว = ฐานที่ใช้งานอยู่ -> ต้องรัน migration ; ยังไม่มี = ติดตั้งครั้งแรก (init.sql สร้างครบแล้ว) -> ข้าม
+          has_store=$(echo "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='onlyfood' AND TABLE_NAME='Store';" \
+            | sudo docker compose -f "$COMPOSE_FILE_NAME" exec -T db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B 2>/dev/null') \
+            || { echo "::error::ถามฐานข้อมูลไม่สำเร็จ หยุด deploy"; exit 1; }
+          if [ "$(echo "$has_store" | tr -d '[:space:]')" != "1" ]; then
+            echo "ยังไม่มีฐาน onlyfood (ติดตั้งครั้งแรก init.sql สร้างให้) - ข้าม migration"; exit 0
           fi
           # กันค้าง: รอล็อกตารางได้ไม่เกิน 60 วิ, ปิด migration ค้างจากรอบก่อน และ connection ที่ถือตารางค้าง (ดูในไฟล์)
           DC="sudo docker compose -f $COMPOSE_FILE_NAME" bash database/apply_migrations.sh

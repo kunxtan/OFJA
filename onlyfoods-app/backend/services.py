@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import state
 from errors import DomainError
-from utils import bangkok_now, queue_label
+from utils import bangkok_now, image_digest, queue_label
 
 logger = logging.getLogger("onlyfood")
 
@@ -68,6 +68,16 @@ def notify_store_owners(db, store_id: int, ntype: str, title: str, message: str,
         owners = [r["UserId"] for r in cur.fetchall()]
     for uid in owners:
         send_notif(db, uid, ntype, title, message, order_id)
+
+
+_ACTOR_TH = {"FRONT_STAFF": "พนักงานหน้าร้าน", "KITCHEN_STAFF": "พนักงานครัว", "STORE_OWNER": "เจ้าของร้าน"}
+
+
+def notify_menu_out_of_stock(db, store_id: int, product_name: str, actor_role: str) -> None:
+    """เมนูถูกปรับเป็นของหมด (ทุกช่องทาง) -> แจ้งเจ้าของร้าน พร้อมบอกว่าใครเป็นคนปรับ"""
+    who = _ACTOR_TH.get(actor_role, "ร้าน")
+    notify_store_owners(db, store_id, "SYSTEM", "สินค้าหมด",
+                        f"⚠️ สินค้าหมด: {who}เพิ่งปรับเมนู '{product_name}' เป็นของหมด")
 
 
 # -------------------------------------------------------------------- lookups
@@ -250,13 +260,34 @@ def create_refund(cur, payment_id: int, refund_type: str, amount: Decimal, reaso
     return cur.lastrowid
 
 
-def refund_price_diff(cur, order_id: int, amount: Decimal, reason: str, order_item_id: int) -> bool:
-    """เปลี่ยนเป็นเมนูที่ถูกกว่า -> คืนส่วนต่างจากการชำระที่ยังเหลือยอดพอ (ค่าอาหารก่อน) ; ยังไม่จ่าย = ไม่ต้องคืน"""
+def assert_slip_not_reused(cur, slip_value: Optional[str], own_payment_id: Optional[int] = None) -> Optional[str]:
+    """สลิปรูปเดียวกัน (เนื้อไฟล์ตรงกัน) ห้ามใช้กับการชำระเงินอื่นที่ยังรอตรวจหรือยืนยันแล้ว ; คืน hash ไว้บันทึก
+    (สลิปที่ร้านเคยปฏิเสธแนบใหม่ได้ เผื่อร้านปฏิเสธผิด)"""
+    digest = image_digest(slip_value)
+    if not digest:
+        return None
+    cur.execute(
+        "SELECT PaymentId FROM Payment WHERE SlipHash = %s AND PaymentStatus IN ('PENDING','VERIFIED') "
+        "AND PaymentId <> %s LIMIT 1",
+        (digest, own_payment_id or 0),
+    )
+    if cur.fetchone():
+        raise DomainError(400, "สลิปนี้เคยถูกใช้ชำระเงินแล้ว กรุณาแนบสลิปของการโอนครั้งนี้")
+    return digest
+
+
+def refund_price_diff(cur, order_id: int, amount: Decimal, reason: str, order_item_id: int) -> Decimal:
+    """เปลี่ยนเป็นเมนูที่ถูกกว่า -> คืนส่วนต่างจากการชำระที่ยืนยันแล้ว (ค่าอาหารก่อน แล้วค่อยส่วนต่างที่โอนเพิ่ม)
+    ใบเดียวไม่พอก็แบ่งคืนจากหลายใบ ; คืนยอดที่สร้างรายการคืนจริง (ยังไม่จ่าย = 0)"""
+    left = amount
     for pay in verified_payments(cur, order_id, lock=True):
-        if Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"]) >= amount:
-            create_refund(cur, pay["PaymentId"], "PRICE_DIFF", amount, reason, order_item_id)
-            return True
-    return False
+        if left <= 0:
+            break
+        part = min(left, Decimal(pay["Amount"]) - refunded_total(cur, pay["PaymentId"]))
+        if part > 0:
+            create_refund(cur, pay["PaymentId"], "PRICE_DIFF", part, reason, order_item_id)
+            left -= part
+    return amount - left
 
 
 def refund_full_cancel(cur, order_id: int, reason: str) -> Decimal:
@@ -307,6 +338,21 @@ def add_top_up(cur, order_id: int, amount: Decimal) -> Decimal:
     return amount
 
 
+def reduce_top_up(cur, order_id: int, amount: Decimal, reason: str) -> Decimal:
+    """ลดยอดส่วนต่างที่ยังไม่ได้โอน (ยังไม่แนบสลิป) ลงไม่เกิน amount ; เหลือ 0 = ปิดรายการทิ้ง ; คืนยอดที่ลดได้"""
+    pending = pending_top_up(cur, order_id)
+    if not pending or pending["SlipImageUrl"]:
+        return Decimal(0)
+    due = Decimal(pending["Amount"])
+    cut = min(due, amount)
+    if cut >= due:
+        cur.execute("UPDATE Payment SET PaymentStatus = 'REJECTED', RejectReason = %s WHERE PaymentId = %s",
+                    (reason[:255], pending["PaymentId"]))
+    else:
+        cur.execute("UPDATE Payment SET Amount = %s WHERE PaymentId = %s", (due - cut, pending["PaymentId"]))
+    return cut
+
+
 def close_pending_top_ups(cur, order_id: int, reason: str) -> None:
     """ก่อนยกเลิกออเดอร์: ส่วนต่างที่ยังไม่โอน -> ปิดทิ้ง (REJECTED) ;
     ถ้าลูกค้าแนบสลิปแล้วแต่ร้านยังไม่ตรวจ -> ห้ามยกเลิก (เงินอาจโอนมาแล้ว ต้องตรวจก่อนจะได้คืนถูกยอด)"""
@@ -345,6 +391,7 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
         queue_print_job(cur, oid)
     if final_code in _PRINT_SKIP_REASON:
         skip_queued_print_jobs(cur, oid, _PRINT_SKIP_REASON[final_code])
+    refunded = Decimal(0)
     if final_code == state.CANCELLED:
         close_pending_top_ups(cur, oid, "ออเดอร์ถูกยกเลิกก่อนโอนส่วนต่าง")
         refunded = refund_full_cancel(cur, oid, reason or "ยกเลิกออเดอร์")
@@ -353,6 +400,8 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
     if order.get("CustomerId"):
         if final_code == state.CANCELLED:
             text = f"ออเดอร์คิว {q} ถูกยกเลิก" + (f": {reason}" if reason else "")
+            if refunded > 0:
+                text += f" — กรุณารับเงินคืน {refunded:.2f} บาท ที่ร้าน {order.get('StoreName') or ''} โดยแจ้งเลขคิว {q}"
             ntype = "ORDER_STATUS"
         elif final_code == state.READY:
             text, ntype = f"ออเดอร์คิว {q} {_MESSAGES[final_code]}", "QUEUE_CALLED"
@@ -368,13 +417,17 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
 
 # -------------------------------------------------------------------- contract
 def open_order_count(cur, store_id: int) -> int:
-    """ออเดอร์ของร้านที่ยังไม่จบ (ใช้กันไม่ให้ตัดสัญญา/ลบร้านทั้งที่ลูกค้ายังรออาหารหรือรอเงินคืน)"""
+    """งานค้างของร้าน = ออเดอร์ที่ยังไม่จบ + เงินคืนที่ยังไม่ได้คืนลูกค้า
+    (ใช้กันไม่ให้ลบร้าน/ปิดบัญชีร้าน ทั้งที่ลูกค้ายังรออาหารหรือรอเงินคืน)"""
     cur.execute(
         """
-        SELECT COUNT(*) AS n FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
-        WHERE o.StoreId = %s AND os.IsTerminal = FALSE
+        SELECT (SELECT COUNT(*) FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId
+                WHERE o.StoreId = %s AND os.IsTerminal = FALSE)
+             + (SELECT COUNT(*) FROM Refund rf JOIN Payment p ON p.PaymentId = rf.PaymentId
+                JOIN `Order` o ON o.OrderId = p.OrderId
+                WHERE o.StoreId = %s AND rf.RefundStatus = 'PENDING') AS n
         """,
-        (store_id,),
+        (store_id, store_id),
     )
     return int(cur.fetchone()["n"])
 

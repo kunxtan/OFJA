@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { startPolling } from '../utils/polling';
+import RefundLog from './RefundLog';
 
 // โทนสีเดิมของ Counter & Theme กลาง
 const PALETTE = {
@@ -24,7 +26,19 @@ const PALETTE = {
 // ออเดอร์ walk-in (ไม่มีบัญชีลูกค้า) : backend ส่ง IsWalkIn เป็น 0/1
 const isWalkInOrder = (o) => Boolean(Number(o?.IsWalkIn)) || !o?.UserId;
 
-const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+// ข้อความ error จาก backend : detail เป็นข้อความ หรือรายการ (422 ของ pydantic) -> ไม่ให้ขึ้น [object Object]
+const apiErrorText = (data, fallback) => {
+  if (typeof data?.detail === 'string') return data.detail;
+  if (Array.isArray(data?.detail)) return data.detail.map(d => d?.msg).filter(Boolean).join(', ') || fallback;
+  return fallback;
+};
+// ชนิดของ toast จากข้อความ (เดิมขึ้น ✓ สีเขียวทุกข้อความ แม้เป็น error)
+const toastKind = (msg) => {
+  const t = String(msg || '');
+  if (/ไม่สำเร็จ|ไม่ได้|ไม่สามารถ|ผิดพลาด|ไม่พอ|ไม่พบ|กรุณา|error|HTTP|⚠️|❌|🔒/i.test(t)) return 'error';
+  return 'success';
+};
 
 function Icon({ name, size = 20 }) {
   const paths = {
@@ -39,6 +53,7 @@ function Icon({ name, size = 20 }) {
     close: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
     warn: <><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>,
     store: <><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7" /><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4" /><path d="M2 7h20" /></>,
+    coin: <><circle cx="12" cy="12" r="9" /><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .9-3 2.2 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.2-3 2.2-1.4 0-2.6-.6-3.1-1.6" /><path d="M12 6v2M12 16v2" /></>,
     tv: <><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8" /><path d="M12 17v4" /></>,
     logout: <><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>
   };
@@ -74,6 +89,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [reportCancellations, setReportCancellations] = useState([]);
   const [viewingCustomer, setViewingCustomer] = useState(null);
   const [toast, setToast] = useState({ show: false, msg: '' });
+  const [liveError, setLiveError] = useState(''); // ดึงคิวไม่สำเร็จ : คงข้อมูลเดิมไว้ แล้วขึ้นแถบเตือน
 
   // ===== Print / Recall / No-Show controls =====
   const [printerStatus, setPrinterStatus] = useState('READY'); // READY | OFFLINE (Mock)
@@ -92,6 +108,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [payMethod, setPayMethod] = useState('Cash');
   const [cashInput, setCashInput] = useState('');
   const [payBusy, setPayBusy] = useState(false);
+  const [lastSale, setLastSale] = useState(null); // { queue, method, change, received, total } หลังออกคิว walk-in
   // จอเรียกคิว (จำลอง): คิวที่เพิ่งพร้อมจะกระพริบ + เสียงติ๊ง ; เห็นครั้งแรกตอนเปิดหน้าไม่นับว่า "ใหม่"
   const [displaySound, setDisplaySound] = useState(true);
   const [displayFull, setDisplayFull] = useState(false);
@@ -108,10 +125,13 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [historyQuery, setHistoryQuery] = useState('');
   const autoPromptedJobsRef = useRef(new Set()); // job ที่เด้ง popup อัตโนมัติไปแล้ว (ปิดแล้วไม่เด้งซ้ำ ยังกดจากแถบเหลืองได้)
   const [noShowModal, setNoShowModal] = useState(null);
-  // อาหารพร้อมรับแล้วลูกค้ายังไม่มา: 15 นาที = ระบบเตือนลูกค้าเอง + ป้ายให้พนักงานโทรตาม ;
-  // 30 นาที = ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (พนักงานกดเองเสมอ กันกรณีลูกค้าแจ้งว่าจะมาช้า)
-  const PICKUP_WARNING_MINUTES = 15;
-  const NO_SHOW_UNLOCK_MINUTES = 30;
+  // อาหารพร้อมรับแล้วลูกค้ายังไม่มา (ค่าจาก backend /api/food-court/status ; ค่าเริ่มต้น 30 / 60 นาที):
+  // PICKUP_WARNING_MINUTES = ระบบเตือนลูกค้าเอง + ป้ายให้พนักงานโทรตาม ;
+  // NO_SHOW_UNLOCK_MINUTES = ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (พนักงานกดเองเสมอ กันกรณีลูกค้าแจ้งว่าจะมาช้า)
+  const [pickupTimes, setPickupTimes] = useState({ warn: 30, noShow: 60 });
+  const PICKUP_WARNING_MINUTES = pickupTimes.warn;
+  const NO_SHOW_UNLOCK_MINUTES = pickupTimes.noShow;
+  const [pendingRefunds, setPendingRefunds] = useState(0);
 
   // 🔴 Modal ยกเลิกคำสั่งซื้อแบบใหม่
   const [cancelModal, setCancelModal] = useState(null); // { order, actionType: 'immediate' | 'window' }
@@ -190,28 +210,43 @@ export default function CounterView({ user, apiBase, onLogout }) {
     return () => { cancelled = true; };
   }, [activeTab, historyDate, activeStoreId, apiBase]);
 
-  const showToast = (msg) => {
-    setToast({ show: true, msg });
+  const showToast = (msg, kind) => {
+    const k = kind || toastKind(msg);
+    setToast({ show: true, msg, kind: k });
     clearTimeout(window.__cvToastTimer);
-    window.__cvToastTimer = setTimeout(() => setToast({ show: false, msg: '' }), 2600);
+    // error ค้างไว้นานกว่า ให้อ่านทัน
+    window.__cvToastTimer = setTimeout(() => setToast({ show: false, msg: '' }), k === 'error' ? 6000 : 2600);
   };
 
   const fetchData = () => {
     // live = ออเดอร์ที่ยังไม่จบ + ของวันนี้ (ไม่ดึงประวัติทั้งร้านทุก 3.5 วิ ; วันก่อน ๆ ดึงตอนเปิดแท็บประวัติ)
-    fetch(`${apiBase}/api/orders?store_id=${activeStoreId}&scope=live`)
-      .then(r => r.json())
-      .then(d => setOrders(Array.isArray(d) ? d : []))
-      .catch(err => console.error("Error orders:", err));
+    // server error ชั่วคราว : ห้ามล้างรายการเป็นว่าง (คิวหายทั้งจอ แล้วพอกลับมาทุกคิวกระพริบ/มีเสียงพร้อมกัน)
+    const getList = (url, opts) => fetch(url, opts).then(async r => {
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !Array.isArray(d)) throw new Error(`HTTP ${r.status}`);
+      return d;
+    });
+    getList(`${apiBase}/api/orders?store_id=${activeStoreId}&scope=live`)
+      .then(d => { setOrders(d); setLiveError(''); })
+      .catch(err => { console.error("Error orders:", err); setLiveError('ดึงรายการคิวล่าสุดไม่สำเร็จ กำลังลองใหม่… (ข้อมูลบนจออาจไม่อัปเดต)'); });
 
-    fetch(`${apiBase}/api/products?store_id=${activeStoreId}`)
-      .then(r => r.json())
-      .then(d => setProducts(Array.isArray(d) ? d : []))
+    getList(`${apiBase}/api/products?store_id=${activeStoreId}`)
+      .then(setProducts)
       .catch(err => console.error("Error products:", err));
 
-    fetch(`${apiBase}/api/print-jobs/pending?store_id=${activeStoreId}`, { cache: 'no-store' })
-      .then(r => r.ok ? r.json() : [])
-      .then(d => setPendingPrintJobs(Array.isArray(d) ? d : []))
+    getList(`${apiBase}/api/print-jobs/pending?store_id=${activeStoreId}`, { cache: 'no-store' })
+      .then(setPendingPrintJobs)
       .catch(err => console.error("Error print jobs:", err));
+
+    fetchPendingRefunds();
+  };
+
+  // จำนวนรายการที่รอลูกค้ามารับเงินคืน (ป้ายตัวเลขบนเมนู "คืนเงินลูกค้า")
+  const fetchPendingRefunds = () => {
+    fetch(`${apiBase}/api/refunds?status=PENDING&limit=500`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d)) setPendingRefunds(d.length); })
+      .catch(err => console.error("Error refunds:", err));
   };
 
   const fetchReports = () => {
@@ -249,6 +284,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
       const data = await res.json();
       setFoodCourtOpen(Boolean(data?.is_open));
+      if (data?.pickup_reminder_minutes && data?.no_show_after_minutes) {
+        setPickupTimes(prev => (prev.warn === data.pickup_reminder_minutes && prev.noShow === data.no_show_after_minutes)
+          ? prev : { warn: data.pickup_reminder_minutes, noShow: data.no_show_after_minutes });
+      }
     } catch (err) {
       console.error("Error food court status:", err);
     }
@@ -258,19 +297,19 @@ export default function CounterView({ user, apiBase, onLogout }) {
     fetchStores();
     checkFoodCourtStatus();
 
-    const storeInterval = setInterval(fetchStores, 2000);
-    const foodCourtInterval = setInterval(checkFoodCourtStatus, 2000);
+    // สถานะร้าน/ศูนย์อาหารเปลี่ยนไม่บ่อย (เดิมทุก 2 วิ)
+    const stopStores = startPolling(fetchStores, 15000);
+    const stopFoodCourt = startPolling(checkFoodCourtStatus, 15000);
 
     return () => {
-      clearInterval(storeInterval);
-      clearInterval(foodCourtInterval);
+      stopStores();
+      stopFoodCourt();
     };
   }, [apiBase]);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3500);
-    return () => clearInterval(interval);
+    return startPolling(fetchData, 3500);
   }, [activeStoreId, apiBase]);
 
   useEffect(() => {
@@ -290,21 +329,25 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const currentStore = stores.find(s => s.StoreId === activeStoreId);
 
   // --- Handlers ---
+  const verifyingRef = useRef(new Set()); // กดซ้ำระหว่างรอคำตอบ = ไม่ยิงซ้ำ (ครั้งที่ 2 เคยขึ้น error ทับข้อความสำเร็จ)
   const verifySlip = (id, approved, reason = '') => {
+    if (verifyingRef.current.has(id)) return;
+    verifyingRef.current.add(id);
     fetch(`${apiBase}/api/orders/${id}/verify-slip`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approved, reason })
     }).then(async res => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(data.detail || 'ไม่สามารถตรวจสอบสลิปได้');
+        showToast(apiErrorText(data, 'ไม่สามารถตรวจสอบสลิปได้'), 'error');
         return;
       }
       showToast(approved ? 'อนุมัติสลิปแล้ว ส่งคิวเข้าครัว' : 'ปฏิเสธสลิปแล้ว');
       setViewingSlip(null);
       setRejectSlipModal(null);
       fetchData();
-    }).catch(() => showToast('เชื่อมต่อระบบตรวจสลิปไม่สำเร็จ'));
+    }).catch(() => showToast('เชื่อมต่อระบบตรวจสลิปไม่สำเร็จ'))
+      .finally(() => verifyingRef.current.delete(id));
   };
 
   const openRejectSlip = (order) => {
@@ -565,7 +608,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   };
 
   const setStockFlag = async (product) => {
-    const res = await fetch(`${apiBase}/api/products/${product.ProductId}/toggle-stock`, { method: 'PUT' });
+    const res = await fetch(`${apiBase}/api/products/${product.ProductId}/toggle-stock?out_of_stock=${!product.IsOutOfStock}`, { method: 'PUT' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
   };
@@ -636,7 +679,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     if (why) return showToast(why);
     setPayMethod('Cash'); setCashInput(''); setPayOpen(true);
   };
-  const cashReceived = Number(cashInput || 0);
+  const cashReceived = Math.round(Number(cashInput || 0) * 100) / 100; // backend รับทศนิยมไม่เกิน 2 ตำแหน่ง
   const cashChange = cashReceived - totalAmount;
   const cashEnough = cashInput !== '' && cashChange >= -0.001;
   const addCash = (n) => setCashInput(v => String(Number(v || 0) + n));
@@ -661,10 +704,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
         })
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { showToast(`สั่งซื้อไม่สำเร็จ: ${data.detail || `HTTP ${res.status}`}`); return; }
-      showToast(payMethod === 'Cash'
-        ? `ออกคิว ${data.queue_no} แล้ว · ทอน ฿${fmtMoney(Math.max(0, cashChange))}`
-        : `ออกคิว ${data.queue_no} แล้ว · รับโอน ฿${fmtMoney(totalAmount)}`);
+      if (!res.ok) { showToast(`สั่งซื้อไม่สำเร็จ: ${apiErrorText(data, `HTTP ${res.status}`)}`, 'error'); return; }
+      // ยอดเงินทอนค้างไว้จนพนักงานกดปิด (เดิมขึ้นแค่ toast 2.6 วิ ทอนไม่ทันอ่าน)
+      setLastSale({ queue: data.queue_no, method: payMethod, change: Math.max(0, cashChange), received: cashReceived, total: totalAmount });
       setPayOpen(false); setCart([]); setOrderNote(''); setCashInput('');
       fetchData(); setActiveTab('orders');
     } catch {
@@ -705,7 +747,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const getRemainingLabel = (deadline) => {
     if (!deadline) return '-';
     const diff = new Date(deadline).getTime() - nowTick;
-    if (diff <= 0) return 'หมดเวลา';
+    if (diff <= 0) return 'หมดเวลา · ระบบกำลังยกเลิกให้';
     const m = Math.floor(diff / 60000);
     const s = Math.floor((diff % 60000) / 1000);
     return `${m}:${s.toString().padStart(2, '0')} น.`;
@@ -826,6 +868,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     { id: 'orders', label: 'Queue & Slips', caption: 'จัดการคิว & ตรวจสลิป', icon: 'orders', badge: verifyingOrders.length || null },
     { id: 'history', label: 'ประวัติออเดอร์', caption: 'ประวัติรายวัน / ดูลูกค้า / พิมพ์ใบเสร็จ', icon: 'stale' },
     { id: 'walkin', label: 'Walk-in POS', caption: 'แคชเชียร์สั่งอาหารหน้าร้าน', icon: 'walkin' },
+    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: 'ลูกค้ามารับเงินคืนที่หน้าร้าน', icon: 'coin', badge: pendingRefunds || null },
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
     { id: 'reports', label: 'Reports', caption: 'รายงานการขายและปัญหา', icon: 'orders' },
     { id: 'display', label: 'จอเรียกคิว (จำลอง)', caption: 'ของจริงเปิดค้างบนทีวีหน้าร้าน', icon: 'tv' },
@@ -927,6 +970,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
         {/* ===== CONTENT AREA ===== */}
         <main className="cv-content">
+          {liveError && <div role="alert" className="cv-live-error">⚠️ {liveError}</div>}
           {pendingPrintJobs.length > 0 && (
             <div className="cv-print-alert">
               <div>
@@ -1491,6 +1535,10 @@ export default function CounterView({ user, apiBase, onLogout }) {
             </div>
           )}
 
+          {activeTab === 'refunds' && (
+            <RefundLog apiBase={apiBase} canConfirm pollMs={10000} onChanged={fetchPendingRefunds} />
+          )}
+
           {/* TAB 5: MENU & STOCK */}
           {activeTab === 'menu' && (
             <div className="cv-card">
@@ -1643,7 +1691,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="stock-queue-list">
                   {stockModal.notifiable.map(o => <span key={o.OrderID} className="stock-queue">{o.QueueNo}</span>)}
                 </div>
-                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที</small>
+                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 30 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ (ลูกค้ามารับเงินคืนที่ร้าน)</small>
               </div>
             ) : (
               <p className="stock-none">ไม่มีออเดอร์ลูกค้าออนไลน์ที่ต้องแจ้ง</p>
@@ -1678,7 +1726,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
               <div className="info-row"><span>คิว</span><b>{noShowModal.QueueNo}</b></div>
               <div className="info-row"><span>ลูกค้า</span><b>{noShowModal.CustomerName || 'ลูกค้า Walk-in'}</b></div>
               <div className="info-row"><span>โทรศัพท์</span><b>{noShowModal.CustomerPhone || '-'}</b></div>
-              <div className="info-row"><span>อีเมล</span><b>{noShowModal.CustomerEmail || '-'}</b></div>
               <div className="info-row"><span>รอมาแล้ว</span><b>{getElapsedLabel(noShowModal.ReadyAt)}</b></div>
               {noShowModal.LatePickupArrivalTime && (
                 <div className="info-row"><span>ลูกค้าแจ้งจะมาถึง</span><b>{fmtClock(noShowModal.LatePickupArrivalTime)} น.</b></div>
@@ -1698,7 +1745,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
           <div className="cv-modal cv-out-modal" onClick={e => e.stopPropagation()}>
             <div className="cv-modal-head">
               <div><h3>⚠️ แจ้งของหมด · คิว {outModal.order.QueueNo}</h3>
-                <div className="caption">ลูกค้าเลือกเปลี่ยนเมนู หรือยกเลิกรับเงินคืนได้ภายใน 30 นาที</div></div>
+                <div className="caption">ลูกค้าเลือกเปลี่ยนเมนู หรือยกเลิกรับเงินคืนได้ภายใน 30 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ</div></div>
               <button onClick={() => setOutModal(null)} className="cv-modal-close" disabled={outBusy}>✖</button>
             </div>
             <div className="out-label">เมนูไหนหมด? (เลือกได้หลายจาน)</div>
@@ -1901,9 +1948,26 @@ export default function CounterView({ user, apiBase, onLogout }) {
         </div>
       )}
 
+      {lastSale && (
+        <div className="cv-modal-overlay" onClick={() => setLastSale(null)}>
+          <div className="cv-modal" role="dialog" aria-modal="true" aria-label="ออกคิวแล้ว" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
+            <h3 style={{ margin: '4px 0 8px' }}>✅ ออกคิว {lastSale.queue} แล้ว</h3>
+            {lastSale.method === 'Cash' ? (
+              <>
+                <div style={{ color: PALETTE.textSub }}>รับเงิน ฿{fmtMoney(lastSale.received)} · ยอด ฿{fmtMoney(lastSale.total)}</div>
+                <div style={{ fontSize: 40, fontWeight: 900, color: PALETTE.green, margin: '12px 0' }}>ทอน ฿{fmtMoney(lastSale.change)}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 22, fontWeight: 800, margin: '12px 0' }}>รับโอน ฿{fmtMoney(lastSale.total)}</div>
+            )}
+            <button type="button" className="cv-btn btn-success cv-btn-lg" style={{ width: '100%' }} autoFocus onClick={() => setLastSale(null)}>ทอนเงินแล้ว / ปิด</button>
+          </div>
+        </div>
+      )}
+
       {/* ===== TOAST ===== */}
-      <div className={`cv-toast ${toast.show ? 'show' : ''}`}>
-        <span className="toast-icon"><Icon name="check" size={16} /></span>
+      <div className={`cv-toast ${toast.show ? 'show' : ''} ${toast.kind === 'error' ? 'error' : ''}`} role={toast.kind === 'error' ? 'alert' : 'status'}>
+        <span className="toast-icon">{toast.kind === 'error' ? '!' : <Icon name="check" size={16} />}</span>
         <span>{toast.msg}</span>
       </div>
     </div>
@@ -2029,6 +2093,7 @@ const CV_STYLES = `
 
 /* ---------- Content / Cards ---------- */
 .cv-content { flex: 1; padding: 24px; overflow-y: auto; }
+.cv-live-error { margin-bottom: 14px; padding: 10px 14px; border-radius: 12px; background: #FEE2E2; color: #991B1B; font-weight: 700; font-size: 14px; }
 .cv-stack { display: flex; flex-direction: column; gap: 24px; }
 .cv-card {
   background: ${PALETTE.white}; border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
@@ -2312,6 +2377,8 @@ const CV_STYLES = `
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .cv-toast.show { opacity: 1; transform: translateY(0); }
+.cv-toast.error { border-color: ${PALETTE.red}; }
+.cv-toast.error .toast-icon { background: ${PALETTE.redLight}; color: ${PALETTE.red}; font-weight: 900; }
 .toast-icon { background: ${PALETTE.greenLight}; color: ${PALETTE.green}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
 
 .bold { font-weight: 600; }

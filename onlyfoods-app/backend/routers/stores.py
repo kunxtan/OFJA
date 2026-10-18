@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 
-from auth import assert_store_access, hash_password, require_role
+from auth import STORE_SCOPED, assert_store_access, get_optional_user, hash_password, require_role
 from db import get_db, transaction
 from errors import DomainError
 from schemas import ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema
@@ -21,8 +21,8 @@ from services import get_foodcourt, is_duplicate_key, log_audit, open_order_coun
 from shapes import STORE_SELECT, shape_store
 from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, add_years_minus_one_day,
                    bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
-                   next_free_queue_code, parse_date, save_image, validate_password, validate_queue_code,
-                   validate_username)
+                   next_free_queue_code, parse_date, save_image, validate_password, validate_phone,
+                   validate_queue_code, validate_username)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 
@@ -94,13 +94,27 @@ def _name_taken(cur, name: str, except_id: Optional[int] = None) -> bool:
     return cur.fetchone() is not None
 
 
+# ข้อมูลภายในของร้าน (ผู้ติดต่อ / วันสัญญา) : เห็นเฉพาะผู้บริหาร บัญชี และบัญชีของร้านนั้นเอง
+_STORE_PRIVATE_FIELDS = ("ContactName", "ContactPhone", "ContactLine", "ContactEmail", "ContractStartDate",
+                         "CurrentContractStartDate", "ContractEndDate", "ContractDaysLeft", "AutoDeleteInDays",
+                         "OpenOrderCount", "IsClearingOrders")
+
+
 @router.get("")
-def get_stores(db=Depends(get_db)):
-    """รายการร้านสำหรับลูกค้า (เปิดสาธารณะ ไม่รวมร้านที่ถูกลบ)"""
+def get_stores(viewer=Depends(get_optional_user), db=Depends(get_db)):
+    """รายการร้าน (เปิดสาธารณะ ไม่รวมร้านที่ถูกลบ) ; ข้อมูลผู้ติดต่อ/สัญญาไม่ส่งให้คนทั่วไป"""
+    role = viewer["RoleCode"] if viewer else None
+    own_store = viewer.get("StoreId") if viewer and role in STORE_SCOPED else None
     with db.cursor() as cur:
         cur.execute(STORE_SELECT + " WHERE s.IsDeleted = FALSE ORDER BY s.StoreId")
         today = bangkok_now().date()
-        return [shape_store(r, today) for r in cur.fetchall()]
+        rows = [shape_store(r, today) for r in cur.fetchall()]
+    if role not in ("EXECUTIVE", "ACCOUNTANT"):
+        for r in rows:
+            if own_store is None or int(r["StoreId"]) != int(own_store):
+                for f in _STORE_PRIVATE_FIELDS:
+                    r.pop(f, None)
+    return rows
 
 
 @router.get("/history")
@@ -171,7 +185,7 @@ def create_store_full(data: StoreFullSchema, user=Depends(require_role("EXECUTIV
                 VALUES (%s, %s, %s, %s, %s, %s, TRUE, FALSE, %s, %s, %s, %s)
                 """,
                 (name, category_id, fc["FoodCourtId"], code, clean_text(data.description), image,
-                 clean_text(data.contact_name), clean_text(data.contact_phone),
+                 clean_text(data.contact_name), validate_phone(data.contact_phone),
                  clean_text(data.contact_line), clean_text(data.contact_email)),
             )
             try:
@@ -237,7 +251,7 @@ def update_store_full(store_id: int, data: StoreFullSchema, user=Depends(require
                        ContactPhone = %s, ContactLine = %s, ContactEmail = %s, Description = %s, ImageUrl = %s
                 WHERE StoreId = %s
                 """,
-                (name, category_id, code, clean_text(data.contact_name), clean_text(data.contact_phone),
+                                (name, category_id, code, clean_text(data.contact_name), validate_phone(data.contact_phone),
                  clean_text(data.contact_line), clean_text(data.contact_email), clean_text(data.description),
                  image, store_id),
             )
@@ -259,7 +273,7 @@ def delete_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Depe
                 raise DomainError(400, "ร้านค้านี้ถูกลบไปแล้ว")
             pending = open_order_count(cur, store_id)
             if pending:
-                raise DomainError(400, f"ร้านนี้ยังมีออเดอร์ค้างอยู่ {pending} รายการ กรุณาจัดการออเดอร์ให้เสร็จก่อนลบร้าน")
+                raise DomainError(400, f"ร้านนี้ยังมีออเดอร์หรือเงินคืนลูกค้าค้างอยู่ {pending} รายการ กรุณาจัดการให้เสร็จก่อนลบร้าน")
             cur.execute("UPDATE Store SET IsDeleted = TRUE, DeletedAt = %s, IsOpen = FALSE WHERE StoreId = %s",
                         (bangkok_now(), store_id))
         log_audit(db, user["UserId"], "DELETE_STORE", "Store", store_id, {"name": store["StoreName"]}, None)
@@ -267,7 +281,9 @@ def delete_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Depe
 
 
 @router.put("/{store_id}/toggle")
-def toggle_store(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+def toggle_store(store_id: int, open: Optional[bool] = None,
+                 user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """open=true/false = ตั้งเป็นสถานะนั้น (เป็นอยู่แล้ว = ไม่ทำอะไร) ; ไม่ส่ง = สลับ (client เดิม)"""
     assert_store_access(user, store_id)
     with transaction(db):
         with db.cursor() as cur:
@@ -284,7 +300,11 @@ def toggle_store(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUT
                 raise DomainError(404, "ไม่พบร้านค้า")
             state = contract_state(store["StartDate"], store["EndDate"])
             # ใช้สถานะ "เปิดจริง" (กดเปิดไว้ + สัญญามีผล) เป็นตัวตั้ง กดแล้วจึงตรงกับที่หน้าจอแสดง
-            new_open = not (bool(store["IsOpen"]) and state == CONTRACT_ACTIVE)
+            current = bool(store["IsOpen"]) and state == CONTRACT_ACTIVE
+            if open is not None and bool(open) == current:
+                return {"success": True, "is_open": current, "unchanged": True,
+                        "message": "ร้านเปิดอยู่แล้ว" if current else "ร้านปิดอยู่แล้ว"}
+            new_open = not current
             if new_open:
                 if state == CONTRACT_EXPIRED:
                     raise DomainError(400, "สัญญาร้านหมดอายุแล้ว ไม่สามารถเปิดร้านได้")

@@ -1,8 +1,10 @@
 """เปิด-ปิดศูนย์อาหาร (สถานะจริง = คำนวณจากเวลาทำการ + manual override ไม่มีคอลัมน์ IsOpen)"""
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends
 
+import config
 from auth import require_role
 from db import get_db, transaction
 from errors import DomainError
@@ -24,6 +26,9 @@ def _status_payload(row: dict, now=None) -> dict:
         "close_time": time_to_hhmm(row["CloseTime"]),
         "mode": mode,
         "override_until": until.strftime("%Y-%m-%d %H:%M:%S") if (until and mode != "AUTO") else None,
+        # เวลาที่หน้าร้านใช้: ขึ้นป้ายให้โทรหาลูกค้า / ปลดล็อกปุ่ม "ลูกค้าไม่มารับ" (นาทีหลังอาหารพร้อม)
+        "pickup_reminder_minutes": config.PICKUP_REMINDER_MINUTES,
+        "no_show_after_minutes": config.NO_SHOW_AFTER_MINUTES,
     }
 
 
@@ -45,7 +50,8 @@ def get_food_court_status(db=Depends(get_db)):
 
 
 @router.put("/toggle")
-def toggle_food_court(user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
+def toggle_food_court(open: Optional[bool] = None, user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
+    """open=true/false = ตั้งเป็นสถานะนั้น (เป็นอยู่แล้ว = ไม่ทำอะไร) ; ไม่ส่ง = สลับ (client เดิม)"""
     with transaction(db):
         with db.cursor() as cur:
             cur.execute("SELECT FoodCourtId, OpenTime, CloseTime, ManualOverride, OverrideUntil FROM FoodCourt ORDER BY FoodCourtId LIMIT 1 FOR UPDATE")
@@ -53,7 +59,13 @@ def toggle_food_court(user=Depends(require_role("EXECUTIVE")), db=Depends(get_db
             if not fc:
                 raise DomainError(500, "ยังไม่มีข้อมูลศูนย์อาหารในระบบ")
             now = bangkok_now()
-            new_open = not foodcourt_is_open(fc, now)
+            current = foodcourt_is_open(fc, now)
+            if open is not None and bool(open) == current:
+                payload = _status_payload(fc, now)
+                return {"success": True, "is_open": current, "mode": payload["mode"],
+                        "override_until": payload["override_until"], "unchanged": True,
+                        "message": "ศูนย์อาหารเปิดอยู่แล้ว" if current else "ศูนย์อาหารปิดอยู่แล้ว"}
+            new_open = not current
             until = next_transition(fc["OpenTime"], fc["CloseTime"], now)
             cur.execute(
                 "UPDATE FoodCourt SET ManualOverride = %s, OverrideUntil = %s, UpdatedBy = %s, UpdatedAt = %s "

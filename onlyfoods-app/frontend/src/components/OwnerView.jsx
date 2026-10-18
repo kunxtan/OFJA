@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { startPolling } from '../utils/polling';
 import { createPortal } from 'react-dom';
+import RefundLog from './RefundLog';
 
 /* ============================================================
    OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า (Executive Theme Colors)
@@ -58,7 +60,7 @@ function orderReceived(o) {
   const paid = (o.Payments || []).filter(p => p.PaymentStatus === 'VERIFIED');
   return paid.length ? paid.reduce((acc, p) => acc + Number(p.Amount || 0), 0) : Number(o.TotalAmount || 0);
 }
-// ยอดสุทธิของออเดอร์ = เงินที่รับจริง − เงินที่ฝ่ายบัญชีคืนแล้ว (refundedByOrder: { OrderId: ยอดคืนที่ DONE })
+// ยอดสุทธิของออเดอร์ = เงินที่รับจริง − เงินคืน (refundedByOrder: { OrderId: ยอดคืนที่คืนแล้ว + รอลูกค้ามารับ })
 const orderNet = (o, refundedByOrder) => orderReceived(o) - Number(refundedByOrder?.[o.OrderID] || 0);
 
 // วันเดียว = รายชั่วโมง 24 จุด ; หลายวัน = รายวัน
@@ -149,9 +151,9 @@ function summarizeOrders(orders, refundedByOrder) {
   const sales = received - refunded;
   const finished = revenue.length + cancelled.length;
   return {
-    sales,                                                   // ยอดขายสุทธิ = รับจริง − คืนแล้ว (สำเร็จ + ไม่มารับ)
+    sales,                                                   // ยอดขายสุทธิ = รับจริง − เงินคืน (สำเร็จ + ไม่มารับ)
     received,                                                // เงินที่รับจริงก่อนหักคืน
-    refunded,                                                // เงินที่ฝ่ายบัญชีคืนแล้ว (ของออเดอร์ที่นับยอด)
+    refunded,                                                // เงินคืน ทั้งคืนแล้วและรอลูกค้ามารับ (ของออเดอร์ที่นับยอด)
     noShowCount: noShow.length,
     noShowSales: noShow.reduce((acc, o) => acc + orderNet(o, refundedByOrder), 0),
     grossSales: revenue.concat(cancelled).reduce((acc, o) => acc + Number(o.TotalAmount || 0), 0), // มูลค่าออเดอร์รวมก่อนหักยกเลิก
@@ -1968,8 +1970,8 @@ const PAYMENT_STATUS_META = {
 };
 const REFUND_TYPE_TH = { FULL_CANCEL: 'คืนเงินทั้งออเดอร์', PRICE_DIFF: 'คืนส่วนต่างราคา', ITEM_CANCEL: 'คืนเงินบางรายการ' };
 const REFUND_STATUS_META = {
-  PENDING: { label: 'รอโอนคืน', tone: 'warning' },
-  DONE: { label: 'โอนคืนแล้ว', tone: 'success' },
+  PENDING: { label: 'รอลูกค้ามารับ', tone: 'warning' },
+  DONE: { label: 'คืนเงินแล้ว', tone: 'success' },
   FAILED: { label: 'ไม่สำเร็จ', tone: 'danger' },
 };
 const PRINT_TYPE_TH = { CUSTOMER: 'ใบรับอาหาร', KITCHEN: 'ใบครัว', REPRINT: 'พิมพ์ซ้ำ' };
@@ -2225,7 +2227,7 @@ function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
                           <div className="sh-pay-sub">{r.Reason || '-'}</div>
                           <div className="sh-pay-sub">
                             ขอคืน {thaiDateTime(r.RequestedAt, true)}
-                            {r.RefundedAt && ` · โอนแล้ว ${thaiDateTime(r.RefundedAt, true)}${r.RefundedByName ? ` โดย ${r.RefundedByName}` : ''}`}
+                            {r.RefundedAt && ` · คืนแล้ว ${thaiDateTime(r.RefundedAt, true)}${r.RefundedByName ? ` โดย ${r.RefundedByName}` : ''}`}
                           </div>
                         </div>
                         <Badge tone={rs.tone}>{rs.label}</Badge>
@@ -2607,11 +2609,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [reviewsData, setReviewsData] = useState({ reviews: [], summary: {} });
   const [refunds, setRefunds] = useState([]); // รายการคืนเงินของร้าน (ใช้หักยอดขายสุทธิ)
-  // { OrderId: ยอดที่ฝ่ายบัญชีคืนแล้ว } ; คืนเงินที่ยังรอโอน (PENDING) ยังไม่หัก เพราะเงินยังอยู่กับร้าน
+  // { OrderId: ยอดเงินคืน } ; หักทั้งที่คืนแล้ว (DONE) และที่รอลูกค้ามารับ (PENDING) เพราะเงินคืนไม่ใช่รายได้
   const refundedByOrder = useMemo(() => refunds.reduce((acc, r) => {
-    if (r.RefundStatus === 'DONE') acc[r.OrderId] = (acc[r.OrderId] || 0) + Number(r.Amount || 0);
+    if (r.RefundStatus === 'DONE' || r.RefundStatus === 'PENDING') acc[r.OrderId] = (acc[r.OrderId] || 0) + Number(r.Amount || 0);
     return acc;
   }, {}), [refunds]);
+  const pendingRefundCount = useMemo(() => refunds.filter(r => r.RefundStatus === 'PENDING').length, [refunds]);
   const [issues, setIssues] = useState([]);
   
   const [storeDays, setStoreDays] = useState(1);
@@ -2744,19 +2747,22 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       if (d && Array.isArray(d.issues)) { setIssues(d.issues); setIssuesSummary(d.summary); markLoaded('issues'); }
     }).catch(err => console.error(err));
     
+    // ตอบ error (เช่น 500 ชั่วคราว) : คงข้อมูลเดิมไว้ ไม่ให้หน้าพังหรือ KPI/ลิ้นชักเงินสดกลายเป็น 0
     fetch(`${apiBase}/api/reports/cancellations?store_id=${storeId}`)
-      .then(r => r.json())
+      .then(r => (r.ok ? r.json() : null))
       .then(data => {
+        if (!Array.isArray(data)) return;
         setCancels(data);
         if (isFirstFetch.current) {
           setKnownCancelsCount(data.length);
           isFirstFetch.current = false;
         }
-      });
+      })
+      .catch(err => console.error(err));
 
-    fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => r.json()).then(d => { setProducts(Array.isArray(d) ? d : []); markLoaded('products'); }).catch(err => console.error(err));
-    fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => r.json()).then(d => { setHistory(Array.isArray(d) ? d : []); markLoaded('history'); }).catch(err => console.error(err));
-    fetch(`${apiBase}/api/stores/${storeId}/staff?include_inactive=true`).then(r => r.json()).then(d => { setStaffList(Array.isArray(d) ? d : []); markLoaded('staff'); }).catch(err => console.error(err));
+    fetch(`${apiBase}/api/products?store_id=${storeId}`).then(r => (r.ok ? r.json() : null)).then(d => { if (Array.isArray(d)) { setProducts(d); markLoaded('products'); } }).catch(err => console.error(err));
+    fetch(`${apiBase}/api/orders?store_id=${storeId}`).then(r => (r.ok ? r.json() : null)).then(d => { if (Array.isArray(d)) { setHistory(d); markLoaded('history'); } }).catch(err => console.error(err));
+    fetch(`${apiBase}/api/stores/${storeId}/staff?include_inactive=true`).then(r => (r.ok ? r.json() : null)).then(d => { if (Array.isArray(d)) { setStaffList(d); markLoaded('staff'); } }).catch(err => console.error(err));
 
     if (uid) {
       fetch(`${apiBase}/api/notifications/${uid}`)
@@ -2771,8 +2777,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 4000);
-    return () => clearInterval(interval);
+    // เดิม 4 วิ (ยิง 11 endpoint ต่อรอบ) ; หยุดเมื่อแท็บซ่อน
+    return startPolling(fetchData, 10000);
   }, [storeId, apiBase, uid]);
 
   useEffect(() => {
@@ -2817,35 +2823,43 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       ready: count('Ready'),
       outOfStock: (products || []).filter(p => p.IsOutOfStock).length,
       todayOrders: todayOrders.length,
-      // เงินสดที่ควรอยู่ในลิ้นชักวันนี้ = ค่าอาหารที่รับเป็นเงินสด (เงินทอนคืนลูกค้าไปแล้ว) ; ออเดอร์ที่ยกเลิกไม่นับ
+      // เงินสดที่ควรอยู่ในลิ้นชักวันนี้ = เงินสดที่รับวันนี้ (ค่าอาหารสุทธิหลังทอน รวมออเดอร์ที่ถูกยกเลิก)
+      // − เงินสดที่จ่ายคืนลูกค้าวันนี้ ; คืนแบบโอนไม่ผ่านลิ้นชัก จึงไม่หัก
       cashToday: todayOrders
-        .filter(o => !orderIs(o, 'Cancelled') && o.StatusCode !== 'CANCELLED')
         .flatMap(o => o.Payments || [])
         .filter(p => p.MethodCode === 'CASH' && p.PaymentStatus === 'VERIFIED')
-        .reduce((acc, p) => acc + Number(p.Amount || 0), 0),
+        .reduce((acc, p) => acc + Number(p.Amount || 0), 0)
+        - refunds
+          .filter(r => r.RefundStatus === 'DONE' && r.PaidMethod !== 'TRANSFER' && r.RefundedAt
+            && toISODate(parseOrderDate(r.RefundedAt)) === today)
+          .reduce((acc, r) => acc + Number(r.Amount || 0), 0),
+      // ลูกค้าที่รอรับเงินสดคืนที่ร้าน (ต้องเตรียมเงินไว้ในลิ้นชัก)
+      cashRefundOwed: refunds
+        .filter(r => r.RefundStatus === 'PENDING' && r.PayoutMethod !== 'TRANSFER')
+        .reduce((acc, r) => acc + Number(r.Amount || 0), 0),
     };
-  }, [history, products]);
+  }, [history, products, refunds]);
 
+  // ยกเลิกใหม่ที่ยังไม่ได้ดู : เทียบด้วยเลขออเดอร์ (เดิมเทียบจำนวนรายการ ซึ่งตันที่ 500 ตาม limit แล้วไม่เตือนอีกเลย)
+  const seenCancelIdsRef = useRef(null);
   useEffect(() => {
-    if (!isFirstFetch.current && cancels.length > knownCancelsCount) {
-      if (page !== 'history') {
-        setUnreadCancels(cancels.length - knownCancelsCount);
-      } else {
-        setKnownCancelsCount(cancels.length);
-      }
+    const ids = cancels.map(c => c.OrderID);
+    if (seenCancelIdsRef.current === null) {
+      if (!isFirstFetch.current) seenCancelIdsRef.current = new Set(ids); // ของที่มีอยู่ตอนเปิดหน้า = ดูแล้ว
+      return;
     }
-  }, [cancels.length, page, knownCancelsCount]);
-
-  useEffect(() => {
     if (page === 'history') {
+      ids.forEach(id => seenCancelIdsRef.current.add(id));
       setUnreadCancels(0);
-      setKnownCancelsCount(cancels.length);
+    } else {
+      setUnreadCancels(ids.filter(id => !seenCancelIdsRef.current.has(id)).length);
     }
-  }, [page, cancels.length]);
+  }, [cancels, page]);
 
   const markAllRead = async () => {
     setUnreadCancels(0);
     setKnownCancelsCount(cancels.length);
+    if (seenCancelIdsRef.current) cancels.forEach(c => seenCancelIdsRef.current.add(c.OrderID));
     if (uid && unreadNotifs > 0) {
       setNotifications(prev => prev.map(n => ({ ...n, IsRead: true })));
       setUnreadNotifs(0);
@@ -2906,7 +2920,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const toggleStore = async () => {
     try {
-      const res = await fetch(`${apiBase}/api/stores/${storeId}/toggle`, { method: 'PUT' });
+      const res = await fetch(`${apiBase}/api/stores/${storeId}/toggle?open=${!dash.IsOpen}`, { method: 'PUT' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         showToast(data.detail || data.message || 'ไม่สามารถเปลี่ยนสถานะร้านได้');
@@ -2948,7 +2962,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     }
     setBulkBusy(true);
     const results = await Promise.allSettled(
-      targets.map(p => fetch(`${apiBase}/api/products/${p.ProductId}/toggle-stock`, { method: 'PUT' })
+      targets.map(p => fetch(`${apiBase}/api/products/${p.ProductId}/toggle-stock?out_of_stock=${makeOut}`, { method: 'PUT' })
         .then(res => { if (!res.ok) throw new Error(p.ProductName); return p; }))
     );
     setBulkBusy(false);
@@ -2967,11 +2981,19 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const exitSelectMode = () => { setSelectMode(false); setSelectedIds([]); };
 
-  const toggleStock = (id, pName, isOutOfStock) => {
-    fetch(`${apiBase}/api/products/${id}/toggle-stock`, { method: 'PUT' }).then(() => {
-      fetchData();
+  const toggleStock = async (id, pName, isOutOfStock) => {
+    try {
+      const res = await fetch(`${apiBase}/api/products/${id}/toggle-stock?out_of_stock=${!isOutOfStock}`, { method: 'PUT' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(typeof data.detail === 'string' ? data.detail : 'อัปเดตสถานะไม่สำเร็จ');
+      }
       showToast(`อัปเดตสถานะ "${pName}" เป็น ${isOutOfStock ? 'มีสินค้า' : 'สินค้าหมด'} แล้ว`);
-    });
+    } catch (err) {
+      showToast(`⚠️ ${err.message || 'อัปเดตสถานะไม่สำเร็จ'} ("${pName}")`);
+    } finally {
+      fetchData();
+    }
   };
 
   const openAddModal = () => setMenuModal({ mode: 'add' });
@@ -3167,12 +3189,13 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history', badge: unreadCancels > 0 ? unreadCancels : null },
     { id: 'reviews', label: 'Customer Reviews', caption: 'รีวิวจากลูกค้า', icon: 'star' },
     { id: 'issues', label: 'Issue Reports', caption: 'ประวัติการแจ้งปัญหา', icon: 'alert' },
+    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: 'รอคืน / คืนแล้ว', icon: 'coin', badge: pendingRefundCount || null },
   ];
   const navById = Object.fromEntries(navItemsAll.map(n => [n.id, n]));
   const navGroups = [
     { label: 'ภาพรวม', items: ['dashboard'] },
     { label: 'จัดการร้าน', items: ['menu', 'staff'] },
-    { label: 'ประวัติและความคิดเห็น', items: ['history', 'reviews', 'issues'] },
+    { label: 'ประวัติและความคิดเห็น', items: ['history', 'refunds', 'reviews', 'issues'] },
   ].map(g => ({ ...g, items: g.items.map(id => navById[id]) }));
 
   const isSuspended = Boolean(storeDetail?.IsSuspended);
@@ -3508,7 +3531,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 <div className="od-live-head">
                   <span className="pulse" />
                   <strong>ตอนนี้ในร้าน</strong>
-                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์ · เงินสดที่ควรมีในลิ้นชัก <b>฿{fmtMoney(liveStats.cashToday)}</b></span>
+                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์ · เงินสดที่ควรมีในลิ้นชัก <b>฿{fmtMoney(liveStats.cashToday)}</b>{liveStats.cashRefundOwed > 0 && <> · รอคืนเงินสดลูกค้าอีก <b>฿{fmtMoney(liveStats.cashRefundOwed)}</b></>}</span>
                 </div>
                 <div className="od-live-grid">
                   {live.map(item => (
@@ -4475,6 +4498,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
               </>
             );
           })()}
+
+          {page === 'refunds' && (
+            <RefundLog apiBase={apiBase} canConfirm isOwner onChanged={fetchData} />
+          )}
 
           {page === 'issues' && (() => {
             const sm = issuesSummary || {};

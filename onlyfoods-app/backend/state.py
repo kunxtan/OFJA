@@ -135,6 +135,21 @@ def late_pickup_arrival(now: datetime, pickup_time: Optional[datetime], minutes:
 
 
 # ---- แปลงคำขอเปลี่ยนสถานะ -> ลำดับขั้นที่ต้องเดินจริง ----
+# สถานะที่ "เงินยังไม่ผ่านการตรวจ" : ออกได้เฉพาะทางที่ระบุผ่าน PUT /orders/{id}/status
+#   รอตรวจสลิป -> ต้องใช้ปุ่มตรวจสลิป (verify-slip) ทั้งผ่านและไม่ผ่าน (ไม่ผ่าน = บันทึกสลิปเป็น REJECTED)
+#   รอโอนส่วนต่าง -> เข้าครัวได้ทาง verify-slip เท่านั้น ; ยกเลิกได้ (คืนค่าอาหารที่จ่ายแล้ว)
+#   รอลูกค้าเปลี่ยนเมนู -> กลับไปทำต่อได้เมื่อลูกค้าเปลี่ยนเมนู (change-item) เท่านั้น ; ยกเลิกได้
+STATUS_ENDPOINT_EXITS = {
+    VERIFYING_SLIP: set(),
+    AWAITING_TOP_UP: {CANCELLED},
+    PENDING_CANCELLATION: {CANCELLED},
+}
+_GATE_HINT = {
+    VERIFYING_SLIP: "ออเดอร์นี้รอตรวจสลิป กรุณาใช้ปุ่มตรวจสลิป (อนุมัติ/ปฏิเสธ)",
+    AWAITING_TOP_UP: "ออเดอร์นี้รอลูกค้าโอนส่วนต่าง เข้าครัวได้หลังตรวจสลิปส่วนต่างผ่านเท่านั้น",
+    PENDING_CANCELLATION: "ออเดอร์นี้รอลูกค้าเปลี่ยนเมนู ทำต่อได้เมื่อลูกค้าเลือกเมนูใหม่ หรือกดยกเลิก",
+}
+
 _READY_CHAIN_ROLES = {"KITCHEN_STAFF", "FRONT_STAFF", "STORE_OWNER"}
 _FORCE_CANCEL_ROLES = {"FRONT_STAFF", "STORE_OWNER"}
 
@@ -163,6 +178,8 @@ def plan_status_change(current: str, requested: str, role: str) -> List[str]:
         return []
     if current in TERMINAL:
         raise DomainError(400, f"ออเดอร์สถานะ {legacy_status(current)} จบแล้ว ไม่สามารถเปลี่ยนสถานะได้")
+    if current in STATUS_ENDPOINT_EXITS and target not in STATUS_ENDPOINT_EXITS[current]:
+        raise DomainError(400, _GATE_HINT[current])
 
     if legacy and requested == "Ready":
         if role not in _READY_CHAIN_ROLES:

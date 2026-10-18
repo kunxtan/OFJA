@@ -262,16 +262,21 @@ export function OutOfStockModal({
         </p>
         {targetItem && (
           <div style={{ background: "#F8F8FA", borderRadius: "12px", padding: "10px 14px", marginTop: "10px", fontSize: "13px", textAlign: "left" }}>
-            <div>เมนูที่หมด: <b>{targetItem.ProductName}</b> ({Number(targetItem.UnitPrice || 0).toFixed(2)} ฿)</div>
+            {/* ร้านไม่ได้ระบุจาน = ไม่รู้ว่าจานไหนหมด : อย่าบอกว่าจานแรกหมด (ลูกค้าจะเปลี่ยนผิดจาน) */}
+            <div>{targetItem.ItemStatus === "OUT_OF_STOCK" ? "เมนูที่หมด" : "เมนูที่จะเปลี่ยน"}: <b>{targetItem.ProductName}</b> ({Number(targetItem.UnitPrice || 0).toFixed(2)} ฿)</div>
             {outOfStockOrder.CancelReason && <div style={{ color: COLORS.gray, marginTop: "4px" }}>เหตุผลจากร้าน: {outOfStockOrder.CancelReason}</div>}
             <div style={{ color: COLORS.gray, marginTop: "4px" }}>เมนูที่ถูกกว่า: คืนเงินส่วนต่างให้ • เมนูที่แพงกว่า: โอนส่วนต่างเพิ่มแล้วแนบสลิป</div>
           </div>
         )}
 
         <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "10px 14px", borderRadius: "12px", margin: "14px 0", fontSize: "14px", fontWeight: "800", border: `1px solid ${COLORS.red}` }}>
-          ⏱ กรุณาเลือกภายใน: <span style={{ fontSize: "18px", color: COLORS.red, fontWeight: "900" }}>{formatTimeLeft(timeLeft)}</span> นาที
+          {timeLeft > 0 ? (
+            <>⏱ กรุณาเลือกภายใน: <span style={{ fontSize: "18px", color: COLORS.red, fontWeight: "900" }}>{formatTimeLeft(timeLeft)}</span> นาที</>
+          ) : (
+            <>⏱ หมดเวลาเลือกเมนูแล้ว ระบบกำลังยกเลิกออเดอร์ให้</>
+          )}
           <div style={{ fontSize: "11px", fontWeight: "normal", marginTop: "2px", color: "#b91c1c" }}>
-            (ระบบจะยกเลิกและคืนเงินให้อัตโนมัติหากหมดเวลา)
+            (หมดเวลาแล้วระบบจะยกเลิกให้อัตโนมัติ และคุณรับเงินคืนได้ที่หน้าร้านโดยแจ้งเลขคิว)
           </div>
         </div>
 

@@ -1,6 +1,7 @@
 """ฟังก์ชันช่วย (pure) : เวลา, ข้อความ, ไฟล์รูป, ศูนย์อาหาร, สัญญา"""
 import base64
 import binascii
+import hashlib
 import os
 import re
 import uuid
@@ -95,6 +96,38 @@ def validate_phone(phone: Optional[str], required: bool = False) -> Optional[str
     return digits
 
 
+_DIGITS_RE = re.compile(r"^\d+$")
+
+
+def validate_payout(kind: Optional[str], bank: Optional[str], account_no: Optional[str],
+                    account_name: Optional[str]) -> dict:
+    """ข้อมูลรับเงินคืนแบบโอน : PROMPTPAY (เบอร์ 10 หลักขึ้นต้น 0 หรือเลขบัตรประชาชน 13 หลัก) หรือ BANK (ธนาคาร + เลขบัญชี 10–15 หลัก + ชื่อบัญชี)"""
+    kind = (kind or "").upper()
+    digits = re.sub(r"[\s-]", "", account_no or "")
+    name = (account_name or "").strip()
+    if kind == "PROMPTPAY":
+        if not _DIGITS_RE.match(digits) or not ((len(digits) == 10 and digits.startswith("0")) or len(digits) == 13):
+            raise DomainError(400, "พร้อมเพย์ต้องเป็นเบอร์โทร 10 หลัก (ขึ้นต้น 0) หรือเลขบัตรประชาชน 13 หลัก")
+        return {"kind": kind, "bank": None, "account_no": digits, "account_name": name[:100] or None}
+    if kind == "BANK":
+        bank = (bank or "").strip()
+        if not bank or len(bank) > 60:
+            raise DomainError(400, "กรุณาระบุชื่อธนาคาร")
+        if not _DIGITS_RE.match(digits) or not (10 <= len(digits) <= 15):
+            raise DomainError(400, "เลขบัญชีต้องเป็นตัวเลข 10–15 หลัก")
+        if not name:
+            raise DomainError(400, "กรุณาระบุชื่อบัญชี")
+        return {"kind": kind, "bank": bank, "account_no": digits, "account_name": name[:100]}
+    raise DomainError(400, "กรุณาเลือกพร้อมเพย์หรือบัญชีธนาคาร")
+
+
+def mask_account(value: Optional[str]) -> Optional[str]:
+    """เลขบัญชี/พร้อมเพย์ที่ปิดบางส่วน เหลือ 4 ตัวท้าย"""
+    if not value:
+        return None
+    return "x" * max(len(value) - 4, 0) + value[-4:]
+
+
 def validate_email(email: Optional[str]) -> Optional[str]:
     """อีเมลไม่บังคับ ; ว่าง = None ; ยาวไม่เกิน 100 (User.Email VARCHAR(100))"""
     email = (email or "").strip()
@@ -150,21 +183,28 @@ _MAGIC = {
 }
 
 
-def save_image(value: Optional[str], folder: str, upload_dir: Optional[str] = None) -> Optional[str]:
+def save_image(value: Optional[str], folder: str, upload_dir: Optional[str] = None, *,
+               new_only: bool = False) -> Optional[str]:
     """รับรูปจาก frontend แล้วคืน path ที่เก็บลง DB (VARCHAR 500)
 
     - data URL (base64)  -> ตรวจชนิด/ขนาด/magic bytes แล้วเขียนไฟล์ /uploads/<folder>/<uuid>.<ext>
-    - path /uploads/...  -> ส่งกลับเดิม (กรณีแก้ข้อมูลโดยไม่เปลี่ยนรูป)
+    - path /uploads/<folder>/... -> ส่งกลับเดิม (กรณีแก้ข้อมูลโดยไม่เปลี่ยนรูป) ; ต้องเป็นโฟลเดอร์เดียวกัน
+      (กันเอา path สลิป/รูปของคนอื่นมาผูก แล้วไปลบหรือใช้ซ้ำ)
     - URL https://...    -> ส่งกลับเดิมถ้ายาวไม่เกิน 500 (เช่นรูปโปรไฟล์ Google)
     - อย่างอื่น/ว่าง     -> None
+    new_only=True (สลิป / QR / หลักฐานการโอน) : รับเฉพาะรูปที่อัปโหลดใหม่ (data URL) เท่านั้น
     """
     if not value:
         return None
     value = value.strip()
-    if _UPLOAD_PATH_RE.match(value):
-        return value
-    if value.startswith("https://") and len(value) <= 500:
-        return value
+    if _UPLOAD_PATH_RE.match(value) or value.startswith("https://"):
+        if new_only:
+            raise DomainError(400, "กรุณาแนบรูปจากเครื่องใหม่ (ใช้ไฟล์ที่อยู่ในระบบแล้วไม่ได้)")
+        if value.startswith(f"/uploads/{folder}/"):
+            return value
+        if value.startswith("https://") and len(value) <= 500:
+            return value
+        raise DomainError(400, "รูปภาพไม่ถูกต้อง")
     m = _DATA_URL_RE.match(value)
     if not m:
         return None
@@ -188,6 +228,17 @@ def save_image(value: Optional[str], folder: str, upload_dir: Optional[str] = No
     with open(os.path.join(target_dir, name), "wb") as fh:
         fh.write(raw)
     return f"/uploads/{folder}/{name}"
+
+
+def image_digest(value: Optional[str]) -> Optional[str]:
+    """sha256 ของเนื้อรูปจาก data URL (ใช้ตรวจสลิปซ้ำ) ; ไม่ใช่ data URL = None"""
+    m = _DATA_URL_RE.match((value or "").strip())
+    if not m:
+        return None
+    try:
+        return hashlib.sha256(base64.b64decode(m.group(2), validate=False)).hexdigest()
+    except (binascii.Error, ValueError):
+        return None
 
 
 def delete_upload(path: Optional[str], upload_dir: Optional[str] = None) -> bool:

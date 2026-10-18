@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startPolling } from '../utils/polling';
 import Cropper from 'react-easy-crop';
 import * as XLSX from 'xlsx';
+import RefundLog from './RefundLog';
 // ===== ตั้งค่าหลักของหน้า Executive =====
 const ORDER_TIME_IS_UTC = false;
 const MAX_IMAGE_MB = 5;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const REFRESH_MS = 2000;
+const REFRESH_MS = 15000; // เดิม 2 วิ (orders 5000 แถว + อีก 4 endpoint ทุก 2 วิ = server/DB โหลดหนัก)
 const FOOD_CATEGORIES = [
     'อาหารจานเดียว',
     'ก๋วยเตี๋ยว / เส้น',
@@ -351,7 +353,9 @@ const ICON_PATHS = {
     refresh: 'M4 12a8 8 0 0113.7-5.7L20 8M20 4v4h-4M20 12a8 8 0 01-13.7 5.7L4 16M4 20v-4h4',
     settings: 'M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.7 1.7 0 002.5 1.1c1.6-.9 3.4.8 2.4 2.4a1.7 1.7 0 001.1 2.6c1.7.4 1.7 2.9 0 3.3a1.7 1.7 0 00-1.1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 00-2.5 1c-.4 1.8-2.9 1.8-3.4 0a1.7 1.7 0 00-2.5-1c-1.6.9-3.3-.9-2.4-2.4a1.7 1.7 0 00-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 001-2.6c-.9-1.6.8-3.3 2.4-2.4a1.7 1.7 0 002.5-1.1zM9 12a3 3 0 106 0 3 3 0 00-6 0',
     logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3',
+    filter: 'M4 5h16l-6 7.5V18l-4 2v-7.5z',
     history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2',
+    refund: 'M3 12a9 9 0 103-6.7M3 4v5h5M12 8v8M14.5 9.5c-.4-.9-1.4-1.5-2.5-1.5-1.4 0-2.5.8-2.5 2 0 2.6 5 1.4 5 4 0 1.2-1.1 2-2.5 2-1.1 0-2.1-.6-2.5-1.5',
     arrowRight: 'M5 12h14M13 6l6 6-6 6',
     arrowUp: 'M7 17L17 7M7 7h10v10',
     arrowDown: 'M7 7l10 10M17 7v10H7'
@@ -383,7 +387,9 @@ function saveBlob(blob, filename) {
 }
 function exportCsv(filename, rows) {
     const escape = (v) => {
-        const s = v === null || v === undefined ? '' : String(v);
+        let s = v === null || v === undefined ? '' : String(v);
+        // ข้อความที่ขึ้นต้นด้วย = + - @ จะถูก Excel ตีเป็นสูตร : ใส่ ' นำหน้า (ตัวเลขติดลบไม่แตะ)
+        if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const csv = rows.map((r) => r.map(escape).join(',')).join('\r\n');
@@ -469,6 +475,23 @@ function CardIconBox({ icon, background, color = '#FFFFFF', size = 44 }) {
       <Icon name={icon} size={22} color={color}/>
     </div>);
 }
+// เตือนอัตรายกเลิก : เกิน 10% (เท่ากับ 10 ไม่เตือน) ; ไม่มีออเดอร์ = N/A ไม่เตือน
+const CANCEL_ALERT_RATE = 10;
+const isCancelAlert = (rate) => rate !== null && rate !== undefined && rate > CANCEL_ALERT_RATE;
+// แถบเตือนบรรทัดเดียว : danger = มีปัญหาแล้ว (แดง) · warn = เตือนให้เตรียมตัว (เหลือง)
+function AlertBanner({ tone = 'danger', children, style }) {
+    const color = tone === 'warn' ? '#9A6400' : T.down;
+    return (<div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px 14px', borderRadius: T.radiusMd, background: tone === 'warn' ? T.accentSoft : T.redSoft, color, fontSize: '13px', fontWeight: 600, lineHeight: 1.6, ...style }}>
+      <Icon name="alert" size={17} color={color} style={{ marginTop: '2px' }}/>
+      <div style={{ minWidth: 0 }}>{children}</div>
+    </div>);
+}
+// สัญญาใกล้หมด : ยังใช้ได้อยู่ (ACTIVE) และเหลือไม่เกิน 30 วัน (ใช้ทั้ง Dashboard / จัดการร้าน / ยอดขายรายร้าน / ติดตามสัญญา)
+const CONTRACT_SOON_DAYS = 30;
+const isContractSoon = (store) => store?.ContractState === 'ACTIVE'
+    && store.ContractDaysLeft !== null && store.ContractDaysLeft !== undefined
+    && Number(store.ContractDaysLeft) <= CONTRACT_SOON_DAYS;
+const contractLeftLabel = (days) => (Number(days) === 0 ? 'หมดคืนนี้' : `เหลือ ${days} วัน`);
 function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hint, hasPreviousData = null, highlight, variant, icon = 'trend', tone = 'blue', size = 'md', invertDelta = false }) {
     const hasDelta = delta !== null && delta !== undefined;
     const showComparison = hasDelta;
@@ -1043,22 +1066,20 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         loadFoodCourt(true);
         loadNotifications(true);
         loadContractNotifications(true);
-        const timer = setInterval(() => {
-            loadStores(true);
-            loadOrders(true);
-            loadFoodCourt(true);
-            loadNotifications(true);
-            loadContractNotifications(true);
-        }, REFRESH_MS);
-        return () => clearInterval(timer);
+        return startPolling(() => Promise.allSettled([
+            loadStores(true),
+            loadOrders(true),
+            loadFoodCourt(true),
+            loadNotifications(true),
+            loadContractNotifications(true)
+        ]), REFRESH_MS);
     }, [loadStores, loadOrders, loadFoodCourt, loadNotifications, loadContractNotifications]);
     useEffect(() => {
         if (!stores.length)
             return;
 
         loadIssueAlerts();
-        const issueTimer = setInterval(loadIssueAlerts, 30000);
-        return () => clearInterval(issueTimer);
+        return startPolling(loadIssueAlerts, 30000);
     }, [stores, loadIssueAlerts]);
 
     useEffect(() => {
@@ -1088,7 +1109,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             return;
         setSwitchingCourt(true);
         try {
-            const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive`, { method: 'PUT' });
+            const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive&open=${!closing}`, { method: 'PUT' });
             setFoodCourtOpen(Boolean(data?.is_open));
             setFoodCourtMode(data?.mode || 'AUTO');
 
@@ -1272,6 +1293,7 @@ const returnFoodCourtToAuto = async () => {
         { id: 'store-accounts', icon: 'account', label: 'Store Accounts', caption: 'บัญชีร้านค้า' },
         { id: 'customer-info', icon: 'search', label: 'User Information', caption: 'ข้อมูลผู้ใช้' },
         { id: 'contract-tracking', icon: 'calendar', label: 'Contract Tracking', caption: 'ติดตามสัญญา' },
+        { id: 'refund-log', icon: 'refund', label: 'Refund Log', caption: 'ประวัติการคืนเงิน' },
         { id: 'audit-history', icon: 'history', label: 'Audit Log', caption: 'ประวัติการดำเนินการ' }
     ];
     // ลบได้ป้ะ
@@ -1309,6 +1331,11 @@ const returnFoodCourtToAuto = async () => {
             title: 'ติดตามระยะเวลาสัญญา',
             subtitle: 'ตรวจสอบวันเริ่มสัญญา วันสิ้นสุดสัญญา และร้านค้าที่ใกล้หมดอายุ',
             searchPlaceholder: 'ค้นหาร้านค้า...'
+        },
+        'refund-log': {
+            title: 'ประวัติการคืนเงิน',
+            subtitle: 'เงินคืนที่รอลูกค้ามารับที่ร้าน และที่ร้านคืนแล้ว (ไม่นับเป็นรายได้)',
+            searchPlaceholder: ''
         },
         'audit-history': {
             title: 'ประวัติการดำเนินการ',
@@ -1568,6 +1595,7 @@ const returnFoodCourtToAuto = async () => {
               {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx}/>}
               {activeMenu === 'customer-info' && <CustomerInfoPage ctx={ctx}/>}
               {activeMenu === 'contract-tracking' && <ContractTrackingPage ctx={ctx}/>}
+              {activeMenu === 'refund-log' && <RefundLog apiBase={API} showStore pollMs={15000} />}
               {activeMenu === 'audit-history' && <AuditHistoryPage ctx={ctx}/>}
               {activeMenu === 'issue-reports' && <IssueReportsPage ctx={ctx}/>}
             </div>
@@ -1714,7 +1742,7 @@ return {
 
     }, [orders, stores, anchor, days ,  customRange, customStart, customEnd]);
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
-const periodLabel = customRange ? effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || (effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}`) : days === 1? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
 const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบวันก่อนหน้า' : `เทียบ ${days} วันก่อนหน้า`;
     const visibleStoreRows = report.storeRows;
     const issueBounds = customRange
@@ -1738,10 +1766,12 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         suspended: stores.filter((s) => s.IsSuspended).length,
         total: stores.length
     }), [stores]);
-    const watchStores = report.storeRows
-        .filter((s) => s.IsSuspended || (s.delta !== null && s.delta <= -15) || s.cancelRate >= 10)
-        .sort((a, b) => (Number(b.IsSuspended) - Number(a.IsSuspended)) || (b.cancelRate - a.cancelRate) || ((a.delta ?? 0) - (b.delta ?? 0)))
-        .slice(0, 4);
+    // สัญญาที่ต้องดู (แถบเหลืองบนสุดของ Dashboard)
+    const contractSoonStores = stores.filter(isContractSoon).sort((a, b) => a.ContractDaysLeft - b.ContractDaysLeft);
+    const contractExpiredStores = stores.filter((s) => s.ContractState === 'EXPIRED');
+    const cancelAlertStores = report.storeRows
+        .filter((s) => isCancelAlert(s.cancelRate))
+        .sort((a, b) => b.cancelRate - a.cancelRate);
     const csvRows = () => {
     const summaryRow = [
         'สรุปภาพรวม',
@@ -1791,7 +1821,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         const summary = summarize(bucketOrders);
 
         return [
-            bucket.label,
+            bucket.key,  // CSV ใช้วันที่เต็ม 2026-10-01 : Excel ทุกภาษาอ่านถูก (01/10 จะถูกแปลงเป็น 10-Jan ใน Excel แบบเดือน/วัน)
             summary.completedCount,
             summary.cancelledCount,
             Math.round(summary.grossSales),
@@ -1871,6 +1901,15 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
     }
 };
     return (<>
+      {(contractSoonStores.length > 0 || contractExpiredStores.length > 0) && (<AlertBanner tone="warn" style={{ marginBottom: '16px' }}>
+        {contractSoonStores.length > 0 && <>สัญญาใกล้หมด {money(contractSoonStores.length)} ร้าน ({contractSoonStores.map((s) => `${s.StoreName} ${contractLeftLabel(s.ContractDaysLeft)}`).join(', ')})</>}
+        {contractSoonStores.length > 0 && contractExpiredStores.length > 0 && ' · '}
+        {contractExpiredStores.length > 0 && <>หมดสัญญาแล้ว {money(contractExpiredStores.length)} ร้าน ({contractExpiredStores.map((s) => s.StoreName).join(', ')})</>}
+        {' — '}
+        <button type="button" onClick={() => navigateTo('contract-tracking')} style={{ border: 'none', background: 'transparent', padding: 0, color: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
+          ดูหน้าติดตามสัญญา →
+        </button>
+      </AlertBanner>)}
 
       <div
         className="of-control-status-grid"
@@ -2104,6 +2143,15 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
       </div>
 
       <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
+        {cancelAlertStores.length > 0 && (<AlertBanner style={{ marginBottom: '12px' }}>
+          {money(cancelAlertStores.length)} ร้านอัตรายกเลิกเกิน {CANCEL_ALERT_RATE}% ในช่วงนี้:{' '}
+          {cancelAlertStores.map((s, i) => (<span key={s.StoreId}>
+            {i > 0 && ', '}
+            <button type="button" onClick={() => ctx.navigateTo('store-sales', s.StoreId)} style={{ border: 'none', background: 'transparent', padding: 0, color: T.down, fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
+              {s.StoreName}
+            </button> ({s.cancelRate.toFixed(2)}%)
+          </span>))}
+        </AlertBanner>)}
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
             <thead>
@@ -2142,7 +2190,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                       </span>)}
                   </td>
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
-                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}</td>
+                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : isCancelAlert(s.cancelRate) ? <Badge tone="danger">{s.cancelRate.toFixed(2)}%</Badge> : `${s.cancelRate.toFixed(1)}%`}</td>
                   <td style={tdStyle}>
                     <Badge tone={s.ContractState === 'EXPIRED' || s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
                       {s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
@@ -2208,7 +2256,6 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                 <h3 style={{ ...h3Style, margin: 0 }}>รายงานภาพรวมศูนย์อาหาร</h3>
                 <p style={{ ...captionStyle, marginTop: '5px' }}>{periodLabel}</p>
               </div>
-              <Badge tone="neutral">{exportPreview === 'xlsx' ? 'XLSX · ไฟล์ Excel' : 'CSV · เปิดต่อใน Excel ได้'}</Badge>
             </div>
           </div>
           <div style={{ padding: '16px 20px' }}>
@@ -2874,15 +2921,49 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
         </>)}
     </Card>);
 }
+// ===== เลือกเป็นเดือน (ใช้กับ Dashboard + ยอดขายรายร้าน และไฟล์ CSV/XLSX ที่ export ตามช่วงนี้) =====
+const TH_MONTH_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+// เดือน m (1–12) ของปี y -> [วันที่ 1, วันสุดท้าย] ; เดือนปัจจุบันตัดที่วันนี้
+function monthRange(y, m) {
+    const last = toISODate(new Date(y, m, 0));
+    const today = todayISO();
+    return [`${y}-${pad2(m)}-01`, last > today ? today : last];
+}
+// ช่วงวันที่ตรงกับ "ทั้งเดือน" -> "เดือนธันวาคม 2025" ; ไม่ใช่ -> ''
+function monthLabelOf(startISO, endISO) {
+    if (!startISO || !endISO || startISO.slice(8) !== '01' || startISO.slice(0, 7) !== endISO.slice(0, 7)) return '';
+    const [y, m] = startISO.split('-').map(Number);
+    const [, end] = monthRange(y, m);
+    if (endISO !== end) return '';
+    const label = `เดือน${TH_MONTH_FULL[m - 1]} ${y}`;
+    return end === todayISO() && end !== toISODate(new Date(y, m, 0)) ? `${label} (ถึงวันนี้)` : label;
+}
 function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom, startDate, setStartDate, endDate, setEndDate }) {
-    const choosePreset = (value) => { setCustom(false); setDays(value); };
+    const [monthMode, setMonthMode] = useState(() => custom && Boolean(monthLabelOf(startDate, endDate)));
+    const choosePreset = (value) => { setMonthMode(false); setCustom(false); setDays(value); };
+    const chooseMonth = (y, m) => { const [start, end] = monthRange(y, m); setStartDate(start); setEndDate(end); };
+    const nowY = Number(todayISO().slice(0, 4));
+    const nowM = Number(todayISO().slice(5, 7));
+    const pickY = Number(startDate.slice(0, 4)) || nowY;
+    const pickM = Number(startDate.slice(5, 7)) || nowM;
+    const tab = (active) => ({ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: active ? T.surface : 'transparent', color: active ? T.primary : T.muted, boxShadow: active ? '0 1px 3px rgba(18,25,38,.12)' : 'none' });
+    const monthSelect = { border: `1px solid ${T.line}`, borderRadius: '7px', background: '#FFFFFF', color: T.ink, fontSize: '12.5px', fontFamily: FONT_STACK, padding: '8px 9px' };
     const inputStyle = { ...dateInputStyle, width: '145px' };
     return (<div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', background: T.primarySoft, padding: '4px', borderRadius: T.radiusMd }}>
         {[1, 7, 14, 30].map((v) => (<button key={v} type="button" onClick={() => choosePreset(v)} style={{ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: !custom && days === v ? T.surface : 'transparent', color: !custom && days === v ? T.primary : T.muted, boxShadow: !custom && days === v ? '0 1px 3px rgba(18,25,38,.12)' : 'none' }}>{v === 1 ? 'วันนี้' : `${v} วัน`}</button>))}
-        <button type="button" onClick={() => setCustom(true)} style={{ padding: '7px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', border: 'none', background: custom ? T.surface : 'transparent', color: custom ? T.primary : T.muted, boxShadow: custom ? '0 1px 3px rgba(18,25,38,.12)' : 'none' }}>กำหนดเอง</button>
+                <button type="button" onClick={() => { setMonthMode(true); setCustom(true); chooseMonth(nowY, nowM); }} style={tab(custom && monthMode)}>รายเดือน</button>
+        <button type="button" onClick={() => { setMonthMode(false); setCustom(true); }} style={tab(custom && !monthMode)}>กำหนดเอง</button>
       </div>
-      {custom ? (<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface, boxShadow: '0 1px 2px rgba(42,44,65,0.03)' }}>
+      {custom && monthMode ? (<div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface }}>
+        <Icon name="calendar" size={16} color={T.muted}/>
+        <select value={pickM} onChange={(e) => chooseMonth(pickY, Number(e.target.value))} style={monthSelect} aria-label="เลือกเดือน">
+          {TH_MONTH_FULL.map((name, i) => (<option key={name} value={i + 1} disabled={pickY === nowY && i + 1 > nowM}>{name}</option>))}
+        </select>
+        <select value={pickY} onChange={(e) => { const y = Number(e.target.value); chooseMonth(y, y === nowY ? Math.min(pickM, nowM) : pickM); }} style={monthSelect} aria-label="เลือกปี">
+          {[nowY, nowY - 1, nowY - 2].map((y) => (<option key={y} value={y}>{y}</option>))}
+        </select>
+      </div>) : custom ? (<div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', padding: '8px 10px', border: `1px solid ${T.line}`, borderRadius: T.radiusMd, background: T.surface, boxShadow: '0 1px 2px rgba(42,44,65,0.03)' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: T.text, fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' }}>
           ตั้งแต่วันที่
           <input type="date" value={startDate} max={endDate || todayISO()} onChange={(e) => { const value = e.target.value || todayISO(); setStartDate(value); if (value > endDate) setEndDate(value); }} style={{ ...inputStyle, width: '136px', minWidth: '136px', boxSizing: 'border-box', padding: '8px 9px', border: `1px solid ${T.line}`, borderRadius: '7px', background: '#FFFFFF', color: T.ink, fontSize: '12.5px' }} aria-label="ตั้งแต่วันที่" />
@@ -2970,7 +3051,7 @@ function StoreSalesPage({ ctx }) {
             return { label: `หมดสัญญาแล้ว ${Math.abs(days)} วัน`, tone: 'danger', detail: `หมดเมื่อ ${endText} 23:59 น. กดเพื่อเปิดสัญญารอบใหม่` };
         if (days === 0)
             return { label: 'หมดคืนนี้ 23:59 น.', tone: 'danger', detail: 'ถ้าร้านต่อสัญญาแล้ว ให้แก้วันสิ้นสุดก่อนเวลานี้' };
-        if (days <= 30)
+        if (days <= CONTRACT_SOON_DAYS)
             return { label: `เหลือ ${days} วัน`, tone: 'warn', detail: `ใกล้หมดสัญญา สิ้นสุด ${endText} 23:59 น.` };
         return { label: `เหลือ ${days} วัน`, tone: 'ok', detail: `สัญญามีผลถึง ${endText} 23:59 น.` };
     };
@@ -3010,7 +3091,7 @@ function StoreSalesPage({ ctx }) {
     const effectiveStart = customRange ? customStart : toISODate(new Date(new Date(`${anchor}T00:00:00`).setDate(new Date(`${anchor}T00:00:00`).getDate() - days + 1)));
     const effectiveEnd = customRange ? customEnd : anchor;
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
-    const periodLabel = customRange ? `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+    const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1
     const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
     const exportDateBounds = customRange
     ? customPeriodBounds(customStart, customEnd)
@@ -3047,7 +3128,8 @@ function StoreSalesPage({ ctx }) {
         'ยอดขายสุทธิ (บาท)',
         'อัตราการยกเลิก'],
     ...salesTimelineRows.map((row) => [
-        row.label,
+        (customRange ? effectiveDays : days) === 1 ? 
+        row.label : row.key,  // รายวัน: วันที่เต็ม 2026-10-01 กัน Excel สลับวัน/เดือน
         row.completedCount,
         row.cancelledCount,
         Math.round(row.grossSales),
@@ -3264,6 +3346,10 @@ function StoreSalesPage({ ctx }) {
             </div>
           </Card>
 
+          {isCancelAlert(report.now.cancelRate) && (<AlertBanner style={{ marginBottom: '16px' }}>
+            อัตรายกเลิกของร้านนี้ {report.now.cancelRate.toFixed(2)}% เกินเกณฑ์ {CANCEL_ALERT_RATE}% ในช่วงที่เลือก ({money(report.now.cancelledCount)} จาก {money(report.now.cancelledCount + report.now.completedCount)} ออเดอร์)
+          </AlertBanner>)}
+
           <div className="of-kpi-hero">
             <KpiCard label="ยอดขายสุทธิ" value={money(report.now.sales)} unit="บาท" delta={changePct(report.now.sales, report.before.sales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} highlight icon="trend"/>
             <KpiCard label="ออเดอร์สำเร็จ" value={money(report.now.completedCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount, report.before.completedCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} variant="blue" icon="check"/>
@@ -3431,6 +3517,15 @@ const EMAIL_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@(?:[a-zA-Z0-9](?
 // รหัสผ่าน: ต้องตรงกับ backend (config.MIN_PASSWORD_LENGTH = 8 ; bcrypt รับได้ไม่เกิน 72)
 const STORE_PASSWORD_MIN = 8;
 const STORE_PASSWORD_MAX = 72;
+// เบอร์ร้าน: ตัวเลข 9–10 หลัก ขึ้นต้นด้วย 0 (พิมพ์ขีด/เว้นวรรคมาได้) -> ข้อความผิด หรือ '' ถ้าถูก
+// ใช้ทั้งฟอร์มเพิ่มร้าน และตอนแก้เบอร์ในหน้าดู/แก้ไขร้าน (backend ตรวจซ้ำด้วย utils.validate_phone)
+function storePhoneError(value) {
+    const phone = String(value || '').replace(/[\s-]/g, '');
+    if (!phone) return 'กรุณากรอกเบอร์โทรติดต่อ';
+    if (!/^0\d{8,9}$/.test(phone)) return 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก และขึ้นต้นด้วย 0';
+    if (looksLikeGarbage(phone)) return 'เบอร์โทรนี้ไม่ถูกต้อง';
+    return '';
+}
 function validateStoreForm(form, mode = 'create') {
     const errors = {};
     if (form.queueCode && !/^[A-Za-z]{1,2}$/.test(form.queueCode.trim()))
@@ -3459,15 +3554,10 @@ function validateStoreForm(form, mode = 'create') {
     else if (/^[\d\s\-_.]+$/.test(contactName) || looksLikeGarbage(contactName)) {
         errors.contactName = 'กรุณากรอกชื่อผู้ติดต่อจริง ไม่ใช่ตัวเลขหรือข้อความมั่ว';
     }
-    const phone = form.phone.replace(/[\s-]/g, '');
-    if (!phone)
-        errors.phone = 'กรุณากรอกเบอร์โทรติดต่อ';
-    else if (!/^0\d{8,9}$/.test(phone)) {
-        errors.phone = 'เบอร์โทรต้องเป็นตัวเลข 9–10 หลัก และขึ้นต้นด้วย 0';
-    }
-    else if (looksLikeGarbage(phone)) {
-        errors.phone = 'เบอร์โทรนี้ไม่ถูกต้อง';
-    }
+        const phoneError = storePhoneError(form.phone);
+    if (phoneError)
+        errors.phone = phoneError;
+
         // LINE และอีเมลไม่บังคับ : ตรวจเฉพาะตอนกรอกมา
     const lineId = form.lineId.trim();
     if (lineId) {
@@ -4004,8 +4094,16 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         }
     };
 
-    const saveStoreField = async (key) => {
-        const next = value.trim();
+        const saveStoreField = async (key) => {
+        let next = value.trim();
+        if (key === 'ContactPhone') {
+            const phoneError = storePhoneError(next);
+            if (phoneError) {
+                pushToast(phoneError, 'error');
+                return;
+            }
+            next = next.replace(/\D/g, '');
+        }
         const current = String(storeValue(key) || '').trim();
         if (next === current) {
             setEditing(null);
@@ -4060,6 +4158,8 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
                                 {!FOOD_CATEGORIES.includes(value) && <option value={value}>{value || '— เลือกประเภทอาหาร —'}</option>}
                                 {FOOD_CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
                             </select>
+                                                ) : key === 'ContactPhone' ? (
+                            <input autoFocus value={value} inputMode="tel" maxLength={12} placeholder="081-234-5678" onChange={(e) => setValue(e.target.value.replace(/[^\d-]/g, ''))} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
                         ) : (
                             <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
                         )}
@@ -4480,7 +4580,7 @@ function StoreManagePage({ ctx }) {
         if (!ok)
             return;
         try {
-            await callApi(`${API}/api/stores/${store.StoreId}/toggle?performed_by=Executive`, { method: 'PUT' });
+            await callApi(`${API}/api/stores/${store.StoreId}/toggle?performed_by=Executive&open=${!closing}`, { method: 'PUT' });
             pushToast(`${closing ? 'ปิด' : 'เปิด'}ร้าน ${store.StoreName} แล้ว`);
             await reloadStores();
         }
@@ -4514,7 +4614,7 @@ function StoreManagePage({ ctx }) {
         const ok = await ask({
             title: 'ลบร้านค้าออกจากระบบ',
             message: `ยืนยันลบร้าน "${store.StoreName}" ออกจากระบบใช่หรือไม่`,
-            warning: 'เมนูของร้านจะถูกลบไปด้วย และถ้าร้านนี้เคยมีออเดอร์ ระบบจะไม่ยอมให้ลบ (ให้ใช้ระงับสิทธิ์แทน)',
+            warning: 'ร้านและเมนูจะหายจากหน้าลูกค้า แต่ประวัติออเดอร์และยอดขายยังเก็บไว้ ; ถ้ายังมีออเดอร์หรือเงินคืนลูกค้าค้างอยู่ ระบบจะไม่ยอมให้ลบ (ถ้าแค่อยากหยุดขายชั่วคราว ให้ใช้ระงับสิทธิ์แทน)',
             confirmText: 'ลบร้านค้า',
             danger: true
         });
@@ -4597,7 +4697,10 @@ function StoreManagePage({ ctx }) {
                                                {s.ContractState === 'EXPIRED'
                             ? <Badge tone="danger">{s.IsClearingOrders ? 'หมดสัญญา · เคลียร์ออเดอร์' : 'หมดสัญญา'}</Badge>
                             : <Badge tone={s.IsOpen ? 'ok' : 'neutral'}>{s.IsOpen ? 'เปิด' : 'ปิด'}</Badge>}
-                        {s.ContractState === 'UPCOMING' && <Badge tone="neutral">ยังไม่เริ่มสัญญา</Badge>}
+                         {s.ContractState === 'UPCOMING' && <Badge tone="neutral">ยังไม่เริ่มสัญญา</Badge>}
+                        {isContractSoon(s) && (<button type="button" onClick={() => navigateTo('contract-tracking', s.StoreId)} title="สัญญาใกล้หมด กดเพื่อไปจัดการสัญญา" style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: FONT_STACK }}>
+                          <Badge tone="warn">{contractLeftLabel(s.ContractDaysLeft)}</Badge>
+                        </button>)}
                         {s.ContractState === 'NONE' && <Badge tone="warn">ไม่มีสัญญา</Badge>}
                         {Boolean(s.IsSuspended) && <Badge tone="danger">ระงับสิทธิ์</Badge>}
                       </div>
@@ -5198,38 +5301,205 @@ function ContractTrackingPage({ ctx }) {
 // ค้นหา/กรองที่ backend (ค้นได้ทั้งตาราง) แล้วโหลดทีละ AUDIT_PAGE_SIZE รายการ กด "โหลดเพิ่ม" เพื่อดูเก่ากว่า
 const AUDIT_PAGE_SIZE = 100;
 // ชื่อภาษาไทยของการดำเนินการ (ใช้ทั้งแสดงผลและแปลงคำค้นภาษาไทยเป็น ActionCode ส่งให้ backend)
+
 const AUDIT_VERBS = {
+    // ออเดอร์
     CREATE_ORDER: 'สร้างออเดอร์',
     CANCEL_ORDER: 'ยกเลิกออเดอร์',
     CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
     CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
     UPDATE_STATUS: 'เปลี่ยนสถานะออเดอร์',
+    CUSTOMER_CHANGE_ITEM: 'ลูกค้าเปลี่ยนเมนูในออเดอร์',
+    LATE_PICKUP: 'ลูกค้าแจ้งว่าจะมารับช้า',
+    PICKUP_REMINDER: 'ระบบเตือนลูกค้าให้มารับอาหาร',
     RECALL_QUEUE: 'เรียกคิวซ้ำ',
     PRINT_ORDER: 'พิมพ์ใบคิว',
     REPRINT_ORDER: 'พิมพ์ใบคิวซ้ำ',
+    PRINT_SKIP: 'ข้ามการพิมพ์ใบคิว',
+    // การชำระเงิน
     VERIFY_SLIP_APPROVE: 'อนุมัติสลิปชำระเงิน',
     VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปชำระเงิน',
+    UPLOAD_TOP_UP_SLIP: 'ลูกค้าส่งสลิปโอนส่วนต่าง',
+    VERIFY_TOP_UP_APPROVE: 'อนุมัติสลิปโอนส่วนต่าง',
+    VERIFY_TOP_UP_REJECT: 'ปฏิเสธสลิปโอนส่วนต่าง',
+    REFUND_DONE: 'คืนเงินให้ลูกค้าแล้ว',
+    REFUND_PAYOUT_SET: 'ลูกค้าเลือกวิธีรับเงินคืน',
+    REFUND_PAYOUT_VIEW: 'เจ้าของร้านเปิดดูบัญชีรับเงินคืน',
+    // ร้านค้า / สัญญา
     CREATE_STORE: 'เพิ่มร้านค้า',
     UPDATE_STORE: 'แก้ไขข้อมูลร้าน',
     DELETE_STORE: 'ลบร้านค้า',
+    AUTO_DELETE_STORE: 'ระบบลบร้านค้าอัตโนมัติ',
     OPEN_STORE: 'เปิดร้าน',
     CLOSE_STORE: 'ปิดร้าน',
     SUSPEND_STORE: 'ระงับร้าน',
     UNSUSPEND_STORE: 'ปลดระงับร้าน',
+    RENEW_CONTRACT: 'ต่อสัญญา',
+    CONTRACT_EXTEND: 'ขยายวันสิ้นสุดสัญญา',
+    CONTRACT_SHORTEN: 'ลดวันสิ้นสุดสัญญา',
+    CONTRACT_END_BACKDATED: 'ตัดสัญญาย้อนหลัง',
+    CONTRACT_RESTART: 'เปิดสัญญารอบใหม่',
+    // เมนู
+    CREATE_PRODUCT: 'เพิ่มเมนู',
+    UPDATE_PRODUCT: 'แก้ไขเมนู',
+    PRICE_UPDATE: 'เปลี่ยนราคาเมนู',
+    DELETE_PRODUCT: 'ลบเมนู',
+    OUT_OF_STOCK: 'ตั้งเมนูเป็นของหมด',
+    BACK_IN_STOCK: 'เมนูกลับมามีขาย',
+    OUT_OF_STOCK_NOTIFY: 'แจ้งลูกค้าว่าเมนูหมด',
+    // บัญชีผู้ใช้
     LOGIN: 'เข้าสู่ระบบ',
     LOGIN_FAIL: 'เข้าสู่ระบบไม่สำเร็จ',
-    UPDATE_FOOD_COURT_SCHEDULE: 'เปลี่ยนเวลาเปิด–ปิดศูนย์อาหาร'
+    ACCOUNT_LOCKED: 'บัญชีถูกล็อกชั่วคราว',
+    PASSWORD_CHANGE: 'เปลี่ยนรหัสผ่านของตัวเอง',
+    PASSWORD_RESET: 'ตั้งรหัสผ่านใหม่ให้ผู้ใช้',
+    CREATE_STAFF: 'เพิ่มพนักงาน',
+    UPDATE_STAFF: 'แก้ไขข้อมูลพนักงาน',
+    ACTIVATE_STAFF: 'เปิดใช้งานบัญชีพนักงาน',
+    DEACTIVATE_STAFF: 'ปิดใช้งานบัญชีพนักงาน',
+    RESET_STAFF_PASSWORD: 'ตั้งรหัสผ่านใหม่ให้พนักงาน',
+    DELETE_STAFF: 'ลบพนักงาน',
+    ERASE_STAFF: 'ลบข้อมูลพนักงานถาวร',
+    CREATE_STORE_ACCOUNT: 'สร้างบัญชีเจ้าของร้าน',
+    UPDATE_STORE_ACCOUNT: 'แก้ไขบัญชีเจ้าของร้าน',
+    DELETE_STORE_ACCOUNT: 'ลบบัญชีเจ้าของร้าน',
+    // ศูนย์อาหาร / รายงานปัญหา
+    OPEN_FOOD_COURT: 'เปิดศูนย์อาหาร (สั่งเอง)',
+    CLOSE_FOOD_COURT: 'ปิดศูนย์อาหาร (สั่งเอง)',
+    FOOD_COURT_AUTO_MODE: 'กลับไปเปิด–ปิดศูนย์อาหารตามเวลาอัตโนมัติ',
+    UPDATE_FOOD_COURT_SCHEDULE: 'เปลี่ยนเวลาเปิด–ปิดศูนย์อาหาร',
+    CREATE_ISSUE: 'ลูกค้าแจ้งปัญหา',
+    UPDATE_ISSUE: 'อัปเดตรายงานปัญหา'
 };
+
 const auditCodesMatching = (keyword) => Object.keys(AUDIT_VERBS)
     .filter((code) => AUDIT_VERBS[code].toLowerCase().includes(keyword));
+// กลุ่มของการกระทำ : ต้องตรงกับ _AUDIT_GROUPS ใน backend/routers/reports.py (เช็คตามลำดับ กลุ่มแรกที่ตรงชนะ)
+const AUDIT_GROUP_WORDS = [
+    ['store', ['STORE', 'SUSPEND']],
+    ['account', ['ACCOUNT', 'USER', 'STAFF', 'PASSWORD']],
+    ['payment', ['SLIP', 'PAYMENT', 'REFUND']],
+    ['order', ['ORDER', 'CANCEL', 'STATUS', 'QUEUE', 'PRINT']]
+];
+const AUDIT_GROUP_META = {
+    store: { label: 'ร้านค้า', bg: T.primarySoft, color: T.primaryDark },
+    account: { label: 'บัญชีผู้ใช้', bg: T.deepSoft, color: T.deep },
+    payment: { label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark },
+    order: { label: 'ออเดอร์', bg: T.greenSoft, color: T.up },
+    other: { label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text }
+};
+// ตัวกรองหน้า Audit Log : ชิปกลุ่ม + ช่องเลือกการกระทำ ทรงเดียวกัน (มนสุด สูง 36px)
+const auditChipStyle = (active) => ({
+    display: 'inline-flex', alignItems: 'center', gap: '7px', height: '36px', boxSizing: 'border-box',
+    border: `1px solid ${active ? T.primary : T.line}`, backgroundColor: active ? T.primarySoft : T.surface,
+    color: active ? T.primaryDark : T.text, borderRadius: '999px', padding: '0 14px',
+    fontSize: '12.5px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', whiteSpace: 'nowrap',
+    transition: 'background .15s ease, border-color .15s ease'
+});
+const auditActionSelectStyle = (active) => ({
+    ...auditChipStyle(active), appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none', outline: 'none',
+    minWidth: '210px', paddingLeft: '36px', paddingRight: '36px',
+    backgroundImage: active ? 'none' : SELECT_CHEVRON, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 14px center'
+});
+const auditGroupOf = (action) => {
+    const key = String(action || '').toUpperCase();
+    return AUDIT_GROUP_WORDS.find(([, words]) => words.some((word) => key.includes(word)))?.[0] || 'other';
+};
+
+// ===== รายละเอียดภาษาไทย : backend ส่ง Details มาเป็น `ชนิด รหัส {JSON}` (เช่น `Product 12 {"name":"ข้าวมันไก่"}`)
+// ดึง JSON ท้ายข้อความมาแต่งเป็นประโยค ; รหัสที่ไม่รู้จักแสดงข้อความเดิม
+const AUDIT_ORDER_STATUS_TH = {
+    VERIFYING_SLIP: 'รอตรวจสลิป', PENDING: 'รอร้านรับออเดอร์', COOKING: 'กำลังทำ', COOKED: 'ทำเสร็จแล้ว',
+    READY: 'เรียกคิวแล้ว', COMPLETED: 'รับอาหารแล้ว', PENDING_CANCELLATION: 'รออนุมัติยกเลิก',
+    AWAITING_TOP_UP: 'รอโอนส่วนต่าง', CANCELLED: 'ยกเลิก', NO_SHOW: 'ไม่มารับอาหาร'
+};
+const AUDIT_ROLE_TH = { STORE_OWNER: 'เจ้าของร้าน', FRONT_STAFF: 'พนักงานหน้าร้าน', KITCHEN_STAFF: 'พนักงานครัว' };
+const AUDIT_FIELD_TH = { password: 'รหัสผ่าน', full_name: 'ชื่อ', role: 'ตำแหน่ง', store_id: 'ร้าน', phone: 'เบอร์โทร', email: 'อีเมล' };
+function auditPayload(raw) {
+    const i = raw.indexOf('{');
+    if (i < 0) return {};
+    try {
+        const value = JSON.parse(raw.slice(i));
+        return value && typeof value === 'object' ? value : {};
+    }
+    catch {
+        return {};
+    }
+}
+const auditQuote = (text) => (text ? `“${text}”` : '');
+const baht = (v) => (v !== undefined && v !== null && v !== '' ? `${money2(v)} บาท` : '');
+const why = (text) => (text ? `เหตุผล: ${text}` : '');
+const who = (p) => (p.username ? `@${p.username}` : '');
+// แต่ละรหัส -> ส่วนขยายต่อท้ายชื่อการกระทำ (p = ข้อมูล JSON, log = แถว audit)
+const AUDIT_DETAIL = {
+    CREATE_ORDER: (p) => [p.total !== undefined ? `ยอด ${baht(p.total)}` : '', p.walk_in ? 'สั่งที่หน้าร้าน' : ''],
+    CANCEL_ORDER: (p) => [why(p.reason)],
+    CANCEL_REQUEST: (p) => [why(p.reason)],
+    UPDATE_STATUS: (p) => [p.status ? `เป็น ${auditQuote(AUDIT_ORDER_STATUS_TH[p.status] || p.status)}` : '', why(p.reason)],
+    CUSTOMER_CHANGE_ITEM: (p) => [p.product ? `เป็น ${auditQuote(p.product)} ${baht(p.price)}` : '', Number(p.refund_diff) > 0 ? `คืนส่วนต่าง ${baht(p.refund_diff)}` : '', Number(p.top_up_due) > 0 ? `ต้องโอนเพิ่ม ${baht(p.top_up_due)}` : ''],
+    LATE_PICKUP: (p) => [p.minutes ? `อีก ${p.minutes} นาที` : '', p.count ? `ครั้งที่ ${p.count}` : ''],
+    PICKUP_REMINDER: (p) => [p.waited_minutes ? `รอมาแล้ว ${p.waited_minutes} นาที` : ''],
+    PRINT_ORDER: (p) => [p.printer ? `เครื่อง ${p.printer}` : ''],
+    REPRINT_ORDER: (p) => [p.printer ? `เครื่อง ${p.printer}` : ''],
+    PRINT_SKIP: (p) => [why(p.reason)],
+    VERIFY_SLIP_REJECT: (p) => [why(p.reason)],
+    UPLOAD_TOP_UP_SLIP: (p) => [baht(p.amount)],
+    VERIFY_TOP_UP_APPROVE: (p) => [baht(p.amount)],
+    VERIFY_TOP_UP_REJECT: (p) => [why(p.reason)],
+    REFUND_DONE: (p) => [baht(p.amount)],
+    CREATE_STORE: (p) => [p.queue_code ? `รหัสคิว ${p.queue_code}` : '', p.start && p.end ? `สัญญา ${thaiDate(p.start)} ถึง ${thaiDate(p.end)}` : ''],
+    UPDATE_STORE: (p) => [p.name ? `ชื่อร้าน ${auditQuote(p.name)}` : '', p.queue_code ? `รหัสคิว ${p.queue_code}` : ''],
+    AUTO_DELETE_STORE: (p) => [why(p.reason)],
+    RENEW_CONTRACT: (p) => [p.end ? `ถึง ${thaiDate(p.end)}` : ''],
+    CONTRACT_EXTEND: (p) => [p.end ? `เป็น ${thaiDate(p.end)}` : '', why(p.reason)],
+    CONTRACT_SHORTEN: (p) => [p.end ? `เป็น ${thaiDate(p.end)}` : '', why(p.reason)],
+    CONTRACT_END_BACKDATED: (p) => [p.end ? `เป็น ${thaiDate(p.end)}` : '', why(p.reason)],
+    CONTRACT_RESTART: (p) => [p.start && p.end ? `${thaiDate(p.start)} ถึง ${thaiDate(p.end)}` : '', why(p.reason)],
+    CREATE_PRODUCT: (p) => [auditQuote(p.name), baht(p.price)],
+    UPDATE_PRODUCT: (p) => [auditQuote(p.name)],
+    PRICE_UPDATE: (p) => [auditQuote(p.name), p.price !== undefined ? `เป็น ${baht(p.price)}` : ''],
+    DELETE_PRODUCT: (p) => [auditQuote(p.name)],
+    OUT_OF_STOCK: (p) => [auditQuote(p.name), p.from_order ? `(จากออเดอร์ #${p.from_order})` : ''],
+    BACK_IN_STOCK: (p) => [auditQuote(p.name)],
+    OUT_OF_STOCK_NOTIFY: (p) => [auditQuote(p.name), p.orders ? `${p.orders} ออเดอร์` : ''],
+    LOGIN: (p) => [p.method === 'google' ? 'ด้วย Google' : ''],
+    LOGIN_FAIL: (p, log) => [p.reason === 'unknown_username' ? `ไม่พบชื่อผู้ใช้ ${auditQuote(log.EntityId)}` : p.failed_count ? `รหัสผ่านไม่ถูกต้อง (ครั้งที่ ${p.failed_count})` : ''],
+    ACCOUNT_LOCKED: (p) => [p.failed_count ? `ใส่รหัสผ่านผิด ${p.failed_count} ครั้ง` : ''],
+    CREATE_STAFF: (p) => [who(p), AUDIT_ROLE_TH[p.role] ? `ตำแหน่ง${AUDIT_ROLE_TH[p.role]}` : ''],
+    UPDATE_STAFF: (p) => [AUDIT_ROLE_TH[p.role] ? `เปลี่ยนตำแหน่งเป็น${AUDIT_ROLE_TH[p.role]}` : ''],
+    ACTIVATE_STAFF: (p) => [who(p)],
+    DEACTIVATE_STAFF: (p) => [who(p)],
+    DELETE_STAFF: (p) => [who(p)],
+    CREATE_STORE_ACCOUNT: (p) => [who(p)],
+    UPDATE_STORE_ACCOUNT: (p) => [Array.isArray(p.changed) && p.changed.length ? `แก้${p.changed.map((f) => AUDIT_FIELD_TH[f] || f).join(', ')}` : ''],
+    DELETE_STORE_ACCOUNT: (p) => [who(p)],
+    OPEN_FOOD_COURT: (p) => [p.override_until ? `ถึง ${thaiDateTime(p.override_until)}` : ''],
+    CLOSE_FOOD_COURT: (p) => [p.override_until ? `ถึง ${thaiDateTime(p.override_until)}` : ''],
+    UPDATE_FOOD_COURT_SCHEDULE: (p) => [p.open && p.close ? `เป็นเปิด ${p.open} น. ปิด ${p.close} น.` : ''],
+    UPDATE_ISSUE: (p) => [p.status ? `เป็น ${auditQuote(ISSUE_STATUS_META[p.status]?.label || p.status)}` : '', p.note ? `ข้อความ: ${p.note}` : '']
+};
+
+const formatAuditDetails = (log) => {
+    const action = String(log.Action || '').toUpperCase();
+    const raw = String(log.Details || '').trim();
+    const verb = AUDIT_VERBS[action];
+    if (!verb) return raw || '—';
+    const storeName = String(log.StoreName || '');
+    const store = log.StoreId != null ? `${storeName ? `${storeName.startsWith('ร้าน') ? '' : 'ร้าน'}${storeName} ` : 'ร้านค้า '}(รหัสร้าน #${log.StoreId})` : '';
+    const order = log.OrderId != null ? `ออเดอร์ #${log.OrderId}` : '';
+    const queue = log.QueueLabel ? `คิว ${log.QueueLabel}` : '';
+    const extra = (AUDIT_DETAIL[action]?.(auditPayload(raw), log) || []).filter(Boolean).join(' · ');
+    return [extra ? `${verb} ${extra}` : verb, order, queue, store].filter(Boolean).join(' · ');
+};
 
 function AuditHistoryPage({ ctx }) {
     const { API } = ctx;
     const [logs, setLogs] = useState([]);
     const [loadingLogs, setLoadingLogs] = useState(true);
     const [loadError, setLoadError] = useState('');
-        const [query, setQuery] = useState('');
+    const [query, setQuery] = useState('');
     const [filter, setFilter] = useState('all');
+    const [actionFilter, setActionFilter] = useState('');  // กรองการกระทำเดียว เช่น CANCEL_ORDER
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const requestNo = useRef(0);  // พิมพ์เร็ว ๆ แล้วผลเก่ากลับมาทีหลัง -> ทิ้ง
@@ -5242,9 +5512,10 @@ function AuditHistoryPage({ ctx }) {
             const codes = auditCodesMatching(keyword);
             if (codes.length) params.set('actions', codes.join(','));
         }
-        if (filter !== 'all') params.set('group', filter);
+                if (filter !== 'all') params.set('group', filter);
+        if (actionFilter) params.set('action', actionFilter);
         return `${API}/api/audit-logs?${params}`;
-    }, [API, query, filter]);
+    }, [API, query, filter, actionFilter]);
 
     const loadLogs = useCallback(async () => {
         const no = ++requestNo.current;
@@ -5292,22 +5563,7 @@ function AuditHistoryPage({ ctx }) {
         return () => clearTimeout(timer);
     }, [loadLogs]);
 
-    const actionMeta = (action) => {
-        const key = String(action || '').toUpperCase();
-        if (key.includes('STORE') || key.includes('SUSPEND')) {
-            return { group: 'store', label: 'ร้านค้า', bg: T.primarySoft, color: T.primaryDark };
-        }
-        if (key.includes('ACCOUNT') || key.includes('USER') || key.includes('STAFF') || key.includes('PASSWORD')) {
-            return { group: 'account', label: 'บัญชีผู้ใช้', bg: T.deepSoft, color: T.deep };
-        }
-        if (key.includes('SLIP') || key.includes('PAYMENT')) {
-            return { group: 'payment', label: 'การชำระเงิน', bg: T.accentSoft, color: T.accentDark };
-        }
-        if (key.includes('ORDER') || key.includes('CANCEL') || key.includes('STATUS') || key.includes('QUEUE') || key.includes('PRINT')) {
-            return { group: 'order', label: 'ออเดอร์', bg: T.greenSoft, color: T.up };
-        }
-        return { group: 'other', label: 'อื่น ๆ', bg: '#F2F3F7', color: T.text };
-    };
+        const actionMeta = (action) => AUDIT_GROUP_META[auditGroupOf(action)];
 
     
     const actionName = (action) => {
@@ -5346,26 +5602,6 @@ function AuditHistoryPage({ ctx }) {
             || String(action || '-').replaceAll('_', ' ');
     };
 
-const formatAuditDetails = (log) => {
-    const action = String(log.Action || '').toUpperCase();
-    const store = log.StoreId != null ? `${log.StoreName ? `ร้าน${log.StoreName} ` : 'ร้านค้า '}(รหัสร้าน #${log.StoreId})` : '';
-    const order = log.OrderId != null ? `ออเดอร์ #${log.OrderId}` : '';
-    const queue = log.QueueLabel ? `คิว ${log.QueueLabel}` : '';
-    const context = [order, queue, store].filter(Boolean).join(' · ');
-    const verbs = AUDIT_VERBS;
-    const raw = String(log.Details || '').trim();
-    if (action === 'UPDATE_FOOD_COURT_SCHEDULE') {
-        const open = raw.match(/["]open["]\s*:\s*["]([^"]+)["]/i);
-        const close = raw.match(/["]close["]\s*:\s*["]([^"]+)["]/i);
-        if (open && close) return `ตั้งเวลาเปิด ${open[1]} น. และปิด ${close[1]} น.`;
-    }
-    if (action === 'LOGIN') return 'เข้าสู่ระบบ';
-    if (verbs[action] && context) return `${verbs[action]}: ${context}`;
-    return raw || (verbs[action] || '—');
-};
-
-
-
     const filtered = logs;  // backend ค้น/กรองมาให้แล้ว
 
     const filters = [
@@ -5375,6 +5611,8 @@ const formatAuditDetails = (log) => {
         ['order', 'ออเดอร์'],
         ['payment', 'การชำระเงิน']
     ];
+    // ตัวเลือกการกระทำ : เฉพาะที่อยู่ในกลุ่มที่เลือก
+    const actionOptions = Object.keys(AUDIT_VERBS).filter((code) => filter === 'all' || auditGroupOf(code) === filter);
 
     return (<>
       <Card style={{ marginBottom: '16px' }}>
@@ -5388,33 +5626,33 @@ const formatAuditDetails = (log) => {
           </Button>
         </div>
 
-        <div style={{display: 'flex',gap: '10px',alignItems: 'center',flexWrap: 'wrap',marginTop: '18px'}}>
-          <div style={{ position: 'relative', flex: '1 1 280px', minWidth: 0 }}>
-            <Icon name="search" size={17} color={T.muted} style={{position: 'absolute',left: '13px',top: '50%',transform: 'translateY(-50%)'}}/>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="ค้นหาการดำเนินการ ผู้ดำเนินการ หรือรายละเอียด..."
-              style={{ ...inputStyle, width: '100%', paddingLeft: '40px' }}
-            />
-          </div>
+                <div style={{ position: 'relative', marginTop: '18px' }}>
+          <Icon name="search" size={17} color={T.muted} style={{position: 'absolute',left: '13px',top: '50%',transform: 'translateY(-50%)'}}/>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="ค้นหาการดำเนินการ ผู้ดำเนินการ หรือรายละเอียด..."
+            style={{ ...inputStyle, width: '100%', paddingLeft: '40px' }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginTop: '12px' }}>
           <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
-            {filters.map(([id, label]) => (<button
-              key={id}
-              type="button"
-              onClick={() => setFilter(id)}
-              style={{
-                  border: `1px solid ${filter === id ? T.primary : T.line}`,
-                  background: filter === id ? T.primarySoft : T.surface,
-                  color: filter === id ? T.primaryDark : T.text,
-                  borderRadius: '999px',
-                  padding: '9px 13px',
-                  fontSize: '12.5px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap'
-              }}
-            >{label}</button>))}
+            {filters.map(([id, label]) => (<button key={id} type="button" onClick={() => { setFilter(id); setActionFilter(''); }} style={auditChipStyle(filter === id)}>
+              {AUDIT_GROUP_META[id] && <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: AUDIT_GROUP_META[id].color }}/>}
+              {label}
+            </button>))}
+          </div>
+          <span style={{ width: '1px', height: '24px', background: T.line }}/>
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <Icon name="filter" size={15} color={actionFilter ? T.primaryDark : T.muted} style={{ position: 'absolute', left: '14px', pointerEvents: 'none' }}/>
+            <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} style={auditActionSelectStyle(Boolean(actionFilter))} aria-label="กรองตามการกระทำ">
+              <option value="">ทุกการกระทำ</option>
+              {actionOptions.map((code) => <option key={code} value={code}>{AUDIT_VERBS[code]}</option>)}
+            </select>
+            {actionFilter && (<button type="button" onClick={() => setActionFilter('')} aria-label="ล้างตัวกรองการกระทำ" style={{ position: 'absolute', right: '8px', width: '22px', height: '22px', borderRadius: '50%', border: 'none', background: T.surface, color: T.primaryDark, display: 'grid', placeItems: 'center', cursor: 'pointer', padding: 0 }}>
+              <Icon name="close" size={12}/>
+            </button>)}
           </div>
         </div>
       </Card>

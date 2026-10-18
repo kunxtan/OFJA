@@ -41,6 +41,18 @@ const ORDER_STATUS_TH = {
   Completed: "รับอาหารแล้ว",
   Cancelled: "ถูกยกเลิก",
   NoShow: "ไม่มารับอาหาร",
+  Pending_Cancellation: "รอคุณเลือกเปลี่ยนเมนู/ยกเลิก",
   Awaiting_Top_Up: "รอโอนส่วนต่าง",
 };
 export const getOrderStatusLabel = (status) => ORDER_STATUS_TH[status] || status || "Pending";
+
+// รวมเงินคืนของออเดอร์ (จาก GET /api/refunds) -> { pending, done, doneAt }
+export const summarizeRefunds = (refunds) => (refunds || []).reduce((acc, r) => {
+  const amount = Number(r.Amount || 0);
+  if (r.RefundStatus === "PENDING") acc.pending += amount;
+  if (r.RefundStatus === "DONE") {
+    acc.done += amount;
+    if (!acc.doneAt || String(r.RefundedAt) > String(acc.doneAt)) acc.doneAt = r.RefundedAt;
+  }
+  return acc;
+}, { pending: 0, done: 0, doneAt: null });

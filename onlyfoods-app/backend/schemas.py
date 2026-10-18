@@ -222,7 +222,7 @@ class IssueUpdateSchema(BaseModel):
 
 
 class CreateIssueReportSchema(BaseModel):
-    order_id: Optional[int] = None
+    order_id: Optional[int] = Field(default=None, ge=1)  # 0 เคยทำให้ INSERT ชน FK แล้วได้ 500
     store_id: int
     issue_type: str = Field(max_length=100)
     description: Optional[str] = Field(default="", max_length=1000)
@@ -235,3 +235,20 @@ class FoodCourtScheduleSchema(BaseModel):
 
 class LatePickupSchema(BaseModel):
     minutes: int  # ต้องเป็นค่าใน config.LATE_PICKUP_CHOICES (ตรวจใน endpoint)
+
+
+class RefundPayoutSchema(BaseModel):
+    """ลูกค้าเลือกวิธีรับเงินคืน : CASH = มารับที่ร้าน, TRANSFER = ให้เจ้าของร้านโอนให้"""
+    method: str = Field(pattern="^(CASH|TRANSFER)$")
+    kind: Optional[str] = Field(default=None, max_length=10)
+    bank: Optional[str] = Field(default=None, max_length=60)
+    account_no: Optional[str] = Field(default=None, max_length=30)
+    account_name: Optional[str] = Field(default=None, max_length=100)
+    qr_image: Optional[str] = None   # รูปใหม่ (data URL) ; ไม่ส่ง = ใช้ QR เดิม
+    remove_qr: bool = False
+
+
+class RefundDoneSchema(BaseModel):
+    """ร้านจ่ายเงินคืนแล้ว : CASH หรือ TRANSFER (ต้องแนบสลิปโอน)"""
+    method: str = Field(default="CASH", pattern="^(CASH|TRANSFER)$")
+    slip_image: Optional[str] = None

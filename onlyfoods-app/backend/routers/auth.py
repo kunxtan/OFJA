@@ -13,7 +13,8 @@ from errors import DomainError
 from schemas import ChangePasswordSchema, GoogleAuthSchema, LoginSchema, RegisterSchema
 from services import is_duplicate_key, log_audit
 from shapes import USER_SELECT, shape_user
-from utils import ACCESS_LOCKED, bangkok_now, clean_text, validate_password, validate_username
+from utils import (ACCESS_LOCKED, bangkok_now, validate_email, validate_password, validate_phone,
+                   validate_username)
 
 logger = logging.getLogger("onlyfood")
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -68,7 +69,9 @@ def login(data: LoginSchema, db=Depends(get_db)):
                 log_audit(db, row["UserId"], "ACCOUNT_LOCKED" if locked else "LOGIN_FAIL", "AUTH",
                           row["UserId"], None, {"failed_count": count})
             else:
-                log_audit(db, None, "LOGIN_FAIL", "AUTH", username[:50], None, {"reason": "unknown_username"})
+                # ชื่อที่ไม่มีในระบบ อาจเป็นรหัสผ่านที่พิมพ์ผิดช่อง : เก็บแบบปิดบางส่วน (AuditLog ลบ/แก้ไม่ได้)
+                log_audit(db, None, "LOGIN_FAIL", "AUTH", f"{username[:2]}***({len(username)})", None,
+                          {"reason": "unknown_username"})
         raise HTTPException(status_code=401, detail="ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 
     if not row["IsActive"]:
@@ -85,7 +88,7 @@ def login(data: LoginSchema, db=Depends(get_db)):
         log_audit(db, row["UserId"], "LOGIN", "AUTH", row["UserId"], None, {"method": "password"})
     with db.cursor() as cur:
         user = _load_user(cur, row["UserId"])
-    user["access_token"] = create_token(row["UserId"])
+        user["access_token"] = _token_for(cur, row["UserId"])
     user["token_type"] = "bearer"
     return user
 
@@ -94,6 +97,11 @@ def login(data: LoginSchema, db=Depends(get_db)):
 def register(data: RegisterSchema, db=Depends(get_db)):
     username = validate_username(data.username)
     validate_password(data.password)
+    name = data.name.strip()
+    if not name:
+        raise DomainError(400, "กรุณากรอกชื่อ-นามสกุล")
+    phone = validate_phone(data.phone, required=True)
+    email = validate_email(data.email)
     with transaction(db):
         with db.cursor() as cur:
             cur.execute("SELECT UserId FROM `User` WHERE Username = %s", (username,))
@@ -105,8 +113,7 @@ def register(data: RegisterSchema, db=Depends(get_db)):
                     INSERT INTO `User` (Username, PasswordHash, FullName, Phone, Email, RoleId)
                     VALUES (%s, %s, %s, %s, %s, (SELECT RoleId FROM Role WHERE RoleCode = 'CUSTOMER'))
                     """,
-                    (username, hash_password(data.password), data.name.strip(), data.phone.strip(),
-                     clean_text(data.email)),
+                    (username, hash_password(data.password), name, phone, email),
                 )
             except Exception as exc:  # noqa: BLE001
                 if is_duplicate_key(exc):
@@ -115,7 +122,7 @@ def register(data: RegisterSchema, db=Depends(get_db)):
             user_id = cur.lastrowid
     with db.cursor() as cur:
         user = _load_user(cur, user_id)
-    user["access_token"] = create_token(user_id)
+        user["access_token"] = _token_for(cur, user_id)
     user["token_type"] = "bearer"
     return user
 
@@ -146,10 +153,17 @@ def change_password(data: ChangePasswordSchema, user=Depends(get_current_user), 
             row = cur.fetchone()
             if not verify_password(data.old_password, row["PasswordHash"]):
                 raise DomainError(400, "รหัสผ่านเดิมไม่ถูกต้อง")
-            cur.execute("UPDATE `User` SET PasswordHash = %s WHERE UserId = %s",
-                        (hash_password(data.new_password), user["UserId"]))
+            new_hash = hash_password(data.new_password)
+            cur.execute("UPDATE `User` SET PasswordHash = %s WHERE UserId = %s", (new_hash, user["UserId"]))
         log_audit(db, user["UserId"], "PASSWORD_CHANGE", "User", user["UserId"])
-    return {"success": True, "message": "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว"}
+    # token เดิมทุกเครื่องใช้ไม่ได้แล้ว : ส่ง token ใหม่ให้เครื่องที่เปลี่ยนรหัสใช้ต่อ
+    return {"success": True, "message": "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว", "access_token": create_token(user["UserId"], new_hash)}
+
+
+def _token_for(cur, user_id: int) -> str:
+    cur.execute("SELECT PasswordHash FROM `User` WHERE UserId = %s", (user_id,))
+    row = cur.fetchone() or {}
+    return create_token(user_id, row.get("PasswordHash"))
 
 
 def _unique_username(cur, email: str) -> str:
@@ -221,9 +235,10 @@ def google_auth(data: GoogleAuthSchema, db=Depends(get_db)):
         log_audit(db, user_id, "LOGIN", "AUTH", user_id, None, {"method": "google"})
     with db.cursor() as cur:
         user = _load_user(cur, user_id)
+        token = _token_for(cur, user_id)
     return {
         "user": user,
         "is_profile_incomplete": not bool(user.get("Phone")),
-        "access_token": create_token(user_id),
+        "access_token": token,
         "token_type": "bearer",
     }
