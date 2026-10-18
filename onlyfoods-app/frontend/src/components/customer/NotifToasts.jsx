@@ -10,10 +10,22 @@ function NotifToastItem({ toast, icon, onClose, onOpen }) {
   }, [toast.key]);
 
   return (
-    <div onClick={onOpen} role="alert"
-      style={{ pointerEvents: "auto", display: "flex", alignItems: "flex-start", gap: "12px", padding: "14px 14px 14px 16px",
-        background: "#FFFFFF", borderRadius: "16px", borderLeft: "5px solid #EA580C", boxShadow: "0 12px 32px rgba(42, 44, 65, 0.28)",
-        cursor: "pointer", animation: "notifToastIn 0.3s ease-out", fontFamily: "inherit",
+    <div
+      onClick={onOpen}
+      role="alert"
+      style={{
+        pointerEvents: "auto",
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "12px",
+        padding: "14px 14px 14px 16px",
+        background: "#FFFFFF",
+        borderRadius: "16px",
+        borderLeft: "5px solid #EA580C",
+        boxShadow: "0 12px 32px rgba(42, 44, 65, 0.28)",
+        cursor: "pointer",
+        animation: "notifToastIn 0.3s ease-out",
+        fontFamily: "inherit",
       }}
     >
       <div style={{ color: "#EA580C", flexShrink: 0, marginTop: "1px" }}>{icon}</div>
@@ -28,8 +40,15 @@ function NotifToastItem({ toast, icon, onClose, onOpen }) {
           e.stopPropagation();
           onClose();
         }}
-        style={{ border: "none", background: "transparent", color: "#94A3B8", fontSize: "18px",
-          lineHeight: 1, cursor: "pointer", padding: "2px 4px", fontFamily: "inherit",
+        style={{
+          border: "none",
+          background: "transparent",
+          color: "#94A3B8",
+          fontSize: "18px",
+          lineHeight: 1,
+          cursor: "pointer",
+          padding: "2px 4px",
+          fontFamily: "inherit",
         }}
       >
         ×
@@ -42,8 +61,17 @@ export default function NotifToasts({ toasts, setToasts, handleSelectTab }) {
   if (toasts.length === 0) return null;
   return (
     <div
-      style={{ position: "fixed", top: "max(12px, env(safe-area-inset-top))", left: "50%", transform: "translateX(-50%)",
-        width: "min(92vw, 420px)", zIndex: 3000, display: "flex", flexDirection: "column", gap: "10px", pointerEvents: "none",
+      style={{
+        position: "fixed",
+        top: "max(12px, env(safe-area-inset-top))",
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: "min(92vw, 420px)",
+        zIndex: 3000,
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        pointerEvents: "none",
       }}
     >
       <style>{`@keyframes notifToastIn { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }`}</style>

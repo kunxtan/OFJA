@@ -18,15 +18,31 @@ export function PaymentModal({
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.6)", zIndex: 2000, display: "flex",
-        alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box", overflowY: "auto",
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(42,44,65,0.6)",
+        zIndex: 2000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px",
+        boxSizing: "border-box",
+        overflowY: "auto",
       }}
       onClick={() => setIsPaymentModalOpen(false)}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ background: COLORS.white, width: "min(500px, 100%)", maxHeight: "90vh", overflowY: "auto",
-          borderRadius: "24px", padding: "25px", boxSizing: "border-box", textAlign: "center",
+        style={{
+          background: COLORS.white,
+          width: "min(500px, 100%)",
+          maxHeight: "90vh",
+          overflowY: "auto",
+          borderRadius: "24px",
+          padding: "25px",
+          boxSizing: "border-box",
+          textAlign: "center",
         }}
       >
         {/* HEADER */}

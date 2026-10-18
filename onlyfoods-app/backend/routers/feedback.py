@@ -1,8 +1,10 @@
 """รีวิวร้าน + รายงานปัญหา"""
 import hashlib
+import json
 from datetime import timedelta
+from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 import config
 import state
@@ -12,7 +14,7 @@ from errors import DomainError
 from schemas import CreateIssueReportSchema, IssueUpdateSchema, ReviewCreateSchema
 from services import is_duplicate_key, log_audit, send_notif
 from shapes import in_clause
-from utils import bangkok_now, clean_text, mask_person_name, queue_label, save_image
+from utils import bangkok_now, clean_text, mask_person_name, parse_date, queue_label, save_image
 
 router = APIRouter(prefix="/api", tags=["feedback"])
 
@@ -394,9 +396,10 @@ def get_store_issues_detail(store_id: int, user=Depends(require_role("STORE_OWNE
 
 
 @router.put("/issues/{issue_id}")
-def update_issue(issue_id: int, data: IssueUpdateSchema, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")),
+def update_issue(issue_id: int, data: IssueUpdateSchema, user=Depends(require_role("STORE_OWNER")),
                  db=Depends(get_db)):
-    """เปลี่ยนสถานะรายงานปัญหา + ข้อความตอบกลับลูกค้า (บันทึกผู้รับเรื่องและเวลาปิดเรื่องให้เอง แจ้งเตือนลูกค้า)"""
+    """เปลี่ยนสถานะรายงานปัญหา + ข้อความตอบกลับลูกค้า (บันทึกผู้รับเรื่องและเวลาปิดเรื่องให้เอง แจ้งเตือนลูกค้า)
+    เฉพาะเจ้าของร้าน : ผู้บริหารดูได้อย่างเดียว (/executive/issues)"""
     note = clean_text(data.note)
     if data.status == "REJECTED" and not note:
         raise DomainError(400, "กรุณาระบุเหตุผลที่ไม่รับเรื่อง เพื่อแจ้งให้ลูกค้าทราบ")
@@ -425,4 +428,149 @@ def update_issue(issue_id: int, data: IssueUpdateSchema, user=Depends(require_ro
                    f"ร้านอัปเดตรายงานปัญหาของคุณเป็น “{label}”" + (f" : {note}" if note else ""), issue["OrderId"])
         log_audit(db, user["UserId"], "UPDATE_ISSUE", "IssueReport", issue_id,
                   {"status": issue["IssueStatus"]}, {"status": data.status, "note": note})
-    return {"success": True, "changed": True, "status": data.status}
+        return {"success": True, "changed": True, "status": data.status}
+
+
+# ------------------------------------------------- issues: ผู้บริหารดูภาพรวม (ดูอย่างเดียว)
+ISSUE_STALE_HOURS = 24  # ค้างเกินนี้ขึ้นป้ายเตือน (ตรงกับหน้าเจ้าของร้าน)
+
+_EXEC_ISSUE_SELECT = """
+    SELECT r.IssueReportId, r.IssueReportId AS ReportID, r.StoreId, s.StoreName, s.QueueCode,
+           r.OrderId AS OrderID, o.QueueNo, it.TypeCode, it.TypeNameTh AS IssueType, r.Description,
+           r.IssueStatus, r.AdminNote, r.CreatedAt, r.ResolvedAt,
+           u.FullName AS CustomerName, h.FullName AS HandledByName
+    FROM IssueReport r
+    JOIN IssueType it ON it.IssueTypeId = r.IssueTypeId
+    JOIN `User` u ON u.UserId = r.ReportedBy
+    JOIN Store s ON s.StoreId = r.StoreId
+    LEFT JOIN `User` h ON h.UserId = r.HandledBy
+    LEFT JOIN `Order` o ON o.OrderId = r.OrderId
+"""
+
+
+def _hours_between(start, end) -> float:
+    return round((end - start).total_seconds() / 3600, 1)
+
+
+@router.get("/executive/issues")
+def list_issues_for_executive(
+    store_id: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    type_code: Optional[str] = Query(None, max_length=30),
+    user=Depends(require_role("EXECUTIVE")),
+    db=Depends(get_db),
+):
+    """รายงานปัญหาทั้งศูนย์อาหารในคำขอเดียว (แทนการยิงทีละร้าน) + ตัวเลขสรุป
+
+    กรองร้าน / ช่วงวันที่แจ้ง / ประเภทได้ ; สถานะกรองที่หน้าเว็บ (summary ใช้นับตัวเลขบนแท็บ)
+    """
+    where, params = [], []
+    if store_id:
+        where.append("r.StoreId = %s")
+        params.append(store_id)
+    start, end = parse_date(date_from, "วันที่เริ่ม"), parse_date(date_to, "วันที่สิ้นสุด")
+    if start:
+        where.append("r.CreatedAt >= %s")
+        params.append(start)
+    if end:
+        where.append("r.CreatedAt < %s")
+        params.append(end + timedelta(days=1))
+    if type_code:
+        where.append("it.TypeCode = %s")
+        params.append(type_code)
+    sql = _EXEC_ISSUE_SELECT + (" WHERE " + " AND ".join(where) if where else "")
+    with db.cursor() as cur:
+        cur.execute(sql + " ORDER BY r.CreatedAt DESC, r.IssueReportId DESC", params)
+        issues = _shape_issues(cur.fetchall())
+        # ประเภทปัญหาทั้งหมด (ไม่ขึ้นกับตัวกรอง) ไว้ทำช่องเลือก
+        cur.execute("SELECT TypeCode, TypeNameTh AS IssueType FROM IssueType ORDER BY IssueTypeId")
+        types = cur.fetchall()
+
+    now = bangkok_now()
+    for i in issues:
+        is_open = i["IssueStatus"] not in _CLOSED
+        i["IsOpen"] = is_open
+        # ค้างมานานเท่าไหร่ (ยังไม่ปิด) / ใช้เวลาปิดเรื่องเท่าไหร่ (ปิดแล้ว)
+        i["AgeHours"] = _hours_between(i["CreatedAt"], now) if is_open else None
+        i["ResolveHours"] = _hours_between(i["CreatedAt"], i["ResolvedAt"]) if not is_open and i["ResolvedAt"] else None
+        i["IsStale"] = is_open and i["AgeHours"] >= ISSUE_STALE_HOURS
+
+    by_type: dict = {}
+    for i in issues:
+            row = by_type.setdefault(i["TypeCode"], {"TypeCode": i["TypeCode"], "IssueType": i["IssueType"], "count": 0})
+            row["count"] += 1
+    resolve = [i["ResolveHours"] for i in issues if i["ResolveHours"] is not None]
+    summary = {
+        "total": len(issues),
+        "by_status": {code: sum(1 for i in issues if i["IssueStatus"] == code) for code in ISSUE_STATUS_TH},
+        "pending": sum(1 for i in issues if i["IsOpen"]),
+        "stale": sum(1 for i in issues if i["IsStale"]),
+        "avg_resolve_hours": round(sum(resolve) / len(resolve), 1) if resolve else None,
+        "top_type": max(by_type.values(), key=lambda r: r["count"], default=None),
+        "types": types,
+        "stale_hours": ISSUE_STALE_HOURS,
+    }
+    return {"issues": issues, "summary": summary}
+
+
+@router.get("/executive/issues/{issue_id}")
+def get_issue_for_executive(issue_id: int, user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
+    """รายละเอียดรายงานปัญหา 1 เรื่อง: ออเดอร์ + รายการอาหาร + เส้นเวลาการเปลี่ยนสถานะ (จาก AuditLog)"""
+    with db.cursor() as cur:
+        cur.execute(_EXEC_ISSUE_SELECT + " WHERE r.IssueReportId = %s", (issue_id,))
+        rows = _shape_issues(cur.fetchall())
+        if not rows:
+            raise DomainError(404, "ไม่พบรายงานปัญหานี้")
+        issue = rows[0]
+        issue["items"], issue["Order"] = [], None
+        if issue["OrderID"]:
+            cur.execute(
+                """
+                SELECT o.TotalAmount, o.CreatedAt, os.StatusNameTh
+                FROM `Order` o JOIN OrderStatus os ON os.StatusId = o.StatusId WHERE o.OrderId = %s
+                """,
+                (issue["OrderID"],),
+            )
+            order = cur.fetchone()
+            if order:
+                order["TotalAmount"] = float(order["TotalAmount"])
+                issue["Order"] = order
+            cur.execute(
+                """
+                SELECT p.ProductName, oi.Qty, oi.ItemStatus
+                FROM OrderItem oi JOIN Product p ON p.ProductId = oi.ProductId
+                WHERE oi.OrderId = %s AND oi.ItemStatus <> 'REPLACED' ORDER BY oi.OrderItemId
+                """,
+                (issue["OrderID"],),
+            )
+            issue["items"] = cur.fetchall()
+        cur.execute(
+            """
+            SELECT a.CreatedAt, a.NewValue, u.FullName AS ByName, r.RoleNameTh AS ByRole
+            FROM AuditLog a
+            LEFT JOIN `User` u ON u.UserId = a.PerformedBy
+            LEFT JOIN Role r ON r.RoleId = u.RoleId
+            WHERE a.EntityType = 'IssueReport' AND a.EntityId = %s AND a.ActionCode = 'UPDATE_ISSUE'
+            ORDER BY a.AuditLogId
+            """,
+            (str(issue_id),),
+        )
+        changes = cur.fetchall()
+
+    timeline = [{"At": issue["CreatedAt"], "Status": "OPEN", "Label": "ลูกค้าแจ้งปัญหา",
+                 "By": issue["CustomerName"], "Note": None}]
+    for c in changes:
+        new = c["NewValue"]
+        if isinstance(new, (str, bytes)):
+            try:
+                new = json.loads(new)
+            except ValueError:
+                new = {}
+        code = (new or {}).get("status")
+        timeline.append({"At": c["CreatedAt"], "Status": code,
+                         "Label": f"เปลี่ยนเป็น “{ISSUE_STATUS_TH.get(code, code)}”",
+                         "By": f"{c['ByName']} ({c['ByRole']})" if c["ByName"] else "ระบบ",
+                         "Note": (new or {}).get("note")})
+    issue["Timeline"] = timeline
+    return issue
