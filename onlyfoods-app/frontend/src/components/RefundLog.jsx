@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { startPolling } from '../utils/polling';
 
 // 💸 รายการคืนเงิน (ใช้ร่วมกันหลายหน้า)
 //  ลูกค้ามารับเงินคืนที่หน้าร้าน : ยกเลิกออเดอร์ / เปลี่ยนเป็นเมนูที่ถูกกว่า -> "รอคืน" (ไม่นับเป็นรายได้แล้ว)
@@ -113,8 +114,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
   useEffect(() => {
     load();
     if (!pollMs) return undefined;
-    const t = setInterval(load, pollMs);
-    return () => clearInterval(t);
+    return startPolling(load, pollMs);
   }, [load, pollMs]);
 
   useEffect(() => {

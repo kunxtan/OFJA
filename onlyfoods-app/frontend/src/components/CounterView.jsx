@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { startPolling } from '../utils/polling';
 import RefundLog from './RefundLog';
 
 // โทนสีเดิมของ Counter & Theme กลาง
@@ -277,19 +278,19 @@ export default function CounterView({ user, apiBase, onLogout }) {
     fetchStores();
     checkFoodCourtStatus();
 
-    const storeInterval = setInterval(fetchStores, 2000);
-    const foodCourtInterval = setInterval(checkFoodCourtStatus, 2000);
+    // สถานะร้าน/ศูนย์อาหารเปลี่ยนไม่บ่อย (เดิมทุก 2 วิ)
+    const stopStores = startPolling(fetchStores, 15000);
+    const stopFoodCourt = startPolling(checkFoodCourtStatus, 15000);
 
     return () => {
-      clearInterval(storeInterval);
-      clearInterval(foodCourtInterval);
+      stopStores();
+      stopFoodCourt();
     };
   }, [apiBase]);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3500);
-    return () => clearInterval(interval);
+    return startPolling(fetchData, 3500);
   }, [activeStoreId, apiBase]);
 
   useEffect(() => {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { startPolling } from '../utils/polling';
 import RefundLog from './RefundLog';
 
 /* ============================================================
@@ -1196,8 +1197,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   useEffect(() => {
     baseRef.current = null;
     fetchData();
-    const interval = setInterval(fetchData, 4000);
-    return () => clearInterval(interval);
+    return startPolling(fetchData, 15000); // fetchData คืน Promise : ไม่ยิงซ้อนรอบที่ยังไม่เสร็จ
   }, [apiBase]);
 
   const showToast = (msg) => {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { startPolling } from "../../utils/polling";
 import Cropper from "react-easy-crop";
 import { createCartRow, getNotifKey, getOrderStatusLabel, getOutOfStockItem, previewLateArrival, summarizeRefunds } from "./utils/orders";
 import { addProductToCart, countCartDishes, decreaseRowQty, increaseRowQty, splitOneFromRow, sumCart } from "./utils/cart";
@@ -398,15 +399,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     fetchNotifs();
     fetchFoodCourtStatus();
 
-    const interval = setInterval(() => {
-      fetchStores();
-      fetchMyOrders();
-      fetchMyRefunds();
-      fetchNotifs();
-      fetchFoodCourtStatus();
-    }, 5000);
+    // ออเดอร์/แจ้งเตือนต้องสด (5 วิ) ; ร้าน/เงินคืนเปลี่ยนไม่บ่อย (30 วิ) ; สถานะศูนย์อาหารมีตัวดึงทุก 30 วิแยกอยู่แล้ว
+    const stopLive = startPolling(() => Promise.allSettled([fetchMyOrders(), fetchNotifs()]), 5000);
+    const stopSlow = startPolling(() => Promise.allSettled([fetchStores(), fetchMyRefunds()]), 30000);
 
-    return () => clearInterval(interval);
+    return () => { stopLive(); stopSlow(); };
   }, [userId, apiBase]);
 
   useEffect(() => {
@@ -438,8 +435,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (!selectedStore) return undefined;
     fetchProducts();
     // ร้านกดของหมด/เปิดขาย -> ลูกค้าเห็นภายใน 5 วินาที โดยไม่ต้องกดเข้าร้านใหม่
-    const timer = setInterval(fetchProducts, 5000);
-    return () => clearInterval(timer);
+    return startPolling(fetchProducts, 10000);
   }, [selectedStore, apiBase]);
 
   useEffect(() => {
@@ -512,12 +508,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
     fetchFoodCourtStatus();
 
-    const interval = setInterval(
-      fetchFoodCourtStatus,
-      30000
-    );
-
-    return () => clearInterval(interval);
+    return startPolling(fetchFoodCourtStatus, 30000);
   }, [apiBase]);
 
   const activeStore = useMemo(
@@ -1039,10 +1030,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
   
     loadQueueEstimate();
-    const interval = setInterval(loadQueueEstimate, 5000);
+    const stop = startPolling(loadQueueEstimate, 10000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      stop();
     };
   }, [apiBase, selectedStore, isCartOpen]);
 
@@ -1090,10 +1081,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       });
     };
     load();
-    const interval = setInterval(load, 5000);
+    const stop = startPolling(load, 10000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      stop();
     };
   }, [apiBase, activeTab, activeOrderStoreKey]);
 

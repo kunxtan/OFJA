@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startPolling } from '../utils/polling';
 import Cropper from 'react-easy-crop';
 import * as XLSX from 'xlsx';
 import RefundLog from './RefundLog';
@@ -6,7 +7,7 @@ import RefundLog from './RefundLog';
 const ORDER_TIME_IS_UTC = false;
 const MAX_IMAGE_MB = 5;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const REFRESH_MS = 2000;
+const REFRESH_MS = 15000; // เดิม 2 วิ (orders 5000 แถว + อีก 4 endpoint ทุก 2 วิ = server/DB โหลดหนัก)
 const FOOD_CATEGORIES = [
     'อาหารจานเดียว',
     'ก๋วยเตี๋ยว / เส้น',
@@ -1046,22 +1047,20 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         loadFoodCourt(true);
         loadNotifications(true);
         loadContractNotifications(true);
-        const timer = setInterval(() => {
-            loadStores(true);
-            loadOrders(true);
-            loadFoodCourt(true);
-            loadNotifications(true);
-            loadContractNotifications(true);
-        }, REFRESH_MS);
-        return () => clearInterval(timer);
+        return startPolling(() => Promise.allSettled([
+            loadStores(true),
+            loadOrders(true),
+            loadFoodCourt(true),
+            loadNotifications(true),
+            loadContractNotifications(true)
+        ]), REFRESH_MS);
     }, [loadStores, loadOrders, loadFoodCourt, loadNotifications, loadContractNotifications]);
     useEffect(() => {
         if (!stores.length)
             return;
 
         loadIssueAlerts();
-        const issueTimer = setInterval(loadIssueAlerts, 30000);
-        return () => clearInterval(issueTimer);
+        return startPolling(loadIssueAlerts, 30000);
     }, [stores, loadIssueAlerts]);
 
     useEffect(() => {

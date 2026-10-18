@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { startPolling } from '../utils/polling';
 import { createPortal } from 'react-dom';
 import RefundLog from './RefundLog';
 
@@ -2773,8 +2774,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 4000);
-    return () => clearInterval(interval);
+    // เดิม 4 วิ (ยิง 11 endpoint ต่อรอบ) ; หยุดเมื่อแท็บซ่อน
+    return startPolling(fetchData, 10000);
   }, [storeId, apiBase, uid]);
 
   useEffect(() => {
