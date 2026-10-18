@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Cropper from 'react-easy-crop';
 import * as XLSX from 'xlsx';
+import RefundLog from './RefundLog';
 // ===== ตั้งค่าหลักของหน้า Executive =====
 const ORDER_TIME_IS_UTC = false;
 const MAX_IMAGE_MB = 5;
@@ -353,6 +354,7 @@ const ICON_PATHS = {
     logout: 'M14 8V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2h7a2 2 0 002-2v-2M9 12h12l-3-3M18 15l3-3',
     filter: 'M4 5h16l-6 7.5V18l-4 2v-7.5z',
     history: 'M3 12a9 9 0 109-9 9.2 9.2 0 00-6.4 2.6L3 8M3 3v5h5M12 7v5l3 2',
+    refund: 'M3 12a9 9 0 103-6.7M3 4v5h5M12 8v8M14.5 9.5c-.4-.9-1.4-1.5-2.5-1.5-1.4 0-2.5.8-2.5 2 0 2.6 5 1.4 5 4 0 1.2-1.1 2-2.5 2-1.1 0-2.1-.6-2.5-1.5',
     arrowRight: 'M5 12h14M13 6l6 6-6 6',
     arrowUp: 'M7 17L17 7M7 7h10v10',
     arrowDown: 'M7 7l10 10M17 7v10H7'
@@ -1273,6 +1275,7 @@ const returnFoodCourtToAuto = async () => {
         { id: 'store-accounts', icon: 'account', label: 'Store Accounts', caption: 'บัญชีร้านค้า' },
         { id: 'customer-info', icon: 'search', label: 'User Information', caption: 'ข้อมูลผู้ใช้' },
         { id: 'contract-tracking', icon: 'calendar', label: 'Contract Tracking', caption: 'ติดตามสัญญา' },
+        { id: 'refund-log', icon: 'refund', label: 'Refund Log', caption: 'ประวัติการคืนเงิน' },
         { id: 'audit-history', icon: 'history', label: 'Audit Log', caption: 'ประวัติการดำเนินการ' }
     ];
     // ลบได้ป้ะ
@@ -1310,6 +1313,11 @@ const returnFoodCourtToAuto = async () => {
             title: 'ติดตามระยะเวลาสัญญา',
             subtitle: 'ตรวจสอบวันเริ่มสัญญา วันสิ้นสุดสัญญา และร้านค้าที่ใกล้หมดอายุ',
             searchPlaceholder: 'ค้นหาร้านค้า...'
+        },
+        'refund-log': {
+            title: 'ประวัติการคืนเงิน',
+            subtitle: 'เงินคืนที่รอลูกค้ามารับที่ร้าน และที่ร้านคืนแล้ว (ไม่นับเป็นรายได้)',
+            searchPlaceholder: ''
         },
         'audit-history': {
             title: 'ประวัติการดำเนินการ',
@@ -1569,6 +1577,7 @@ const returnFoodCourtToAuto = async () => {
               {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx}/>}
               {activeMenu === 'customer-info' && <CustomerInfoPage ctx={ctx}/>}
               {activeMenu === 'contract-tracking' && <ContractTrackingPage ctx={ctx}/>}
+              {activeMenu === 'refund-log' && <RefundLog apiBase={API} showStore pollMs={15000} />}
               {activeMenu === 'audit-history' && <AuditHistoryPage ctx={ctx}/>}
               {activeMenu === 'issue-reports' && <IssueReportsPage ctx={ctx}/>}
             </div>
@@ -5268,6 +5277,8 @@ const AUDIT_VERBS = {
     VERIFY_TOP_UP_APPROVE: 'อนุมัติสลิปโอนส่วนต่าง',
     VERIFY_TOP_UP_REJECT: 'ปฏิเสธสลิปโอนส่วนต่าง',
     REFUND_DONE: 'คืนเงินให้ลูกค้าแล้ว',
+    REFUND_PAYOUT_SET: 'ลูกค้าเลือกวิธีรับเงินคืน',
+    REFUND_PAYOUT_VIEW: 'เจ้าของร้านเปิดดูบัญชีรับเงินคืน',
     // ร้านค้า / สัญญา
     CREATE_STORE: 'เพิ่มร้านค้า',
     UPDATE_STORE: 'แก้ไขข้อมูลร้าน',
@@ -5321,7 +5332,7 @@ const auditCodesMatching = (keyword) => Object.keys(AUDIT_VERBS)
 const AUDIT_GROUP_WORDS = [
     ['store', ['STORE', 'SUSPEND']],
     ['account', ['ACCOUNT', 'USER', 'STAFF', 'PASSWORD']],
-    ['payment', ['SLIP', 'PAYMENT']],
+    ['payment', ['SLIP', 'PAYMENT', 'REFUND']],
     ['order', ['ORDER', 'CANCEL', 'STATUS', 'QUEUE', 'PRINT']]
 ];
 const AUDIT_GROUP_META = {

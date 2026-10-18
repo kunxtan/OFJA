@@ -95,6 +95,38 @@ def validate_phone(phone: Optional[str], required: bool = False) -> Optional[str
     return digits
 
 
+_DIGITS_RE = re.compile(r"^\d+$")
+
+
+def validate_payout(kind: Optional[str], bank: Optional[str], account_no: Optional[str],
+                    account_name: Optional[str]) -> dict:
+    """ข้อมูลรับเงินคืนแบบโอน : PROMPTPAY (เบอร์ 10 หลักขึ้นต้น 0 หรือเลขบัตรประชาชน 13 หลัก) หรือ BANK (ธนาคาร + เลขบัญชี 10–15 หลัก + ชื่อบัญชี)"""
+    kind = (kind or "").upper()
+    digits = re.sub(r"[\s-]", "", account_no or "")
+    name = (account_name or "").strip()
+    if kind == "PROMPTPAY":
+        if not _DIGITS_RE.match(digits) or not (_PHONE_RE.match(digits) or len(digits) == 13):
+            raise DomainError(400, "พร้อมเพย์ต้องเป็นเบอร์โทร 10 หลัก (ขึ้นต้น 0) หรือเลขบัตรประชาชน 13 หลัก")
+        return {"kind": kind, "bank": None, "account_no": digits, "account_name": name[:100] or None}
+    if kind == "BANK":
+        bank = (bank or "").strip()
+        if not bank or len(bank) > 60:
+            raise DomainError(400, "กรุณาระบุชื่อธนาคาร")
+        if not _DIGITS_RE.match(digits) or not (10 <= len(digits) <= 15):
+            raise DomainError(400, "เลขบัญชีต้องเป็นตัวเลข 10–15 หลัก")
+        if not name:
+            raise DomainError(400, "กรุณาระบุชื่อบัญชี")
+        return {"kind": kind, "bank": bank, "account_no": digits, "account_name": name[:100]}
+    raise DomainError(400, "กรุณาเลือกพร้อมเพย์หรือบัญชีธนาคาร")
+
+
+def mask_account(value: Optional[str]) -> Optional[str]:
+    """เลขบัญชี/พร้อมเพย์ที่ปิดบางส่วน เหลือ 4 ตัวท้าย"""
+    if not value:
+        return None
+    return "x" * max(len(value) - 4, 0) + value[-4:]
+
+
 def validate_email(email: Optional[str]) -> Optional[str]:
     """อีเมลไม่บังคับ ; ว่าง = None ; ยาวไม่เกิน 100 (User.Email VARCHAR(100))"""
     email = (email or "").strip()

@@ -70,6 +70,16 @@ def notify_store_owners(db, store_id: int, ntype: str, title: str, message: str,
         send_notif(db, uid, ntype, title, message, order_id)
 
 
+_ACTOR_TH = {"FRONT_STAFF": "พนักงานหน้าร้าน", "KITCHEN_STAFF": "พนักงานครัว", "STORE_OWNER": "เจ้าของร้าน"}
+
+
+def notify_menu_out_of_stock(db, store_id: int, product_name: str, actor_role: str) -> None:
+    """เมนูถูกปรับเป็นของหมด (ทุกช่องทาง) -> แจ้งเจ้าของร้าน พร้อมบอกว่าใครเป็นคนปรับ"""
+    who = _ACTOR_TH.get(actor_role, "ร้าน")
+    notify_store_owners(db, store_id, "SYSTEM", "สินค้าหมด",
+                        f"⚠️ สินค้าหมด: {who}เพิ่งปรับเมนู '{product_name}' เป็นของหมด")
+
+
 # -------------------------------------------------------------------- lookups
 _status_ids: Dict[str, int] = {}
 
@@ -345,6 +355,7 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
         queue_print_job(cur, oid)
     if final_code in _PRINT_SKIP_REASON:
         skip_queued_print_jobs(cur, oid, _PRINT_SKIP_REASON[final_code])
+    refunded = Decimal(0)
     if final_code == state.CANCELLED:
         close_pending_top_ups(cur, oid, "ออเดอร์ถูกยกเลิกก่อนโอนส่วนต่าง")
         refunded = refund_full_cancel(cur, oid, reason or "ยกเลิกออเดอร์")
@@ -353,6 +364,8 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
     if order.get("CustomerId"):
         if final_code == state.CANCELLED:
             text = f"ออเดอร์คิว {q} ถูกยกเลิก" + (f": {reason}" if reason else "")
+            if refunded > 0:
+                text += f" — กรุณารับเงินคืน {refunded:.2f} บาท ที่ร้าน {order.get('StoreName') or ''} โดยแจ้งเลขคิว {q}"
             ntype = "ORDER_STATUS"
         elif final_code == state.READY:
             text, ntype = f"ออเดอร์คิว {q} {_MESSAGES[final_code]}", "QUEUE_CALLED"

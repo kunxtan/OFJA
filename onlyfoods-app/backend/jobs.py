@@ -1,8 +1,11 @@
-"""งานเบื้องหลัง: เตือนลูกค้าที่ยังไม่มารับอาหาร
+"""งานเบื้องหลัง: เตือนลูกค้าที่ยังไม่มารับอาหาร + ยกเลิกออเดอร์ที่หมดเวลาเลือกเมนูทดแทน
 
 อาหารพร้อมรับ (READY) แล้วลูกค้ายังไม่มาเกิน PICKUP_REMINDER_MINUTES -> ส่งแจ้งเตือนให้ 1 ครั้ง
 (ปุ่ม "ลูกค้าไม่มารับ" ปลดล็อกทีหลังที่ NO_SHOW_AFTER_MINUTES และพนักงานกดเองเสมอ ;
  ลูกค้าที่แจ้งร้านแล้วว่าจะมาช้า (LatePickupArrivalTime) ไม่ถูกเตือน)
+
+ร้านแจ้งของหมด (PENDING_CANCELLATION) แล้วลูกค้าไม่เปลี่ยนเมนู/ไม่ยกเลิกจนเลย CancelDeadline
+-> ระบบยกเลิกให้ (ผู้กระทำ = SYSTEM) สร้างรายการคืนเงินรอลูกค้ามารับที่ร้าน และแจ้งลูกค้า
 
 ปลอดภัยเมื่อรันหลาย worker / รีสตาร์ท: ใช้ UPDATE ... WHERE PickupReminderAt IS NULL เป็นตัวจอง
 ใครจองได้ (rowcount = 1) คนนั้นเท่านั้นที่ส่งแจ้งเตือน
@@ -13,8 +16,11 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import config
+import state
 from db import acquire
-from services import log_audit, purge_expired_stores, send_notif
+from errors import DomainError
+from services import (apply_status_effects, do_transition, lock_order, log_audit, purge_expired_stores,
+                      send_notif)
 from utils import bangkok_now, queue_label
 
 logger = logging.getLogger("onlyfood")
@@ -79,9 +85,59 @@ def send_pickup_reminders(db, now: Optional[datetime] = None) -> int:
     return sent
 
 
+def auto_cancel_reason(cancel_reason: Optional[str]) -> str:
+    base = "หมดเวลาเลือกเมนูทดแทน ระบบยกเลิกออเดอร์อัตโนมัติ"
+    return (f"{base} ({cancel_reason})" if cancel_reason else base)[:255]
+
+
+def cancel_expired_requests(db, now: Optional[datetime] = None) -> int:
+    """ยกเลิกออเดอร์ PENDING_CANCELLATION ที่เลยเส้นตายแล้ว คืนจำนวนที่ยกเลิก (1 ออเดอร์ = 1 transaction)"""
+    now = now or bangkok_now()
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.OrderId FROM `Order` o
+            JOIN OrderStatus os ON os.StatusId = o.StatusId
+            WHERE os.StatusCode = 'PENDING_CANCELLATION' AND o.CancelDeadline IS NOT NULL AND o.CancelDeadline <= %s
+            ORDER BY o.CancelDeadline
+            LIMIT 200
+            """,
+            (now,),
+        )
+        due = [r["OrderId"] for r in cur.fetchall()]
+    db.rollback()
+
+    cancelled = 0
+    for oid in due:
+        try:
+            with db.cursor() as cur:
+                order = lock_order(cur, oid)
+                # ระหว่างเลือกกับล็อก ลูกค้าอาจเปลี่ยนเมนู/ยกเลิกเอง หรือพนักงานจัดการไปแล้ว
+                if (order["StatusCode"] != state.PENDING_CANCELLATION or not order["CancelDeadline"]
+                        or order["CancelDeadline"] > now):
+                    db.rollback()
+                    continue
+                reason = auto_cancel_reason(order["CancelReason"])
+                do_transition(cur, order, state.CANCELLED, actor_id=None, reason=reason, system=True,
+                              cancel_reason=reason, cancel_deadline=None, now=now)
+                apply_status_effects(db, cur, order, state.CANCELLED, None, reason)
+            db.commit()
+            cancelled += 1
+        except DomainError as exc:  # เช่นมีสลิปส่วนต่างที่ยังไม่ตรวจ: ปล่อยให้พนักงานจัดการ
+            db.rollback()
+            logger.warning("auto-cancel skipped order=%s: %s", oid, exc)
+        except Exception:  # noqa: BLE001 - ออเดอร์หนึ่งพัง ไม่ให้กระทบออเดอร์อื่น
+            db.rollback()
+            logger.exception("auto-cancel failed order=%s", oid)
+    return cancelled
+
+
 def _run_once() -> int:
     conn = acquire()
     try:
+        cancelled = cancel_expired_requests(conn)
+        if cancelled:
+            logger.info("expired out-of-stock orders auto-cancelled: %s", cancelled)
         return send_pickup_reminders(conn)
     finally:
         try:

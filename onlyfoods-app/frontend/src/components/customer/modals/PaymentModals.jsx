@@ -269,9 +269,13 @@ export function OutOfStockModal({
         )}
 
         <div style={{ background: "#FFF0ED", color: COLORS.red, padding: "10px 14px", borderRadius: "12px", margin: "14px 0", fontSize: "14px", fontWeight: "800", border: `1px solid ${COLORS.red}` }}>
-          ⏱ กรุณาเลือกภายใน: <span style={{ fontSize: "18px", color: COLORS.red, fontWeight: "900" }}>{formatTimeLeft(timeLeft)}</span> นาที
+          {timeLeft > 0 ? (
+            <>⏱ กรุณาเลือกภายใน: <span style={{ fontSize: "18px", color: COLORS.red, fontWeight: "900" }}>{formatTimeLeft(timeLeft)}</span> นาที</>
+          ) : (
+            <>⏱ หมดเวลาเลือกเมนูแล้ว ระบบกำลังยกเลิกออเดอร์ให้</>
+          )}
           <div style={{ fontSize: "11px", fontWeight: "normal", marginTop: "2px", color: "#b91c1c" }}>
-            (ระบบจะยกเลิกและคืนเงินให้อัตโนมัติหากหมดเวลา)
+            (หมดเวลาแล้วระบบจะยกเลิกให้อัตโนมัติ และคุณรับเงินคืนได้ที่หน้าร้านโดยแจ้งเลขคิว)
           </div>
         </div>
 
