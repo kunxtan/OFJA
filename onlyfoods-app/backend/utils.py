@@ -191,6 +191,10 @@ _MAGIC = {
 }
 
 
+# โฟลเดอร์รูปที่เปิดสาธารณะที่ /uploads/<folder>/ ; โฟลเดอร์อื่น (slips, refunds) เปิดผ่าน /api/files เท่านั้น
+PUBLIC_UPLOAD_FOLDERS = ("products", "stores", "profiles", "reviews")
+
+
 def save_image(value: Optional[str], folder: str, upload_dir: Optional[str] = None, *,
                new_only: bool = False) -> Optional[str]:
     """รับรูปจาก frontend แล้วคืน path ที่เก็บลง DB (VARCHAR 500)

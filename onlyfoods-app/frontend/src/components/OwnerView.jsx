@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { startPolling } from '../utils/polling';
 import { createPortal } from 'react-dom';
 import { RefundActionModals, STATUS_TH as REFUND_STATUS_TH, payoutLabel } from './RefundLog';
+import AuthImage, { openFile } from './AuthImage';
 
 /* ============================================================
    OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า (Executive Theme Colors)
@@ -2165,9 +2166,9 @@ function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
                   return (
                     <div key={p.PaymentId} className="nd-card sh-pay">
                       {p.SlipUrl ? (
-                        <a className="sh-slip" href={p.SlipUrl} target="_blank" rel="noopener noreferrer" title="เปิดสลิปขนาดเต็ม">
-                          <img src={p.SlipUrl} alt="สลิปการโอน" />
-                        </a>
+                        <button type="button" className="sh-slip" onClick={() => openFile(apiBase, p.SlipUrl)} title="เปิดสลิปขนาดเต็ม">
+                          <AuthImage apiBase={apiBase} src={p.SlipUrl} alt="สลิปการโอน" />
+                        </button>
                       ) : (
                         <span className="sh-slip none"><Icon name={p.MethodCode === 'CASH' ? 'coin' : 'receipt'} size={20} /></span>
                       )}
@@ -4813,9 +4814,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                                       {r.PayoutMethod === 'TRANSFER' ? 'โอนคืน' : 'คืนเงินแล้ว'}
                                     </button>
                                   ) : r.TransferSlipUrl ? (
-                                    <a className="rr-btn ghost" href={`${apiBase}${r.TransferSlipUrl}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+                                    <button type="button" className="rr-btn ghost" onClick={stop(() => openFile(apiBase, r.TransferSlipUrl))}>
                                       <Icon name="eye" size={14} /> สลิปโอน
-                                    </a>
+                                    </button>
                                   ) : (
                                     <span className="sh-chevron"><Icon name="arrowRight" size={16} /></span>
                                   )}
@@ -6519,7 +6520,7 @@ body, html {
 .sh-cancel-reason { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: var(--berry-red-light); color: var(--berry-red); font-size: 12.5px; font-weight: 600; }
 
 .sh-pay { display: flex; gap: 12px; align-items: flex-start; }
-.sh-slip { width: 64px; height: 84px; min-width: 64px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); }
+.sh-slip { width: 64px; height: 84px; min-width: 64px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--berry-border); border-radius: 10px; background: var(--berry-bg); color: var(--berry-text-muted); padding: 0; cursor: pointer; }
 .sh-slip img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.2s ease; }
 .sh-slip:hover img { transform: scale(1.06); }
 .sh-slip.none { height: 64px; }

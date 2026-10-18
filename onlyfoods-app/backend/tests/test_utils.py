@@ -284,6 +284,23 @@ def test_queue_summary_limits_list():
     assert queue_summary(rows) == "A001, A002, A003, A004, A005, A006, A007, A008, A009, A010 และอีก 2 คิว"
 
 
+def test_protected_file_rules():
+    from routers.files import _NAME, _allowed
+    assert _NAME.match("0123456789abcdef0123456789abcdef.png")
+    assert not _NAME.match("../../etc/passwd") and not _NAME.match("abc.png") and not _NAME.match("0123456789abcdef0123456789abcdef.svg")
+    cust = {"RoleCode": "CUSTOMER", "UserId": 7, "StoreId": None}
+    other = {"RoleCode": "CUSTOMER", "UserId": 8, "StoreId": None}
+    staff = {"RoleCode": "FRONT_STAFF", "UserId": 2, "StoreId": 1}
+    staff2 = {"RoleCode": "FRONT_STAFF", "UserId": 3, "StoreId": 2}
+    kitchen = {"RoleCode": "KITCHEN_STAFF", "UserId": 4, "StoreId": 1}
+    acc = {"RoleCode": "ACCOUNTANT", "UserId": 5, "StoreId": None}
+    slip = lambda u: _allowed(u, 7, 1, ("FRONT_STAFF", "STORE_OWNER"), ("ACCOUNTANT", "EXECUTIVE"))
+    assert [slip(u) for u in (cust, other, staff, staff2, kitchen, acc)] == [True, False, True, False, False, True]
+    qr = lambda u: _allowed(u, 7, 1, ("STORE_OWNER",), ())
+    owner = {"RoleCode": "STORE_OWNER", "UserId": 6, "StoreId": 1}
+    assert [qr(u) for u in (cust, owner, staff, acc)] == [True, True, False, False]
+
+
 def test_day_period_buckets():
     from datetime import datetime
     from utils import day_period

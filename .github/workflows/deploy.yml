@@ -86,6 +86,12 @@ jobs:
           # กันค้าง: รอล็อกตารางได้ไม่เกิน 60 วิ, ปิด migration ค้างจากรอบก่อน และ connection ที่ถือตารางค้าง (ดูในไฟล์)
           DC="sudo docker compose -f $COMPOSE_FILE_NAME" bash database/apply_migrations.sh
 
+      - name: Limit app database user
+        run: |
+          cd "$APP_DIR/onlyfoods-app"
+          # L26 : user ที่ backend ใช้ (MYSQL_USER) ได้แค่ SELECT/INSERT/UPDATE/DELETE ; migration ยังใช้ root
+          DC="sudo docker compose -f $COMPOSE_FILE_NAME" bash database/restrict_app_user.sh
+
       - name: Build and start
         run: |
           set -e
