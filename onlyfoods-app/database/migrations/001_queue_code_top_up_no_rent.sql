@@ -101,23 +101,9 @@ PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
 
 
 -- ---------------------------------------------------------------------
--- 5) v_order_net: one row per order (food + top-ups - refunds paid back)
+-- 5) v_order_net : ย้ายไปไว้ใน migration 006 ที่เดียว (นิยามล่าสุด : เงินคืนที่รอคืนไม่นับเป็นรายได้)
+--    เดิมไฟล์นี้สร้าง view แบบเก่าใหม่ทุก deploy ถ้า migration ไฟล์หลัง ๆ ล้ม ยอดขายจะนับเงินที่รอคืนเป็นรายได้
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE VIEW v_order_net AS
-SELECT
-  p.OrderId,
-  SUM(p.Amount)                                  AS PaidAmount,
-  COALESCE(SUM(rf.Refunded), 0)                  AS RefundedAmount,
-  SUM(p.Amount) - COALESCE(SUM(rf.Refunded), 0)  AS NetAmount
-FROM Payment p
-LEFT JOIN (
-  SELECT PaymentId, SUM(Amount) AS Refunded
-  FROM Refund
-  WHERE RefundStatus = 'DONE'
-  GROUP BY PaymentId
-) rf ON rf.PaymentId = p.PaymentId
-WHERE p.PaymentStatus = 'VERIFIED'
-GROUP BY p.OrderId;
 
 
 -- ---------------------------------------------------------------------
