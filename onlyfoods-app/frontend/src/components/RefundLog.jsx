@@ -98,6 +98,8 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
   const [payInfoError, setPayInfoError] = useState('');
   const openRefundRef = useRef(null);                   // แถวที่เปิดอยู่ : คำตอบที่มาช้าของแถวอื่นต้องไม่ทับ
   const [flash, setFlash] = useState('');
+  const [checking, setChecking] = useState(null);       // ตรวจสลิปของออเดอร์ที่ถูกบังคับยกเลิกก่อนร้านตรวจ
+  const [checkReason, setCheckReason] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -126,11 +128,11 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
   }, [flash]);
 
   useEffect(() => {
-    if (!confirming) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape' && !busy) setConfirming(null); };
+    if (!confirming && !checking) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) { setConfirming(null); setChecking(null); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [confirming, busy]);
+  }, [confirming, checking, busy]);
 
   const stores = useMemo(() => {
     const m = new Map();
@@ -207,6 +209,36 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
       onChanged?.();
     } catch (err) {
       setConfirmError(err.message || 'บันทึกการคืนเงินไม่สำเร็จ');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openSlipCheck = (r) => {
+    setConfirmError('');
+    setCheckReason('');
+    setChecking(r);
+  };
+
+  const submitSlipCheck = async (approved) => {
+    if (!checking) return;
+    setBusy(true);
+    setConfirmError('');
+    try {
+      const res = await fetch(`${apiBase}/api/refunds/${checking.RefundId}/slip-check`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved, reason: approved ? '' : (checkReason.trim() || 'สลิปไม่ถูกต้อง / เงินไม่เข้าบัญชี') }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'บันทึกผลตรวจสลิปไม่สำเร็จ'));
+      setFlash(approved
+        ? `สลิปคิว ${checking.QueueNo} ถูกต้อง: คืนเงิน ฿${money(checking.Amount)} ต่อได้ตามปกติ`
+        : `สลิปคิว ${checking.QueueNo} ไม่ผ่าน: ไม่ต้องคืนเงินรายการนี้`);
+      setChecking(null);
+      await load();
+      onChanged?.();
+    } catch (err) {
+      setConfirmError(err.message || 'บันทึกผลตรวจสลิปไม่สำเร็จ');
     } finally {
       setBusy(false);
     }
@@ -311,7 +343,12 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
                   {r.RefundStatus === 'PENDING' && r.PayoutMethod === 'TRANSFER' && r.PayoutBank && <div className="rf-sub">{r.PayoutBank}</div>}
                   {r.TransferSlipUrl && <div><a className="rf-link" href={`${apiBase}${r.TransferSlipUrl}`} target="_blank" rel="noreferrer">ดูสลิปโอน</a></div>}
                 </td>
-                <td><span className={`rf-badge ${String(r.RefundStatus).toLowerCase()}`}>{STATUS_TH[r.RefundStatus] || r.RefundStatus}</span></td>
+                <td>
+                  <span className={`rf-badge ${String(r.RefundStatus).toLowerCase()}`}>{STATUS_TH[r.RefundStatus] || r.RefundStatus}</span>
+                  {r.RefundStatus === 'PENDING' && r.SlipUnverified && (
+                    <div><span className="rf-badge unverified" title="ออเดอร์ถูกยกเลิกก่อนร้านตรวจสลิป ต้องตรวจสลิปและยอดเข้าบัญชีก่อนคืนเงิน">สลิปยังไม่ได้ตรวจ</span></div>
+                  )}
+                </td>
                 <td>
                   {r.RefundedAt ? (
                     <>
@@ -323,7 +360,9 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
                 {canConfirm && (
                   <td>
                     {r.RefundStatus === 'PENDING' && (
-                      !isOwner && r.PayoutMethod === 'TRANSFER'
+                      r.SlipUnverified
+                        ? <button type="button" className="rf-btn rf-btn-ghost" onClick={() => openSlipCheck(r)}>ตรวจสลิปก่อน</button>
+                        : !isOwner && r.PayoutMethod === 'TRANSFER'
                         ? <span className="rf-sub">ลูกค้าขอโอน<br />รอเจ้าของร้านดำเนินการ</span>
                         : (
                           <button type="button" className="rf-btn rf-btn-primary" onClick={() => openConfirm(r)}>
@@ -338,6 +377,38 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
           </tbody>
         </table>
       </div>
+
+      {checking && (
+        <div className="rf-overlay" onClick={() => !busy && setChecking(null)}>
+          <div className="rf-modal" role="dialog" aria-modal="true" aria-labelledby="rf-check-title" onClick={e => e.stopPropagation()}>
+            <h4 id="rf-check-title">ตรวจสลิปก่อนคืนเงิน</h4>
+            <div className="rf-modal-amount">฿{money(checking.Amount)}</div>
+            <dl className="rf-modal-list">
+              <dt>คิว</dt><dd><span className="rf-queue">{checking.QueueNo}</span></dd>
+              <dt>ลูกค้า</dt><dd>{checking.CustomerName || '-'}{checking.CustomerPhone ? ` · ${fmtPhone(checking.CustomerPhone)}` : ''}</dd>
+              <dt>สลิป</dt><dd>{checking.PaymentType === 'TOP_UP' ? 'ส่วนต่างค่าอาหาร' : 'ค่าอาหาร'}</dd>
+            </dl>
+            {checking.PaymentSlipUrl
+              ? <a href={`${apiBase}${checking.PaymentSlipUrl}`} target="_blank" rel="noreferrer"><img className="rf-slip-preview" src={`${apiBase}${checking.PaymentSlipUrl}`} alt="สลิปที่ลูกค้าแนบ" /></a>
+              : <div className="rf-sub">ไม่พบรูปสลิป</div>}
+            <p className="rf-modal-note">
+              ออเดอร์นี้ถูกยกเลิกตอนร้านยังไม่ได้ตรวจสลิป เช็คว่ายอดเข้าบัญชีร้านจริงก่อน
+              ถ้าถูกต้อง รายการนี้จะกลับไปรอคืนเงินตามปกติ ถ้าไม่ถูกต้อง ไม่ต้องคืนเงิน
+            </p>
+            <label className="rf-slip">
+              <span>เหตุผล (ถ้าสลิปไม่ถูกต้อง)</span>
+              <input className="rf-input" style={{ maxWidth: 'none' }} value={checkReason} maxLength={200}
+                onChange={e => setCheckReason(e.target.value)} placeholder="เช่น ยอดไม่เข้าบัญชี / สลิปซ้ำ" disabled={busy} />
+            </label>
+            {confirmError && <div className="rf-error" role="alert" style={{ marginTop: '10px' }}>{confirmError}</div>}
+            <div className="rf-modal-actions" style={{ marginTop: '12px' }}>
+              <button type="button" className="rf-btn rf-btn-ghost" onClick={() => setChecking(null)} disabled={busy}>ปิด</button>
+              <button type="button" className="rf-btn rf-btn-danger" onClick={() => submitSlipCheck(false)} disabled={busy}>สลิปไม่ถูกต้อง</button>
+              <button type="button" className="rf-btn rf-btn-primary" onClick={() => submitSlipCheck(true)} disabled={busy}>{busy ? 'กำลังบันทึก…' : 'เงินเข้าแล้ว สลิปถูกต้อง'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirming && (
         <div className="rf-overlay" onClick={() => !busy && setConfirming(null)}>
@@ -448,6 +519,8 @@ const RF_STYLES = `
 .rf-badge.pending { background: ${C.amberSoft}; color: ${C.amber}; }
 .rf-badge.done { background: ${C.greenSoft}; color: ${C.green}; }
 .rf-badge.failed { background: ${C.redSoft}; color: ${C.red}; }
+.rf-badge.unverified { background: #FEF3C7; color: #92400E; margin-top: 4px; }
+.rf-btn-danger { background: ${C.redSoft}; color: ${C.red}; border-color: ${C.redSoft}; }
 .rf-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 2000; }
 .rf-modal { background: ${C.bg}; border-radius: 16px; padding: 22px; width: 100%; max-width: 420px; max-height: calc(100vh - 32px); overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
 .rf-modal h4 { margin: 0 0 6px; font-size: 17px; }

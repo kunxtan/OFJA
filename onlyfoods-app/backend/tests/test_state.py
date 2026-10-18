@@ -193,3 +193,13 @@ def test_status_endpoint_cannot_skip_money_checks():
             state.plan_status_change(cur, target, "STORE_OWNER")
     assert state.plan_status_change("AWAITING_TOP_UP", "Cancelled", "FRONT_STAFF") == ["CANCELLED"]
     assert state.plan_status_change("PENDING_CANCELLATION", "Cancelled", "FRONT_STAFF") == ["CANCELLED"]
+
+
+@pytest.mark.parametrize("old", ALL)
+def test_force_cancel_any_open_status(old):
+    """ผู้บริหารบังคับปิดแบบยกเลิกทั้งหมด: ยกเลิกได้ทุกสถานะที่ยังไม่จบ ; ออเดอร์ที่จบแล้วห้ามแตะ"""
+    if old in state.TERMINAL:
+        with pytest.raises(DomainError):
+            state.assert_force_cancel(old)
+    else:
+        state.assert_force_cancel(old)

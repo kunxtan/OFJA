@@ -238,6 +238,7 @@ CREATE TABLE `Order` (
   IsWalkIn          BOOLEAN           NOT NULL DEFAULT FALSE,
   PickupTime        DATETIME          NULL COMMENT 'customer-requested pickup time',
   ReadyAt           DATETIME          NULL COMMENT 'set when status becomes READY; no-show clock starts here',
+  DeliveredAt       DATETIME          NULL COMMENT 'set when status becomes COMPLETED (food handed over)',
   PickupReminderAt  DATETIME          NULL COMMENT 'when the customer was auto-reminded to pick up (15 min after ReadyAt); NULL = not yet',
   LatePickupArrivalTime DATETIME      NULL COMMENT 'customer told the store they will arrive by this time (latest wins); no auto reminder, no-show locked until then',
   LatePickupMinutes SMALLINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'minutes chosen in the latest late-pickup notice',

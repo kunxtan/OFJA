@@ -11,13 +11,14 @@ import json
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from auth import STORE_SCOPED, assert_store_access, get_optional_user, hash_password, require_role
 from db import get_db, transaction
 from errors import DomainError
 from schemas import ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema
-from services import get_foodcourt, is_duplicate_key, log_audit, open_order_count
+from services import (force_cancel_open_orders, get_foodcourt, is_duplicate_key, log_audit, open_order_count,
+                      open_orders, queue_summary)
 from shapes import STORE_SELECT, shape_store
 from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, add_years_minus_one_day,
                    bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
@@ -280,11 +281,23 @@ def delete_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Depe
     return {"success": True, "message": "ลบร้านค้าเรียบร้อยแล้ว"}
 
 
+@router.get("/{store_id}/open-orders")
+def get_store_open_orders(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """ออเดอร์ที่ยังไม่จบของร้าน (แสดงในหน้าต่างยืนยันก่อนปิดร้าน)"""
+    assert_store_access(user, store_id)
+    with db.cursor() as cur:
+        return open_orders(cur, store_id)
+
+
 @router.put("/{store_id}/toggle")
 def toggle_store(store_id: int, open: Optional[bool] = None,
+                 on_open_orders: Optional[str] = Query(None, pattern="^(finish|cancel)$"),
                  user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
-    """open=true/false = ตั้งเป็นสถานะนั้น (เป็นอยู่แล้ว = ไม่ทำอะไร) ; ไม่ส่ง = สลับ (client เดิม)"""
+    """open=true/false = ตั้งเป็นสถานะนั้น (เป็นอยู่แล้ว = ไม่ทำอะไร) ; ไม่ส่ง = สลับ (client เดิม)
+    กฎ PO 1 ปิดร้านตอนยังมีออเดอร์ค้าง: เจ้าของร้านปิดไม่ได้ ; ผู้บริหารต้องเลือก on_open_orders
+      finish = หยุดรับออเดอร์ใหม่ ออเดอร์ที่ค้างทำต่อจนจบ ; cancel = ยกเลิกทั้งหมดและคืนเงิน"""
     assert_store_access(user, store_id)
+    forced = None
     with transaction(db):
         with db.cursor() as cur:
             cur.execute(
@@ -305,6 +318,7 @@ def toggle_store(store_id: int, open: Optional[bool] = None,
                 return {"success": True, "is_open": current, "unchanged": True,
                         "message": "ร้านเปิดอยู่แล้ว" if current else "ร้านปิดอยู่แล้ว"}
             new_open = not current
+            pending = []
             if new_open:
                 if state == CONTRACT_EXPIRED:
                     raise DomainError(400, "สัญญาร้านหมดอายุแล้ว ไม่สามารถเปิดร้านได้")
@@ -316,11 +330,23 @@ def toggle_store(store_id: int, open: Optional[bool] = None,
                     raise DomainError(400, "ไม่สามารถเปิดร้านได้ เนื่องจากศูนย์อาหารปิดให้บริการ")
                 if store["IsSuspended"]:
                     raise DomainError(400, "ร้านถูกระงับสิทธิ์ ไม่สามารถเปิดร้านได้")
-                
+            else:
+                pending = open_orders(cur, store_id)
+                if pending and user["RoleCode"] != "EXECUTIVE":
+                    raise DomainError(400, f"ยังปิดร้านไม่ได้ เพราะมีออเดอร์ที่ยังไม่จบ {len(pending)} ออเดอร์ "
+                                           f"({queue_summary(pending)}) กรุณาทำและส่งมอบให้ครบก่อน")
+                if pending and not on_open_orders:
+                    raise DomainError(409, f"ร้านนี้ยังมีออเดอร์ที่ยังไม่จบ {len(pending)} ออเดอร์ "
+                                           f"({queue_summary(pending)}) กรุณาเลือกว่าจะให้ทำต่อจนเสร็จหรือยกเลิกทั้งหมด")
             cur.execute("UPDATE Store SET IsOpen = %s WHERE StoreId = %s", (new_open, store_id))
-        log_audit(db, user["UserId"], "OPEN_STORE" if new_open else "CLOSE_STORE", "Store", store_id,
-                  None, {"name": store["StoreName"]})
-    return {"success": True, "is_open": new_open}
+            if not new_open and pending and on_open_orders == "cancel":
+                forced = force_cancel_open_orders(db, cur, store_id, user["UserId"],
+                                                  "ร้านปิดให้บริการกะทันหัน (ผู้บริหารสั่งปิด)")
+        detail = {"name": store["StoreName"]}
+        if not new_open and pending:
+            detail.update(open_orders=len(pending), on_open_orders=on_open_orders, **(forced or {}))
+        log_audit(db, user["UserId"], "OPEN_STORE" if new_open else "CLOSE_STORE", "Store", store_id, None, detail)
+    return {"success": True, "is_open": new_open, **({"forced": forced} if forced else {})}
 
 
 @router.put("/{store_id}/suspend")

@@ -125,6 +125,10 @@ def get_logs(
         LEFT JOIN Store ast ON ast.StoreId = COALESCE(ao.StoreId, IF(a.EntityType = 'Store', a.EntityId, NULL))
     """
     where, params = [], []
+    if user["RoleCode"] == "ACCOUNTANT":
+        # ฝ่ายบัญชีดูเฉพาะเหตุการณ์ด้านเงิน/ออเดอร์/ร้าน : ไม่เห็นการเข้าสู่ระบบและการเปลี่ยนรหัสผ่าน (ข้อมูลความปลอดภัย)
+        where.append("a.EntityType <> 'AUTH' AND a.ActionCode NOT LIKE %s")
+        params.append("%PASSWORD%")
     if action:
         where.append("a.ActionCode = %s")
         params.append(action)
