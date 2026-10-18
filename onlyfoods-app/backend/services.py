@@ -338,6 +338,21 @@ def add_top_up(cur, order_id: int, amount: Decimal) -> Decimal:
     return amount
 
 
+def reduce_top_up(cur, order_id: int, amount: Decimal, reason: str) -> Decimal:
+    """ลดยอดส่วนต่างที่ยังไม่ได้โอน (ยังไม่แนบสลิป) ลงไม่เกิน amount ; เหลือ 0 = ปิดรายการทิ้ง ; คืนยอดที่ลดได้"""
+    pending = pending_top_up(cur, order_id)
+    if not pending or pending["SlipImageUrl"]:
+        return Decimal(0)
+    due = Decimal(pending["Amount"])
+    cut = min(due, amount)
+    if cut >= due:
+        cur.execute("UPDATE Payment SET PaymentStatus = 'REJECTED', RejectReason = %s WHERE PaymentId = %s",
+                    (reason[:255], pending["PaymentId"]))
+    else:
+        cur.execute("UPDATE Payment SET Amount = %s WHERE PaymentId = %s", (due - cut, pending["PaymentId"]))
+    return cut
+
+
 def close_pending_top_ups(cur, order_id: int, reason: str) -> None:
     """ก่อนยกเลิกออเดอร์: ส่วนต่างที่ยังไม่โอน -> ปิดทิ้ง (REJECTED) ;
     ถ้าลูกค้าแนบสลิปแล้วแต่ร้านยังไม่ตรวจ -> ห้ามยกเลิก (เงินอาจโอนมาแล้ว ต้องตรวจก่อนจะได้คืนถูกยอด)"""
