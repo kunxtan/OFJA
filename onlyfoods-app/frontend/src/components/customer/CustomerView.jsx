@@ -2456,12 +2456,21 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           }
 
           @media (max-width: 480px) {
-            .customer-profile-name {
+            /* ชิปโปรไฟล์ในแถบส่วนหัว (หน้าเมนู ใช้แถวร่วมกับช่องค้นหา): แสดงเฉพาะรูป */
+            header .customer-profile-name {
               display: none !important;
             }
 
-            .customer-profile-chip {
+            header .customer-profile-chip {
               padding: 5px !important;
+            }
+
+            /* ชิปโปรไฟล์ข้างหัวข้อแท็บ (คำสั่งซื้อ/แจ้งเตือน/โปรไฟล์): พื้นที่เหลือพอ จึงแสดงชื่อด้วย ถ้าชื่อยาวตัดด้วย ... */
+            .customer-profile-name > div {
+              max-width: 80px;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
             }
           }
         `}

@@ -3,15 +3,6 @@ import { COLORS } from "../constants";
 export default function CustomAlert({ alertData, setAlertData }) {
   if (!alertData.isOpen) return null;
 
-  const getIcon = () => {
-    switch (alertData.type) {
-      case "success": return "✔";
-      case "error": return "✖";
-      case "warning": return "🛇";
-      default: return "✔";
-    }
-  };
-
   const getButtonColor = () => {
     switch (alertData.type) {
       case "success": return COLORS.green;
@@ -19,6 +10,30 @@ export default function CustomAlert({ alertData, setAlertData }) {
       case "warning": return COLORS.orange;
       default: return COLORS.green;
     }
+  };
+
+  const getIcon = () => {
+    let symbol;
+    if (alertData.type === "error") {
+      symbol = <path d="M17 17l14 14M31 17L17 31" />;
+    } else if (alertData.type === "warning") {
+      symbol = (
+        <>
+          <path d="M24 13v14" />
+          <circle cx="24" cy="34" r="2.4" fill="#FFFFFF" stroke="none" />
+        </>
+      );
+    } else {
+      symbol = <path d="M14.5 25l7 7 12-14" />;
+    }
+    return (
+      <svg width="64" height="64" viewBox="0 0 48 48" aria-hidden="true">
+        <circle cx="24" cy="24" r="24" fill={getButtonColor()} />
+        <g fill="none" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+          {symbol}
+        </g>
+      </svg>
+    );
   };
 
   const closeAlert = () => setAlertData({ ...alertData, isOpen: false });
@@ -55,7 +70,7 @@ export default function CustomAlert({ alertData, setAlertData }) {
           boxSizing: "border-box",
         }}
       >
-        <div style={{ fontSize: "55px", marginBottom: "15px" }}>{getIcon()}</div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "15px" }}>{getIcon()}</div>
 
         <h3 style={{ margin: "0 0 10px", fontSize: "22px", fontWeight: "900", color: COLORS.navy }}>
           {alertData.title}
