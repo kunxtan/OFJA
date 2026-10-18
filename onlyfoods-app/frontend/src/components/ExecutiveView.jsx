@@ -1091,7 +1091,7 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             return;
         setSwitchingCourt(true);
         try {
-            const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive`, { method: 'PUT' });
+            const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive&open=${!closing}`, { method: 'PUT' });
             setFoodCourtOpen(Boolean(data?.is_open));
             setFoodCourtMode(data?.mode || 'AUTO');
 
@@ -4537,7 +4537,7 @@ function StoreManagePage({ ctx }) {
         if (!ok)
             return;
         try {
-            await callApi(`${API}/api/stores/${store.StoreId}/toggle?performed_by=Executive`, { method: 'PUT' });
+            await callApi(`${API}/api/stores/${store.StoreId}/toggle?performed_by=Executive&open=${!closing}`, { method: 'PUT' });
             pushToast(`${closing ? 'ปิด' : 'เปิด'}ร้าน ${store.StoreName} แล้ว`);
             await reloadStores();
         }

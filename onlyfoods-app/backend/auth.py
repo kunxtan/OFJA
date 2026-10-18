@@ -19,9 +19,12 @@ _bearer = HTTPBearer(auto_error=False)
 
 # สัญญาร้าน : ใช้ทั้งตอน login และทุก request (ต้อง LEFT JOIN StoreContract c ON c.StoreId = u.StoreId)
 STORE_CONTRACT_COLUMNS = """c.EndDate AS ContractEndDate,
-                   (u.StoreId IS NOT NULL AND c.EndDate < CURDATE() AND EXISTS (
+                   (u.StoreId IS NOT NULL AND c.EndDate < CURDATE() AND (EXISTS (
                        SELECT 1 FROM `Order` ox JOIN OrderStatus osx ON osx.StatusId = ox.StatusId
-                       WHERE ox.StoreId = u.StoreId AND osx.IsTerminal = FALSE)) AS StoreHasOpenOrders"""
+                       WHERE ox.StoreId = u.StoreId AND osx.IsTerminal = FALSE) OR EXISTS (
+                       SELECT 1 FROM Refund rfx JOIN Payment px ON px.PaymentId = rfx.PaymentId
+                       JOIN `Order` ox ON ox.OrderId = px.OrderId
+                       WHERE ox.StoreId = u.StoreId AND rfx.RefundStatus = 'PENDING'))) AS StoreHasOpenOrders"""
 CONTRACT_EXPIRED_MESSAGE = "สัญญาร้านค้าหมดอายุแล้ว บัญชีของร้านนี้ใช้งานไม่ได้ กรุณาติดต่อผู้บริหารศูนย์อาหาร"
 CONTRACT_READ_ONLY_MESSAGE = "สัญญาร้านหมดแล้ว ดูข้อมูลได้อย่างเดียว แก้ไขหรือเปิดร้านไม่ได้"
 CONTRACT_CLEARING_MESSAGE = (
@@ -30,10 +33,12 @@ CONTRACT_CLEARING_MESSAGE = (
 )
 _SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
-# ช่วงเคลียร์ออเดอร์ (CLEARING): นอกจากอ่านข้อมูล ยิงได้เฉพาะ path งานออเดอร์เหล่านี้
+# ช่วงเคลียร์ออเดอร์ (CLEARING): นอกจากอ่านข้อมูล ยิงได้เฉพาะ path งานออเดอร์/คืนเงินลูกค้าเหล่านี้
+# (งานค้าง = ออเดอร์ที่ยังไม่จบ หรือเงินคืนที่ยังไม่ได้คืน)
 _CLEARING_WRITE_PATHS = re.compile(
     r"^/api/(orders/\d+/(status|cancel-request|verify-slip|print)"
     r"|print-jobs/\d+/skip"
+    r"|refunds/\d+/done"
     r"|products/\d+/(toggle-stock|notify-out-of-stock))$"
 )
 
