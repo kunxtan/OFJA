@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { startPolling } from '../utils/polling';
 import { AUDIT_VERBS, auditCodesMatching, formatAuditDetails } from '../utils/auditText';
 import Cropper from 'react-easy-crop';
-import * as XLSX from 'xlsx';
+import { buildSimpleWorkbook } from '../utils/xlsxWriter';
 import RefundLog from './RefundLog';
 // ===== ตั้งค่าหลักของหน้า Executive =====
 const ORDER_TIME_IS_UTC = false;
@@ -405,43 +405,8 @@ function exportCsv(filename, rows) {
     saveBlob(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }), filename);
 }
 function exportXlsx(filename, sheets) {
-    const workbook = XLSX.utils.book_new();
-
-    (sheets || []).forEach((sheet, index) => {
-        if (!sheet || !Array.isArray(sheet.rows)) return;
-
-        const sheetName = String(
-            sheet.name || `Sheet${index + 1}`
-        )
-            .replace(/[\\/*?:[\]]/g, '')
-            .slice(0, 31) || `Sheet${index + 1}`;
-
-        const worksheet = XLSX.utils.aoa_to_sheet(
-            sheet.rows
-        );
-
-        if (Array.isArray(sheet.widths)) {
-            worksheet['!cols'] = sheet.widths.map(
-                (width) => ({
-                    wch: Number(width) || 12
-                })
-            );
-        }
-
-        XLSX.utils.book_append_sheet(
-            workbook,
-            worksheet,
-            sheetName
-        );
-    });
-
-    if (!workbook.SheetNames.length) {
-        throw new Error(
-            'ไม่มีข้อมูลสำหรับสร้างไฟล์ Excel'
-        );
-    }
-
-    XLSX.writeFile(workbook, filename);
+    // buildSimpleWorkbook โยน error ถ้าไม่มีชีตที่มีข้อมูล (ข้อความเดิม "ไม่มีข้อมูลสำหรับสร้างไฟล์ Excel")
+    saveBlob(buildSimpleWorkbook(sheets), filename);
 }
 // ===== UI Components กลาง เช่น Card, Button, Modal, Toast =====
 function Card({ title, subtitle, right, children, style }) {
