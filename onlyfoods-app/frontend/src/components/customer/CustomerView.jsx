@@ -25,7 +25,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(fullName);
   const [editPhone, setEditPhone] = useState(phone);
-
   const [profileImage, setProfileImage] = useState(user?.ProfileImg || user?.ProfileImage || user?.avatar || null);
   const [cropImage, setCropImage] = useState(null);
   const [isCropModalOpen, setIsCropModalOpen] = useState(false);
@@ -51,7 +50,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [newSelectedProduct, setNewSelectedProduct] = useState(null);
   const [timeLeft, setTimeLeft] = useState(1800);
 
-  // TOP-UP (เปลี่ยนเป็นเมนูที่แพงกว่า -> โอนส่วนต่าง + แนบสลิป)
+  // TOP-UP
   const [topUpSlip, setTopUpSlip] = useState(null);
   const [isSubmittingTopUp, setIsSubmittingTopUp] = useState(false);
   const [hiddenTopUpOrderId, setHiddenTopUpOrderId] = useState(null);
@@ -65,10 +64,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   // CART & ORDER FORM STATE
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
-  // เวลารับอาหารที่ลูกค้านัด: เก็บ "ชั่วโมง" กับ "นาที" แยกกัน (เช่น "12" กับ "05")
   const [pickupHour, setPickupHour] = useState("");
   const [pickupMinute, setPickupMinute] = useState("");
-  // pickupTime ยังเป็นข้อความ "HH:MM" หรือ "" (= รับทันที) เหมือนเดิม โค้ดส่วนอื่นจึงไม่ต้องแก้
   const pickupTime = pickupHour !== "" && pickupMinute !== "" ? `${pickupHour}:${pickupMinute}` : "";
   const setPickupTime = (value) => {
     const [h = "", m = ""] = String(value || "").split(":");
@@ -136,7 +133,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setAlertData({ isOpen: true, title, message, type, onConfirm });
   };
 
-  // กดซ้ำระหว่างรอคำตอบ = ไม่ยิงซ้ำ (เดิมแจ้งมาช้าเสียโควตา 2 ครั้ง / รีวิวซ้ำ)
+  // กดซ้ำระหว่างรอคำตอบ  ไม่ยิงซ้ำ
   const busyRef = useRef(new Set());
   const once = async (key, fn) => {
     if (busyRef.current.has(key)) return undefined;
@@ -153,12 +150,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const res = await fetch(`${apiBase}/api/stores`);
       if (!res.ok) return;
       const allStores = await res.json();
-      // เก็บเฉพาะร้านที่ "ไม่ถูกระงับ" และ "สัญญายังมีผล" (ต้องผ่านทั้งสองเงื่อนไข จึงใช้ &&)
-      // ร้านที่สัญญายังมีผลแต่ปิดชั่วคราว (IsOpen = false) ยังแสดงเป็นการ์ดสีจาง
-      // หน้าผู้บริหาร/เจ้าของร้านยังเห็นครบตามเดิม เพราะกรองเฉพาะฝั่งหน้าลูกค้า
-      const data = Array.isArray(allStores)
-        ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE")
-        : [];
+      const data = Array.isArray(allStores) ? allStores.filter((store) => !store.IsSuspended && store.ContractState === "ACTIVE"): [];
       const storesWithReviews = await Promise.all(
         data.map(async (store) => {
           try {
@@ -200,7 +192,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // เงินคืนของฉัน (ยกเลิก/เปลี่ยนเป็นเมนูที่ถูกกว่า) : { OrderId: [refund, ...] } -> ป้าย "รอรับเงินคืนที่ร้าน" ในออเดอร์
   const [refundsByOrder, setRefundsByOrder] = useState({});
   const fetchMyRefunds = async () => {
     if (!userId) return;
@@ -222,7 +213,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [payoutError, setPayoutError] = useState("");
 
   const savePayout = async (body) => {
-    // backend ใช้วิธีรับเงินชุดเดียวกับเงินคืนที่รอคืนทุกรายการของออเดอร์นี้ (ส่งครั้งเดียวพอ)
     const first = (refundsByOrder[payoutOrder.OrderID] || []).find((r) => r.RefundStatus === "PENDING");
     if (!first) return;
     setPayoutSaving(true);
@@ -253,12 +243,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       <div role="status" style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "12px", fontSize: "13px", lineHeight: 1.5,
         background: pending ? "#FEF3C7" : "#D1FAE5", color: pending ? "#92400E" : "#065F46", fontWeight: "700" }}>
         {pending ? (
-          <>💸 รอรับเงินคืน {sum.pending.toFixed(2)} ฿ ที่ร้าน {order.StoreName}
-            {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.SlipUnverified) && (
-              <div style={{ fontWeight: "500", fontSize: "12px" }}>
-                ร้านกำลังตรวจสลิปที่คุณแนบ (ออเดอร์ถูกยกเลิกก่อนร้านตรวจ) ตรวจเสร็จแล้วจึงคืนเงินได้
-              </div>
-            )}
+          <>รอรับเงินคืน {sum.pending.toFixed(2)} ฿ ที่ร้าน {order.StoreName}
             <div style={{ fontWeight: "500", fontSize: "12px" }}>
               {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER")
                 ? "เลือกให้เจ้าของร้านโอนคืนแล้ว รอร้านดำเนินการ"
@@ -269,7 +254,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               เลือกวิธีรับเงินคืน
             </button></>
         ) : (
-          <>✅ รับเงินคืนแล้ว {sum.done.toFixed(2)} ฿{sum.doneAt ? ` · ${new Date(String(sum.doneAt).replace(" ", "T")).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}` : ""}</>
+          <>รับเงินคืนแล้ว {sum.done.toFixed(2)} ฿{sum.doneAt ? ` · ${new Date(String(sum.doneAt).replace(" ", "T")).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}` : ""}</>
         )}
         {pending && sum.done > 0 && <div style={{ fontWeight: "500", fontSize: "12px" }}>รับคืนไปแล้ว {sum.done.toFixed(2)} ฿</div>}
       </div>
@@ -278,27 +263,20 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const fetchMyOrders = async () => {
     if (!userId) return;
-
     try {
       const res = await fetch(`${apiBase}/api/orders?user_id=${userId}`);
       if (!res.ok) return;
-
       const data = await res.json();
       setMyOrders(data);
-
       setLatePickupOrder((prev) => {
         const updated = { ...prev };
-
         data.forEach((order) => {
           const orderId = order.OrderID ?? order.OrderId ?? order.order_id;
           if (!orderId) return;
-
           const arrival = order.LatePickupArrivalTime;
           let arrivalTime = "";
-
           if (arrival) {
             const date = new Date(arrival);
-
             if (!Number.isNaN(date.getTime())) {
               arrivalTime = date.toLocaleTimeString("th-TH", {
                 timeZone: "Asia/Bangkok",
@@ -332,22 +310,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       const data = await res.json();
       setNotifs(data);
 
-      // เด้งป๊อปอัพเฉพาะการแจ้งเตือนที่เพิ่งเข้ามาหลังเปิดแอป (โหลดครั้งแรกเก็บไว้เฉยๆ ไม่เด้งของเก่า)
+      // เด้งป๊อปอัพเฉพาะการแจ้งเตือนที่เพิ่งเข้ามาหลังเปิดแอป
       if (Array.isArray(data)) {
         if (seenToastKeysRef.current === null) {
           seenToastKeysRef.current = new Set(data.map((n) => getNotifKey(n)));
         } else {
           const fresh = data.filter((n) => !seenToastKeysRef.current.has(getNotifKey(n)));
           fresh.forEach((n) => seenToastKeysRef.current.add(getNotifKey(n)));
-          // อยู่หน้าการแจ้งเตือนอยู่แล้ว ไม่ต้องเด้งซ้ำ
-          if (fresh.length > 0 && activeTabRef.current !== "notifs") {
-            const incoming = fresh.map((n) => ({
-              key: getNotifKey(n),
-              title: n.Title || "Only Foods",
-              message: n.Message || "",
-            }));
-            setToasts((prev) => [...incoming, ...prev].slice(0, 3));
-          }
         }
       }
     } catch (error) {
@@ -359,16 +328,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     try {
       const res = await fetch(`${apiBase}/api/food-court/status`);
       if (!res.ok) return;
-
       const data = await res.json();
-
       setIsFoodCourtOpen(Boolean(data?.is_open));
       setFoodCourtMode(data?.mode || "AUTO");
-
       if (data?.open_time) {
         setFoodCourtOpenTime(data.open_time.slice(0, 5));
       }
-
       if (data?.close_time) {
         setFoodCourtCloseTime(data.close_time.slice(0, 5));
       }
@@ -416,10 +381,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     fetchNotifs();
     fetchFoodCourtStatus();
 
-    // ออเดอร์/แจ้งเตือนต้องสด (5 วิ) ; ร้าน/เงินคืนเปลี่ยนไม่บ่อย (30 วิ) ; สถานะศูนย์อาหารมีตัวดึงทุก 30 วิแยกอยู่แล้ว
     const stopLive = startPolling(() => Promise.allSettled([fetchMyOrders(), fetchNotifs()]), 5000);
     const stopSlow = startPolling(() => Promise.allSettled([fetchStores(), fetchMyRefunds()]), 30000);
-
     return () => { stopLive(); stopSlow(); };
   }, [userId, apiBase]);
 
@@ -451,7 +414,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   useEffect(() => {
     if (!selectedStore) return undefined;
     fetchProducts();
-    // ร้านกดของหมด/เปิดขาย -> ลูกค้าเห็นภายใน 5 วินาที โดยไม่ต้องกดเข้าร้านใหม่
     return startPolling(fetchProducts, 10000);
   }, [selectedStore, apiBase]);
 
@@ -480,7 +442,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   }, [myOrders]);
 
-  // นับถอยหลังอย่างเดียว : เลยเวลาแล้ว backend (jobs.py) เป็นคนยกเลิกให้ แม้ลูกค้าจะปิดแอปอยู่
   useEffect(() => {
     if (!outOfStockOrder) return undefined;
     const tick = () => setTimeLeft(secondsUntil(outOfStockOrder.CancelDeadline));
@@ -503,18 +464,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         const res = await fetch(
           `${apiBase}/api/food-court/status`
         );
-
         if (!res.ok) return;
-
         const data = await res.json();
-
-        setFoodCourtOpenTime(
-          data?.open_time || ""
-        );
-
-        setFoodCourtCloseTime(
-          data?.close_time || ""
-        );
+        setFoodCourtOpenTime(data?.open_time || "");
+        setFoodCourtCloseTime(data?.close_time || "");
       } catch (error) {
         console.error(
           "โหลดเวลาเปิด-ปิดศูนย์อาหารไม่สำเร็จ:",
@@ -524,7 +477,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     };
 
     fetchFoodCourtStatus();
-
     return startPolling(fetchFoodCourtStatus, 30000);
   }, [apiBase]);
 
@@ -532,7 +484,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     () => stores.find((store) => Number(store.StoreId) === Number(selectedStore)) || {},
     [stores, selectedStore]
   );
-  // ร้านของสินค้าในตะกร้า (ตะกร้ามีได้ร้านเดียว) : สั่ง/ประเมินคิว/ตรวจร้านเปิด ต้องใช้ร้านนี้ ไม่ใช่ร้านที่กำลังเปิดดูอยู่
+
   const cartStoreId = cart.length ? Number(cart[0].StoreId || cart[0].store_id) || null : null;
   const cartStore = useMemo(
     () => stores.find((store) => Number(store.StoreId) === Number(cartStoreId)) || {},
@@ -548,7 +500,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const filteredStores = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    // แสดงเฉพาะร้านที่สัญญายังมีผล (ContractState คำนวณจากวันที่ที่ backend: NONE / UPCOMING / ACTIVE / EXPIRED)
     const contracted = stores.filter((store) => store.ContractState === "ACTIVE");
     if (!keyword) return contracted;
     return contracted.filter((store) => String(store.StoreName || "").toLowerCase().includes(keyword));
@@ -610,7 +561,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     setCart((prev) => decreaseRowQty(prev, index));
   };
 
-  // แยก 1 จานออกจากแถวที่มีหลายจาน เพื่อใส่หมายเหตุต่างจากจานอื่น
+  // แยก 1 จานออกเพื่อใส่หมายเหตุเฉพาะ
   const splitOneFromCart = (index) => {
     setCart((prev) => splitOneFromRow(prev, index));
   };
@@ -794,14 +745,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         croppedAreaPixels.x,
         croppedAreaPixels.y,
         croppedAreaPixels.width,
-        croppedAreaPixels.height,
-        0, 0,
+        croppedAreaPixels.height, 0, 0,
         croppedAreaPixels.width,
         croppedAreaPixels.height
       );
 
       const croppedBase64 = canvas.toDataURL("image/jpeg", 0.8);
-
       setProfileImage(croppedBase64);
       setIsCropModalOpen(false);
       setCropImage(null);
@@ -951,8 +900,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
 
     try {
-      const res = await fetch(
-        `${apiBase}/api/orders/${orderId}/late-pickup`,
+      const res = await fetch(`${apiBase}/api/orders/${orderId}/late-pickup`,
         {
           method: "PUT",
           headers: {
@@ -1010,7 +958,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   // อ่านสลิปเป็น data URL (base64) เพื่อส่งให้ backend บันทึกเป็นไฟล์
-  // (ห้ามใช้ URL.createObjectURL : ได้ blob: URL ที่ใช้ได้เฉพาะแท็บนี้ ร้านค้าจะไม่เห็นรูป)
   const handleSlipChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1134,7 +1081,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     const slot = slots[order.OrderID];
     if (slot) return formatPickupRange(slot.start, slot.end);
 
-    // ยังไม่อยู่ในคิวครัว (เช่น รอตรวจสลิป) -> ประเมินเหมือนต่อท้ายคิวที่ค้างอยู่ (เหมือนตะกร้า)
+    // ยังไม่อยู่ในคิวครัว
     const dishes = countOrderDishes(order);
     const { newOrder } = buildQueueSchedule(queue, dishes);
     return formatPickupRange(newOrder.start, newOrder.end);
@@ -1143,20 +1090,17 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (isSubmittingOrder) return;
     if (!checkFoodCourtOrderTime()) return;
     if (isPickupInPast()) {
-      // ตรวจซ้ำอีกครั้งก่อนส่งจริง แล้วพากลับไปตะกร้าให้เลือกเวลาใหม่
       setIsPaymentModalOpen(false);
       setIsCartOpen(true);
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
     }
 
-    // ทุกวิธีชำระเงินของลูกค้า (PromptPay / TrueMoney) ต้องแนบสลิป
     if (!slipFile || !slipPreview) {
       return customAlert("ไม่พบรูปภาพสลิป", "กรุณาอัปโหลดรูปภาพสลิปชำระเงินก่อนกดสั่งซื้อ", "warning");
     }
 
     const currentOrderTime = getCurrentDateTimeForBackend();
     const displayOrderTime = getCurrentTimeFormatted();
-    // รับทันที = ไม่ส่งเวลา (เดิมส่งเวลาจากนาฬิกาเครื่องลูกค้า ถ้าคลาดหรือข้ามนาที ครัวจะนับเป็นออเดอร์นัดเวลา)
     const finalPickupTime = pickupTime ? `${pickupTime} น.` : null;
 
     const orderItems = cart.map((item) => ({
@@ -1292,7 +1236,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return customAlert(data.detail || "ไม่สามารถส่งรีวิวได้", "", "error");
-
       customAlert("ส่งรีวิวเรียบร้อยแล้ว ");
       setReviewedOrderIds((prev) => ({
         ...prev,
@@ -1615,20 +1558,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         <button
                           onClick={() => addToCart(product)}
                           aria-label={`เพิ่ม ${product.ProductName} ลงตะกร้า`}
-                          style={{
-                            width: "44px",
-                            height: "44px",
-                            flexShrink: 0,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            padding: 0,
-                            border: "none",
-                            borderRadius: "50%",
-                            background: COLORS.orange,
-                            color: COLORS.white,
-                            cursor: "pointer",
-                            lineHeight: 0,
+                          style={{width: "44px", height: "44px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                            padding: 0, border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, cursor: "pointer", lineHeight: 0,
                           }}
                         >
                           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1653,10 +1584,34 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
+  // ชิปโปรไฟล์ (รูป + ชื่อ) ใช้ทั้งหัวหน้าเมนูและหัวข้อของแต่ละแท็บ
+  const renderProfileChip = () => (
+    <div className="customer-profile-chip" onClick={() => handleSelectTab("profile")} style={profileStyle}>
+      <div style={avatarStyle}>
+        {profileImage ? (
+          <img src={profileImage} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <UserIcon/>
+        )}
+      </div>
+      <div className="customer-profile-name">
+        <div style={{ fontSize: "13px", fontWeight: "800" }}>{fullName}</div>
+      </div>
+    </div>
+  );
+
+  // หัวข้อแท็บ + รูปโปรไฟล์อยู่แถวเดียวกัน
+  const renderTabTitle = (title) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", margin: "5px 0 20px" }}>
+      <h2 style={{ margin: 0, fontSize: "25px", fontWeight: "900", minWidth: 0 }}>{title}</h2>
+      {renderProfileChip()}
+    </div>
+  );
+
   // PROFILE TAB
   const renderProfile = () => (
     <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>โปรไฟล์ของฉัน </h2>
+      {renderTabTitle("โปรไฟล์ของฉัน")}
       <div style={{ background: COLORS.white, borderRadius: "25px", padding: "30px 25px", width: "100%", margin: "0 auto 30px", boxShadow: "0 7px 25px rgba(42,44,65,0.07)", border: `1px solid ${COLORS.border}`, overflow: "visible" }}>
         <div style={{ textAlign: "center", position: "relative" }}>
           <div style={{ position: "relative", width: "120px", height: "120px", margin: "0 auto 15px" }}>
@@ -1674,31 +1629,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
             <label
               htmlFor="profile-upload-input"
-              style={{
-                position: "absolute",
-                bottom: "2px",
-                right: "2px",
-                background: COLORS.navy,
-                color: COLORS.white,
-                borderRadius: "50%",
-                width: "44px",
-                height: "44px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                boxShadow: "0 3px 10px rgba(0,0,0,0.2)",
-                fontSize: "16px"
+              style={{position: "absolute", bottom: "2px", right: "2px", background: COLORS.navy, color: COLORS.white, borderRadius: "50%", width: "44px", 
+                height: "44px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 3px 10px rgba(0,0,0,0.2)",fontSize: "16px"
               }}
               title="เปลี่ยนรูปโปรไฟล์"
             >
               <CameraIcon />
             </label>
             <input
-              id="profile-upload-input"
-              type="file"
-              accept="image/*"
-              onChange={handleProfileImageChange}
+              id="profile-upload-input" type="file" accept="image/*" onChange={handleProfileImageChange}
               style={{ display: "none" }}
             />
           </div>
@@ -1706,15 +1645,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           {profileImage && (
             <button
               onClick={handleRemoveProfileImage}
-              style={{
-                background: "none",
-                border: "none",
-                color: COLORS.red,
-                fontSize: "12px",
-                fontWeight: "800",
-                cursor: "pointer",
-                marginBottom: "12px",
-                textDecoration: "underline"
+              style={{background: "none", border: "none", color: COLORS.red, fontSize: "12px", fontWeight: "800", cursor: "pointer", marginBottom: "12px", textDecoration: "underline"
               }}
             >
               ลบรูปโปรไฟล์
@@ -1837,7 +1768,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                   <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "8px" }}>
                     เวลาสั่งซื้อ: {order.OrderTime || order.order_time || order.CreatedAt || "-"}
-                    {order.DeliveredAt && <> • รับอาหารเมื่อ: {String(order.DeliveredAt).replace("T", " ").slice(0, 16)}</>}
                   </div>
 
                   {order.items && order.items.length > 0 && (
@@ -1873,16 +1803,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     {order.Status === "Completed" && (
                       <button
                         onClick={() => handleOpenReviewModal(order)}
-                        style={{
-                          padding: "7px 14px",
-                          border: "none",
-                          borderRadius: "10px",
-                          background: hasReview ? COLORS.yellow : COLORS.orange,
-                          color: hasReview ? COLORS.navy : COLORS.white,
-                          fontSize: "12px",
-                          fontWeight: "800",
-                          cursor: "pointer",
-                          fontFamily: "inherit"
+                        style={{padding: "7px 14px", border: "none", borderRadius: "10px", background: hasReview ? COLORS.yellow : COLORS.orange,
+                          color: hasReview ? COLORS.navy : COLORS.white, fontSize: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
                         }}
                       >
                         {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
@@ -1901,7 +1823,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   // ORDERS TAB
   const renderOrders = () => (
     <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>คำสั่งซื้อของฉัน</h2>
+      {renderTabTitle("คำสั่งซื้อของฉัน")}
       {myOrders.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}><CartIcon /></div>
@@ -1935,20 +1857,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     width: "100%", boxSizing: "border-box", marginBottom: "14px", transition: "all 0.3s ease"
                   }}>
                     <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "12px",
+                    style={{display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px",
                     }}
                   >
                     {/* ฝั่งซ้าย: ข้อมูลคิว */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
-                        style={{
-                          fontSize: "10px",
-                          opacity: 0.85,
-                          textTransform: "uppercase",
+                        style={{fontSize: "10px", opacity: 0.85, textTransform: "uppercase",
                         }}
                       >
                         คิวของคุณ
@@ -1959,10 +1874,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       </div>
 
                       <div
-                        style={{
-                          fontSize: "13px",
-                          fontWeight: "700",
-                          marginTop: "2px",
+                        style={{ fontSize: "13px", fontWeight: "700", marginTop: "2px",
                         }}
                       >
                         {order.StoreName}
@@ -1971,38 +1883,24 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                     {/* ฝั่งขวา: เวลารับอาหาร */}
                     <div
-                      style={{
-                        flex: "0 1 180px",
-                        minWidth: 0,
-                        textAlign: "right",
-                        overflowWrap: "anywhere",
+                      style={{flex: "0 1 180px", minWidth: 0, textAlign: "right", overflowWrap: "anywhere",
                       }}
                     >
                       <div
-                        style={{
-                          fontSize: "10px",
-                          opacity: 0.85,
-                          marginBottom: "5px",
+                        style={{fontSize: "10px", opacity: 0.85, marginBottom: "5px",
                         }}
                       >
                         เวลารับอาหาร
                       </div>
                       <div
-                        style={{
-                          fontSize: "13px",
-                          fontWeight: "900",
+                        style={{fontSize: "13px", fontWeight: "900",
                         }}
                       >
                         {getOrderPickupRange(order)}
                       </div>
-
                       {getOrderPickupRange(order) === "กำลังคำนวณเวลา..." && (
                         <div
-                          style={{
-                            fontSize: "10px",
-                            opacity: 0.85,
-                            marginTop: "4px",
-                            lineHeight: 1.4,
+                          style={{fontSize: "10px", opacity: 0.85, marginTop: "4px", lineHeight: 1.4,
                           }}
                         >
                           เวลาโดยประมาณ
@@ -2018,9 +1916,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       <div>เวลาที่สั่ง: {order.OrderTime || order.order_time || order.CreatedAt}</div>
                     )}
                     <div>
-                      เวลารับอาหาร: {isImmediatePickup(order.PickupTime || order.pickup_time, order.OrderTime || order.CreatedAt)
-                        ? 'รับทันที'
-                        : (order.PickupTime || order.pickup_time)}
+                      เวลารับอาหาร: {isImmediatePickup(order.PickupTime || order.pickup_time, order.OrderTime || order.CreatedAt) ? 'รับทันที' : (order.PickupTime || order.pickup_time)}
                     </div>
                   </div>
                   <span style={{ background: "#FFF0EB", color: COLORS.orange, padding: "7px 16px", borderRadius: "20px", fontSize: "12px", fontWeight: "800", whiteSpace: "nowrap" }}>
@@ -2048,16 +1944,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 </div>
                 {renderRefundNote(order)}
 
- 
                 {/* แจ้งร้านว่าจะมารับช้า */}
                 {canNotifyLatePickup && (
                   <div
-                    style={{
-                      marginTop: "14px",
-                      padding: "12px",
-                      border: `1px solid ${COLORS.border}`,
-                      borderRadius: "12px",
-                      background: "#FFF9F5",
+                    style={{marginTop: "14px", padding: "12px", border: `1px solid ${COLORS.border}`, borderRadius: "12px", background: "#FFF9F5",
                     }}
                   >
                     <div style={{ fontWeight: "800", color: COLORS.navy, fontSize: "14px" }}>
@@ -2071,19 +1961,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         arrivalTime: "",
                       };
                       const selectedMinutes = latePickupMinutes[orderId] || "15";
-
                       return (
                         <>
                           <div style={{ fontSize: "12px", color: COLORS.gray, marginTop: "5px" }}>
                             แจ้งได้ไม่เกิน 3 ครั้งต่อออเดอร์ · แจ้งใหม่จะใช้แทนเวลาเดิม (นับจากเวลานัดรับ)
                           </div>
-
                           {lateInfo.arrivalTime && (
                             <div style={{ marginTop: "8px", fontSize: "13px", color: COLORS.orange, fontWeight: "700" }}>
                               เวลามาถึงล่าสุด: {lateInfo.arrivalTime} น.
                             </div>
                           )}
-
                           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "10px" }}>
                             {[
                               { value: "15", label: "15 นาที" },
@@ -2101,22 +1988,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                                     [orderId]: option.value,
                                   }))
                                 }
-                                style={{
-                                  padding: "10px 14px",
-                                  minHeight: "40px",
-                                  borderRadius: "10px",
-                                  border: `1px solid ${
-                                    selectedMinutes === option.value
-                                      ? COLORS.orange
-                                      : COLORS.border
-                                  }`,
-                                  background:
-                                    selectedMinutes === option.value
-                                      ? "#FFF0EB"
-                                      : "#FFFFFF",
-                                  color: COLORS.navy,
-                                  fontSize: "13px",
-                                  cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
+                                style={{padding: "10px 14px", minHeight: "40px", borderRadius: "10px", border: `1px solid ${
+                                    selectedMinutes === option.value ? COLORS.orange : COLORS.border
+                                  }`, background: selectedMinutes === option.value ? "#FFF0EB" : "#FFFFFF",
+                                  color: COLORS.navy, fontSize: "13px", cursor: lateInfo.count >= 3 ? "not-allowed" : "pointer",
                                   opacity: lateInfo.count >= 3 ? 0.5 : 1,
                                 }}
                               >
@@ -2132,35 +2007,17 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           <button
                             onClick={() => once(`late-${order.OrderID}`, () => handleLatePickup(order, selectedMinutes))}
                             disabled={(latePickupOrder[order.OrderID]?.count || 0) >= 3}
-                            style={{
-                              width: "100%",
-                              marginTop: "12px",
-                              padding: "13px 16px",
-                              border: "none",
-                              borderRadius: "14px",
-                              background:
-                                (latePickupOrder[order.OrderID]?.count || 0) >= 3
-                                  ? "#CBD5E1"
-                                  : "linear-gradient(135deg, #F97316 0%, #EA580C 100%)",
-                              color: "#FFFFFF",
-                              fontSize: "14px",
-                              fontWeight: "800",
-                              fontFamily: "inherit",
-                              letterSpacing: "0.2px",
+                            style={{width: "100%", marginTop: "12px", padding: "13px 16px", border: "none", borderRadius: "14px",
+                              background:(latePickupOrder[order.OrderID]?.count || 0) >= 3 ? "#CBD5E1" : "linear-gradient(135deg, #F97316 0%, #EA580C 100%)",
+                              color: "#FFFFFF", fontSize: "14px", fontWeight: "800", fontFamily: "inherit", letterSpacing: "0.2px",
                               boxShadow:
-                                (latePickupOrder[order.OrderID]?.count || 0) >= 3
-                                  ? "none"
-                                  : "0 6px 16px rgba(234, 88, 12, 0.35)",
+                                (latePickupOrder[order.OrderID]?.count || 0) >= 3 ? "none" : "0 6px 16px rgba(234, 88, 12, 0.35)",
                               cursor:
-                                (latePickupOrder[order.OrderID]?.count || 0) >= 3 ? "not-allowed" : "pointer",
-                              transition: "transform 0.15s ease, box-shadow 0.15s ease",
+                                (latePickupOrder[order.OrderID]?.count || 0) >= 3 ? "not-allowed" : "pointer", transition: "transform 0.15s ease, box-shadow 0.15s ease",
                             }}
                           >
-                            {(latePickupOrder[order.OrderID]?.count || 0) >= 3
-                              ? "แจ้งครบแล้ว (3/3)"
-                              : (latePickupOrder[order.OrderID]?.count || 0) === 0
-                                ? "ยืนยันแจ้งเวลามารับช้า"
-                                : `แจ้งเวลาครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
+                            {(latePickupOrder[order.OrderID]?.count || 0) >= 3 ? "แจ้งครบแล้ว (3/3)" : (latePickupOrder[order.OrderID]?.count || 0) === 0
+                                ? "ยืนยันแจ้งเวลามารับช้า" : `แจ้งเวลาครั้งที่ ${(latePickupOrder[order.OrderID]?.count || 0) + 1}/3`}
                           </button>
                           <div style={{ fontSize: "11px", color: COLORS.orange, marginTop: "6px" }}>
                             แจ้งแล้ว {lateInfo.count}/3 ครั้ง
@@ -2182,19 +2039,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     <button
                       type="button"
                       onClick={handleReportClick}
-                      style={{
-                        width: "100%",
-                        marginTop: "10px",
-                        padding: "12px",
-                        minHeight: "44px",
-                        border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
-                        borderRadius: "12px",
-                        background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED",
-                        color: hasReportedIssue ? COLORS.navy : COLORS.red,
-                        fontSize: "13px",
-                        fontWeight: "800",
-                        cursor: "pointer",
-                        fontFamily: "inherit",
+                      style={{width: "100%", marginTop: "10px", padding: "12px", minHeight: "44px", border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
+                        borderRadius: "12px", background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED", color: hasReportedIssue ? COLORS.navy : COLORS.red,
+                        fontSize: "13px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit",
                       }}
                     >
                       {hasReportedIssue ? "ดูปัญหาของฉัน" : "ไม่เห็นด้วย/มีปัญหา แจ้งปัญหาออเดอร์นี้"}
@@ -2206,17 +2053,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   <div style={{ display: "flex", gap: "10px", marginTop: "15px", width: "100%" }}>
                     <button
                       onClick={() => handleOpenReviewModal(order)}
-                      style={{
-                        flex: 1,
-                        padding: "11px",
-                        border: "none",
-                        borderRadius: "12px",
-                        background: hasReview ? COLORS.yellow : COLORS.orange,
-                        color: hasReview ? COLORS.navy : COLORS.white,
-                        fontSize: "13px",
-                        fontWeight: "800",
-                        cursor: "pointer",
-                        fontFamily: "inherit"
+                      style={{flex: 1, padding: "11px", border: "none", borderRadius: "12px", background: hasReview ? COLORS.yellow : COLORS.orange,
+                        color: hasReview ? COLORS.navy : COLORS.white, fontSize: "13px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
                       }}
                     >
                       {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนและรีวิว"}
@@ -2224,17 +2062,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                     <button
                       onClick={handleReportClick}
-                      style={{
-                        flex: 1,
-                        padding: "11px",
-                        border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
-                        borderRadius: "12px",
-                        background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED",
-                        color: hasReportedIssue ? COLORS.navy : COLORS.red,
-                        fontSize: "13px",
-                        fontWeight: "800",
-                        cursor: "pointer",
-                        fontFamily: "inherit"
+                      style={{flex: 1, padding: "11px", border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`, borderRadius: "12px",
+                        background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED", color: hasReportedIssue ? COLORS.navy : COLORS.red, fontSize: "13px",
+                        fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
                       }}
                     >
                       {hasReportedIssue ? "ดูปัญหาของฉัน" : "แจ้งปัญหา"}
@@ -2251,7 +2081,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
   const renderNotifications = () => (
     <div>
-      <h2 style={{ margin: "5px 0 20px", fontSize: "25px", fontWeight: "900" }}>การแจ้งเตือน</h2>
+      {renderTabTitle("การแจ้งเตือน")}
       {notifs.length === 0 ? (
         <div style={{ ...cardStyle, padding: "55px 20px", width: "100%", textAlign: "center", color: COLORS.gray }}>
           <div style={{ fontSize: "45px", marginBottom: "10px" }}><NotiIcon/></div>
@@ -2335,11 +2165,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <div style={{ borderTop: `2px solid ${COLORS.border}`, paddingTop: "20px" }}>
                 <div style={{ marginBottom: "15px" }}>
                 <label
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    fontWeight: "800",
-                    marginBottom: "5px",
+                  style={{display: "block", fontSize: "12px", fontWeight: "800", marginBottom: "5px",
                   }}
                 >
                   เวลารับอาหาร
@@ -2359,7 +2185,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       </option>
                     ))}
                   </select>
-
                   <span style={{ fontWeight: "800" }}>:</span>
 
                   <select
@@ -2381,16 +2206,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     <button
                       type="button"
                       onClick={() => setPickupTime("")}
-                      style={{
-                        flexShrink: 0,
-                        padding: "11px 14px",
-                        borderRadius: "10px",
-                        border: "none",
-                        background: "#FFEDD5",
-                        color: "#C2410C",
-                        fontWeight: "800",
-                        fontFamily: "inherit",
-                        cursor: "pointer",
+                      style={{flexShrink: 0, padding: "11px 14px", borderRadius: "10px", border: "none", background: "#FFEDD5",
+                        color: "#C2410C", fontWeight: "800", fontFamily: "inherit", cursor: "pointer",
                       }}
                     >
                       รับทันที
@@ -2399,10 +2216,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 </div>
 
                 <div
-                  style={{
-                    fontSize: "10px",
-                    color: COLORS.gray,
-                    marginTop: "5px",
+                  style={{fontSize: "10px", color: COLORS.gray, marginTop: "5px",
                   }}
                 >
                   ไม่เลือกเวลา = รับทันที ครัวจะทำตามลำดับคิว
@@ -2410,15 +2224,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                 {pickupTime ? (
                   <div
-                    style={{
-                      marginTop: "8px",
-                      padding: "10px 12px",
-                      borderRadius: "10px",
-                      background: "#FFFFFF",
-                      color: "#F97316",
-                      fontSize: "12px",
-                      fontWeight: "700",
-                      border: "1px solid #FED7AA",
+                    style={{marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "#FFFFFF", color: "#F97316", fontSize: "12px", fontWeight: "700", border: "1px solid #FED7AA",
                     }}
                   >
                     เวลารับตามที่เลือก: {formatScheduledPickupRange(pickupTime, pickupWindowMinutes)}
@@ -2434,25 +2240,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   </div>
                 ) : cart.length > 0 ? (
                   <div
-                    style={{
-                      marginTop: "8px",
-                      padding: "10px 12px",
-                      borderRadius: "10px",
-                      background: "#FFFFFF",
-                      color: "#F97316",
-                      fontSize: "12px",
-                      fontWeight: "700",
-                      border: "1px solid #FED7AA",
+                    style={{marginTop: "8px", padding: "10px 12px", borderRadius: "10px", background: "#FFFFFF", color: "#F97316", fontSize: "12px",  fontWeight: "700", border: "1px solid #FED7AA",
                     }}
                   >
                     เวลารับอาหารโดยประมาณ {getCustomerPickupRange()}
 
                     <div
-                      style={{
-                        marginTop: "3px",
-                        fontSize: "10px",
-                        fontWeight: "400",
-                        color: "#9A3412",
+                      style={{marginTop: "3px", fontSize: "10px", fontWeight: "400", color: "#9A3412",
                       }}
                     >
                       เป็นช่วงเวลาโดยประมาณ อาจเปลี่ยนตามจำนวนออเดอร์ที่ครัวกำลังทำ
@@ -2497,9 +2291,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     );
   };
 
-  
-  // ===== เลือกเวลารับอาหาร (ชั่วโมง + นาที) =====
-  // ช่วงที่เลือกได้ = ตั้งแต่ตอนนี้ (เวลาไทย) ถึงเวลาปิดศูนย์อาหาร ห้ามย้อนอดีต
   const pickupRange = getPickupRange({
     nowTime: formatBangkokTime(new Date()),
     openTime: foodCourtOpenTime,
@@ -2514,7 +2305,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     fontFamily: "inherit",
   };
 
-  // เปลี่ยนชั่วโมงแล้วนาทีที่เลือกไว้เลือกไม่ได้แล้ว (เช่น เป็นชั่วโมงปัจจุบันที่นาทีผ่านไปแล้ว) ให้ล้างนาทีให้เลือกใหม่
   const handlePickupHourChange = (e) => {
     const hour = e.target.value;
     setPickupHour(hour);
@@ -2523,12 +2313,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
-  // เวลาที่ครัวน่าจะทำเสร็จถ้าสั่งตอนนี้ ใช้เตือนเมื่อลูกค้านัดเวลาที่เร็วกว่านั้น (เตือนเฉยๆ ไม่บล็อก)
   const cartDishCount = countCartDishes(cart);
   const cartSchedule = cartDishCount ? buildQueueSchedule(queueEstimateOrders, cartDishCount) : null;
-  const estimatedReadyTime = cartSchedule
-    ? formatBangkokTime(new Date(Math.ceil(cartSchedule.newOrder.end.getTime() / 60000) * 60000))
-    : "";
+  const estimatedReadyTime = cartSchedule ? formatBangkokTime(new Date(Math.ceil(cartSchedule.newOrder.end.getTime() / 60000) * 60000)) : "";
   const isPickupTooEarly =
     Boolean(pickupTime && estimatedReadyTime) && toMinutes(pickupTime) < toMinutes(estimatedReadyTime);
   const pickupWindowMinutes = scheduledWindowMinutes(
@@ -2648,7 +2435,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               flex: 1 0 100% !important;
             }
 
-            /* แท็บอื่นที่ไม่ใช่เมนู: ให้โปรไฟล์อยู่ข้างหัวข้อ */
+            /* แท็บอื่นที่ไม่ใช่เมนู โปรไฟล์อยู่ข้างหัวข้อ */
             .customer-header-brand.customer-header-brand-inline {
               flex: 1 1 0 !important;
               min-width: 0 !important;
@@ -2689,26 +2476,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
             </div>
             {activeTab === "menu" && (
               <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "5px 12px",
-                  borderRadius: "20px",
-                  fontSize: "12px",
-                  fontWeight: "800",
-                  background: isFoodCourtOpen ? "#E8F8F3" : "#FFF0ED",
-                  color: isFoodCourtOpen ? COLORS.green : COLORS.red,
+                style={{display: "flex", alignItems: "center", gap: "6px", padding: "5px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: "800",
+                  background: isFoodCourtOpen ? "#E8F8F3" : "#FFF0ED", color: isFoodCourtOpen ? COLORS.green : COLORS.red,
                   border: `1px solid ${isFoodCourtOpen ? COLORS.green + "40" : COLORS.red + "40"}`
                 }}
               >
                 <span
-                  style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: isFoodCourtOpen ? COLORS.green : COLORS.red,
-                    display: "inline-block"
+                  style={{width: "8px", height: "8px", borderRadius: "50%", background: isFoodCourtOpen ? COLORS.green : COLORS.red, display: "inline-block"
                   }}
                 />
                 {isFoodCourtOpen ? "ศูนย์อาหารเปิดให้บริการ" : "ศูนย์อาหารปิดให้บริการ"}
@@ -2727,18 +2501,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
             />
           )}
 
-          <div className="customer-profile-chip" onClick={() => handleSelectTab("profile")} style={profileStyle}>
-            <div style={avatarStyle}>
-              {profileImage ? (
-                <img src={profileImage} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              ) : (
-                <UserIcon/>
-              )}
-            </div>
-            <div className="customer-profile-name">
-              <div style={{ fontSize: "13px", fontWeight: "800" }}>{fullName}</div>
-            </div>
-          </div>
+          {activeTab === "menu" && renderProfileChip()}
         </header>
 
         {/* ACTIVE TAB CONTENT */}
@@ -2751,7 +2514,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       {/* FLOATING CART BUTTON */}
       <button
         onClick={() => setIsCartOpen(true)}
-        style={{
+        style={{display: (activeTab === "notifs" || activeTab === "profile") ? "none" : undefined,
           position: "fixed", right: "25px", bottom: "90px", width: "62px", height: "62px",
           border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white,
           fontSize: "26px", cursor: "pointer", zIndex: 500, boxShadow: "0 8px 25px rgba(255,114,76,0.35)"
@@ -2770,8 +2533,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       </button>
 
       {/* BOTTOM NAVIGATION BAR */}
-      <div style={{
-        position: "fixed", left: "50%", bottom: "18px", transform: "translateX(-50%)",
+      <div style={{position: "fixed", left: "50%", bottom: "18px", transform: "translateX(-50%)",
         background: COLORS.navy, borderRadius: "35px", padding: "7px", display: "flex",
         alignItems: "center", gap: "4px", zIndex: 600, boxShadow: "0 10px 35px rgba(42,44,65,0.25)",
         maxWidth: "calc(100vw - 30px)", overflowX: "auto"
@@ -2888,7 +2650,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         setToasts={setToasts}
         handleSelectTab={handleSelectTab}
       />
-
       {isCropModalOpen && cropImage && (
         <div
           style={{
@@ -2917,13 +2678,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
             </h3>
 
             <div
-              style={{
-                position: "relative",
-                width: "100%",
-                height: "350px",
-                background: "#222",
-                borderRadius: "15px",
-                overflow: "hidden",
+              style={{position: "relative", width: "100%", height: "350px", background: "#222", borderRadius: "15px", overflow: "hidden",
               }}
             >
               <Cropper
@@ -2956,7 +2711,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                 style={{ width: "100%" }}
               />
             </div>
-
             <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
               <button
                 type="button"
@@ -2964,15 +2718,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   setIsCropModalOpen(false);
                   setCropImage(null);
                 }}
-                style={{
-                  flex: 1,
-                  padding: "11px",
-                  background: COLORS.lightGray,
-                  color: COLORS.navy,
-                  border: "none",
-                  borderRadius: "10px",
-                  fontWeight: "800",
-                  cursor: "pointer",
+                style={{flex: 1, padding: "11px", background: COLORS.lightGray, color: COLORS.navy, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer",
                 }}
               >
                 ยกเลิก
@@ -2981,15 +2727,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <button
                 type="button"
                 onClick={createCroppedImage}
-                style={{
-                  flex: 1,
-                  padding: "11px",
-                  background: COLORS.orange,
-                  color: COLORS.white,
-                  border: "none",
-                  borderRadius: "10px",
-                  fontWeight: "800",
-                  cursor: "pointer",
+                style={{flex: 1, padding: "11px", background: COLORS.orange, color: COLORS.white, border: "none", borderRadius: "10px", fontWeight: "800", cursor: "pointer",
                 }}
               >
                 ใช้รูปนี้
