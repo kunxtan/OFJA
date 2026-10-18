@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { startPolling } from '../utils/polling';
 import { createPortal } from 'react-dom';
-import RefundLog from './RefundLog';
+import { RefundActionModals, STATUS_TH as REFUND_STATUS_TH, payoutLabel } from './RefundLog';
 
 /* ============================================================
    OF Shop Owner — แดชบอร์ดเจ้าของร้านค้า (Executive Theme Colors)
    ============================================================ */
 
 const fmtMoney = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+// ยอดเงินคืน: แสดงสตางค์เฉพาะเมื่อมี (ส่วนต่างราคาอาจไม่ลงตัว)
+const fmtBaht = (n) => { const v = Number(n || 0); return v.toLocaleString('th-TH', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 }); };
 
 // --- Helper Functions สำหรับคำนวณกราฟแบบ Executive ---
 function parseOrderDate(value) {
@@ -2594,7 +2596,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
   const [foodCourtHours, setFoodCourtHours] = useState(null); // { open: '08:00', close: '20:00' }
   // โหลดข้อมูลครั้งแรกเสร็จหรือยัง (ใช้แสดง skeleton แทนเลข 0)
-  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false, reviews: false, issues: false });
+  const [loaded, setLoaded] = useState({ history: false, products: false, dash: false, staff: false, reviews: false, issues: false, refunds: false });
   const markLoaded = (key) => setLoaded(prev => (prev[key] ? prev : { ...prev, [key]: true }));
   // หน้าเมนู: การเรียง + โหมดเลือกหลายเมนู
   const [menuSort, setMenuSort] = useState('default');
@@ -2686,6 +2688,15 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [salesSearch, setSalesSearch] = useState('');
   const [salesLimit, setSalesLimit] = useState(60);
   const [salesDetailId, setSalesDetailId] = useState(null); // ออเดอร์ที่เปิดดูรายละเอียด
+  // หน้าคืนเงินลูกค้า : ใช้ refunds ที่ดึงพร้อม fetchData (ไม่โหลดใหม่ทุกครั้งที่เปิดหน้า)
+  const [refundRange, setRefundRange] = useState('all'); // today | 7 | 30 | all | custom ; ค่าเริ่มต้นทั้งหมด จะได้ไม่ซ่อนรายการค้างเก่า
+  const [refundFrom, setRefundFrom] = useState(todayISO());
+  const [refundTo, setRefundTo] = useState(todayISO());
+  const [refundStatus, setRefundStatus] = useState('pending'); // all | pending | slip | transfer | done | failed
+  const [refundSearch, setRefundSearch] = useState('');
+  const [refundLimit, setRefundLimit] = useState(60);
+  const [refundConfirming, setRefundConfirming] = useState(null); // แถวที่เปิดหน้าต่างคืนเงิน
+  const [refundChecking, setRefundChecking] = useState(null);     // แถวที่เปิดหน้าต่างตรวจสลิป
   // ไปหน้าประวัติการขายพร้อมตั้งตัวกรอง (ใช้จากการแจ้งเตือน / แดชบอร์ด) ; orderId = เปิดรายละเอียดออเดอร์นั้นเลย
   const openSalesHistory = ({ status = 'all', range = '7', orderId = null } = {}) => {
     setSalesStatus(status);
@@ -2742,7 +2753,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         }
       })
       .catch(err => console.error(err));
-    fetch(`${apiBase}/api/refunds?limit=1000`).then(r => r.json()).then(d => { if (Array.isArray(d)) setRefunds(d); }).catch(err => console.error(err));
+    fetch(`${apiBase}/api/refunds?limit=2000`).then(r => (r.ok ? r.json() : null)).then(d => { if (Array.isArray(d)) { setRefunds(d); markLoaded('refunds'); } }).catch(err => console.error(err));
     fetch(`${apiBase}/api/stores/${storeId}/reviews/detail`).then(r => r.json()).then(d => { if (d && Array.isArray(d.reviews)) { setReviewsData(d); markLoaded('reviews'); } }).catch(err => console.error(err));
     // รายงานปัญหาแบบละเอียด (ชื่อผู้แจ้งแบบย่อ ไม่มีข้อมูลติดต่อ)
     fetch(`${apiBase}/api/stores/${storeId}/issues/detail`).then(r => r.json()).then(d => {
@@ -4532,9 +4543,273 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             );
           })()}
 
-          {page === 'refunds' && (
-            <RefundLog apiBase={apiBase} canConfirm isOwner onChanged={fetchData} />
-          )}
+          {page === 'refunds' && (() => {
+            // ---- ช่วงวันที่ (ตามวันที่ขอคืน) ----
+            const today = todayISO();
+            const shiftDays = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return toISODate(d); };
+            const range = refundRange === 'custom'
+              ? { from: refundFrom || today, to: refundTo || today }
+              : refundRange === 'all' ? null
+              : { from: refundRange === 'today' ? today : shiftDays(Number(refundRange) - 1), to: today };
+            const dayKey = (r) => { const d = parseOrderDate(r.RequestedAt); return d ? toISODate(d) : 'unknown'; };
+            const inRange = refunds.filter(r => !range || (dayKey(r) >= range.from && dayKey(r) <= range.to));
+
+            // ---- สถานะ ----
+            const isPending = (r) => r.RefundStatus === 'PENDING';
+            const needSlipCheck = (r) => isPending(r) && r.SlipUnverified;
+            const needTransfer = (r) => isPending(r) && !r.SlipUnverified && r.PayoutMethod === 'TRANSFER';
+            const pendingList = inRange.filter(isPending);
+            const doneList = inRange.filter(r => r.RefundStatus === 'DONE');
+            const failedList = inRange.filter(r => r.RefundStatus === 'FAILED');
+            const slipCount = inRange.filter(needSlipCheck).length;
+            const transferCount = inRange.filter(needTransfer).length;
+            const sumOf = (list) => list.reduce((s, r) => s + Number(r.Amount || 0), 0);
+            const statusTabs = [
+              { id: 'pending', label: 'รอคืน', count: pendingList.length, tone: 'amber' },
+              { id: 'slip', label: 'ต้องตรวจสลิป', count: slipCount, tone: 'red' },
+              { id: 'transfer', label: 'ลูกค้าขอโอน', count: transferCount },
+              { id: 'done', label: 'คืนแล้ว', count: doneList.length, tone: 'green' },
+              ...(failedList.length ? [{ id: 'failed', label: 'ไม่ต้องคืน', count: failedList.length }] : []),
+              { id: 'all', label: 'ทั้งหมด', count: inRange.length },
+            ];
+            const matchStatus = {
+              all: () => true,
+              pending: isPending,
+              slip: needSlipCheck,
+              transfer: needTransfer,
+              done: (r) => r.RefundStatus === 'DONE',
+              failed: (r) => r.RefundStatus === 'FAILED',
+            }[refundStatus] || (() => true);
+
+            // ---- ค้นหา ----
+            const q = refundSearch.trim().toLowerCase();
+            const qDigits = q.replace(/\D/g, '');
+            const shown = inRange
+              .filter(matchStatus)
+              .filter(r => !q
+                || String(r.QueueNo || '').toLowerCase().includes(q)
+                || String(r.OrderId).includes(q)
+                || String(r.CustomerName || '').toLowerCase().includes(q)
+                || String(r.Reason || '').toLowerCase().includes(q)
+                || (qDigits.length >= 3 && String(r.CustomerPhone || '').includes(qDigits)))
+              .sort((x, y) => (parseOrderDate(y.RequestedAt)?.getTime() || 0) - (parseOrderDate(x.RequestedAt)?.getTime() || 0)
+                || y.RefundId - x.RefundId);
+
+            // ---- สรุปยอดของช่วงที่เลือก ----
+            const doneTransfer = sumOf(doneList.filter(r => r.PaidMethod === 'TRANSFER'));
+            const typeCounts = inRange.reduce((acc, r) => { acc[r.RefundType] = (acc[r.RefundType] || 0) + 1; return acc; }, {});
+            const kpis = [
+              { tone: 'amber', icon: 'clock', value: `฿${fmtBaht(sumOf(pendingList))}`, label: 'รอคืนเงิน (ยังไม่นับเป็นรายได้)',
+                sub: pendingList.length ? `${fmtMoney(pendingList.length)} รายการ${transferCount ? ` · ขอโอน ${transferCount}` : ''}` : 'ไม่มีรายการค้าง' },
+              { tone: 'green', icon: 'check', value: `฿${fmtBaht(sumOf(doneList))}`, label: 'คืนเงินแล้ว',
+                sub: doneList.length ? `${fmtMoney(doneList.length)} รายการ · โอน ฿${fmtBaht(doneTransfer)} · เงินสด ฿${fmtBaht(sumOf(doneList) - doneTransfer)}` : null },
+              { tone: 'red', icon: 'alert', value: fmtMoney(slipCount), label: 'ต้องตรวจสลิปก่อนคืน',
+                sub: slipCount ? 'ออเดอร์ถูกยกเลิกก่อนร้านตรวจสลิป' : null },
+              { tone: 'blue', icon: 'receipt', value: fmtMoney(inRange.length), label: 'รายการคืนเงินทั้งหมด',
+                sub: Object.entries(typeCounts).map(([t, n]) => `${REFUND_TYPE_TH[t] || t} ${n}`).join(' · ') || null },
+            ];
+            const rangeChips = [
+              { id: 'today', label: 'วันนี้' }, { id: '7', label: '7 วัน' }, { id: '30', label: '30 วัน' },
+              { id: 'all', label: 'ทั้งหมด' }, { id: 'custom', label: 'กำหนดเอง' },
+            ];
+
+            // ---- จัดกลุ่มตามวันที่ขอคืน (แสดงทีละ refundLimit รายการ) ----
+            const visible = shown.slice(0, refundLimit);
+            const days = [];
+            visible.forEach(r => {
+              const key = dayKey(r);
+              let day = days[days.length - 1];
+              if (!day || day.key !== key) { day = { key, date: parseOrderDate(r.RequestedAt), rows: [] }; days.push(day); }
+              day.rows.push(r);
+            });
+            const daySummary = (key) => {
+              const list = shown.filter(r => dayKey(r) === key);
+              const pend = list.filter(isPending);
+              const done = list.filter(r => r.RefundStatus === 'DONE');
+              return [
+                `${list.length} รายการ`,
+                pend.length ? `รอคืน ฿${fmtBaht(sumOf(pend))}` : null,
+                done.length ? `คืนแล้ว ฿${fmtBaht(sumOf(done))}` : null,
+              ].filter(Boolean).join(' · ');
+            };
+            const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+            const openOrder = (r) => setSalesDetailId(r.OrderId);
+            const emptyText = {
+              pending: ['ไม่มีรายการที่รอคืนเงิน', 'เมื่อมีการยกเลิกหลังจ่ายเงิน หรือเปลี่ยนเมนูที่ถูกกว่า รายการจะมาแสดงที่นี่'],
+              slip: ['ไม่มีสลิปที่ต้องตรวจ', 'รายการที่ออเดอร์ถูกยกเลิกก่อนร้านตรวจสลิปจะแสดงที่นี่'],
+              transfer: ['ไม่มีรายการที่ลูกค้าขอรับแบบโอน', 'ลูกค้าที่ขอรับเงินคืนเข้าบัญชีจะแสดงที่นี่'],
+            }[refundStatus] || ['ไม่พบรายการคืนเงินในช่วงนี้', 'ลองเลือกช่วงวันที่ที่กว้างขึ้น หรือเปลี่ยนตัวกรองสถานะ'];
+
+            return (
+              <>
+                <PageHeader title="คืนเงินลูกค้า" subtitle="เงินที่ต้องคืนลูกค้าจากการยกเลิกหรือเปลี่ยนเมนู กดที่รายการเพื่อดูรายละเอียดออเดอร์" icon="coin">
+                  <span className={`op-count-chip ${pendingRefundCount ? 'danger' : ''}`}>
+                    {pendingRefundCount ? `รอคืน ${fmtMoney(pendingRefundCount)} รายการ` : 'ไม่มีรายการค้าง'}
+                  </span>
+                </PageHeader>
+
+                <div className="rv-privacy rr-note">
+                  <Icon name="lock" size={15} />
+                  ยอดที่รอคืนไม่ถูกนับเป็นรายได้ · ลูกค้าที่ขอรับแบบโอน ต้องแนบสลิปโอนทุกครั้ง และข้อมูลบัญชีลูกค้าจะถูกลบหลังยืนยัน
+                </div>
+
+                <div className="sh-filter-bar">
+                  <div className="sh-range" role="group" aria-label="ช่วงวันที่ขอคืนเงิน">
+                    <Icon name="calendar" size={16} />
+                    {rangeChips.map(c => (
+                      <button key={c.id} type="button" className={refundRange === c.id ? 'active' : ''}
+                        onClick={() => { setRefundRange(c.id); setRefundLimit(60); }}>
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                  {refundRange === 'custom' && (
+                    <div className="berry-date-range sh-dates">
+                      <label>
+                        ตั้งแต่
+                        <input type="date" value={refundFrom} max={refundTo || today}
+                          onChange={e => { const v = e.target.value || today; setRefundFrom(v); if (v > refundTo) setRefundTo(v); setRefundLimit(60); }} />
+                      </label>
+                      <label>
+                        ถึง
+                        <input type="date" value={refundTo} min={refundFrom} max={today}
+                          onChange={e => { setRefundTo(e.target.value || today); setRefundLimit(60); }} />
+                      </label>
+                    </div>
+                  )}
+                  <span className="sh-range-label">
+                    {range ? (range.from === range.to ? thaiDate(range.from) : `${thaiDate(range.from)} – ${thaiDate(range.to)}`) : 'ทุกช่วงเวลา'}
+                  </span>
+                </div>
+
+                <div className="sf-stats">
+                  {kpis.map(k => (
+                    <div key={k.label} className={`sf-stat tone-${k.tone}`}>
+                      <span className="icon"><Icon name={k.icon} size={20} /></span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="value">{loaded.refunds ? k.value : <Skeleton height={22} width={60} />}</div>
+                        <div className="label">{k.label}</div>
+                        {loaded.refunds && k.sub && <div className="sub">{k.sub}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mm-toolbar mm-wrap-tabs">
+                  <div className="mm-tabs" role="tablist" aria-label="กรองตามสถานะการคืนเงิน">
+                    {statusTabs.map(t => (
+                      <button key={t.id} type="button" role="tab" aria-selected={refundStatus === t.id}
+                        onClick={() => { setRefundStatus(t.id); setRefundLimit(60); }}
+                        className={`mm-tab ${refundStatus === t.id ? 'active' : ''} ${t.tone ? `tone-${t.tone}` : ''}`}>
+                        {t.tone && <span className="dot" />}
+                        {t.label}
+                        <span className="count">{t.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mm-search">
+                    <Icon name="search" size={16} />
+                    <input value={refundSearch} onChange={e => { setRefundSearch(e.target.value); setRefundLimit(60); }}
+                      placeholder="ค้นหาเลขคิว เลขออเดอร์ ชื่อ เบอร์โทร หรือเหตุผล..." aria-label="ค้นหารายการคืนเงิน" />
+                    {refundSearch && (
+                      <button type="button" onClick={() => setRefundSearch('')} aria-label="ล้างคำค้นหา"><Icon name="close" size={14} /></button>
+                    )}
+                  </div>
+                </div>
+
+                {!loaded.refunds ? (
+                  <div className="sh-list">{[0, 1, 2, 3].map(i => <Skeleton key={i} height={72} radius={14} />)}</div>
+                ) : shown.length === 0 ? (
+                  <div className="sf-empty">
+                    <span className="icon"><Icon name={q ? 'search' : 'coin'} size={28} /></span>
+                    <h3>{q ? 'ไม่พบรายการที่ตรงกับการค้นหา' : emptyText[0]}</h3>
+                    <p>{q ? 'ลองค้นด้วยเลขคิว ชื่อลูกค้า หรือเบอร์โทรอื่น' : emptyText[1]}</p>
+                  </div>
+                ) : (
+                  <div className="sh-list">
+                    {days.map(day => (
+                      <section key={day.key} className="sh-day">
+                        <div className="sh-day-head">
+                          <strong>{day.date ? day.date.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'ไม่ทราบวันที่'}</strong>
+                          <span>{daySummary(day.key)}</span>
+                        </div>
+                        <div className="sh-day-card">
+                          {day.rows.map(r => {
+                            const pending = isPending(r);
+                            const transfer = (r.RefundStatus === 'DONE' ? r.PaidMethod : r.PayoutMethod) === 'TRANSFER';
+                            const statusClass = needSlipCheck(r) ? 'cancelled' : pending ? 'active' : r.RefundStatus === 'DONE' ? 'done' : 'noshow';
+                            const badgeTone = needSlipCheck(r) ? 'danger' : pending ? 'warning' : r.RefundStatus === 'DONE' ? 'success' : 'neutral';
+                            const badgeLabel = needSlipCheck(r) ? 'สลิปยังไม่ได้ตรวจ'
+                              : pending && r.PayoutMethod === 'TRANSFER' ? 'รอร้านโอนคืน'
+                              : (REFUND_STATUS_TH[r.RefundStatus] || r.RefundStatus);
+                            // คืนคนละวันกับวันที่ขอ (กลุ่มวันเป็นวันที่ขอ) : ใส่วันที่ด้วย
+                            const refundedDay = r.RefundedAt && dayKey({ RequestedAt: r.RefundedAt }) !== day.key
+                              ? `${parseOrderDate(r.RefundedAt)?.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })} ` : '';
+                            return (
+                              <div key={r.RefundId} className={`sh-row rr-row status-${statusClass}`} role="button" tabIndex={0}
+                                aria-label={`ดูออเดอร์ #${r.OrderId} คิว ${r.QueueNo}`}
+                                onClick={() => openOrder(r)}
+                                onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openOrder(r); } }}>
+                                <span className="sh-time">{timeHM(r.RequestedAt)}</span>
+                                <span className="sh-queue">{r.QueueNo}</span>
+                                <span className="sh-main">
+                                  <span className="sh-who">
+                                    {r.IsWalkIn ? <span className="sh-type walkin">Walk-in</span> : (r.CustomerName || 'ลูกค้า')}
+                                    {r.CustomerPhone && <span className="sh-order-id rr-phone">{formatPhone(r.CustomerPhone)}</span>}
+                                    <span className="sh-order-id">#{r.OrderId}</span>
+                                  </span>
+                                  <span className="sh-items-text" title={r.Reason || ''}>
+                                    <b className="rr-type">{REFUND_TYPE_TH[r.RefundType] || r.RefundType}</b>
+                                    {r.Reason ? ` · ${r.Reason}` : ''}
+                                  </span>
+                                </span>
+                                <span className={`rr-payout ${transfer ? 'transfer' : ''}`}>
+                                  <Icon name={transfer ? 'receipt' : 'coin'} size={14} />
+                                  <span>
+                                    {payoutLabel(r)}
+                                    {pending && r.PayoutMethod === 'TRANSFER' && r.PayoutBank && <small>{r.PayoutBank}</small>}
+                                  </span>
+                                </span>
+                                <span className="sh-amount">฿{fmtBaht(r.Amount)}</span>
+                                <span className="sh-status">
+                                  <Badge tone={badgeTone}>{badgeLabel}</Badge>
+                                  {r.RefundedAt && (
+                                    <span className="sh-delivered" title={`คืนเมื่อ ${thaiDateTime(r.RefundedAt, true)}`}>
+                                      {r.RefundedByName ? `${r.RefundedByName} · ` : ''}{refundedDay}{timeHM(r.RefundedAt)}
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="rr-action">
+                                  {pending && needSlipCheck(r) ? (
+                                    <button type="button" className="rr-btn danger" onClick={stop(() => setRefundChecking(r))}>ตรวจสลิป</button>
+                                  ) : pending ? (
+                                    <button type="button" className="rr-btn primary" onClick={stop(() => setRefundConfirming(r))}>
+                                      {r.PayoutMethod === 'TRANSFER' ? 'โอนคืน' : 'คืนเงินแล้ว'}
+                                    </button>
+                                  ) : r.TransferSlipUrl ? (
+                                    <a className="rr-btn ghost" href={`${apiBase}${r.TransferSlipUrl}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+                                      <Icon name="eye" size={14} /> สลิปโอน
+                                    </a>
+                                  ) : (
+                                    <span className="sh-chevron"><Icon name="arrowRight" size={16} /></span>
+                                  )}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ))}
+                    {shown.length > refundLimit && (
+                      <button type="button" className="sh-more" onClick={() => setRefundLimit(n => n + 60)}>
+                        แสดงเพิ่ม ({fmtMoney(shown.length - refundLimit)} รายการที่เหลือ)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {page === 'issues' && (() => {
             const sm = issuesSummary || {};
@@ -4692,6 +4967,19 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       {eraseStaff && (
         <StaffEraseModal staff={eraseStaff} onClose={() => setEraseStaff(null)} onSubmit={eraseStaffAccount} />
       )}
+      <RefundActionModals
+        apiBase={apiBase}
+        isOwner
+        confirming={refundConfirming}
+        checking={refundChecking}
+        onClose={() => { setRefundConfirming(null); setRefundChecking(null); }}
+        onDone={(message, info) => {
+          setRefundConfirming(null);
+          setRefundChecking(null);
+          showSuccess(info?.kind === 'slip-check' ? (info.approved ? 'สลิปถูกต้อง' : 'บันทึกผลตรวจสลิปแล้ว') : 'คืนเงินเรียบร้อย', message);
+          fetchData();
+        }}
+      />
       {salesDetailId && (
         <SalesOrderDetailModal
           key={salesDetailId}
@@ -6133,6 +6421,28 @@ body, html {
 .sh-status { justify-self: end; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 .sh-delivered { font-size: 11px; color: var(--berry-text-muted, #6b7280); white-space: nowrap; }
 .sh-chevron { color: #C3C6D4; transition: all 0.15s ease; }
+/* หน้าคืนเงินลูกค้า : ใช้โครงเดียวกับประวัติการขาย + คอลัมน์ปุ่มดำเนินการ */
+.rr-note { margin-bottom: 14px; }
+.sh-row.rr-row { grid-template-columns: 52px 64px minmax(0, 1fr) 150px 96px 136px 112px; }
+.sh-row.rr-row:focus-visible { outline: 3px solid var(--berry-purple); outline-offset: -3px; }
+.rr-type { font-weight: 700; color: var(--berry-text-dark); }
+.rr-payout { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--berry-text-muted); }
+.rr-payout svg { flex: none; margin-top: 2px; }
+.rr-payout > span { display: flex; flex-direction: column; min-width: 0; }
+.rr-payout small { font-size: 11.5px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rr-payout.transfer { color: var(--berry-blue); }
+.rr-action { justify-self: end; display: flex; align-items: center; }
+.rr-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 7px 14px; border: 1px solid transparent; border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; text-decoration: none; cursor: pointer; transition: all 0.15s ease; }
+.rr-btn.primary { background: var(--berry-purple); color: #FFFFFF; box-shadow: 0 4px 10px rgba(255,114,76,0.25); }
+.rr-btn.primary:hover { background: var(--berry-purple-dark); }
+.rr-btn.danger { background: var(--berry-red-light); color: var(--berry-red); border-color: rgba(226,69,47,0.25); }
+.rr-btn.danger:hover { border-color: var(--berry-red); }
+.rr-btn.ghost { background: var(--berry-paper); color: var(--berry-text-dark); border-color: var(--berry-border); }
+.rr-btn.ghost:hover { border-color: var(--berry-purple); color: var(--berry-purple); }
+.rr-btn:focus-visible { outline: 3px solid var(--berry-purple); outline-offset: 2px; }
+.sf-stat.tone-red .icon { background: var(--berry-red-light); color: var(--berry-red); }
+.mm-tab.tone-amber .dot { background: var(--berry-amber); }
+.mm-tab.active.tone-amber .count { background: var(--berry-amber); }
 .sh-more { align-self: center; padding: 10px 18px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-dark); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .sh-more:hover { border-color: var(--berry-purple); color: var(--berry-purple); }
 
@@ -6220,6 +6530,7 @@ body, html {
 
 @media (max-width: 1100px) {
   .sh-row { grid-template-columns: 48px 60px minmax(0, 1fr) 90px 120px 18px; }
+  .sh-row.rr-row { grid-template-columns: 48px 60px minmax(0, 1fr) 128px 90px 124px 104px; }
   .sh-pay-method { display: none; }
   .sh-people { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -6242,6 +6553,11 @@ body, html {
   .sh-amount { grid-area: amount; }
   .sh-status { grid-area: status; }
   .sh-chevron { display: none; }
+  .sh-row.rr-row { grid-template-columns: 56px minmax(0, 1fr) auto; grid-template-areas: "queue main amount" "time main status" "pay pay action"; }
+  .rr-payout { grid-area: pay; align-self: center; }
+  .rr-action { grid-area: action; }
+  .rr-phone { display: none; } /* จอแคบโดนตัด : ดูเบอร์ได้ในรายละเอียดออเดอร์ */
+  .rr-action:empty, .rr-action:has(> .sh-chevron) { display: none; }
   .sh-people { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sh-stats { gap: 6px; }
   .sh-stats > div { padding: 8px 10px; }
