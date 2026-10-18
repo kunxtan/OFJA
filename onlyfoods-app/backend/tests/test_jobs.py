@@ -133,9 +133,10 @@ class CancelCursor:
         return False
 
     def execute(self, sql, args=()):
-        (now,) = args
+        now, *skip = args
         self._rows = [{"OrderId": o["OrderId"]} for o in self.db.orders
-                      if o["StatusCode"] == "PENDING_CANCELLATION" and o["CancelDeadline"] and o["CancelDeadline"] <= now]
+                      if o["StatusCode"] == "PENDING_CANCELLATION" and o["CancelDeadline"] and o["CancelDeadline"] <= now
+                      and o["OrderId"] not in skip]
 
     def fetchall(self):
         return self._rows
@@ -160,6 +161,7 @@ def pc_order(oid, deadline_in_minutes, status="PENDING_CANCELLATION"):
 
 def patch_cancel(monkeypatch, db, fail_ids=()):
     calls = []
+    monkeypatch.setattr(jobs, "_auto_cancel_retry_at", {})
 
     def fake_lock(cur, oid):
         return next(o for o in db.orders if o["OrderId"] == oid)
@@ -216,3 +218,17 @@ def test_auto_cancel_one_failure_does_not_block_others(monkeypatch):
 def test_auto_cancel_reason_fits_column():
     assert len(jobs.auto_cancel_reason("x" * 300)) == 255
     assert jobs.auto_cancel_reason(None).startswith("หมดเวลาเลือกเมนูทดแทน")
+
+
+def test_auto_cancel_failure_backs_off(monkeypatch):
+    """ยกเลิกไม่สำเร็จ -> เว้น 10 นาทีค่อยลองใหม่ (ไม่ลองทุกรอบ และไม่กินโควตา LIMIT ของออเดอร์อื่น)"""
+    db = CancelDB([pc_order(1, -2)])
+    patch_cancel(monkeypatch, db, fail_ids={1})
+    tried = []
+    real_lock = jobs.lock_order
+    monkeypatch.setattr(jobs, "lock_order", lambda cur, oid: (tried.append(oid), real_lock(cur, oid))[1])
+    jobs.cancel_expired_requests(db, NOW)
+    jobs.cancel_expired_requests(db, NOW + timedelta(minutes=1))
+    assert tried == [1]
+    jobs.cancel_expired_requests(db, NOW + timedelta(minutes=jobs.AUTO_CANCEL_RETRY_MINUTES))
+    assert tried == [1, 1]
