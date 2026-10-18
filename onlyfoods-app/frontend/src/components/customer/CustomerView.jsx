@@ -1529,9 +1529,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                               boxSizing: "border-box",
                               maxWidth: "100%",
                               whiteSpace: "nowrap",
-                              padding: "8px 12px",
-                              minHeight: "36px",
-                              fontSize: "12px",
+                              padding: "5px 12px",
+                              minHeight: "28px",
+                              fontSize: "11px",
                               fontWeight: "600",
                               color: COLORS.navy,
                               cursor: "pointer",
@@ -1549,9 +1549,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           background: store.IsSuspended ? "#FFF0ED" : store.IsOpen ? "#E8F8F3" : "#FFF7DD",
                           color: store.IsSuspended ? COLORS.red : store.IsOpen ? COLORS.green : "#9A7100"
                         }}>
-                          {store.IsSuspended ? "● ถูกระงับ" : store.IsOpen ? "● เปิดให้บริการ" : "● ปิดชั่วคราว"}
+                          {store.IsSuspended ? "● ถูกระงับ" : store.IsOpen ? "● เปิด" : "● ปิดชั่วคราว"}
                         </span>
-                        <span style={{ color: isStoreUnavailable ? COLORS.gray : COLORS.orange, fontWeight: "800", fontSize: "13px" }}>
+                        <span className="customer-select-store" style={{ color: isStoreUnavailable ? COLORS.gray : COLORS.orange, fontWeight: "800", fontSize: "14px", whiteSpace: "nowrap" }}>
                           {store.IsSuspended ? "ถูกระงับสิทธิ์" : !store.IsOpen ? "ปิดให้บริการ" : "เลือกร้านนี้ ➔"}
                         </span>
                       </div>
@@ -1565,18 +1565,21 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
         {viewMode === "products" && (
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+            <div className="customer-products-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", marginBottom: "20px" }}>
               <button
+                className="customer-back-btn"
                 onClick={() => setViewMode("stores")}
                 style={{
                   background: COLORS.white, border: `1px solid ${COLORS.border}`, borderRadius: "20px",
                   padding: "8px 16px", cursor: "pointer", fontWeight: "800", fontSize: "13px", color: COLORS.navy,
-                  display: "flex", alignItems: "center", gap: "6px"
+                  display: "flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap", flexShrink: 0
                 }}
               >
                 ← เลือกร้านอื่น
               </button>
-              <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ร้าน: {activeStore.StoreName}</h2>
+              <h2 className="customer-products-title" style={{ margin: 0, fontSize: "22px", fontWeight: "900", minWidth: 0, textAlign: "right" }}>
+                <span className="customer-products-title-prefix">ร้าน: </span>{activeStore.StoreName}
+              </h2>
             </div>
 
             {Boolean(activeStore.IsSuspended) && (
@@ -2564,14 +2567,36 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
             .customer-store-grid button {
               font-family: 'Sarabun', sans-serif !important;
-              font-size: 12px !important;
+              font-size: 11px !important;
               font-weight: 600 !important;
               line-height: 1.2 !important;
               box-sizing: border-box !important;
               max-width: 100% !important;
-              min-height: 36px !important;
-              padding: 8px 12px !important;
+              min-height: 26px !important;
+              padding: 4px 10px !important;
               white-space: nowrap !important;
+            }
+
+            .customer-store-grid .customer-select-store {
+              font-size: 13px !important;
+              font-weight: 800 !important;
+              line-height: 1.2 !important;
+            }
+
+            /* หน้าเลือกเมนู: ปุ่มกลับ + ชื่อร้านอยู่บรรทัดเดียว */
+            .customer-products-head {
+              gap: 8px !important;
+            }
+            .customer-back-btn {
+              padding: 7px 12px !important;
+              font-size: 12px !important;
+            }
+            .customer-products-title {
+              font-size: 17px !important;
+              line-height: 1.25 !important;
+            }
+            .customer-products-title-prefix {
+              display: none;
             }
 
             /* ปุ่ม/ช่องกรอกบนมือถือ */
@@ -2623,6 +2648,12 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               flex: 1 0 100% !important;
             }
 
+            /* แท็บอื่นที่ไม่ใช่เมนู: ให้โปรไฟล์อยู่ข้างหัวข้อ */
+            .customer-header-brand.customer-header-brand-inline {
+              flex: 1 1 0 !important;
+              min-width: 0 !important;
+            }
+
             .customer-header-search {
               min-width: 0 !important;
               flex: 1 1 0 !important;
@@ -2652,7 +2683,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       <div style={containerStyle}>
         {/* HEADER BAR */}
         <header style={headerStyle}>
-          <div className="customer-header-brand" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div className={activeTab === "menu" ? "customer-header-brand" : "customer-header-brand customer-header-brand-inline"} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <div style={logoStyle} onClick={() => handleSelectTab("menu")}>
               Only<span style={{ color: COLORS.orange }}>Foods</span>
             </div>
