@@ -8,7 +8,7 @@ import state
 from auth import assert_store_access, require_role
 from db import get_db, transaction
 from errors import DomainError
-from schemas import RefundDoneSchema, RefundPayoutSchema, VerifySlipSchema
+from schemas import RefundDoneSchema, RefundPayoutSchema, RefundSlipCheckSchema, VerifySlipSchema
 from services import do_transition, lock_order, log_audit, notify_store_owners, pending_top_up, send_notif
 from utils import bangkok_now, clean_text, delete_upload, mask_account, queue_label, save_image, validate_payout
 
@@ -133,6 +133,7 @@ def list_refunds(status: Optional[str] = Query(None, pattern="^(PENDING|DONE|FAI
                rf.PayoutMethod, rf.PayoutKind, rf.PayoutBank, rf.PayoutAccountNo, rf.PayoutAccountName,
                (rf.PayoutQrUrl IS NOT NULL) AS HasPayoutQr, (rf.PayoutLockedAt IS NOT NULL) AS PayoutLocked, rf.PaidMethod, rf.TransferSlipUrl,
                p.OrderId, o.StoreId, s.StoreName, s.QueueCode, o.QueueNo, o.IsWalkIn, o.OrderDate,
+               (p.PaymentStatus = 'PENDING') AS SlipUnverified, p.SlipImageUrl AS PaymentSlipUrl, p.PaymentType,
                cu.FullName AS CustomerName, cu.Phone AS CustomerPhone
         FROM Refund rf
         JOIN Payment p ON p.PaymentId = rf.PaymentId
@@ -169,6 +170,9 @@ def list_refunds(status: Optional[str] = Query(None, pattern="^(PENDING|DONE|FAI
         r["QueueNo"] = queue_label(r["QueueNo"], r.pop("QueueCode"))
         r["HasPayoutQr"] = bool(r["HasPayoutQr"])
         r["PayoutLocked"] = bool(r["PayoutLocked"])
+        r["SlipUnverified"] = bool(r["SlipUnverified"])
+        if not r["SlipUnverified"]:
+            r.pop("PaymentSlipUrl", None)  # ส่งรูปสลิปเฉพาะรายการที่ร้านยังต้องตรวจ
         if role == "CUSTOMER":  # ลูกค้าไม่ต้องเห็นชื่อพนักงาน แต่เห็นข้อมูลรับเงินของตัวเอง
             r.pop("RefundedByName", None)
             r.pop("RefundedByRole", None)
@@ -181,7 +185,7 @@ def list_refunds(status: Optional[str] = Query(None, pattern="^(PENDING|DONE|FAI
 _REFUND_ROW_SQL = """
     SELECT rf.RefundId, rf.RefundStatus, rf.Amount, rf.RefundType, rf.PaymentId, rf.PayoutMethod, rf.PayoutKind,
            rf.PayoutBank, rf.PayoutAccountNo, rf.PayoutAccountName, rf.PayoutQrUrl, rf.PayoutLockedAt,
-           o.OrderId, o.StoreId, o.CustomerId, o.QueueNo, s.QueueCode
+           o.OrderId, o.StoreId, o.CustomerId, o.QueueNo, s.QueueCode, p.PaymentStatus
     FROM Refund rf
     JOIN Payment p ON p.PaymentId = rf.PaymentId
     JOIN `Order` o ON o.OrderId = p.OrderId
@@ -298,6 +302,40 @@ def get_refund_payout_info(refund_id: int, user=Depends(require_role("STORE_OWNE
             "qr_image": rf["PayoutQrUrl"], "amount": rf["Amount"]}
 
 
+@router.put("/refunds/{refund_id}/slip-check")
+def check_refund_slip(refund_id: int, payload: RefundSlipCheckSchema,
+                      user=Depends(require_role(*REFUND_CONFIRM_ROLES)), db=Depends(get_db)):
+    """ออเดอร์ที่ผู้บริหารบังคับยกเลิกตอนสลิปยังไม่ได้ตรวจ : ร้านตรวจสลิป/ยอดเข้าบัญชีก่อน
+    ผ่าน -> การชำระเป็น VERIFIED แล้วคืนเงินได้ตามปกติ ; ไม่ผ่าน -> การชำระ REJECTED และรายการคืนเงินเป็น FAILED"""
+    reason = clean_text(payload.reason) or "สลิปไม่ถูกต้อง"
+    now = bangkok_now()
+    with transaction(db):
+        with db.cursor() as cur:
+            rf = _lock_refund(cur, refund_id)
+            assert_store_access(user, rf["StoreId"])
+            cur.execute("SELECT PaymentStatus, Amount FROM Payment WHERE PaymentId = %s FOR UPDATE", (rf["PaymentId"],))
+            pay = cur.fetchone()
+            if rf["RefundStatus"] != "PENDING" or pay["PaymentStatus"] != "PENDING":
+                raise DomainError(400, "รายการนี้ตรวจสลิปไปแล้ว")
+            q = queue_label(rf["QueueNo"], rf["QueueCode"])
+            if payload.approved:
+                cur.execute("UPDATE Payment SET PaymentStatus = 'VERIFIED', VerifiedBy = %s, PaidAt = %s WHERE PaymentId = %s",
+                            (user["UserId"], now, rf["PaymentId"]))
+                text = (f"ร้านตรวจสลิปคิว {q} แล้ว คุณจะได้รับเงินคืน {Decimal(rf['Amount']):.2f} บาท "
+                        f"กรุณารับที่ร้านโดยแจ้งเลขคิว หรือเลือกให้ร้านโอนคืนที่รายการคืนเงิน")
+            else:
+                cur.execute("UPDATE Payment SET PaymentStatus = 'REJECTED', RejectReason = %s, VerifiedBy = %s "
+                            "WHERE PaymentId = %s", (reason[:255], user["UserId"], rf["PaymentId"]))
+                cur.execute("UPDATE Refund SET RefundStatus = 'FAILED', Reason = LEFT(CONCAT(Reason, ' | สลิปไม่ผ่าน: ', %s), 255) "
+                            "WHERE PaymentId = %s AND RefundStatus = 'PENDING'", (reason, rf["PaymentId"]))
+                text = f"❌ สลิปคิว {q} ไม่ผ่านการตรวจ: {reason} จึงไม่มีเงินคืนสำหรับสลิปนี้ หากโอนจริงกรุณาติดต่อร้าน"
+            send_notif(db, rf["CustomerId"], "PAYMENT", f"คืนเงินคิว {q}", text, rf["OrderId"])
+        log_audit(db, user["UserId"], "REFUND_SLIP_APPROVE" if payload.approved else "REFUND_SLIP_REJECT", "Refund",
+                  refund_id, None, {"order_id": rf["OrderId"], "store_id": rf["StoreId"], "queue": q,
+                                    "amount": rf["Amount"], **({} if payload.approved else {"reason": reason})})
+    return {"success": True, "approved": payload.approved}
+
+
 @router.put("/refunds/{refund_id}/done")
 def mark_refund_done(refund_id: int, payload: Optional[RefundDoneSchema] = None,
                      user=Depends(require_role(*REFUND_CONFIRM_ROLES)), db=Depends(get_db)):
@@ -318,6 +356,8 @@ def mark_refund_done(refund_id: int, payload: Optional[RefundDoneSchema] = None,
                 assert_store_access(user, rf["StoreId"])
                 if rf["RefundStatus"] != "PENDING":
                     raise DomainError(400, "รายการนี้คืนเงินไปแล้ว")
+                if rf["PaymentStatus"] != "VERIFIED":
+                    raise DomainError(400, "สลิปของรายการนี้ยังไม่ได้ตรวจ กรุณาตรวจสลิปและเช็คยอดเข้าบัญชีก่อนคืนเงิน")
                 if rf["PayoutMethod"] == "TRANSFER" and payload.method == "CASH" and user["RoleCode"] != "STORE_OWNER":
                     raise DomainError(403, "ลูกค้าขอรับเงินคืนแบบโอน ให้เจ้าของร้านดำเนินการ")
                 if payload.method == "TRANSFER" and rf["PayoutMethod"] != "TRANSFER":

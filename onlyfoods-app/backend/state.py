@@ -113,6 +113,15 @@ def assert_transition(old: str, new: str) -> None:
         raise DomainError(400, f"เปลี่ยนสถานะจาก {legacy_status(old)} เป็น {legacy_status(new)} ไม่ได้")
 
 
+def assert_force_cancel(old: str) -> None:
+    """ผู้บริหารบังคับปิดร้าน/ศูนย์อาหารแบบ "ยกเลิกทั้งหมด": ยกเลิกได้จากทุกสถานะที่ยังไม่จบ
+    (ข้ามตาราง TRANSITIONS เช่น COOKING / READY ปกติต้องผ่าน PENDING_CANCELLATION ก่อน)"""
+    if old not in TRANSITIONS:
+        raise DomainError(400, f"สถานะปัจจุบันไม่ถูกต้อง: {old}")
+    if old in TERMINAL:
+        raise DomainError(400, f"ออเดอร์สถานะ {legacy_status(old)} จบแล้ว ไม่สามารถเปลี่ยนสถานะได้")
+
+
 def assert_role_can_set(role: str, new: str) -> None:
     if new not in ROLE_CAN_SET.get(role, set()):
         raise DomainError(403, "บทบาทของคุณไม่มีสิทธิ์เปลี่ยนเป็นสถานะนี้")

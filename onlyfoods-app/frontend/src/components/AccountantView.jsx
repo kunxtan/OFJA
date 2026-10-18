@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { startPolling } from '../utils/polling';
 import RefundLog from './RefundLog';
+import { AUDIT_VERBS, formatAuditDetails } from '../utils/auditText';
 
 /* ============================================================
    OF Accounting — เจ้าหน้าที่บัญชีสถาบัน (Foodka Theme)
@@ -146,7 +147,7 @@ function buildAuditRows(logs, orders) {
     if (m && tone === 'bad') coveredCancels.add(m[1]);
     if (m && /APPROVE/i.test(String(action))) loggedApprove.add(m[1]);
 
-    rows.push({ key: `log-${l.LogID ?? l.LogId ?? l.logId ?? idx}`, orderId: order ? String(order.OrderID) : (m ? m[1] : null), time: logTime, action, by: performerOf(l, order), details, tone, derived: false });
+    rows.push({ key: `log-${l.LogID ?? l.LogId ?? l.logId ?? idx}`, orderId: order ? String(order.OrderID) : (m ? m[1] : null), time: logTime, action, by: performerOf(l, order), details, tone, derived: false, raw: l });
   });
 
   // เติมจากข้อมูลออเดอร์: ออเดอร์ที่ถูกยกเลิกแต่ไม่มี log รองรับ (เช่น log เก่าถูกตัดออกจากรายการ 50 ล่าสุด)
@@ -184,7 +185,7 @@ function buildAuditRows(logs, orders) {
         details: `${isWalkIn ? 'ออเดอร์หน้าร้าน' : 'อนุมัติสลิปแล้ว'} ${head} แต่สินค้าหมด — ลูกค้ายกเลิก`, tone: 'bad', derived: true });
     }
     if (['Cooking', 'Ready', 'Completed', 'NoShow'].includes(st) && !loggedStatus.has(`${o.OrderID}|${st}`)) {
-      const when = st === 'Ready' || st === 'NoShow' ? (o.ReadyAt || o.CreatedAt) : st === 'Completed' ? (o.CompletedAt || o.ReadyAt || o.CreatedAt) : o.CreatedAt;
+      const when = st === 'Ready' || st === 'NoShow' ? (o.ReadyAt || o.CreatedAt) : st === 'Completed' ? (o.DeliveredAt || o.ReadyAt || o.CreatedAt) : o.CreatedAt;
       rows.push({ key: `drv-st-${o.OrderID}-${st}`, orderId: String(o.OrderID), time: when, action: 'UPDATE_STATUS', by: storeStaff,
         details: `Order ${o.OrderID} -> ${st} ${head}`, tone: st === 'Completed' ? 'green' : 'neutral', derived: true });
     }
@@ -244,7 +245,7 @@ function auditMeta(r) {
     const st = normStatus((String(r.details || '').match(/->\s*([A-Za-z_]+)/) || [])[1]);
     return { label: STATUS_ACTION_LABEL[st] || 'เปลี่ยนสถานะออเดอร์', cat: st === 'Cancelled' ? 'cancel' : st === 'Completed' ? 'done' : 'order' };
   }
-  return AUDIT_ACTION_META[a] || { label: a, cat: 'other' };
+  return AUDIT_ACTION_META[a] || { label: AUDIT_VERBS[a] || a, cat: /REFUND|SLIP/.test(a) ? 'slip' : /STORE|FOOD_COURT|PRODUCT|STOCK/.test(a) ? 'store' : /ORDER/.test(a) ? 'order' : 'other' };
 }
 
 const orderItemsOf = (o) => (o && (o.items || o.OrderItems || o.Items || o.orderItems)) || [];
@@ -281,7 +282,12 @@ function auditSummary(r, order) {
       }[st];
       return msg || plain;
     }
-    default: return plain;
+    default:
+      // รหัสอื่น ๆ ใช้ตัวแปลงประโยคเดียวกับหน้าผู้บริหาร (คิว/ร้าน/ยอดแสดงเป็นคอลัมน์แยกอยู่แล้ว จึงไม่ต่อท้ายซ้ำ)
+      if (r.raw && AUDIT_VERBS[a]) {
+        return formatAuditDetails({ ...r.raw, OrderId: null, QueueLabel: null, StoreId: order ? null : r.raw.StoreId });
+      }
+      return plain;
   }
 }
 const AUDIT_ROW_BG = { bad: '#FFF7F7', green: '#F1FBF5' };
@@ -1098,8 +1104,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [customEnd, setCustomEnd] = useState(reportEnd);
   const [reportStoreFilter, setReportStoreFilter] = useState('all');
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [salesRange, setSalesRange] = useState(7);   // 'today' | 7 | 14 | 30 | 'custom' — ค่าเริ่มต้น: 7 วัน
+  const [salesRange, setSalesRange] = useState(7);   // 'today' | 7 | 14 | 30 | 'month' | 'custom' — ค่าเริ่มต้น: 7 วัน
   const [salesCustomStart, setSalesCustomStart] = useState(reportStart);
+  const [salesMonth, setSalesMonth] = useState(() => new Date().toISOString().slice(0, 7));   // 'YYYY-MM' (เลือกเดือน)
   const [salesCustomEnd, setSalesCustomEnd] = useState(reportEnd);
   const [cancelCustomStart, setCancelCustomStart] = useState(reportStart);
   const [cancelCustomEnd, setCancelCustomEnd] = useState(reportEnd);
@@ -1273,9 +1280,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   // ช่วงวันที่ของ Sales Summary: ตามปุ่มที่เลือก หรือกำหนดเอง
   const { salesStart, salesEnd } = useMemo(() => {
     if (salesRange === 'custom') return { salesStart: salesCustomStart, salesEnd: salesCustomEnd };
+    if (salesRange === 'month' && /^\d{4}-\d{2}$/.test(salesMonth)) {
+      const [y, m] = salesMonth.split('-').map(Number);
+      const last = new Date(y, m, 0).getDate();   // วันสุดท้ายของเดือน
+      return { salesStart: `${salesMonth}-01`, salesEnd: `${salesMonth}-${String(last).padStart(2, '0')}` };
+    }
     const { currStart, currEnd } = getPeriodBounds(salesRange);
     return { salesStart: currStart, salesEnd: currEnd };
-  }, [salesRange, salesCustomStart, salesCustomEnd]);
+  }, [salesRange, salesCustomStart, salesCustomEnd, salesMonth]);
   const salesOrders = useMemo(() => filterOrdersByRange(orders, salesStart, salesEnd, 'all'), [orders, salesStart, salesEnd]);
   const salesStoreSummary = useMemo(() => buildStoreSummary(stores, salesOrders, salesStart), [stores, salesOrders, salesStart]);
 
@@ -1803,13 +1815,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
                 <label>ช่วงเวลา:</label>
                 <div className="berry-toggle-pills">
-                  {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['custom', 'กำหนดเอง']].map(([val, label]) => (
+                  {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['month', 'เลือกเดือน'], ['custom', 'กำหนดเอง']].map(([val, label]) => (
                     <button
                       key={val}
                       className={salesRange === val ? 'active' : ''}
                       onClick={() => {
                         // กดกำหนดเอง -> เริ่มจากช่วงวันที่ที่กำลังดูอยู่ แล้วค่อยแก้ต่อ
                         if (val === 'custom') { setSalesCustomStart(salesStart); setSalesCustomEnd(salesEnd); }
+                        if (val === 'month') setSalesMonth(String(salesEnd || '').slice(0, 7));
                         setSalesRange(val);
                       }}
                     >
@@ -1817,6 +1830,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </button>
                   ))}
                 </div>
+
+                {salesRange === 'month' && (
+                  <>
+                    <label>เดือน:</label>
+                    <input type="month" className="berry-input" value={salesMonth} max={new Date().toISOString().slice(0, 7)}
+                      onChange={e => setSalesMonth(e.target.value)} aria-label="เลือกเดือนที่ต้องการดู" />
+                  </>
+                )}
 
                 {salesRange === 'custom' && (
                   <>

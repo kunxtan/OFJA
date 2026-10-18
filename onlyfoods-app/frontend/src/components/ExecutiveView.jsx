@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { startPolling } from '../utils/polling';
+import { AUDIT_VERBS, auditCodesMatching, formatAuditDetails } from '../utils/auditText';
 import Cropper from 'react-easy-crop';
 import * as XLSX from 'xlsx';
 import RefundLog from './RefundLog';
@@ -282,6 +283,14 @@ function summarizeMenus(completedOrders) {
       return Number(a.id) - Number(b.id); });
 }
 // ===== เรียก API และจัดการข้อผิดพลาดจาก Backend =====
+// ข้อความหลังบังคับปิดแบบยกเลิกทั้งหมด (forced = ผลจาก backend)
+function forceCloseMessage(base, forced) {
+    if (!forced) return base;
+    const money = (v) => Number(v || 0).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+    let msg = `${base} ยกเลิก ${forced.cancelled} ออเดอร์ คืนเงิน ${money(forced.refund_total)} บาท`;
+    if (Number(forced.unverified_total) > 0) msg += ` และรอร้านตรวจสลิปอีก ${money(forced.unverified_total)} บาท`;
+    return msg;
+}
 async function callApi(url, options = {}) {
     let response;
     try {
@@ -611,6 +620,40 @@ function ConfirmDialog({ state, onCancel, onConfirm }) {
         </>}>
       <p style={{ ...bodyStyle, margin: 0 }}>{state?.message}</p>
       {state?.warning && (<p style={{ ...captionStyle, color: T.down, marginTop: '10px' }}>{state.warning}</p>)}
+    </Modal>);
+}
+// ปิดร้าน/ศูนย์อาหารตอนยังมีออเดอร์ค้าง (กฎ PO 1) : ผู้บริหารเลือกว่าจะให้ทำต่อจนเสร็จ หรือยกเลิกทั้งหมดและคืนเงิน
+function ForceCloseDialog({ state, onCancel, onChoose }) {
+    const orders = state?.orders || [];
+    const unverified = orders.filter((o) => o.status === 'VERIFYING_SLIP' || o.status === 'AWAITING_TOP_UP').length;
+    const byStore = orders.reduce((acc, o) => {
+        (acc[o.store_name] = acc[o.store_name] || []).push(o);
+        return acc;
+    }, {});
+    return (<Modal open={Boolean(state)} title={state?.title || ''} onClose={onCancel} width={520} footer={<>
+          <Button variant="ghost" onClick={onCancel}>ยังไม่ปิด</Button>
+          <Button variant="primary" onClick={() => onChoose('finish')} icon="check">ปิดรับใหม่ ทำต่อให้เสร็จ</Button>
+          <Button variant="danger" onClick={() => onChoose('cancel')} icon="ban" style={{ background: T.down, color: '#FFFFFF', borderColor: T.down }}>ยกเลิกทั้งหมดและคืนเงิน</Button>
+        </>}>
+      <div style={{ background: T.redSoft, border: `1px solid ${T.down}`, borderRadius: '12px', padding: '12px 14px' }}>
+        <p style={{ ...bodyStyle, margin: 0, color: T.down, fontWeight: 700 }}>
+          ยังมีออเดอร์ที่ยังไม่จบ {orders.length} ออเดอร์{state?.kind === 'court' ? ` ใน ${Object.keys(byStore).length} ร้าน` : ''}
+        </p>
+        <div style={{ marginTop: '8px', display: 'grid', gap: '6px' }}>
+          {Object.entries(byStore).map(([name, list]) => (<div key={name} style={{ ...captionStyle, color: T.text }}>
+              {state?.kind === 'court' && <b>{name}: </b>}
+              {list.map((o) => `${o.queue} (${o.status_label})`).join(', ')}
+            </div>))}
+        </div>
+      </div>
+      <p style={{ ...captionStyle, color: T.text, marginTop: '12px', lineHeight: 1.7 }}>
+        ทั้งสองแบบ ลูกค้าจะสั่งออเดอร์ใหม่ไม่ได้ทันที<br/>
+        <b>ทำต่อให้เสร็จ:</b> ร้านทำและส่งมอบออเดอร์ที่ค้างต่อได้ตามปกติ<br/>
+        <b>ยกเลิกทั้งหมดและคืนเงิน:</b> ยกเลิกทุกออเดอร์ข้างบน ระบบสร้างรายการคืนเงินและแจ้งลูกค้าให้มารับเงินหรือเลือกให้ร้านโอนคืน
+      </p>
+      {unverified > 0 && (<p style={{ ...captionStyle, color: '#B45309', marginTop: '8px' }}>
+          มี {unverified} ออเดอร์ที่ลูกค้าแนบสลิปแล้วแต่ร้านยังไม่ได้ตรวจ ถ้ายกเลิก รายการคืนเงินจะติดป้าย "สลิปยังไม่ได้ตรวจ" ร้านต้องตรวจสลิปก่อนจึงคืนเงินได้
+        </p>)}
     </Modal>);
 }
 function ToastStack({ toasts, onDismiss }) {
@@ -946,6 +989,19 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             confirmResolver.current = resolve;
         });
     }, []);
+    const [forceCloseState, setForceCloseState] = useState(null);
+    const forceCloseResolver = useRef(null);
+    const askForceClose = useCallback((options) => {
+        setForceCloseState(options);
+        return new Promise((resolve) => {
+            forceCloseResolver.current = resolve;
+        });
+    }, []);
+    const closeForceClose = (choice) => {
+        setForceCloseState(null);
+        forceCloseResolver.current?.(choice);
+        forceCloseResolver.current = null;
+    };
     const closeConfirm = (result) => {
         setConfirmState(null);
         confirmResolver.current?.(result);
@@ -1094,7 +1150,18 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
 
     const toggleFoodCourt = async () => {
         const closing = foodCourtOpen;
-        const ok = await ask({
+        let onOpenOrders = '';
+        if (closing) {
+            let pending = [];
+            try { pending = await callApi(`${API}/api/food-court/open-orders`); }
+            catch (err) { pushToast(err.message, 'error'); return; }
+            if (Array.isArray(pending) && pending.length) {
+                const choice = await askForceClose({ kind: 'court', title: 'ปิดศูนย์อาหาร', orders: pending });
+                if (!choice) return;
+                onOpenOrders = `&on_open_orders=${choice}`;
+            }
+        }
+        const ok = onOpenOrders || await ask({
             title: closing ? 'ปิดศูนย์อาหาร' : 'เปิดศูนย์อาหาร',
             message: closing
                 ? 'ยืนยันปิดศูนย์อาหารทั้งหมดใช่หรือไม่'
@@ -1109,14 +1176,14 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             return;
         setSwitchingCourt(true);
         try {
-            const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive&open=${!closing}`, { method: 'PUT' });
+            const data = await callApi(`${API}/api/food-court/toggle?performed_by=Executive&open=${!closing}${onOpenOrders}`, { method: 'PUT' });
             setFoodCourtOpen(Boolean(data?.is_open));
             setFoodCourtMode(data?.mode || 'AUTO');
 
             await loadFoodCourt(true);
             await loadStores();
 
-            pushToast(data?.message || 'อัปเดตสถานะศูนย์อาหารแล้ว');
+            pushToast(forceCloseMessage(data?.message || 'อัปเดตสถานะศูนย์อาหารแล้ว', data?.forced));
         }
         catch (err) {
             pushToast(err.message, 'error');
@@ -1619,6 +1686,7 @@ const returnFoodCourtToAuto = async () => {
     </div>
 </Modal>
       <ConfirmDialog state={confirmState} onCancel={() => closeConfirm(false)} onConfirm={() => closeConfirm(true)}/>
+      <ForceCloseDialog state={forceCloseState} onCancel={() => closeForceClose(null)} onChoose={closeForceClose}/>
       <ToastStack toasts={toasts} onDismiss={dismissToast}/>
       </div>
     </>);
@@ -4570,7 +4638,18 @@ function StoreManagePage({ ctx }) {
             pushToast(`ร้าน ${store.StoreName} ถูกระงับสิทธิ์ กรุณาปลดระงับก่อนเปิดร้าน`, 'warn');
             return;
         }
-        const ok = await ask({
+        let onOpenOrders = '';
+        if (closing) {
+            let pending = [];
+            try { pending = await callApi(`${API}/api/stores/${store.StoreId}/open-orders`); }
+            catch (err) { pushToast(err.message, 'error'); return; }
+            if (Array.isArray(pending) && pending.length) {
+                const choice = await askForceClose({ kind: 'store', title: `ปิดร้าน "${store.StoreName}"`, orders: pending });
+                if (!choice) return;
+                onOpenOrders = `&on_open_orders=${choice}`;
+            }
+        }
+        const ok = onOpenOrders || await ask({
             title: closing ? 'ปิดร้านค้า' : 'เปิดร้านค้า',
             message: `ยืนยัน${closing ? 'ปิด' : 'เปิด'}ร้าน "${store.StoreName}" ใช่หรือไม่`,
             warning: closing ? 'ลูกค้าจะสั่งอาหารจากร้านนี้ไม่ได้จนกว่าจะเปิดใหม่' : null,
@@ -4580,8 +4659,8 @@ function StoreManagePage({ ctx }) {
         if (!ok)
             return;
         try {
-            await callApi(`${API}/api/stores/${store.StoreId}/toggle?performed_by=Executive&open=${!closing}`, { method: 'PUT' });
-            pushToast(`${closing ? 'ปิด' : 'เปิด'}ร้าน ${store.StoreName} แล้ว`);
+            const data = await callApi(`${API}/api/stores/${store.StoreId}/toggle?performed_by=Executive&open=${!closing}${onOpenOrders}`, { method: 'PUT' });
+            pushToast(forceCloseMessage(`${closing ? 'ปิด' : 'เปิด'}ร้าน ${store.StoreName} แล้ว`, data?.forced));
             await reloadStores();
         }
         catch (err) {
@@ -5302,78 +5381,6 @@ function ContractTrackingPage({ ctx }) {
 const AUDIT_PAGE_SIZE = 100;
 // ชื่อภาษาไทยของการดำเนินการ (ใช้ทั้งแสดงผลและแปลงคำค้นภาษาไทยเป็น ActionCode ส่งให้ backend)
 
-const AUDIT_VERBS = {
-    // ออเดอร์
-    CREATE_ORDER: 'สร้างออเดอร์',
-    CANCEL_ORDER: 'ยกเลิกออเดอร์',
-    CUSTOMER_CANCEL_ORDER: 'ลูกค้ายกเลิกออเดอร์',
-    CANCEL_REQUEST: 'ขอยกเลิกออเดอร์',
-    UPDATE_STATUS: 'เปลี่ยนสถานะออเดอร์',
-    CUSTOMER_CHANGE_ITEM: 'ลูกค้าเปลี่ยนเมนูในออเดอร์',
-    LATE_PICKUP: 'ลูกค้าแจ้งว่าจะมารับช้า',
-    PICKUP_REMINDER: 'ระบบเตือนลูกค้าให้มารับอาหาร',
-    RECALL_QUEUE: 'เรียกคิวซ้ำ',
-    PRINT_ORDER: 'พิมพ์ใบคิว',
-    REPRINT_ORDER: 'พิมพ์ใบคิวซ้ำ',
-    PRINT_SKIP: 'ข้ามการพิมพ์ใบคิว',
-    // การชำระเงิน
-    VERIFY_SLIP_APPROVE: 'อนุมัติสลิปชำระเงิน',
-    VERIFY_SLIP_REJECT: 'ปฏิเสธสลิปชำระเงิน',
-    UPLOAD_TOP_UP_SLIP: 'ลูกค้าส่งสลิปโอนส่วนต่าง',
-    VERIFY_TOP_UP_APPROVE: 'อนุมัติสลิปโอนส่วนต่าง',
-    VERIFY_TOP_UP_REJECT: 'ปฏิเสธสลิปโอนส่วนต่าง',
-    REFUND_DONE: 'คืนเงินให้ลูกค้าแล้ว',
-    REFUND_PAYOUT_SET: 'ลูกค้าเลือกวิธีรับเงินคืน',
-    REFUND_PAYOUT_VIEW: 'เจ้าของร้านเปิดดูบัญชีรับเงินคืน',
-    // ร้านค้า / สัญญา
-    CREATE_STORE: 'เพิ่มร้านค้า',
-    UPDATE_STORE: 'แก้ไขข้อมูลร้าน',
-    DELETE_STORE: 'ลบร้านค้า',
-    AUTO_DELETE_STORE: 'ระบบลบร้านค้าอัตโนมัติ',
-    OPEN_STORE: 'เปิดร้าน',
-    CLOSE_STORE: 'ปิดร้าน',
-    SUSPEND_STORE: 'ระงับร้าน',
-    UNSUSPEND_STORE: 'ปลดระงับร้าน',
-    RENEW_CONTRACT: 'ต่อสัญญา',
-    CONTRACT_EXTEND: 'ขยายวันสิ้นสุดสัญญา',
-    CONTRACT_SHORTEN: 'ลดวันสิ้นสุดสัญญา',
-    CONTRACT_END_BACKDATED: 'ตัดสัญญาย้อนหลัง',
-    CONTRACT_RESTART: 'เปิดสัญญารอบใหม่',
-    // เมนู
-    CREATE_PRODUCT: 'เพิ่มเมนู',
-    UPDATE_PRODUCT: 'แก้ไขเมนู',
-    PRICE_UPDATE: 'เปลี่ยนราคาเมนู',
-    DELETE_PRODUCT: 'ลบเมนู',
-    OUT_OF_STOCK: 'ตั้งเมนูเป็นของหมด',
-    BACK_IN_STOCK: 'เมนูกลับมามีขาย',
-    OUT_OF_STOCK_NOTIFY: 'แจ้งลูกค้าว่าเมนูหมด',
-    // บัญชีผู้ใช้
-    LOGIN: 'เข้าสู่ระบบ',
-    LOGIN_FAIL: 'เข้าสู่ระบบไม่สำเร็จ',
-    ACCOUNT_LOCKED: 'บัญชีถูกล็อกชั่วคราว',
-    PASSWORD_CHANGE: 'เปลี่ยนรหัสผ่านของตัวเอง',
-    PASSWORD_RESET: 'ตั้งรหัสผ่านใหม่ให้ผู้ใช้',
-    CREATE_STAFF: 'เพิ่มพนักงาน',
-    UPDATE_STAFF: 'แก้ไขข้อมูลพนักงาน',
-    ACTIVATE_STAFF: 'เปิดใช้งานบัญชีพนักงาน',
-    DEACTIVATE_STAFF: 'ปิดใช้งานบัญชีพนักงาน',
-    RESET_STAFF_PASSWORD: 'ตั้งรหัสผ่านใหม่ให้พนักงาน',
-    DELETE_STAFF: 'ลบพนักงาน',
-    ERASE_STAFF: 'ลบข้อมูลพนักงานถาวร',
-    CREATE_STORE_ACCOUNT: 'สร้างบัญชีเจ้าของร้าน',
-    UPDATE_STORE_ACCOUNT: 'แก้ไขบัญชีเจ้าของร้าน',
-    DELETE_STORE_ACCOUNT: 'ลบบัญชีเจ้าของร้าน',
-    // ศูนย์อาหาร / รายงานปัญหา
-    OPEN_FOOD_COURT: 'เปิดศูนย์อาหาร (สั่งเอง)',
-    CLOSE_FOOD_COURT: 'ปิดศูนย์อาหาร (สั่งเอง)',
-    FOOD_COURT_AUTO_MODE: 'กลับไปเปิด–ปิดศูนย์อาหารตามเวลาอัตโนมัติ',
-    UPDATE_FOOD_COURT_SCHEDULE: 'เปลี่ยนเวลาเปิด–ปิดศูนย์อาหาร',
-    CREATE_ISSUE: 'ลูกค้าแจ้งปัญหา',
-    UPDATE_ISSUE: 'อัปเดตรายงานปัญหา'
-};
-
-const auditCodesMatching = (keyword) => Object.keys(AUDIT_VERBS)
-    .filter((code) => AUDIT_VERBS[code].toLowerCase().includes(keyword));
 // กลุ่มของการกระทำ : ต้องตรงกับ _AUDIT_GROUPS ใน backend/routers/reports.py (เช็คตามลำดับ กลุ่มแรกที่ตรงชนะ)
 const AUDIT_GROUP_WORDS = [
     ['store', ['STORE', 'SUSPEND']],
@@ -5404,92 +5411,6 @@ const auditActionSelectStyle = (active) => ({
 const auditGroupOf = (action) => {
     const key = String(action || '').toUpperCase();
     return AUDIT_GROUP_WORDS.find(([, words]) => words.some((word) => key.includes(word)))?.[0] || 'other';
-};
-
-// ===== รายละเอียดภาษาไทย : backend ส่ง Details มาเป็น `ชนิด รหัส {JSON}` (เช่น `Product 12 {"name":"ข้าวมันไก่"}`)
-// ดึง JSON ท้ายข้อความมาแต่งเป็นประโยค ; รหัสที่ไม่รู้จักแสดงข้อความเดิม
-const AUDIT_ORDER_STATUS_TH = {
-    VERIFYING_SLIP: 'รอตรวจสลิป', PENDING: 'รอร้านรับออเดอร์', COOKING: 'กำลังทำ', COOKED: 'ทำเสร็จแล้ว',
-    READY: 'เรียกคิวแล้ว', COMPLETED: 'รับอาหารแล้ว', PENDING_CANCELLATION: 'รออนุมัติยกเลิก',
-    AWAITING_TOP_UP: 'รอโอนส่วนต่าง', CANCELLED: 'ยกเลิก', NO_SHOW: 'ไม่มารับอาหาร'
-};
-const AUDIT_ROLE_TH = { STORE_OWNER: 'เจ้าของร้าน', FRONT_STAFF: 'พนักงานหน้าร้าน', KITCHEN_STAFF: 'พนักงานครัว' };
-const AUDIT_FIELD_TH = { password: 'รหัสผ่าน', full_name: 'ชื่อ', role: 'ตำแหน่ง', store_id: 'ร้าน', phone: 'เบอร์โทร', email: 'อีเมล' };
-function auditPayload(raw) {
-    const i = raw.indexOf('{');
-    if (i < 0) return {};
-    try {
-        const value = JSON.parse(raw.slice(i));
-        return value && typeof value === 'object' ? value : {};
-    }
-    catch {
-        return {};
-    }
-}
-const auditQuote = (text) => (text ? `“${text}”` : '');
-const baht = (v) => (v !== undefined && v !== null && v !== '' ? `${money2(v)} บาท` : '');
-const why = (text) => (text ? `เหตุผล: ${text}` : '');
-const who = (p) => (p.username ? `@${p.username}` : '');
-// แต่ละรหัส -> ส่วนขยายต่อท้ายชื่อการกระทำ (p = ข้อมูล JSON, log = แถว audit)
-const AUDIT_DETAIL = {
-    CREATE_ORDER: (p) => [p.total !== undefined ? `ยอด ${baht(p.total)}` : '', p.walk_in ? 'สั่งที่หน้าร้าน' : ''],
-    CANCEL_ORDER: (p) => [why(p.reason)],
-    CANCEL_REQUEST: (p) => [why(p.reason)],
-    UPDATE_STATUS: (p) => [p.status ? `เป็น ${auditQuote(AUDIT_ORDER_STATUS_TH[p.status] || p.status)}` : '', why(p.reason)],
-    CUSTOMER_CHANGE_ITEM: (p) => [p.product ? `เป็น ${auditQuote(p.product)} ${baht(p.price)}` : '', Number(p.refund_diff) > 0 ? `คืนส่วนต่าง ${baht(p.refund_diff)}` : '', Number(p.top_up_due) > 0 ? `ต้องโอนเพิ่ม ${baht(p.top_up_due)}` : ''],
-    LATE_PICKUP: (p) => [p.minutes ? `อีก ${p.minutes} นาที` : '', p.count ? `ครั้งที่ ${p.count}` : ''],
-    PICKUP_REMINDER: (p) => [p.waited_minutes ? `รอมาแล้ว ${p.waited_minutes} นาที` : ''],
-    PRINT_ORDER: (p) => [p.printer ? `เครื่อง ${p.printer}` : ''],
-    REPRINT_ORDER: (p) => [p.printer ? `เครื่อง ${p.printer}` : ''],
-    PRINT_SKIP: (p) => [why(p.reason)],
-    VERIFY_SLIP_REJECT: (p) => [why(p.reason)],
-    UPLOAD_TOP_UP_SLIP: (p) => [baht(p.amount)],
-    VERIFY_TOP_UP_APPROVE: (p) => [baht(p.amount)],
-    VERIFY_TOP_UP_REJECT: (p) => [why(p.reason)],
-    REFUND_DONE: (p) => [baht(p.amount)],
-    CREATE_STORE: (p) => [p.queue_code ? `รหัสคิว ${p.queue_code}` : '', p.start && p.end ? `สัญญา ${thaiDate(p.start)} ถึง ${thaiDate(p.end)}` : ''],
-    UPDATE_STORE: (p) => [p.name ? `ชื่อร้าน ${auditQuote(p.name)}` : '', p.queue_code ? `รหัสคิว ${p.queue_code}` : ''],
-    AUTO_DELETE_STORE: (p) => [why(p.reason)],
-    RENEW_CONTRACT: (p) => [p.end ? `ถึง ${thaiDate(p.end)}` : ''],
-    CONTRACT_EXTEND: (p) => [p.end ? `เป็น ${thaiDate(p.end)}` : '', why(p.reason)],
-    CONTRACT_SHORTEN: (p) => [p.end ? `เป็น ${thaiDate(p.end)}` : '', why(p.reason)],
-    CONTRACT_END_BACKDATED: (p) => [p.end ? `เป็น ${thaiDate(p.end)}` : '', why(p.reason)],
-    CONTRACT_RESTART: (p) => [p.start && p.end ? `${thaiDate(p.start)} ถึง ${thaiDate(p.end)}` : '', why(p.reason)],
-    CREATE_PRODUCT: (p) => [auditQuote(p.name), baht(p.price)],
-    UPDATE_PRODUCT: (p) => [auditQuote(p.name)],
-    PRICE_UPDATE: (p) => [auditQuote(p.name), p.price !== undefined ? `เป็น ${baht(p.price)}` : ''],
-    DELETE_PRODUCT: (p) => [auditQuote(p.name)],
-    OUT_OF_STOCK: (p) => [auditQuote(p.name), p.from_order ? `(จากออเดอร์ #${p.from_order})` : ''],
-    BACK_IN_STOCK: (p) => [auditQuote(p.name)],
-    OUT_OF_STOCK_NOTIFY: (p) => [auditQuote(p.name), p.orders ? `${p.orders} ออเดอร์` : ''],
-    LOGIN: (p) => [p.method === 'google' ? 'ด้วย Google' : ''],
-    LOGIN_FAIL: (p, log) => [p.reason === 'unknown_username' ? `ไม่พบชื่อผู้ใช้ ${auditQuote(log.EntityId)}` : p.failed_count ? `รหัสผ่านไม่ถูกต้อง (ครั้งที่ ${p.failed_count})` : ''],
-    ACCOUNT_LOCKED: (p) => [p.failed_count ? `ใส่รหัสผ่านผิด ${p.failed_count} ครั้ง` : ''],
-    CREATE_STAFF: (p) => [who(p), AUDIT_ROLE_TH[p.role] ? `ตำแหน่ง${AUDIT_ROLE_TH[p.role]}` : ''],
-    UPDATE_STAFF: (p) => [AUDIT_ROLE_TH[p.role] ? `เปลี่ยนตำแหน่งเป็น${AUDIT_ROLE_TH[p.role]}` : ''],
-    ACTIVATE_STAFF: (p) => [who(p)],
-    DEACTIVATE_STAFF: (p) => [who(p)],
-    DELETE_STAFF: (p) => [who(p)],
-    CREATE_STORE_ACCOUNT: (p) => [who(p)],
-    UPDATE_STORE_ACCOUNT: (p) => [Array.isArray(p.changed) && p.changed.length ? `แก้${p.changed.map((f) => AUDIT_FIELD_TH[f] || f).join(', ')}` : ''],
-    DELETE_STORE_ACCOUNT: (p) => [who(p)],
-    OPEN_FOOD_COURT: (p) => [p.override_until ? `ถึง ${thaiDateTime(p.override_until)}` : ''],
-    CLOSE_FOOD_COURT: (p) => [p.override_until ? `ถึง ${thaiDateTime(p.override_until)}` : ''],
-    UPDATE_FOOD_COURT_SCHEDULE: (p) => [p.open && p.close ? `เป็นเปิด ${p.open} น. ปิด ${p.close} น.` : ''],
-    UPDATE_ISSUE: (p) => [p.status ? `เป็น ${auditQuote(ISSUE_STATUS_META[p.status]?.label || p.status)}` : '', p.note ? `ข้อความ: ${p.note}` : '']
-};
-
-const formatAuditDetails = (log) => {
-    const action = String(log.Action || '').toUpperCase();
-    const raw = String(log.Details || '').trim();
-    const verb = AUDIT_VERBS[action];
-    if (!verb) return raw || '—';
-    const storeName = String(log.StoreName || '');
-    const store = log.StoreId != null ? `${storeName ? `${storeName.startsWith('ร้าน') ? '' : 'ร้าน'}${storeName} ` : 'ร้านค้า '}(รหัสร้าน #${log.StoreId})` : '';
-    const order = log.OrderId != null ? `ออเดอร์ #${log.OrderId}` : '';
-    const queue = log.QueueLabel ? `คิว ${log.QueueLabel}` : '';
-    const extra = (AUDIT_DETAIL[action]?.(auditPayload(raw), log) || []).filter(Boolean).join(' · ');
-    return [extra ? `${verb} ${extra}` : verb, order, queue, store].filter(Boolean).join(' · ');
 };
 
 function AuditHistoryPage({ ctx }) {

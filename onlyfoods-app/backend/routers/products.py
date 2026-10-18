@@ -10,6 +10,7 @@ from db import get_db, transaction
 from errors import DomainError
 from schemas import NotifyOutStockSchema, ProductCreateSchema, ProductUpdateSchema
 from services import do_transition, lock_order, log_audit, notify_menu_out_of_stock, send_notif
+import config
 import state
 from utils import bangkok_now, clean_text, queue_label, save_image
 
@@ -132,6 +133,24 @@ def delete_product(product_id: int, user=Depends(require_role("STORE_OWNER", "EX
         with db.cursor() as cur:
             prod = _product_for_update(cur, product_id)
             assert_store_access(user, prod["StoreId"])
+            # กฎ PO 3: เมนูที่ยังอยู่ในออเดอร์ที่ไม่จบ ลบไม่ได้ (ร้านต้องทำ/ส่งมอบ หรือลูกค้าต้องเปลี่ยนเมนูก่อน)
+            cur.execute(
+                """
+                SELECT DISTINCT o.QueueNo, s.QueueCode
+                FROM OrderItem oi
+                JOIN `Order` o ON o.OrderId = oi.OrderId
+                JOIN OrderStatus os ON os.StatusId = o.StatusId
+                JOIN Store s ON s.StoreId = o.StoreId
+                WHERE oi.ProductId = %s AND oi.ItemStatus <> 'REPLACED' AND os.IsTerminal = FALSE
+                ORDER BY o.QueueNo
+                """,
+                (product_id,),
+            )
+            busy = [queue_label(r["QueueNo"], r["QueueCode"]) for r in cur.fetchall()]
+            if busy:
+                shown = ", ".join(busy[:10]) + (f" และอีก {len(busy) - 10} คิว" if len(busy) > 10 else "")
+                raise DomainError(400, f"ลบเมนูนี้ไม่ได้ เพราะยังมีออเดอร์ที่ยังไม่จบใช้เมนูนี้อยู่ ({shown}) "
+                                       f"ถ้าไม่อยากให้ลูกค้าสั่งเพิ่ม ให้กด \"ของหมด\" แทน แล้วค่อยลบเมื่อออเดอร์เสร็จ")
             cur.execute("UPDATE Product SET IsDeleted = TRUE WHERE ProductId = %s", (product_id,))
         log_audit(db, user["UserId"], "DELETE_PRODUCT", "Product", product_id, {"name": prod["ProductName"]}, None)
     return {"success": True, "message": "ลบเมนูสำเร็จ"}
@@ -162,7 +181,7 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema,
                         user=Depends(require_role("FRONT_STAFF", "STORE_OWNER")), db=Depends(get_db)):
     """เมนูหมด: ออเดอร์ที่ยังไม่เริ่มส่งมอบ (PENDING/COOKING) -> PENDING_CANCELLATION ให้ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิก"""
     now = bangkok_now()
-    deadline = now + timedelta(minutes=payload.response_window_minutes)
+    deadline = now + timedelta(minutes=config.OUT_OF_STOCK_RESPONSE_MINUTES)
     with transaction(db):
         with db.cursor() as cur:
             prod = _product_for_update(cur, product_id)
@@ -194,7 +213,7 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema,
                               cancel_reason=reason, cancel_deadline=deadline, now=now)
                 send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {queue_label(order['QueueNo'], order['QueueCode'])} เมนูหมด",
                            f"⚠️ คิว {queue_label(order['QueueNo'], order['QueueCode'])} สินค้า {prod['ProductName']} หมด! "
-                           f"กรุณาเปลี่ยนเมนูหรือกดยกเลิกรับเงินคืนภายใน {payload.response_window_minutes} นาที "
+                           f"กรุณาเปลี่ยนเมนูหรือกดยกเลิกรับเงินคืนภายใน {config.OUT_OF_STOCK_RESPONSE_MINUTES} นาที "
                            f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติ", oid)
         log_audit(db, user["UserId"], "OUT_OF_STOCK_NOTIFY", "Product", product_id, None,
                   {"orders": len(ids), "name": prod["ProductName"]})

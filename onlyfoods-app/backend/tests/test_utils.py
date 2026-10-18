@@ -275,3 +275,10 @@ def test_save_image_rejects_foreign_or_reused_paths(tmp_path):
     assert save_image(png, "slips", str(tmp_path), new_only=True).startswith("/uploads/slips/")
     assert image_digest(png) == image_digest(png) and len(image_digest(png)) == 64
     assert image_digest("/uploads/slips/x.png") is None
+
+
+def test_queue_summary_limits_list():
+    from services import queue_summary
+    rows = [{"queue": f"A{i:03d}"} for i in range(1, 13)]
+    assert queue_summary(rows[:2]) == "A001, A002"
+    assert queue_summary(rows) == "A001, A002, A003, A004, A005, A006, A007, A008, A009, A010 และอีก 2 คิว"

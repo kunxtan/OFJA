@@ -631,12 +631,14 @@ function ConfirmDeleteDialog({ state, busy, onCancel, onConfirm }) {
         {state.warn !== null && <div className="berry-confirm-warn">{state.warn || 'การลบนี้ไม่สามารถย้อนกลับได้'}</div>}
         <div className="berry-confirm-actions">
           <button type="button" className="berry-confirm-btn cancel" onClick={onCancel} disabled={busy} autoFocus>
-            ยกเลิก
+            {state.blocked ? 'รับทราบ' : 'ยกเลิก'}
           </button>
-          <button type="button" className="berry-confirm-btn danger" onClick={onConfirm} disabled={busy}>
-            {busy ? <span className="berry-spinner" /> : <Icon name={state.icon || 'trash'} size={16} />}
-            {busy ? (state.busyText || 'กำลังลบ...') : state.confirmText || 'ยืนยันการลบ'}
-          </button>
+          {!state.blocked && (
+            <button type="button" className="berry-confirm-btn danger" onClick={onConfirm} disabled={busy}>
+              {busy ? <span className="berry-spinner" /> : <Icon name={state.icon || 'trash'} size={16} />}
+              {busy ? (state.busyText || 'กำลังลบ...') : state.confirmText || 'ยืนยันการลบ'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -2063,7 +2065,7 @@ function SalesOrderDetailModal({ orderId, statusCode, apiBase, onClose }) {
               {o && <span className={`sh-type ${o.IsWalkIn ? 'walkin' : 'online'}`}>{o.IsWalkIn ? 'Walk-in หน้าร้าน' : 'สั่งออนไลน์'}</span>}
             </div>
             <h3 id="sh-title">ออเดอร์ #{orderId}</h3>
-            <p>{o ? `สั่งเมื่อ ${thaiDateTime(o.CreatedAt, true)}` : 'กำลังโหลด...'}{o?.PickupTime ? ` · นัดรับ ${o.PickupTime}` : ''}</p>
+            <p>{o ? `สั่งเมื่อ ${thaiDateTime(o.CreatedAt, true)}` : 'กำลังโหลด...'}{o?.PickupTime ? ` · นัดรับ ${o.PickupTime}` : ''}{o?.DeliveredAt ? ` · ส่งมอบ ${thaiDateTime(o.DeliveredAt, true)}` : ''}</p>
           </div>
           <button type="button" className="mf-close" onClick={onClose} aria-label="ปิด"><Icon name="close" size={18} /></button>
         </div>
@@ -2936,9 +2938,31 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   };
 
   // สวิตช์บน topbar: เปิดร้านได้ทันที แต่ถามยืนยันก่อนปิด (กันกดโดนโดยไม่ตั้งใจ)
-  const requestToggleStore = () => {
+  const requestToggleStore = async () => {
     if (toggleDisabled) return;
     if (!storeOpen) { toggleStore(); return; }
+    // กฎ PO 1: ยังมีออเดอร์ที่ยังไม่จบ = ปิดร้านไม่ได้ (backend ตรวจซ้ำอีกชั้น)
+    try {
+      const res = await fetch(`${apiBase}/api/stores/${storeId}/open-orders`);
+      const pending = res.ok ? await res.json() : [];
+      if (Array.isArray(pending) && pending.length) {
+        const queues = pending.slice(0, 10).map(o => `${o.queue} (${o.status_label})`).join(', ');
+        setConfirmDelete({
+          type: 'closeBlocked',
+          blocked: true,
+          name: dash.StoreName || 'ร้านของคุณ',
+          title: 'ยังปิดร้านไม่ได้',
+          prefix: 'ร้าน',
+          suffix: `ยังมีออเดอร์ที่ยังไม่จบ ${pending.length} ออเดอร์`,
+          warn: `${queues}${pending.length > 10 ? ` และอีก ${pending.length - 10} คิว` : ''} — กรุณาทำและส่งมอบให้ครบก่อนปิดร้าน ถ้าไม่อยากรับออเดอร์เพิ่ม ให้กด "ของหมด" ที่เมนูแทน`,
+          icon: 'power',
+          tone: 'danger',
+        });
+        return;
+      }
+    } catch (err) {
+      console.error(err);
+    }
     setConfirmDelete({
       type: 'closeStore',
       name: dash.StoreName || 'ร้านของคุณ',
@@ -3075,6 +3099,12 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       const res = await fetch(url, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        if (res.status === 400 && data.detail) {
+          // กฎ PO 3: เมนูยังอยู่ในออเดอร์ที่ไม่จบ -> แสดงเหตุผลค้างไว้ให้อ่าน (toast หายเร็วเกิน)
+          setConfirmDelete({ type: 'deleteBlocked', blocked: true, name, title: 'ยังลบเมนูนี้ไม่ได้',
+            prefix: 'เมนู', suffix: '', warn: data.detail, icon: 'trash', tone: 'danger' });
+          return;
+        }
         throw new Error(data.detail || data.message || 'เกิดข้อผิดพลาดในการลบเมนู');
       }
       setConfirmDelete(null);
@@ -4337,7 +4367,10 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                                     {o.PaymentMethodCode === 'CASH' ? 'เงินสด' : 'โอน'}
                                   </span>
                                   <span className="sh-amount">฿{fmtMoney(o.TotalAmount)}</span>
-                                  <span className="sh-status"><Badge tone={sm.tone}>{sm.label}</Badge></span>
+                                  <span className="sh-status">
+                                    <Badge tone={sm.tone}>{sm.label}</Badge>
+                                    {o.DeliveredAt && <span className="sh-delivered" title="เวลาที่ส่งมอบอาหาร">ส่งมอบ {timeHM(o.DeliveredAt)}</span>}
+                                  </span>
                                   <span className="sh-chevron"><Icon name="arrowRight" size={16} /></span>
                                 </button>
                               );
@@ -6097,7 +6130,8 @@ body, html {
 .sh-type.online { background: var(--berry-green-light); color: var(--berry-green); }
 .sh-pay-method { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--berry-text-muted); }
 .sh-amount { justify-self: end; font-size: 15px; font-weight: 700; color: var(--berry-text-dark); font-variant-numeric: tabular-nums; }
-.sh-status { justify-self: end; }
+.sh-status { justify-self: end; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.sh-delivered { font-size: 11px; color: var(--berry-text-muted, #6b7280); white-space: nowrap; }
 .sh-chevron { color: #C3C6D4; transition: all 0.15s ease; }
 .sh-more { align-self: center; padding: 10px 18px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); color: var(--berry-text-dark); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .sh-more:hover { border-color: var(--berry-purple); color: var(--berry-purple); }

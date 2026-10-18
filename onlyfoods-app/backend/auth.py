@@ -39,7 +39,7 @@ _SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 _CLEARING_WRITE_PATHS = re.compile(
     r"^/api/(orders/\d+/(status|cancel-request|verify-slip|print)"
     r"|print-jobs/\d+/skip"
-    r"|refunds/\d+/done"
+    r"|refunds/\d+/(done|slip-check)"
     r"|products/\d+/(toggle-stock|notify-out-of-stock))$"
 )
 

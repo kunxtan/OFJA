@@ -61,16 +61,19 @@ def create_order(data: CreateOrderSchema, user=Depends(require_role("CUSTOMER", 
 
     with transaction(db):
         with db.cursor() as cur:
-            if not foodcourt_is_open(get_foodcourt(cur), now):
+            if not foodcourt_is_open(get_foodcourt(cur, share_lock=True), now):
                 raise DomainError(400, "ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้")
 
             cur.execute(
                 """
                 SELECT s.StoreName, s.QueueCode, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate
                 FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId WHERE s.StoreId = %s
+                FOR UPDATE OF s
                 """,
                 (data.store_id,),
             )
+            # ล็อกแถวร้านตั้งแต่ตรงนี้ (next_queue_no ล็อกแถวเดียวกันอยู่แล้ว) : ปิดร้านพร้อมกับมีคนกำลังสั่ง
+            # = รอกันทีละคน ออเดอร์ไม่หลุดเข้ามาหลังร้านปิด/หลังนับออเดอร์ค้างในหน้าต่างบังคับปิด
             store = cur.fetchone()
             if not store or store["IsDeleted"]:
                 raise DomainError(404, "ไม่พบร้านค้านี้")
@@ -437,7 +440,7 @@ def update_status(order_id: int, payload: StatusUpdateSchema,
 def request_cancel(order_id: int, payload: CancelRequestSchema,
                    user=Depends(require_role("FRONT_STAFF", "STORE_OWNER")), db=Depends(get_db)):
     now = bangkok_now()
-    deadline = now + timedelta(minutes=payload.response_window_minutes)
+    deadline = now + timedelta(minutes=config.OUT_OF_STOCK_RESPONSE_MINUTES)
     reason = payload.reason.strip()
     closed = []
     with transaction(db):
@@ -489,7 +492,7 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
                           cancel_reason=reason, cancel_deadline=deadline, now=now)
             q = queue_label(order["QueueNo"], order["QueueCode"])
             send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} มีปัญหา",
-                       f"คิว {q} มีปัญหา: {reason} กรุณาเปลี่ยนเมนูหรือยกเลิกภายใน {payload.response_window_minutes} นาที "
+                       f"คิว {q} มีปัญหา: {reason} กรุณาเปลี่ยนเมนูหรือยกเลิกภายใน {config.OUT_OF_STOCK_RESPONSE_MINUTES} นาที "
                        f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติและคืนเงินที่ร้าน", order_id)
         log_audit(db, user["UserId"], "CANCEL_REQUEST", "Order", order_id, None,
                   {"reason": reason, "store_id": order["StoreId"], "items": payload.item_ids or []})
