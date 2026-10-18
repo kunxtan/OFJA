@@ -472,6 +472,15 @@ function CardIconBox({ icon, background, color = '#FFFFFF', size = 44 }) {
       <Icon name={icon} size={22} color={color}/>
     </div>);
 }
+// เตือนอัตรายกเลิก : เกิน 10% (เท่ากับ 10 ไม่เตือน) ; ไม่มีออเดอร์ = N/A ไม่เตือน
+const CANCEL_ALERT_RATE = 10;
+const isCancelAlert = (rate) => rate !== null && rate !== undefined && rate > CANCEL_ALERT_RATE;
+function CancelAlertBanner({ children, style }) {
+    return (<div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '12px 14px', borderRadius: T.radiusMd, background: T.redSoft, color: T.down, fontSize: '13px', fontWeight: 600, lineHeight: 1.6, ...style }}>
+      <Icon name="alert" size={17} color={T.down} style={{ marginTop: '2px' }}/>
+      <div style={{ minWidth: 0 }}>{children}</div>
+    </div>);
+}
 function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hint, hasPreviousData = null, highlight, variant, icon = 'trend', tone = 'blue', size = 'md', invertDelta = false }) {
     const hasDelta = delta !== null && delta !== undefined;
     const showComparison = hasDelta;
@@ -1748,10 +1757,9 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         suspended: stores.filter((s) => s.IsSuspended).length,
         total: stores.length
     }), [stores]);
-    const watchStores = report.storeRows
-        .filter((s) => s.IsSuspended || (s.delta !== null && s.delta <= -15) || s.cancelRate >= 10)
-        .sort((a, b) => (Number(b.IsSuspended) - Number(a.IsSuspended)) || (b.cancelRate - a.cancelRate) || ((a.delta ?? 0) - (b.delta ?? 0)))
-        .slice(0, 4);
+    const cancelAlertStores = report.storeRows
+        .filter((s) => isCancelAlert(s.cancelRate))
+        .sort((a, b) => b.cancelRate - a.cancelRate);
     const csvRows = () => {
     const summaryRow = [
         'สรุปภาพรวม',
@@ -2114,6 +2122,15 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
       </div>
 
       <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
+        {cancelAlertStores.length > 0 && (<CancelAlertBanner style={{ marginBottom: '12px' }}>
+          {money(cancelAlertStores.length)} ร้านอัตรายกเลิกเกิน {CANCEL_ALERT_RATE}% ในช่วงนี้:{' '}
+          {cancelAlertStores.map((s, i) => (<span key={s.StoreId}>
+            {i > 0 && ', '}
+            <button type="button" onClick={() => ctx.navigateTo('store-sales', s.StoreId)} style={{ border: 'none', background: 'transparent', padding: 0, color: T.down, fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
+              {s.StoreName}
+            </button> ({s.cancelRate.toFixed(2)}%)
+          </span>))}
+        </CancelAlertBanner>)}
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
             <thead>
@@ -2152,7 +2169,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                       </span>)}
                   </td>
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
-                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}</td>
+                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : isCancelAlert(s.cancelRate) ? <Badge tone="danger">{s.cancelRate.toFixed(2)}%</Badge> : `${s.cancelRate.toFixed(1)}%`}</td>
                   <td style={tdStyle}>
                     <Badge tone={s.ContractState === 'EXPIRED' || s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
                       {s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
@@ -3307,6 +3324,10 @@ function StoreSalesPage({ ctx }) {
               </div>
             </div>
           </Card>
+
+          {isCancelAlert(report.now.cancelRate) && (<CancelAlertBanner style={{ marginBottom: '16px' }}>
+            อัตรายกเลิกของร้านนี้ {report.now.cancelRate.toFixed(2)}% เกินเกณฑ์ {CANCEL_ALERT_RATE}% ในช่วงที่เลือก ({money(report.now.cancelledCount)} จาก {money(report.now.cancelledCount + report.now.completedCount)} ออเดอร์)
+          </CancelAlertBanner>)}
 
           <div className="of-kpi-hero">
             <KpiCard label="ยอดขายสุทธิ" value={money(report.now.sales)} unit="บาท" delta={changePct(report.now.sales, report.before.sales)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} highlight icon="trend"/>
