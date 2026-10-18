@@ -2869,6 +2869,25 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     }
   }, [cancels, page]);
 
+  // ป้ายตัวเลขเมนูคืนเงิน = รายการรอคืน "ใหม่ที่ยังไม่ได้เปิดดู" (เปิดหน้าแล้วหาย)
+  // จำในเบราว์เซอร์ต่อร้าน : รีเฟรช/เข้าใหม่แล้วรายการที่เคยดูไม่เด้งกลับ ; จำนวนที่ยังค้างดูได้จาก caption ของเมนู
+  const seenRefundsKey = `owner.seenRefunds.${storeId}`;
+  const [seenRefundIds, setSeenRefundIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(seenRefundsKey) || '[]')); } catch { return new Set(); }
+  });
+  const unseenRefundCount = useMemo(
+    () => refunds.filter(r => r.RefundStatus === 'PENDING' && !seenRefundIds.has(r.RefundId)).length,
+    [refunds, seenRefundIds],
+  );
+  useEffect(() => {
+    if (page !== 'refunds' || !loaded.refunds) return;
+    // เก็บเฉพาะรายการที่ยังรอคืน : คืนแล้วไม่ต้องจำ ไฟล์ไม่โตเรื่อย ๆ
+    const pendingIds = refunds.filter(r => r.RefundStatus === 'PENDING').map(r => r.RefundId);
+    if (pendingIds.every(id => seenRefundIds.has(id)) && seenRefundIds.size === pendingIds.length) return;
+    setSeenRefundIds(new Set(pendingIds));
+    try { localStorage.setItem(seenRefundsKey, JSON.stringify(pendingIds)); } catch { /* ไม่เป็นไร */ }
+  }, [page, refunds, loaded.refunds, seenRefundIds, seenRefundsKey]);
+
   const markAllRead = async () => {
     setUnreadCancels(0);
     setKnownCancelsCount(cancels.length);
@@ -3230,7 +3249,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     { id: 'history', label: 'Sales History', caption: 'ประวัติการขาย', icon: 'history', badge: unreadCancels > 0 ? unreadCancels : null },
     { id: 'reviews', label: 'Customer Reviews', caption: 'รีวิวจากลูกค้า', icon: 'star' },
     { id: 'issues', label: 'Issue Reports', caption: 'ประวัติการแจ้งปัญหา', icon: 'alert' },
-    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: 'รอคืน / คืนแล้ว', icon: 'coin', badge: pendingRefundCount || null },
+    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: pendingRefundCount ? `รอคืน ${pendingRefundCount} รายการ` : 'รอคืน / คืนแล้ว', icon: 'coin', badge: unseenRefundCount || null },
   ];
   const navById = Object.fromEntries(navItemsAll.map(n => [n.id, n]));
   const navGroups = [
