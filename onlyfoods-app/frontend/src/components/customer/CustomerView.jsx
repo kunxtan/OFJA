@@ -7,6 +7,7 @@ import { DISH_MINUTES, SCHEDULED_PICKUP_BASE_MINUTES, buildQueueSchedule, canEst
 import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, logoStyle, pageStyle, profileStyle, searchStyle } from "./styles";
 import { BigUserIcon, CameraIcon, CartIcon, CartIconPlus, HiIcon, HomeIcon, NoodleBowlArt, NotiIcon, OrderIcon, SparkleArt, StarIcon, ThaiTeaArt, UserIcon } from "./icons";
 import { PaymentModal, TopUpModal, OutOfStockModal } from "./modals/PaymentModals";
+import RefundPayoutModal from "./modals/RefundPayoutModal";
 import { ReviewModal, StoreReviewsModal } from "./modals/ReviewModals";
 import { ReportModal, ViewReportsModal } from "./modals/ReportModals";
 import NotifToasts from "./NotifToasts";
@@ -190,6 +191,34 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
+  const [payoutOrder, setPayoutOrder] = useState(null); // ออเดอร์ที่กำลังเลือกวิธีรับเงินคืน
+  const [payoutSaving, setPayoutSaving] = useState(false);
+  const [payoutError, setPayoutError] = useState("");
+
+  const savePayout = async (body) => {
+    const pending = (refundsByOrder[payoutOrder.OrderID] || []).filter((r) => r.RefundStatus === "PENDING");
+    setPayoutSaving(true);
+    setPayoutError("");
+    try {
+      for (const r of pending) {
+        const res = await fetch(`${apiBase}/api/refunds/${r.RefundId}/payout`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(typeof data.detail === "string" ? data.detail : "บันทึกไม่สำเร็จ");
+        }
+      }
+      setPayoutOrder(null);
+      await fetchMyRefunds();
+      customAlert("บันทึกแล้ว", body.method === "TRANSFER" ? "เจ้าของร้านจะโอนเงินคืนเข้าบัญชีของคุณ คุณจะได้รับแจ้งเตือนเมื่อโอนแล้ว" : `รับเงินสดที่ร้านโดยแจ้งเลขคิว ${payoutOrder.QueueNo}`, "success");
+    } catch (error) {
+      setPayoutError(error.message || "บันทึกไม่สำเร็จ");
+    } finally {
+      setPayoutSaving(false);
+    }
+  };
+
   const renderRefundNote = (order) => {
     const sum = summarizeRefunds(refundsByOrder[order.OrderID]);
     if (!sum.pending && !sum.done) return null;
@@ -199,7 +228,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         background: pending ? "#FEF3C7" : "#D1FAE5", color: pending ? "#92400E" : "#065F46", fontWeight: "700" }}>
         {pending ? (
           <>💸 รอรับเงินคืน {sum.pending.toFixed(2)} ฿ ที่ร้าน {order.StoreName}
-            <div style={{ fontWeight: "500", fontSize: "12px" }}>แจ้งเลขคิว #{order.QueueNo} กับพนักงานหน้าร้านเพื่อรับเงินคืน</div></>
+            <div style={{ fontWeight: "500", fontSize: "12px" }}>
+              {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER")
+                ? "เลือกให้เจ้าของร้านโอนคืนแล้ว รอร้านดำเนินการ"
+                : `แจ้งเลขคิว #${order.QueueNo} กับพนักงานหน้าร้านเพื่อรับเงินคืน หรือเลือกให้ร้านโอนให้`}
+            </div>
+            <button type="button" onClick={() => { setPayoutError(""); setPayoutOrder(order); }}
+              style={{ marginTop: "8px", padding: "8px 14px", borderRadius: "10px", border: "none", background: "#92400E", color: "#fff", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
+              เลือกวิธีรับเงินคืน
+            </button></>
         ) : (
           <>✅ รับเงินคืนแล้ว {sum.done.toFixed(2)} ฿{sum.doneAt ? ` · ${new Date(String(sum.doneAt).replace(" ", "T")).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}` : ""}</>
         )}
@@ -2552,6 +2589,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         newSelectedProduct={newSelectedProduct}
         handleChangeOrderMenu={handleChangeOrderMenu}
       />
+      {payoutOrder && (
+        <RefundPayoutModal
+          order={payoutOrder}
+          refunds={(refundsByOrder[payoutOrder.OrderID] || []).filter((r) => r.RefundStatus === "PENDING")}
+          onClose={() => setPayoutOrder(null)}
+          onSave={savePayout}
+          saving={payoutSaving}
+          error={payoutError}
+        />
+      )}
       <TopUpModal
         topUpOrder={topUpOrder}
         outOfStockOrder={outOfStockOrder}

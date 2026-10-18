@@ -2819,14 +2819,22 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       ready: count('Ready'),
       outOfStock: (products || []).filter(p => p.IsOutOfStock).length,
       todayOrders: todayOrders.length,
-      // เงินสดที่ควรอยู่ในลิ้นชักวันนี้ = ค่าอาหารที่รับเป็นเงินสด (เงินทอนคืนลูกค้าไปแล้ว) ; ออเดอร์ที่ยกเลิกไม่นับ
+      // เงินสดที่ควรอยู่ในลิ้นชักวันนี้ = เงินสดที่รับวันนี้ (ค่าอาหารสุทธิหลังทอน รวมออเดอร์ที่ถูกยกเลิก)
+      // − เงินสดที่จ่ายคืนลูกค้าวันนี้ ; คืนแบบโอนไม่ผ่านลิ้นชัก จึงไม่หัก
       cashToday: todayOrders
-        .filter(o => !orderIs(o, 'Cancelled') && o.StatusCode !== 'CANCELLED')
         .flatMap(o => o.Payments || [])
         .filter(p => p.MethodCode === 'CASH' && p.PaymentStatus === 'VERIFIED')
-        .reduce((acc, p) => acc + Number(p.Amount || 0), 0),
+        .reduce((acc, p) => acc + Number(p.Amount || 0), 0)
+        - refunds
+          .filter(r => r.RefundStatus === 'DONE' && r.PaidMethod !== 'TRANSFER' && r.RefundedAt
+            && toISODate(parseOrderDate(r.RefundedAt)) === today)
+          .reduce((acc, r) => acc + Number(r.Amount || 0), 0),
+      // ลูกค้าที่รอรับเงินสดคืนที่ร้าน (ต้องเตรียมเงินไว้ในลิ้นชัก)
+      cashRefundOwed: refunds
+        .filter(r => r.RefundStatus === 'PENDING' && r.PayoutMethod !== 'TRANSFER')
+        .reduce((acc, r) => acc + Number(r.Amount || 0), 0),
     };
-  }, [history, products]);
+  }, [history, products, refunds]);
 
   useEffect(() => {
     if (!isFirstFetch.current && cancels.length > knownCancelsCount) {
@@ -3519,7 +3527,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 <div className="od-live-head">
                   <span className="pulse" />
                   <strong>ตอนนี้ในร้าน</strong>
-                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์ · เงินสดที่ควรมีในลิ้นชัก <b>฿{fmtMoney(liveStats.cashToday)}</b></span>
+                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์ · เงินสดที่ควรมีในลิ้นชัก <b>฿{fmtMoney(liveStats.cashToday)}</b>{liveStats.cashRefundOwed > 0 && <> · รอคืนเงินสดลูกค้าอีก <b>฿{fmtMoney(liveStats.cashRefundOwed)}</b></>}</span>
                 </div>
                 <div className="od-live-grid">
                   {live.map(item => (
@@ -4488,7 +4496,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           })()}
 
           {page === 'refunds' && (
-            <RefundLog apiBase={apiBase} canConfirm onChanged={fetchData} />
+            <RefundLog apiBase={apiBase} canConfirm isOwner onChanged={fetchData} />
           )}
 
           {page === 'issues' && (() => {

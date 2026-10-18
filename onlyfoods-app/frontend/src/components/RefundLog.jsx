@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 // 💸 รายการคืนเงิน (ใช้ร่วมกันหลายหน้า)
 //  ลูกค้ามารับเงินคืนที่หน้าร้าน : ยกเลิกออเดอร์ / เปลี่ยนเป็นเมนูที่ถูกกว่า -> "รอคืน" (ไม่นับเป็นรายได้แล้ว)
 //  canConfirm  : หน้าร้าน/เจ้าของร้าน กด "คืนเงินแล้ว" ได้ (backend ตรวจสิทธิ์และร้านซ้ำอีกชั้น)
+//  isOwner     : เจ้าของร้านเท่านั้นที่โอนคืนได้ (เห็นข้อมูลบัญชีลูกค้า + แนบสลิปโอนบังคับ) ; หน้าร้านจ่ายเงินสดได้อย่างเดียว
 //  showStore   : บัญชี/ผู้บริหาร เห็นทุกร้าน -> แสดงคอลัมน์ร้าน + ตัวกรองร้าน + ส่งออก CSV
 const C = {
   primary: '#FF6B00',
@@ -22,6 +23,7 @@ const C = {
 
 const TYPE_TH = { FULL_CANCEL: 'ยกเลิกออเดอร์', PRICE_DIFF: 'ส่วนต่างราคาเมนู', ITEM_CANCEL: 'ยกเลิกบางรายการ' };
 const STATUS_TH = { PENDING: 'รอลูกค้ามารับ', DONE: 'คืนเงินแล้ว', FAILED: 'ไม่สำเร็จ' };
+const PAYOUT_KIND_TH = { PROMPTPAY: 'พร้อมเพย์', BANK: 'ธนาคาร' };
 const ROLE_TH = { FRONT_STAFF: 'หน้าร้าน', STORE_OWNER: 'เจ้าของร้าน', ACCOUNTANT: 'ฝ่ายบัญชี', EXECUTIVE: 'ผู้บริหาร' };
 
 const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -36,6 +38,22 @@ const fmtPhone = (p) => {
   return s.length === 10 ? `${s.slice(0, 3)}-${s.slice(3, 6)}-${s.slice(6)}` : s;
 };
 
+const MAX_SLIP_MB = 5;
+const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+  const fr = new FileReader();
+  fr.onload = () => resolve(fr.result);
+  fr.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+  fr.readAsDataURL(file);
+});
+
+// วิธีรับเงินของรายการ : ที่ลูกค้าเลือก (ยังรอคืน) หรือที่ร้านจ่ายจริง (คืนแล้ว)
+function payoutLabel(r) {
+  if (r.RefundStatus === 'DONE') return r.PaidMethod === 'TRANSFER' ? 'โอนแล้ว' : 'เงินสด';
+  if (r.PayoutMethod !== 'TRANSFER') return 'เงินสดที่ร้าน';
+  const kind = PAYOUT_KIND_TH[r.PayoutKind] || 'โอน';
+  return `โอน · ${kind}${r.PayoutAccountNo ? ` ${r.PayoutAccountNo}` : ''}`;
+}
+
 async function readError(res, fallback) {
   try {
     const data = await res.json();
@@ -46,12 +64,12 @@ async function readError(res, fallback) {
 }
 
 function downloadCsv(rows, showStore) {
-  const head = ['RefundId', 'วันที่ขอคืน', ...(showStore ? ['ร้าน'] : []), 'คิว', 'ลูกค้า', 'ประเภท', 'ยอดเงิน', 'เหตุผล', 'สถานะ', 'คืนเมื่อ', 'ผู้คืน'];
+  const head = ['RefundId', 'วันที่ขอคืน', ...(showStore ? ['ร้าน'] : []), 'คิว', 'ลูกค้า', 'ประเภท', 'ยอดเงิน', 'เหตุผล', 'วิธีรับเงิน', 'สถานะ', 'คืนเมื่อ', 'ผู้คืน'];
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = rows.map(r => [
     r.RefundId, fmtDateTime(r.RequestedAt), ...(showStore ? [r.StoreName] : []), r.QueueNo,
     r.IsWalkIn ? 'Walk-in' : (r.CustomerName || ''), TYPE_TH[r.RefundType] || r.RefundType, Number(r.Amount || 0).toFixed(2),
-    r.Reason, STATUS_TH[r.RefundStatus] || r.RefundStatus, r.RefundedAt ? fmtDateTime(r.RefundedAt) : '', r.RefundedByName || '',
+    r.Reason, payoutLabel(r), STATUS_TH[r.RefundStatus] || r.RefundStatus, r.RefundedAt ? fmtDateTime(r.RefundedAt) : '', r.RefundedByName || '',
   ].map(esc).join(','));
   const blob = new Blob(['﻿' + [head.map(esc).join(','), ...lines].join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -62,7 +80,7 @@ function downloadCsv(rows, showStore) {
   URL.revokeObjectURL(url);
 }
 
-export default function RefundLog({ apiBase, canConfirm = false, showStore = false, pollMs = 0, onChanged }) {
+export default function RefundLog({ apiBase, canConfirm = false, isOwner = false, showStore = false, pollMs = 0, onChanged }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -72,6 +90,10 @@ export default function RefundLog({ apiBase, canConfirm = false, showStore = fal
   const [confirming, setConfirming] = useState(null);
   const [busy, setBusy] = useState(false);
   const [confirmError, setConfirmError] = useState('');
+  const [payMethod, setPayMethod] = useState('CASH');   // วิธีที่ร้านจ่ายจริงในหน้าต่างยืนยัน
+  const [slip, setSlip] = useState(null);               // { name, dataUrl }
+  const [payInfo, setPayInfo] = useState(null);         // ข้อมูลบัญชีเต็มของลูกค้า (เจ้าของเปิดดู -> audit)
+  const [payInfoError, setPayInfoError] = useState('');
   const [flash, setFlash] = useState('');
 
   const load = useCallback(async () => {
@@ -131,12 +153,49 @@ export default function RefundLog({ apiBase, canConfirm = false, showStore = fal
     });
   }, [scoped, filter, search]);
 
+  const openConfirm = async (r) => {
+    setConfirmError('');
+    setSlip(null);
+    setPayInfo(null);
+    setPayInfoError('');
+    const transfer = isOwner && r.PayoutMethod === 'TRANSFER';
+    setPayMethod(transfer ? 'TRANSFER' : 'CASH');
+    setConfirming(r);
+    if (!transfer) return;
+    try {
+      const res = await fetch(`${apiBase}/api/refunds/${r.RefundId}/payout-info`);
+      if (!res.ok) throw new Error(await readError(res, 'โหลดข้อมูลบัญชีลูกค้าไม่สำเร็จ'));
+      setPayInfo(await res.json());
+    } catch (err) {
+      setPayInfoError(err.message || 'โหลดข้อมูลบัญชีลูกค้าไม่สำเร็จ');
+    }
+  };
+
+  const pickSlip = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setConfirmError('กรุณาเลือกไฟล์รูปภาพ'); return; }
+    if (file.size > MAX_SLIP_MB * 1024 * 1024) { setConfirmError(`ไฟล์รูปต้องไม่เกิน ${MAX_SLIP_MB} MB`); return; }
+    try {
+      setSlip({ name: file.name, dataUrl: await readFileAsDataUrl(file) });
+      setConfirmError('');
+    } catch (err) {
+      setConfirmError(err.message);
+    }
+  };
+
   const confirmRefund = async () => {
     if (!confirming) return;
+    if (payMethod === 'TRANSFER' && !slip) { setConfirmError('กรุณาแนบสลิปโอนเงินคืนก่อนยืนยัน'); return; }
     setBusy(true);
     setConfirmError('');
     try {
-      const res = await fetch(`${apiBase}/api/refunds/${confirming.RefundId}/done`, { method: 'PUT' });
+      const res = await fetch(`${apiBase}/api/refunds/${confirming.RefundId}/done`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method: payMethod, slip_image: payMethod === 'TRANSFER' ? slip.dataUrl : null }),
+      });
       if (!res.ok) throw new Error(await readError(res, 'บันทึกการคืนเงินไม่สำเร็จ'));
       setFlash(`บันทึกแล้ว: คืนเงิน ฿${money(confirming.Amount)} คิว ${confirming.QueueNo}`);
       setConfirming(null);
@@ -149,7 +208,7 @@ export default function RefundLog({ apiBase, canConfirm = false, showStore = fal
     }
   };
 
-  const colCount = 7 + (showStore ? 1 : 0) + (canConfirm ? 1 : 0);
+  const colCount = 8 + (showStore ? 1 : 0) + (canConfirm ? 1 : 0);
 
   return (
     <div className="rf-root">
@@ -216,6 +275,7 @@ export default function RefundLog({ apiBase, canConfirm = false, showStore = fal
               <th>ประเภท / เหตุผล</th>
               <th className="num">ยอดคืน</th>
               <th>ขอคืนเมื่อ</th>
+              <th>วิธีรับเงิน</th>
               <th>สถานะ</th>
               <th>ผู้คืน</th>
               {canConfirm && <th aria-label="ดำเนินการ"></th>}
@@ -242,6 +302,11 @@ export default function RefundLog({ apiBase, canConfirm = false, showStore = fal
                 </td>
                 <td className="num"><b>฿{money(r.Amount)}</b></td>
                 <td>{fmtDateTime(r.RequestedAt)}</td>
+                <td>
+                  <span className={`rf-method ${(r.RefundStatus === 'DONE' ? r.PaidMethod : r.PayoutMethod) === 'TRANSFER' ? 'transfer' : ''}`}>{payoutLabel(r)}</span>
+                  {r.RefundStatus === 'PENDING' && r.PayoutMethod === 'TRANSFER' && r.PayoutBank && <div className="rf-sub">{r.PayoutBank}</div>}
+                  {r.TransferSlipUrl && <div><a className="rf-link" href={`${apiBase}${r.TransferSlipUrl}`} target="_blank" rel="noreferrer">ดูสลิปโอน</a></div>}
+                </td>
                 <td><span className={`rf-badge ${String(r.RefundStatus).toLowerCase()}`}>{STATUS_TH[r.RefundStatus] || r.RefundStatus}</span></td>
                 <td>
                   {r.RefundedAt ? (
@@ -254,9 +319,13 @@ export default function RefundLog({ apiBase, canConfirm = false, showStore = fal
                 {canConfirm && (
                   <td>
                     {r.RefundStatus === 'PENDING' && (
-                      <button type="button" className="rf-btn rf-btn-primary" onClick={() => { setConfirmError(''); setConfirming(r); }}>
-                        คืนเงินแล้ว
-                      </button>
+                      !isOwner && r.PayoutMethod === 'TRANSFER'
+                        ? <span className="rf-sub">ลูกค้าขอโอน<br />รอเจ้าของร้านดำเนินการ</span>
+                        : (
+                          <button type="button" className="rf-btn rf-btn-primary" onClick={() => openConfirm(r)}>
+                            {isOwner && r.PayoutMethod === 'TRANSFER' ? 'โอนคืน' : 'คืนเงินแล้ว'}
+                          </button>
+                        )
                     )}
                   </td>
                 )}
@@ -276,12 +345,45 @@ export default function RefundLog({ apiBase, canConfirm = false, showStore = fal
               <dt>ลูกค้า</dt><dd>{confirming.IsWalkIn ? 'Walk-in' : (confirming.CustomerName || '-')}{confirming.CustomerPhone ? ` · ${fmtPhone(confirming.CustomerPhone)}` : ''}</dd>
               <dt>เหตุผล</dt><dd>{confirming.Reason || TYPE_TH[confirming.RefundType]}</dd>
             </dl>
-            <p className="rf-modal-note">ตรวจเลขคิวกับลูกค้าให้ตรงก่อนจ่ายเงิน เมื่อกดยืนยันแล้วจะแก้ไขไม่ได้</p>
+            {confirming.PayoutMethod === 'TRANSFER' && (
+              <div className="rf-pay-box">
+                <b>ลูกค้าขอรับเงินคืนแบบโอน</b>
+                {payInfoError && <div className="rf-error" role="alert">{payInfoError}</div>}
+                {!payInfo && !payInfoError && <div className="rf-sub">กำลังโหลดข้อมูลบัญชี…</div>}
+                {payInfo && (
+                  <dl className="rf-modal-list">
+                    <dt>{PAYOUT_KIND_TH[payInfo.kind] || 'บัญชี'}</dt>
+                    <dd>
+                      {payInfo.bank ? `${payInfo.bank} · ` : ''}<span className="rf-acct">{payInfo.account_no}</span>
+                      <button type="button" className="rf-link" onClick={() => navigator.clipboard?.writeText(payInfo.account_no)}> คัดลอก</button>
+                    </dd>
+                    {payInfo.account_name && (<><dt>ชื่อบัญชี</dt><dd>{payInfo.account_name}</dd></>)}
+                    {payInfo.qr_image && (<><dt>QR</dt><dd><img className="rf-qr" src={`${apiBase}${payInfo.qr_image}`} alt="QR รับเงินของลูกค้า" /></dd></>)}
+                  </dl>
+                )}
+                <div className="rf-method-pick" role="radiogroup" aria-label="วิธีคืนเงิน">
+                  <label><input type="radio" name="rf-paymethod" checked={payMethod === 'TRANSFER'} onChange={() => setPayMethod('TRANSFER')} /> โอนเข้าบัญชีลูกค้า</label>
+                  <label><input type="radio" name="rf-paymethod" checked={payMethod === 'CASH'} onChange={() => setPayMethod('CASH')} /> ลูกค้ามารับเงินสดแทน</label>
+                </div>
+                {payMethod === 'TRANSFER' && (
+                  <label className="rf-slip">
+                    <span>แนบสลิปโอน <b>(บังคับ)</b></span>
+                    <input type="file" accept="image/*" onChange={pickSlip} disabled={busy} />
+                    {slip && <img className="rf-slip-preview" src={slip.dataUrl} alt="สลิปโอนที่เลือก" />}
+                  </label>
+                )}
+              </div>
+            )}
+            <p className="rf-modal-note">
+              {payMethod === 'TRANSFER'
+                ? 'ข้อมูลบัญชีลูกค้าจะถูกลบออกจากระบบเมื่อยืนยัน และเก็บเฉพาะสลิปโอนไว้เป็นหลักฐาน'
+                : 'ตรวจเลขคิวกับลูกค้าให้ตรงก่อนจ่ายเงิน เมื่อกดยืนยันแล้วจะแก้ไขไม่ได้'}
+            </p>
             {confirmError && <div className="rf-error" role="alert">{confirmError}</div>}
             <div className="rf-modal-actions">
               <button type="button" className="rf-btn rf-btn-ghost" onClick={() => setConfirming(null)} disabled={busy}>ยกเลิก</button>
-              <button type="button" className="rf-btn rf-btn-primary" onClick={confirmRefund} disabled={busy} autoFocus>
-                {busy ? 'กำลังบันทึก…' : 'จ่ายเงินแล้ว ยืนยัน'}
+              <button type="button" className="rf-btn rf-btn-primary" onClick={confirmRefund} disabled={busy || (payMethod === 'TRANSFER' && !slip)} autoFocus>
+                {busy ? 'กำลังบันทึก…' : (payMethod === 'TRANSFER' ? 'โอนแล้ว ยืนยัน' : 'จ่ายเงินแล้ว ยืนยัน')}
               </button>
             </div>
           </div>
@@ -296,6 +398,14 @@ const RF_STYLES = `
 .rf-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
 .rf-head h3 { margin: 0 0 4px; font-size: 18px; font-weight: 800; }
 .rf-head p { margin: 0; color: ${C.sub}; font-size: 13px; line-height: 1.5; max-width: 640px; }
+.rf-method { display: inline-block; padding: 2px 8px; border-radius: 8px; background: ${C.primarySoft}; color: ${C.primaryDark}; font-size: 12px; font-weight: 700; }
+.rf-method.transfer { background: #E0F2FE; color: #0369A1; }
+.rf-pay-box { background: #F8FAFC; border: 1px solid ${C.border}; border-radius: 12px; padding: 12px 14px; margin: 12px 0; display: grid; gap: 8px; }
+.rf-acct { font-weight: 800; letter-spacing: .5px; font-variant-numeric: tabular-nums; }
+.rf-qr { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid ${C.border}; }
+.rf-method-pick { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.rf-slip { display: grid; gap: 6px; font-size: 13px; }
+.rf-slip-preview { max-width: 180px; max-height: 220px; border-radius: 8px; border: 1px solid ${C.border}; }
 .rf-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .rf-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
 .rf-stat { border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
