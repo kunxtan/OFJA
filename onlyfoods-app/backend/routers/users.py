@@ -197,6 +197,41 @@ def _staff_image(value: Optional[str]) -> Optional[str]:
     return path
 
 
+def _assert_not_last_owner_with_transfers(cur, user_id: int) -> None:
+    """เจ้าของร้านคนสุดท้ายของร้าน ปิดบัญชีไม่ได้ ถ้ายังมีลูกค้ารอรับเงินคืนแบบโอน (โอนคืนได้เฉพาะเจ้าของร้าน)"""
+    cur.execute(
+        """
+        SELECT u.StoreId FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
+        WHERE u.UserId = %s AND r.RoleCode = 'STORE_OWNER' AND u.StoreId IS NOT NULL
+        """,
+        (user_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return
+    cur.execute(
+        """
+        SELECT COUNT(*) AS n FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
+        WHERE u.StoreId = %s AND r.RoleCode = 'STORE_OWNER' AND u.IsActive = TRUE AND u.UserId <> %s
+        """,
+        (row["StoreId"], user_id),
+    )
+    if cur.fetchone()["n"]:
+        return
+    cur.execute(
+        """
+        SELECT COUNT(*) AS n FROM Refund rf JOIN Payment p ON p.PaymentId = rf.PaymentId
+        JOIN `Order` o ON o.OrderId = p.OrderId
+        WHERE o.StoreId = %s AND rf.RefundStatus = 'PENDING' AND rf.PayoutMethod = 'TRANSFER'
+        """,
+        (row["StoreId"],),
+    )
+    n = cur.fetchone()["n"]
+    if n:
+        raise DomainError(400, f"ร้านนี้ยังมีลูกค้ารอรับเงินคืนแบบโอน {n} รายการ ซึ่งเจ้าของร้านเท่านั้นที่โอนได้ "
+                               "กรุณาให้เจ้าของร้านโอนคืนให้ครบ หรือเพิ่มบัญชีเจ้าของร้านคนใหม่ก่อนปิดบัญชีนี้")
+
+
 def _lock_staff(cur, user: dict, user_id: int) -> dict:
     """พนักงานหน้าร้าน/ครัวที่ผู้เรียกมีสิทธิ์จัดการ (เจ้าของร้าน = เฉพาะร้านตัวเอง)"""
     cur.execute(
@@ -523,6 +558,7 @@ def delete_store_account(user_id: int, user=Depends(require_role("EXECUTIVE")), 
                 raise DomainError(403, "ไม่สามารถลบบัญชีของร้านที่ถูกลบแล้ว")
             if acc["RoleCode"] not in STORE_ROLES:
                 raise DomainError(400, "ลบได้เฉพาะบัญชีของฝั่งร้านค้าเท่านั้น")
+            _assert_not_last_owner_with_transfers(cur, user_id)
             cur.execute("UPDATE `User` SET IsActive = FALSE WHERE UserId = %s", (user_id,))
         log_audit(db, user["UserId"], "DELETE_STORE_ACCOUNT", "User", user_id, {"username": acc["Username"]}, None)
     return {"success": True, "message": "ลบบัญชีเรียบร้อยแล้ว"}
