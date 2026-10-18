@@ -471,6 +471,16 @@ CREATE TABLE OrderStatusLog (
 -- Covers login events too (EntityType = 'AUTH'), and price history
 -- through OldValue / NewValue - that is why there is no separate
 -- SecurityLog or ProductPriceHistory table.
+-- failed logins counted per (IP + username) and per username across IPs (routers/auth.py throttle)
+CREATE TABLE LoginThrottle (
+  ThrottleKey  CHAR(64)          NOT NULL COMMENT 'sha256 of "ip|<ip>|<username>" or "user|<username>" (no raw IP/username stored)',
+  FailCount    SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  BlockedUntil DATETIME          NULL,
+  LastFailAt   DATETIME          NOT NULL,
+  PRIMARY KEY (ThrottleKey),
+  KEY ix_throttle_lastfail (LastFailAt)
+) ENGINE=InnoDB;
+
 CREATE TABLE AuditLog (
   AuditLogId  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   PerformedBy INT UNSIGNED    NULL,
