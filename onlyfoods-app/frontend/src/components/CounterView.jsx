@@ -87,7 +87,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
     setActiveTab(tab);
     return true;
   });
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // มือถือ (≤768px): เมนูซ้ายปิดไว้ก่อน (เปิดแล้วลอยทับเนื้อหา) ; จอใหญ่: เปิดไว้
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth > 768);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
@@ -994,6 +995,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
       {/* ===== BODY ===== */}
       <div className="cv-body">
+        {sidebarOpen && <div className="cv-sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
         <aside className={`cv-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
           <nav className="cv-nav">
             <div className="cv-nav-label hide-on-collapse">Counter Controls</div>
@@ -2118,7 +2120,8 @@ const CV_STYLES = `
 .cv-profile-dropdown .dropdown-item:hover { background: ${PALETTE.coralLight}; color: ${PALETTE.coral}; }
 
 /* ---------- Body / Sidebar ---------- */
-.cv-body { display: flex; flex: 1; overflow: hidden; }
+.cv-body { display: flex; flex: 1; overflow: hidden; position: relative; }
+.cv-sidebar-backdrop { display: none; }
 .cv-sidebar {
   width: 260px; background: ${PALETTE.white}; border-right: 1px solid ${PALETTE.border};
   display: flex; flex-direction: column; flex-shrink: 0; z-index: 100; overflow-x: hidden;
@@ -2145,9 +2148,20 @@ const CV_STYLES = `
 @media (max-width: 768px) {
   .cv-sidebar { position: absolute; top: 0; bottom: 0; left: 0; transform: translateX(-100%); }
   .cv-sidebar.open { transform: translateX(0); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+  .cv-sidebar-backdrop { display: block; position: absolute; inset: 0; z-index: 99; background: rgba(15, 23, 42, 0.35); }
   .cv-brand { width: auto; }
-  .cv-stat-grid { grid-template-columns: 1fr; }
-  .cv-pos-grid { grid-template-columns: 1fr; }
+  .cv-topbar-left, .cv-topbar-right { gap: 8px; min-width: 0; }
+  .cv-topbar-right { flex-shrink: 1; justify-content: flex-end; }
+  .brand-icon { display: none; }
+  .brand-title { font-size: 17px; }
+  .cv-store-chip { min-width: 0; padding: 6px 10px; font-size: 13px; }
+  .cv-store-chip > span:not(.store-status-pill) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28vw; }
+  .cv-content { padding: 14px; }
+  .cv-topbar { padding: 0 12px; }
+}
+@media (max-width: 560px) {
+  .cv-user-chip .user-name { display: none; }
+  .cv-store-chip > svg { display: none; }
 }
 
 /* ---------- Content / Cards ---------- */
@@ -2443,4 +2457,12 @@ const CV_STYLES = `
 
 .bold { font-weight: 600; }
 .cv-divider { border: none; border-top: 1px solid ${PALETTE.border}; margin: 4px 0 8px; }
+/* มือถือ : วางท้ายสุดเพื่อให้ทับค่าตั้งต้นของ grid ด้านบน */
+@media (max-width: 768px) {
+  .cv-stat-grid { grid-template-columns: 1fr; gap: 12px; }
+  .cv-pos-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .cv-store-chip > span:not(.store-status-pill) { display: none; }
+}
 `;

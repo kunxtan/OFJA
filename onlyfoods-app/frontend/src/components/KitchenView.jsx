@@ -483,6 +483,11 @@ export default function KitchenView({ user, apiBase, onLogout }) {
           50% { background-color: rgba(239, 68, 68, 0.3); border-color: #DC2626; }
           100% { background-color: rgba(239, 68, 68, 0.12); border-color: #EF4444; }
         }
+        /* มือถือ : แถบหัวขึ้นสองบรรทัด (ฝั่งขวาลงไปบรรทัดใหม่) แทนการล้นขอบจอ */
+        @media (max-width: 640px) {
+          .kv-header { flex-wrap: wrap !important; padding: 10px 12px !important; gap: 8px !important; }
+          .kv-header-right { flex-shrink: 1 !important; flex-wrap: wrap; width: 100%; }
+        }
         @keyframes statusPulse {
           0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
           70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
@@ -491,7 +496,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
       `}</style>
 
       {/* Header Bar */}
-      <header style={{
+      <header className="kv-header" style={{
         background: theme.navBg,
         borderBottom: `1px solid ${theme.border}`,
         padding: '12px 24px',
@@ -561,7 +566,7 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         </div>
 
         {/* ส่วนขวา: เวลา + Dropdown สรุปรายการ + ปุ่มตั้งค่า */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+        <div className="kv-header-right" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
           
           {/* นาฬิกา Realtime */}
           <div style={{
