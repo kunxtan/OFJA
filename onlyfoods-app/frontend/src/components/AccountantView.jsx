@@ -2394,7 +2394,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     onClick={() => setReportFormat('csv')}
                   >
                     <div className="sc-title">CSV (.csv)</div>
-                    <div className="sc-sub">ไฟล์ข้อมูลสากล เปิดได้ทุกโปรแกรม</div>
+                    <div className="sc-sub">ไฟล์ข้อมูลสากล</div>
                   </div>
                   <div
                     className={`berry-select-card ${reportFormat === 'xlsx' ? 'active' : ''}`}
@@ -2402,7 +2402,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     onClick={() => setReportFormat('xlsx')}
                   >
                     <div className="sc-title">Excel (.xlsx)</div>
-                    <div className="sc-sub">ไฟล์ Excel จริง เปิดได้ใน Excel / Google Sheets</div>
+                    <div className="sc-sub">ไฟล์ Excel</div>
                   </div>
                 </div>
                 <button className="berry-btn primary" style={{ width: '100%', marginTop: 20, padding: '12px' }} onClick={exportReport}>
