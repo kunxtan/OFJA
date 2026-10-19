@@ -2157,7 +2157,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               <h2 style={{ margin: 0, fontSize: "22px", fontWeight: "900" }}>ตะกร้าของฉัน</h2>
               {cart.length > 0 && <div style={{ fontSize: "11px", color: COLORS.gray, marginTop: "4px" }}></div>}
             </div>
-            <button onClick={() => setIsCartOpen(false)} aria-label="ปิดตะกร้า" style={{ width: "40px", height: "40px", border: "none", borderRadius: "50%", background: COLORS.lightGray, cursor: "pointer", fontSize: "20px" }}>×</button>
+            <button className="cart-tap" onClick={() => setIsCartOpen(false)} aria-label="ปิดตะกร้า" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, width: "40px", height: "40px", border: "none", borderRadius: "50%", background: COLORS.lightGray, color: COLORS.navy, cursor: "pointer" }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg>
+            </button>
           </div>
 
           {cart.length === 0 ? (
@@ -2183,11 +2185,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           )}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "8px" }}>
-                          <button onClick={() => decreaseQty(index)} aria-label="ลดจำนวน" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, width: "36px", height: "36px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, cursor: "pointer" }}>
+                          <button className="cart-tap" onClick={() => decreaseQty(index)} aria-label="ลดจำนวน" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, width: "36px", height: "36px", border: "none", borderRadius: "50%", background: "#FFE9E3", color: COLORS.orange, cursor: "pointer" }}>
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M3 8h10"/></svg>
                           </button>
                           <b style={{ minWidth: "20px", textAlign: "center", lineHeight: 1 }}>{item.qty || 1}</b>
-                          <button onClick={() => increaseQty(index)} aria-label="เพิ่มจำนวน" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, width: "36px", height: "36px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, cursor: "pointer" }}>
+                          <button className="cart-tap" onClick={() => increaseQty(index)} aria-label="เพิ่มจำนวน" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, width: "36px", height: "36px", border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white, cursor: "pointer" }}>
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M3 8h10M8 3v10"/></svg>
                           </button>
                         </div>
@@ -2201,7 +2203,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                           </button>
                         )}
                       </div>
-                      <button onClick={() => removeFromCart(index)} aria-label="ลบรายการ" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, alignSelf: "flex-start", width: "36px", height: "36px", border: "none", background: "none", color: COLORS.navy, cursor: "pointer" }}>
+                      <button className="cart-tap" onClick={() => removeFromCart(index)} aria-label="ลบรายการ" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, flexShrink: 0, alignSelf: "flex-start", width: "36px", height: "36px", border: "none", background: "none", color: COLORS.navy, cursor: "pointer" }}>
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg>
                       </button>
                     </div>
@@ -2380,6 +2382,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         {`
           @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
           .customer-view, .customer-view * {font-family: 'Sarabun', sans-serif !important;}
+          .customer-view button { -webkit-appearance: none; appearance: none; box-sizing: border-box; font-family: inherit; }
+          /* จอสัมผัส: ปุ่มกดต้องมีพื้นที่ขั้นต่ำ 44px */
+          @media (pointer: coarse) {
+            .cart-tap { min-width: 44px !important; min-height: 44px !important; width: 44px !important; height: 44px !important; }
+            .customer-review-btn { min-height: 34px !important; }
+          }
+          @media (max-width: 380px) {
+            .cart-tap { min-width: 40px !important; min-height: 40px !important; width: 40px !important; height: 40px !important; }
+          }
           @keyframes sparkleTwinkle { 0% {transform: scale(0.8) rotate(0deg); opacity: 0.4;} 50% {transform: scale(1.25) rotate(90deg); opacity: 1;
           filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));} 100% {transform: scale(0.8) rotate(180deg); opacity: 0.4;}}
           .animated-sparkle {animation: sparkleTwinkle 2s infinite ease-in-out; display: inline-block;}
@@ -2596,7 +2607,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       <div style={{position: "fixed", left: "50%", bottom: "18px", transform: "translateX(-50%)",
         background: COLORS.navy, borderRadius: "35px", padding: "7px", display: "flex",
         alignItems: "center", gap: "4px", zIndex: 600, boxShadow: "0 10px 35px rgba(42,44,65,0.25)",
-        maxWidth: "calc(100vw - 30px)", overflowX: "auto"
+        maxWidth: "calc(100% - 30px)", overflowX: "auto"
       }}>
         <button onClick={() => handleSelectTab("menu")} style={{ border: "none", borderRadius: "28px", padding: "10px 17px", background: activeTab === "menu" ? COLORS.orange : "transparent", color: COLORS.white, fontFamily: "inherit", fontWeight: activeTab === "menu" ? "800" : "500", cursor: "pointer", whiteSpace: "nowrap" }}>
           <span className="nav-text"><HomeIcon/></span>
