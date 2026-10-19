@@ -33,10 +33,10 @@ def _get_user_row(cur, user_id: int) -> dict:
 @router.put("/users/profile")
 def update_profile(data: UpdateProfileSchema, user=Depends(get_current_user), db=Depends(get_db)):
     name = (data.full_name or data.fullName or data.name or "").strip()
-    phone = (data.phone or "").strip()
     img_in = data.profile_img if data.profile_img is not None else data.profileImg
-    if not name or not phone:
+    if not name or not (data.phone or "").strip():
         raise DomainError(400, "กรุณากรอกชื่อ-นามสกุลและเบอร์โทรศัพท์ให้ครบถ้วน")
+    phone = validate_phone(data.phone, required=True)  # กฎเดียวกับตอนสมัคร (หน้าเว็บตรวจแล้ว แต่ API ต้องตรวจเองด้วย)
     img = save_image(img_in, "profiles") if img_in else None
     with transaction(db):
         with db.cursor() as cur:
@@ -50,12 +50,13 @@ def update_profile(data: UpdateProfileSchema, user=Depends(get_current_user), db
 
 @router.put("/users/complete-profile")
 def complete_profile(data: CompleteProfileSchema, user=Depends(get_current_user), db=Depends(get_db)):
+    phone = validate_phone(data.phone, required=True)
     img = save_image(data.profile_img, "profiles") if data.profile_img else None
     with transaction(db):
         with db.cursor() as cur:
             cur.execute(
                 "UPDATE `User` SET FullName = %s, Phone = %s, ProfileImageUrl = COALESCE(%s, ProfileImageUrl) WHERE UserId = %s",
-                (data.full_name.strip()[:100], data.phone.strip()[:20], img, user["UserId"]),
+                (data.full_name.strip()[:100], phone, img, user["UserId"]),
             )
     with db.cursor() as cur:
         return _get_user_row(cur, user["UserId"])
