@@ -227,6 +227,7 @@ export default function App() {
   const [authTab, setAuthTab] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', name: '', phone: '' });
   const [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);   // กันกดซ้ำ + บอกว่ากำลังรอเซิร์ฟเวอร์ (ตอนระบบช้า/ล่มอาจรอนาน)
   const [showPassword, setShowPassword] = useState(false);
 
   const API_BASE = import.meta.env.VITE_API_URL || window.location.origin;
@@ -440,7 +441,9 @@ export default function App() {
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
+    if (authBusy) return;
     setAuthError('');
+    setAuthBusy(true);
 
     const endpoint = authTab === 'login' ? '/api/login' : '/api/register';
     const bodyData = authTab === 'login' 
@@ -469,6 +472,8 @@ export default function App() {
       setAuthForm({ username: '', password: '', name: '', phone: '' });
     } catch (err) {
       setAuthError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
+    } finally {
+      setAuthBusy(false);
     }
   };
 
@@ -1072,8 +1077,8 @@ export default function App() {
                       </div>
                     )}
 
-                    <button type="submit" className="btn-primary">
-                      <span>{authTab === 'login' ? 'เข้าสู่ระบบ' : 'สร้างบัญชีผู้ใช้'}</span>
+                    <button type="submit" className="btn-primary" disabled={authBusy} aria-busy={authBusy}>
+                      <span>{authBusy ? 'กำลังเชื่อมต่อ...' : authTab === 'login' ? 'เข้าสู่ระบบ' : 'สร้างบัญชีผู้ใช้'}</span>
                     </button>
                   </form>
 

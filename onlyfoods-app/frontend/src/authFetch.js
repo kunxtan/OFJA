@@ -5,6 +5,8 @@
 //  - แนบ header  Authorization: Bearer <token>  เฉพาะ request ที่ไปหา origin ของ API
 //  - ได้ 401 (หมดอายุ/ถูกระงับ/สัญญาร้านหมด) = ทิ้ง token แล้วส่ง event 'auth:expired' ให้ App.jsx เด้งไปหน้า login
 //  - App.jsx ส่ง 'auth:logout' ตอนกดออกจากระบบ = ทิ้ง token
+//  - เซิร์ฟเวอร์ล่ม/เน็ตหลุด : ไม่ส่งข้อความดิบ ("Failed to fetch", หน้า HTML 502 ของ nginx, "Internal Server Error")
+//    ไปถึงหน้าจอ แต่แปลงเป็นคำตอบ JSON ที่มี detail ภาษาไทย ทุกหน้าที่อ่าน data.detail จึงแสดงข้อความที่ผู้ใช้เข้าใจ
 const originalFetch = window.fetch.bind(window);
 const API_ORIGIN = new URL(import.meta.env.VITE_API_URL || window.location.origin, window.location.origin).origin;
 const TOKEN_PATHS = ['/api/login', '/api/register', '/api/auth/google', '/api/auth/google/link', '/api/users/change-password'];
@@ -34,6 +36,21 @@ export const saveUser = (user) => {
 };
 window.addEventListener('auth:logout', () => setToken(null));
 
+const NETWORK_DOWN = 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่อีกครั้ง';
+const SERVER_DOWN = 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่';
+const jsonError = (status, detail) => new Response(JSON.stringify({ detail }), {
+  status, headers: { 'Content-Type': 'application/json' },
+});
+// 5xx ที่ไม่มีข้อความภาษาไทยจาก backend (nginx 502/504, uvicorn "Internal Server Error") -> ข้อความกลาง
+const friendlyServerError = async (res) => {
+  if (res.status < 500) return res;
+  try {
+    const data = await res.clone().json();
+    if (typeof data?.detail === 'string' && /[\u0E00-\u0E7F]/.test(data.detail)) return res;
+  } catch { /* ไม่ใช่ JSON (หน้า HTML ของ proxy) */ }
+  return jsonError(res.status, SERVER_DOWN);
+};
+
 window.fetch = async (input, init = {}) => {
   let url;
   try {
@@ -48,7 +65,14 @@ window.fetch = async (input, init = {}) => {
   const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
 
-  const res = await originalFetch(input, { ...init, headers });
+  let res;
+  try {
+    res = await originalFetch(input, { ...init, headers });
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;  // component ยกเลิกเอง (เช่น ออกจากหน้า) : ไม่ใช่เน็ตหลุด
+    return jsonError(503, NETWORK_DOWN);
+  }
+  res = await friendlyServerError(res);
 
   if (TOKEN_PATHS.includes(url.pathname)) {
     if (res.ok) {

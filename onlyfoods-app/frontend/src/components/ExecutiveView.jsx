@@ -865,30 +865,6 @@ function SearchableStorePicker({ stores, value, onChange }) {
         </div>)}
     </div>);
 }
-function MenuRankList({ rows, tone = 'primary', emptyText }) {
-    if (!rows.length)
-        return <EmptyState text={emptyText || 'ยังไม่มีข้อมูลเมนู'} minHeight="120px"/>;
-    const maxValue = Math.max(...rows.map((r) => r.qty), 1);
-    return (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
-      {rows.map((r) => (<div key={r.name}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-            <span style={{ color: T.text, fontSize: '13px' }}>{r.name}</span>
-            <strong style={{ color: T.ink, fontSize: '13px', whiteSpace: 'nowrap' }}>
-              {money(r.qty)} รายการ
-            </strong>
-          </div>
-          <div style={{ height: '8px', background: T.trackSoft, borderRadius: '999px', marginTop: '5px' }}>
-            <div style={{
-                height: '100%',
-                width: `${Math.max((r.qty / maxValue) * 100, 3)}%`,
-                borderRadius: '999px',
-                background: tone === 'primary' ? T.primary : T.accent
-            }}/>
-          </div>
-          
-        </div>))}
-    </div>);
-}
 // ===== หน้าหลัก Executive: โหลดข้อมูล เมนู แจ้งเตือน และควบคุมศูนย์อาหาร =====
 export default function ExecutiveView({ apiBase, user, onLogout }) {
     const API = apiBase || 'http://localhost:8000';
@@ -3111,7 +3087,6 @@ function StoreSalesPage({ ctx }) {
         const previous = orders.filter((o) => inRange(o, prevBounds, storeId));
         const now = summarize(current);
         const before = summarize(previous);
-        const menus = summarizeMenus(now.settled);
         return {
             now,
             before, current,
@@ -3119,14 +3094,6 @@ function StoreSalesPage({ ctx }) {
             buckets: customRange
                 ? buildBucketsForRange(now.settled, customStart, customEnd)
                 : buildBuckets(now.settled, anchor, days),
-            bestMenus: menus.slice(0, 2),
-            // เมนูขายได้น้อยต้องไม่ซ้ำกับรายการขายดี
-            // ถ้ามีข้อมูลไม่พอสำหรับเปรียบเทียบ จะได้เป็น [] และ UI เดิมจะแสดง empty state
-            worstMenus: menus
-                .filter((menu) => !menus.slice(0, 2).some((best) => best.name === menu.name))
-                .reverse()
-                .slice(0, 2),
-            menuCount: menus.length
         };
     }, [orders, storeId, anchor, days, customRange, customStart, customEnd]);
     const effectiveStart = customRange ? customStart : toISODate(new Date(new Date(`${anchor}T00:00:00`).setDate(new Date(`${anchor}T00:00:00`).getDate() - days + 1)));
@@ -3418,14 +3385,7 @@ function StoreSalesPage({ ctx }) {
             <SalesLineChart buckets={report.buckets} showStoreDetail={false}/>
           </Card>
 
-          <div style={{ ...chartGridStyle, marginBottom: '16px' }}>
-            <Card title="เมนูขายดี 2 อันดับแรก" >
-              <MenuRankList rows={report.bestMenus} emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้"/>
-            </Card>
-            <Card title="เมนูที่ขายได้น้อย 2 อันดับ" >
-              <MenuRankList rows={report.worstMenus} tone="accent" emptyText="ช่วงนี้ยังไม่มีเมนูที่ขายได้"/>
-            </Card>
-          </div>
+          {/* PO: เจ้าของโรงอาหารไม่ต้องการดูอันดับเมนูขายดี/ขายน้อย จึงไม่แสดงการ์ดอันดับเมนู */}
           <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
             <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={`${store.StoreName} · ${periodLabel}`} showStore={false} style={{ marginTop: 0 }}/>
             <StoreReviewSection ctx={ctx} storeId={storeId}/>
@@ -5615,7 +5575,6 @@ const historyTdStyle = { padding: '16px', textAlign: 'left', verticalAlign: 'top
 function CustomerInfoPage({ ctx }) {
     const { API, pushToast } = ctx;
     const isCompact = useIsNarrow(700);
-    const [banTarget, setBanTarget] = useState(null);   // { customer, reason, busy, error } ระงับ/เปิดบัญชีลูกค้า
     const [query, setQuery] = useState(''), [customers, setCustomers] = useState([]), [loading, setLoading] = useState(false), [searched, setSearched] = useState(false), [error, setError] = useState('');
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [activities, setActivities] = useState([]);
@@ -5653,52 +5612,8 @@ function CustomerInfoPage({ ctx }) {
         setActivities(combined);
     } catch (err) { setActivityError(err.message); }
     finally { setActivityLoading(false); }};
-    const submitBan = async () => {
-        if (!banTarget || banTarget.busy) return;
-        const { customer, reason } = banTarget;
-        const activate = !customer.IsActive;
-        if (!activate && !reason.trim()) { setBanTarget(b => ({ ...b, error: 'กรุณาระบุเหตุผลที่ระงับบัญชี' })); return; }
-        setBanTarget(b => ({ ...b, busy: true, error: '' }));
-        try {
-            await callApi(`${API}/api/executive/customers/${customer.UserId}/active`, {
-                method: 'PUT', body: JSON.stringify({ is_active: activate, reason: reason.trim() })
-            });
-            const update = (c) => (c.UserId === customer.UserId ? { ...c, IsActive: activate } : c);
-            setCustomers(list => list.map(update));
-            setSelectedCustomer(c => (c ? update(c) : c));
-            setBanTarget(null);
-            pushToast?.(activate ? `เปิดใช้งานบัญชี ${customer.Username} แล้ว` : `ระงับบัญชี ${customer.Username} แล้ว ใช้งานไม่ได้ทันที`);
-        } catch (err) {
-            setBanTarget(b => b && ({ ...b, busy: false, error: err.message }));
-        }
-    };
     return (
         <Card title="ค้นหาข้อมูลผู้ใช้" subtitle="ค้นหาเฉพาะบัญชี Customer ด้วย User ID, Username หรือชื่อผู้ใช้">
-            <Modal open={Boolean(banTarget)} title={banTarget?.customer.IsActive ? 'ระงับบัญชีลูกค้า' : 'เปิดใช้งานบัญชีลูกค้า'}
-                onClose={() => !banTarget?.busy && setBanTarget(null)} width={460} footer={<>
-                    <Button variant="ghost" onClick={() => setBanTarget(null)} disabled={banTarget?.busy}>ยกเลิก</Button>
-                    <Button variant={banTarget?.customer.IsActive ? 'danger' : 'primary'} icon={banTarget?.customer.IsActive ? 'ban' : 'check'}
-                        onClick={submitBan} disabled={banTarget?.busy}>
-                        {banTarget?.busy ? 'กำลังบันทึก...' : banTarget?.customer.IsActive ? 'ระงับบัญชี' : 'เปิดใช้งาน'}
-                    </Button>
-                </>}>
-                {banTarget && (<>
-                    <p style={{ ...bodyStyle, margin: 0 }}>
-                        {banTarget.customer.FullName || 'ไม่ระบุชื่อ'} (@{banTarget.customer.Username}, User ID {banTarget.customer.UserId})
-                    </p>
-                    <p style={{ ...captionStyle, color: T.text, marginTop: '8px' }}>
-                        {banTarget.customer.IsActive
-                            ? 'ลูกค้าจะเข้าสู่ระบบและสั่งอาหารไม่ได้ทันที (หลุดจากระบบแม้กำลังใช้งานอยู่) ประวัติออเดอร์และเงินคืนที่ค้างยังอยู่ครบ'
-                            : 'ลูกค้าจะกลับมาเข้าสู่ระบบและสั่งอาหารได้ตามปกติ'}
-                    </p>
-                    <Field label={banTarget.customer.IsActive ? 'เหตุผลที่ระงับ' : 'หมายเหตุ (ถ้ามี)'} required={banTarget.customer.IsActive} error={banTarget.error}>
-                        <input value={banTarget.reason} maxLength={200} autoFocus disabled={banTarget.busy}
-                            onChange={e => setBanTarget(b => ({ ...b, reason: e.target.value, error: '' }))}
-                            placeholder={banTarget.customer.IsActive ? 'เช่น สั่งแล้วไม่มารับซ้ำหลายครั้ง / ใช้สลิปปลอม' : ''}
-                            style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}/>
-                    </Field>
-                </>)}
-            </Modal>
             <form onSubmit={e => { e.preventDefault(); searchCustomers(); }} style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', flex: '1 1 320px' }}>
                     <Icon name="search" size={17} color={T.muted}/>
@@ -5714,7 +5629,6 @@ function CustomerInfoPage({ ctx }) {
     {customers.map(customer => <div key={customer.UserId} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '16px', background: T.surface }}>
         <div style={{ fontSize: '16px', fontWeight: 700, color: T.ink, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             {customer.FullName || 'ไม่ระบุชื่อ'}
-            {customer.IsActive === false && <Badge tone="danger">ถูกระงับ</Badge>}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: isCompact ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: '12px', minWidth: 0 }}>
             <div><strong>User ID:</strong> {customer.UserId}</div>
@@ -5725,9 +5639,6 @@ function CustomerInfoPage({ ctx }) {
         </div>
         <div style={{ marginTop: '14px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <Button icon="history" onClick={() => openCustomer(customer)}>ดูข้อมูลและประวัติ</Button>
-            {customer.IsActive === false
-                ? <Button variant="soft" icon="check" onClick={() => setBanTarget({ customer, reason: '', busy: false, error: '' })}>เปิดใช้งานบัญชี</Button>
-                : <Button variant="danger" icon="ban" onClick={() => setBanTarget({ customer, reason: '', busy: false, error: '' })}>ระงับบัญชี</Button>}
         </div>
     </div>)}
 </div>}

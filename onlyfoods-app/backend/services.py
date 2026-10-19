@@ -361,6 +361,22 @@ def queue_summary(rows: List[dict], limit: int = 10) -> str:
     return ", ".join(labels[:limit]) + (f" และอีก {more} คิว" if more > 0 else "")
 
 
+def notify_owners_closed_by_executive(db, pending: List[dict], on_open_orders: Optional[str], who: str) -> None:
+    """แจ้งเจ้าของร้านที่ยังมีออเดอร์ค้าง ตอนผู้บริหารปิดร้าน/ปิดศูนย์อาหาร ว่าออเดอร์ของร้านจะเป็นอย่างไรต่อ"""
+    by_store: Dict[int, List[dict]] = {}
+    for row in pending:
+        by_store.setdefault(int(row["store_id"]), []).append(row)
+    for store_id, rows in by_store.items():
+        queues = queue_summary(rows)
+        if on_open_orders == "cancel":
+            message = (f"{who} ออเดอร์ที่ยังไม่จบ {len(rows)} ออเดอร์ ({queues}) ถูกยกเลิกแล้ว "
+                       f"ระบบสร้างรายการคืนเงินให้ลูกค้าแล้ว ดูได้ที่หน้าคืนเงิน")
+        else:
+            message = (f"{who} ร้านไม่รับออเดอร์ใหม่ แต่ออเดอร์ที่ยังไม่จบ {len(rows)} ออเดอร์ ({queues}) "
+                       f"ยังต้องทำและส่งมอบให้ครบ")
+        notify_store_owners(db, store_id, "SYSTEM", "ร้านถูกปิดโดยผู้บริหาร", message)
+
+
 def force_cancel_open_orders(db, cur, store_id: Optional[int], actor_id: int, reason: str) -> dict:
     """ยกเลิกทุกออเดอร์ที่ยังไม่จบ + สร้างรายการคืนเงิน + แจ้งลูกค้า (ทีละออเดอร์ ล็อกแถวก่อนเสมอ)"""
     now = bangkok_now()

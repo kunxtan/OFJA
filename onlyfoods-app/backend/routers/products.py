@@ -149,8 +149,9 @@ def delete_product(product_id: int, user=Depends(require_role("STORE_OWNER", "EX
             busy = [queue_label(r["QueueNo"], r["QueueCode"]) for r in cur.fetchall()]
             if busy:
                 shown = ", ".join(busy[:10]) + (f" และอีก {len(busy) - 10} คิว" if len(busy) > 10 else "")
-                raise DomainError(400, f"ลบเมนูนี้ไม่ได้ เพราะยังมีออเดอร์ที่ยังไม่จบใช้เมนูนี้อยู่ ({shown}) "
-                                       f"ถ้าไม่อยากให้ลูกค้าสั่งเพิ่ม ให้กด \"ของหมด\" แทน แล้วค่อยลบเมื่อออเดอร์เสร็จ")
+                raise DomainError(400, f"มีออเดอร์ที่ยังไม่เสร็จสั่งเมนูนี้อยู่ {len(busy)} คิว ({shown}) "
+                                       f"จะลบได้เมื่อคิวเหล่านี้ส่งมอบหรือยกเลิกแล้ว "
+                                       f"ระหว่างนี้กด \"ของหมด\" เพื่อไม่ให้ลูกค้าสั่งเมนูนี้เพิ่ม")
             cur.execute("UPDATE Product SET IsDeleted = TRUE WHERE ProductId = %s", (product_id,))
         log_audit(db, user["UserId"], "DELETE_PRODUCT", "Product", product_id, {"name": prod["ProductName"]}, None)
     return {"success": True, "message": "ลบเมนูสำเร็จ"}

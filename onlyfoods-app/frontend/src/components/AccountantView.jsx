@@ -19,6 +19,7 @@ const RATE_ALERT = 10;  // % -> แจ้งเตือน (Alert) เมื่
 const ALERT_WINDOW_DAYS = 30;   // การแจ้งเตือน Cancel Rate คำนวณจากข้อมูลย้อนหลังกี่วัน
 
 const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+const fmtThaiMonth = (ym) => { const [y, m] = String(ym || '').split('-').map(Number); return y && m ? `${THAI_MONTHS[m - 1]} ${y + 543}` : ''; };
 const THAI_WEEKDAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
 
 // นักบัญชีบันทึกยอด/จำนวนออเดอร์ เฉพาะออเดอร์ที่ "จบ/กึ่งจบ" หรือ "ถูกยกเลิก" เท่านั้น
@@ -413,7 +414,18 @@ function filterOrdersByRange(orders, start, end, storeId) {
   });
 }
 
-function getPeriodBounds(range) {
+// range = 'today' | จำนวนวัน | 'month' (ใช้ month = 'YYYY-MM' ; ช่วงก่อนหน้า = เดือนก่อน)
+function getPeriodBounds(range, month) {
+  if (range === 'month' && /^\d{4}-\d{2}$/.test(month || '')) {
+    const [y, m] = month.split('-').map(Number);
+    const pad = (n) => String(n).padStart(2, '0');
+    const lastDay = (yy, mm) => new Date(yy, mm, 0).getDate();
+    const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+    return {
+      currStart: `${month}-01`, currEnd: `${month}-${pad(lastDay(y, m))}`,
+      prevStart: `${py}-${pad(pm)}-01`, prevEnd: `${py}-${pad(pm)}-${pad(lastDay(py, pm))}`,
+    };
+  }
   const days = range === 'today' ? 1 : (Number(range) || 7);
   const end = new Date();
   const start = new Date();
@@ -1034,7 +1046,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [dropdown, setDropdown] = useState('');
 
-  const [trendDays, setTrendDays] = useState(7);
+  const [trendDays, setTrendDays] = useState(7);   // 'today' | 7 | 14 | 30 | 'month'
+  const [dashMonth, setDashMonth] = useState(() => dateOnly(new Date()).slice(0, 7));   // ใช้เมื่อ trendDays = 'month'
   const [salesStoreFilter, setSalesStoreFilter] = useState('all');
   const [detailStoreId, setDetailStoreId] = useState(null);
   const [auditSearch, setAuditSearch] = useState('');
@@ -1264,14 +1277,17 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     return { gross, net, completed, cancelled };
   }, [salesFilteredRows]);
 
-  const topMenu = useMemo(() => buildTopMenu(salesOrders, salesStoreFilter, 10, stores), [salesOrders, salesStoreFilter, stores]);
   // ยอดขายตามช่วงเวลาของร้านที่เลือกใน Sales Summary (แสดงเมื่อกรองแยกร้านเท่านั้น)
   const salesTrend = useMemo(() => {
     if (salesStoreFilter === 'all') return [];
     const ords = salesOrders.filter(o => String(o.StoreId) === String(salesStoreFilter));
     return buildRangeTrend(ords, salesStart, salesEnd);
   }, [salesOrders, salesStoreFilter, salesStart, salesEnd]);
-  const hourlyTrend = useMemo(() => buildSalesTrend(orders, trendDays), [orders, trendDays]);
+  const hourlyTrend = useMemo(() => {
+    if (trendDays !== 'month') return buildSalesTrend(orders, trendDays);
+    const { currStart, currEnd } = getPeriodBounds('month', dashMonth);
+    return buildRangeTrend(orders, currStart, currEnd);
+  }, [orders, trendDays, dashMonth]);
 
   // ดึงข้อมูลเมนูของร้านที่ถูกเลือกเพื่อแสดงใน Modal แบบละเอียด
   const detailStoreMenus = useMemo(() => {
@@ -1280,7 +1296,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   }, [salesOrders, detailStoreId, stores]);
 
   const periodStats = useMemo(() => {
-    const { currStart, currEnd, prevStart, prevEnd } = getPeriodBounds(trendDays);
+    const { currStart, currEnd, prevStart, prevEnd } = getPeriodBounds(trendDays, dashMonth);
     const summarize = (ords, startDay) => {
       const s = buildStoreSummary(stores, ords, startDay);
       const gross = s.reduce((a, x) => a + x.grossSales, 0);
@@ -1300,7 +1316,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
         }
         return +(((c - p) / p) * 100).toFixed(1);
       };
-      const compareLabel = trendDays === 'today' ? 'เทียบกับเมื่อวาน' : `เทียบกับ ${trendDays} วันก่อนหน้า`;
+      const compareLabel = trendDays === 'today' ? 'เทียบกับเมื่อวาน' : trendDays === 'month' ? 'เทียบกับเดือนก่อน' : `เทียบกับ ${trendDays} วันก่อนหน้า`;
       return {
         curr, prev, compareLabel,
         deltaGross: pctChange(curr.gross, prev.gross),
@@ -1309,7 +1325,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
         deltaCancelled: pctChange(curr.cancelled, prev.cancelled),
         deltaRate: curr.rate === null || prev.rate === null ? null : +(curr.rate - prev.rate).toFixed(1),
       };
-    }, [orders, stores, trendDays]);
+    }, [orders, stores, trendDays, dashMonth]);
 
   // ร้านค้ายอดนิยม (Dashboard): ตามช่วงเวลาที่เลือก เรียงตามยอดสุทธิ ตัดร้านที่ไม่มียอดและร้านที่ถูกลบออก
   const topStores = useMemo(
@@ -1602,7 +1618,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div>
                   <h2 style={{ margin: 0 }}>ภาพรวมศูนย์อาหาร</h2>
                   <div style={{ color: 'var(--berry-text-muted)', fontSize: 13 }}>
-                    ยอดขายและอัตรายกเลิกของ{trendDays === 'today' ? 'วันนี้' : `${trendDays} วันล่าสุด`}
+                    ยอดขายและอัตรายกเลิกของ{trendDays === 'today' ? 'วันนี้' : trendDays === 'month' ? `เดือน ${fmtThaiMonth(dashMonth)}` : `${trendDays} วันล่าสุด`}
                   </div>
                 </div>
                 {lastUpdated && (
@@ -1651,7 +1667,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       <div className="berry-panel-caption">แนวโน้มยอดขายที่สำเร็จแล้ว — ใช้ดูว่าช่วงไหนขายดีหรือขายตก</div>
                     </div>
                     <div className="berry-toggle-pills">
-                      {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน']].map(([val, label]) => (
+                      {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['month', 'เลือกเดือน']].map(([val, label]) => (
                         <button
                           key={val}
                           className={trendDays === val ? 'active' : ''}
@@ -1661,6 +1677,11 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                         </button>
                       ))}
                     </div>
+                    {trendDays === 'month' && (
+                      <input type="month" className="berry-input" aria-label="เลือกเดือน" value={dashMonth}
+                        max={dateOnly(new Date()).slice(0, 7)} onChange={e => e.target.value && setDashMonth(e.target.value)}
+                        style={{ width: 'auto' }} />
+                    )}
                   </div>
                   <BerryLineChart data={hourlyTrend} height={290} valueFormat={(v) => `฿${fmtMoney(v)}`} axisFormat={(v) => (v >= 1000 ? `฿${(v / 1000).toFixed(1)}k` : `฿${Math.round(v)}`)} />
                 </div>
@@ -1686,7 +1707,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div className="berry-panel-header">
                   <div>
                     <h3 style={{ margin: 0 }}>ร้านค้าที่ต้องเฝ้าระวัง</h3>
-                    <div className="berry-panel-caption">เรียงตามอัตรายกเลิกจากสูงไปต่ำ</div>
+                    <div className="berry-panel-caption">อัตรายกเลิกในช่วงเวลาที่เลือกด้านบน · เรียงจากสูงไปต่ำ</div>
                   </div>
                   <span className="berry-link" onClick={() => setPage('cancel')}>ดูการวิเคราะห์ทั้งหมด →</span>
                 </div>
@@ -1704,7 +1725,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {[...storeSummary].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1)).map(s => (
+                      {[...periodStats.curr.storesData].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1)).map(s => (
                         <tr key={s.storeId}>
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.totalOrders)}</td>
@@ -1829,6 +1850,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <BerryStatCard label="Orders ยกเลิก" value={fmtMoney(salesTotals.cancelled)} />
               </div>
 
+              {/* PO: เจ้าของโรงอาหารไม่ต้องการดูอันดับเมนูขายดี จึงเหลือแค่กราฟยอดขายเมื่อเลือกร้าน */}
               <div className="berry-chart-row">
                 {salesStoreFilter !== 'all' && (
                   <div className="berry-panel" style={{ flex: '1 1 380px', minWidth: 0 }}>
@@ -1843,28 +1865,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     <BerryLineChart data={salesTrend} height={290} valueFormat={(v) => `฿${fmtMoney(v)}`} axisFormat={(v) => (v >= 1000 ? `฿${(v / 1000).toFixed(1)}k` : `฿${Math.round(v)}`)} />
                   </div>
                 )}
-              <div className="berry-panel" style={{ flex: '1 1 380px', minWidth: 0 }}>
-                <div className="berry-panel-header"><h3>เมนูขายดี Top 10</h3></div>
-                {topMenu.length === 0 ? (
-                  <div className="berry-empty-note">ยังไม่มีข้อมูลรายการเมนูที่ขาย</div>
-                ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="berry-table">
-                      <thead><tr><th>อันดับ</th><th>เมนู</th>{salesStoreFilter === 'all' && <th>ร้านค้า</th>}<th>จำนวนที่ขาย</th></tr></thead>
-                      <tbody>
-                        {topMenu.map((m, i) => (
-                          <tr key={`${m.storeId}-${m.name}`}>
-                            <td>#{i + 1}</td>
-                            <td>{m.name}</td>
-                            {salesStoreFilter === 'all' && <td>{m.storeName}</td>}
-                            <td>{fmtMoney(m.qty)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
               
               </div>
 

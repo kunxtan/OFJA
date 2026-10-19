@@ -81,12 +81,6 @@ class StaffActiveSchema(BaseModel):
     is_active: bool
 
 
-class CustomerActiveSchema(BaseModel):
-    """ผู้บริหารระงับ/เปิดบัญชีลูกค้า : ระงับต้องใส่เหตุผล (เก็บใน AuditLog)"""
-    is_active: bool
-    reason: Optional[str] = Field(default="", max_length=255)
-
-
 class StaffEraseSchema(BaseModel):
     confirm_username: str = Field(max_length=50)  # ต้องพิมพ์ชื่อผู้ใช้ของพนักงานให้ตรง กันกดลบผิดคน
 
