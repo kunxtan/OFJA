@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { startPolling } from '../utils/polling';
 import { useHistoryNav } from '../utils/historyNav';
 import RefundLog from './RefundLog';
@@ -758,6 +758,24 @@ function BerryStatCard({ label, value, tone, delta, deltaSuffix = '%', invertDel
 /* Line chart — มีเส้น Grid + แกน Y มองเห็นตลอด และ มี Custom Tooltip เมื่อ Hover */
 function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '#FF724C' }) {
   const [hoverIndex, setHoverIndex] = useState(null);
+  const wrapRef = useRef(null);
+  const [boxW, setBoxW] = useState(600);
+  const isEmpty = !data || data.length === 0;
+  // วัดความกว้างจริงของกราฟ เพื่อวาดตามสัดส่วนจริง (ตัวอักษรไม่ถูกบีบบนจอแคบ)
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return undefined;
+    const apply = () => setBoxW(Math.max(280, Math.round(el.getBoundingClientRect().width)));
+    apply();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', apply);
+      return () => window.removeEventListener('resize', apply);
+    }
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isEmpty]);
+  useTapAway(wrapRef, () => setHoverIndex(null));
 
   if (!data || data.length === 0) {
     return <div className="berry-empty-note" style={{ height }}>ยังไม่มีข้อมูล</div>;
@@ -775,7 +793,8 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
   });
   // ป้ายแกน Y: ตั้งแต่หลักพันใช้ k ทศนิยม 1 ตำแหน่ง เพื่อประหยัดพื้นที่ (tooltip ยังแสดงเต็ม)
   const fmtAxis = axisFormat || ((v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v))));
-  const w = 600, h = 190, padX = 45, padY = 20, padBottom = 30;
+  const w = boxW, h = Math.max(height, 160), padY = 20, padBottom = 30;
+  const padX = w < 420 ? 38 : 45;
   const stepX = data.length > 1 ? (w - padX * 2) / (data.length - 1) : 0;
   
   const points = data.map((d, i) => ({
@@ -786,11 +805,11 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
 
   const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   const areaPath = points.length ? `${linePath} L ${points[points.length - 1].x.toFixed(1)} ${h - padBottom} L ${points[0].x.toFixed(1)} ${h - padBottom} Z` : '';
-  const labelEvery = Math.max(1, Math.ceil(data.length / 7));
+  const labelEvery = Math.max(1, Math.ceil(data.length / (w < 420 ? 4 : 7)));
 
   return (
-    <div style={{ position: 'relative', height, width: '100%' }}>
-      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height="100%" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+    <div ref={wrapRef} style={{ position: 'relative', height: h, width: '100%' }}>
+      <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} style={{ overflow: 'visible', display: 'block', maxWidth: '100%' }}>
         <defs>
           <linearGradient id="themeLineArea" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={color} stopOpacity="0.25" />
@@ -838,8 +857,9 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
               x={p.x - stepX / 2} y={0} 
               width={stepX || w} height={h} 
               fill="transparent"
-              onMouseEnter={() => setHoverIndex(i)}
-              onMouseLeave={() => setHoverIndex(null)}
+              onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHoverIndex(i); }}
+              onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHoverIndex(null); }}
+              onPointerDown={(e) => { if (e.pointerType !== 'mouse') setHoverIndex(i); }}
               style={{ cursor: 'crosshair' }}
             />
           </g>
@@ -853,7 +873,7 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
             position: 'absolute',
             left: `calc(${(points[hoverIndex].x / w) * 100}%)`,
             top: `calc(${(points[hoverIndex].y / h) * 100}%)`,
-            transform: 'translate(-50%, -120%)',
+            transform: `translate(-${points[hoverIndex].x / w < 0.14 ? 12 : points[hoverIndex].x / w > 0.86 ? 88 : 50}%, -120%)`,
             background: '#2A2C41',
             color: '#FFFFFF',
             padding: '8px 12px',
@@ -873,7 +893,7 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
             {valueFormat ? valueFormat(points[hoverIndex].value) : points[hoverIndex].value}
           </div>
           <div style={{
-            position: 'absolute', bottom: '-4px', left: '50%', transform: 'translateX(-50%)',
+            position: 'absolute', bottom: '-4px', left: points[hoverIndex].x / w < 0.14 ? '12%' : points[hoverIndex].x / w > 0.86 ? '88%' : '50%', transform: 'translateX(-50%)',
             width: '0', height: '0', borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
             borderTop: '5px solid #2A2C41'
           }} />
@@ -885,6 +905,9 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
 
 function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ยอดสุทธิรวม' }) {
   const [hoverIndex, setHoverIndex] = useState(null);
+  const donutRef = useRef(null);
+  useTapAway(donutRef, () => setHoverIndex(null));
+  const tapSelect = (i) => (e) => { if (e.pointerType !== 'mouse') setHoverIndex(cur => (cur === i ? null : i)); };
 
   const clean = (data || []).filter(d => Number(d.value || 0) > 0);
   if (clean.length === 0) {
@@ -919,7 +942,7 @@ function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ย�
   const activeSlice = hoverIndex !== null ? slices[hoverIndex] : null;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '28px', flexWrap: 'wrap', minHeight: height, padding: '10px 0' }}>
+    <div ref={donutRef} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '28px', flexWrap: 'wrap', minHeight: height, padding: '10px 0' }}>
       <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
           <g transform={`rotate(-90 ${center} ${center})`}>
@@ -936,8 +959,9 @@ function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ย�
                 strokeDashoffset={slice.strokeDashoffset}
                 strokeLinecap="butt"
                 style={{ transition: 'all 0.2s ease', cursor: 'pointer', opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.4 }}
-                onMouseEnter={() => setHoverIndex(i)}
-                onMouseLeave={() => setHoverIndex(null)}
+                onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHoverIndex(i); }}
+                onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHoverIndex(null); }}
+                onPointerDown={tapSelect(i)}
               />
             ))}
           </g>
@@ -962,8 +986,9 @@ function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ย�
           <div
             key={i}
             style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', cursor: 'pointer', opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.45, transition: 'opacity 0.2s' }}
-            onMouseEnter={() => setHoverIndex(i)}
-            onMouseLeave={() => setHoverIndex(null)}
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHoverIndex(i); }}
+            onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHoverIndex(null); }}
+            onPointerDown={tapSelect(i)}
           >
             <span style={{ width: 11, height: 11, borderRadius: '50%', backgroundColor: slice.color, flexShrink: 0 }} />
             <span title={slice.label} style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: hoverIndex === i ? 700 : 500, color: 'var(--berry-text-dark)' }}>
@@ -1009,6 +1034,52 @@ function BerryBulletChart({ data, target = RATE_ALERT, warn = RATE_WARN }) {
 }
 
 /* ============================================================
+   RESPONSIVE / ACCESSIBILITY HELPERS
+   ============================================================ */
+// แตะนอกกราฟเพื่อปิด tooltip (จอสัมผัสไม่มี hover)
+function useTapAway(ref, onAway) {
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) onAway(); };
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
+  }, [ref, onAway]);
+}
+
+const A11Y_CLICKABLE = '.berry-nav-item, .berry-user-chip, .dropdown-item, .berry-select-card, .alert-link, .berry-link, .berry-row-click';
+
+// ทำให้ element ที่คลิกได้ใช้คีย์บอร์ดได้ (Enter/Space) และใส่ data-label ให้ตารางที่เปลี่ยนเป็นการ์ดบนมือถือ
+// ทำที่เดียวแทนการแก้ทีละจุด (ไม่กระทบ logic เดิม)
+function useResponsiveEnhancements(rootRef) {
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    root.querySelectorAll(A11Y_CLICKABLE).forEach(el => {
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+      if (el.tagName !== 'TR' && !el.hasAttribute('role')) el.setAttribute('role', 'button');
+      if (el.classList.contains('berry-nav-item')) {
+        if (el.classList.contains('active')) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+      }
+    });
+    root.querySelectorAll('table.stack-sm').forEach(table => {
+      const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+      table.querySelectorAll('tbody tr').forEach(tr => {
+        const cells = [...tr.children];
+        if (cells.length !== heads.length) return;
+        cells.forEach((td, i) => { if (td.getAttribute('data-label') !== heads[i]) td.setAttribute('data-label', heads[i]); });
+      });
+    });
+    if (!root.__a11yBound) {
+      root.__a11yBound = true;
+      root.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const el = e.target.closest && e.target.closest(A11Y_CLICKABLE);
+        if (el && el === e.target) { e.preventDefault(); el.click(); }
+      });
+    }
+  });
+}
+
+/* ============================================================
    MAIN COMPONENT
    ============================================================ */
 export default function AccountantView({ apiBase, user, onLogout }) {
@@ -1037,7 +1108,17 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     setPage(p);
     return true;
   });
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768);
+  // เดสก์ท็อป (>1024px) เปิดเมนูข้างไว้, แท็บเล็ตเป็นแถบไอคอน, มือถือเป็นลิ้นชัก
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 1024);
+  const rootRef = useRef(null);
+  useResponsiveEnhancements(rootRef);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(max-width: 1024px)');
+    const onChange = (e) => setSidebarOpen(!e.matches);
+    if (mq.addEventListener) mq.addEventListener('change', onChange); else mq.addListener(onChange);
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', onChange); else mq.removeListener(onChange); };
+  }, []);
   const [toast, setToast] = useState({ show: false, msg: '' });
   
   const [profileOpen, setProfileOpen] = useState(false);
@@ -1177,6 +1258,17 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     fetchData();
     return startPolling(fetchData, 15000); // fetchData คืน Promise : ไม่ยิงซ้อนรอบที่ยังไม่เสร็จ
   }, [apiBase]);
+
+  // ปุ่ม Esc ปิดป๊อปอัป เมนูแจ้งเตือน/โปรไฟล์ และลิ้นชักเมนูบนจอเล็ก
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setDetailStoreId(null); setCancelDetailId(null); setDropdown(''); setProfileOpen(false);
+      if (window.innerWidth <= 1024) setSidebarOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   const showToast = (msg) => {
     setToast({ show: true, msg });
@@ -1499,13 +1591,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   }
 
   return (
-    <div className="berry-root">
+    <div className="berry-root" ref={rootRef}>
       <style>{STYLES}</style>
       
       {/* ===== TOPBAR (HEADER) ===== */}
       <header className="berry-topbar">
         <div className="berry-topbar-left">
-          <button className="berry-icon-btn purple-light" onClick={() => setSidebarOpen(!sidebarOpen)}>
+          <button className="berry-icon-btn purple-light" aria-label="เปิด/ปิดเมนู" aria-expanded={sidebarOpen} aria-controls="berry-sidebar" onClick={() => setSidebarOpen(!sidebarOpen)}>
             <Icon name="menu" size={20} color="var(--berry-purple)" />
           </button>
 
@@ -1521,7 +1613,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
         <div className="berry-topbar-right">
           <div style={{ position: 'relative' }}>
-            <button className="berry-icon-btn amber-light" onClick={() => { setNotificationsRead(true); toggleDropdown('notif');}}>
+            <button className="berry-icon-btn amber-light" aria-label={`การแจ้งเตือน${alertStores.length ? ` ${alertStores.length} รายการ` : ''}`} aria-haspopup="true" aria-expanded={dropdown === 'notif'} onClick={() => { setNotificationsRead(true); toggleDropdown('notif');}}>
               <Icon name="bell" size={20} color="var(--berry-amber)" />
               {!notificationsRead && alertStores.length > 0 && (
                 <span className="berry-nav-badge" style={{ position: 'absolute', top: -5, right: -5 }}>{alertStores.length}</span>
@@ -1549,7 +1641,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
           </div>
           
           <div className="berry-profile-container" ref={profileRef}>
-            <div className="berry-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
+            <div className="berry-user-chip" aria-label="บัญชีผู้ใช้" aria-expanded={profileOpen} onClick={() => setProfileOpen(!profileOpen)}>
               <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>
                 {user?.name || user?.FullName || 'Accountant'}
               </span>
@@ -1575,8 +1667,11 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       {/* ===== BODY ===== */}
       <div className="berry-body">
         
+        {/* ฉากหลังมืดเมื่อเปิดเมนูบนมือถือ/แท็บเล็ต แตะเพื่อปิด */}
+        <div className={`berry-backdrop ${sidebarOpen ? 'show' : ''}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+
         {/* SIDEBAR */}
-        <aside className={`berry-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
+        <aside id="berry-sidebar" className={`berry-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
           <nav className="berry-nav">
             <div className="berry-nav-group">
               <div className="berry-nav-label hide-on-collapse">Menu</div>
@@ -1584,7 +1679,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div 
                   key={n.id} 
                   className={`berry-nav-item ${page === n.id ? 'active' : ''}`} 
-                  onClick={() => { setPage(n.id); if (window.innerWidth <= 768) setSidebarOpen(false); }}
+                  onClick={() => { setPage(n.id); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
                   title={!sidebarOpen ? n.label : ""}
                 >
                   <div className="berry-nav-icon"><Icon name={n.icon} size={20} /></div>
@@ -1600,7 +1695,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
         </aside>
 
         {/* MAIN CONTENT */}
-        <main className="berry-content">
+        <main className="berry-content" id="berry-main">
           {!loadError && connInfo && (
             <div style={{ background: '#FFFBF0', border: '1px solid #FDBF50', color: '#8a5a00', padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
               ℹ️ {connInfo}
@@ -1712,7 +1807,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <span className="berry-link" onClick={() => setPage('cancel')}>ดูการวิเคราะห์ทั้งหมด →</span>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="berry-table">
+                  <table className="berry-table stack-sm">
                     <thead>
                       <tr>
                         <th>ร้าน</th>
@@ -1753,7 +1848,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <div className="berry-empty-note">ยังไม่มีข้อมูลยอดขายในช่วงเวลานี้</div>
                 ) : (
                   <div style={{ overflowX: 'auto' }}>
-                    <table className="berry-table">
+                    <table className="berry-table stack-sm">
                       <thead>
                         <tr>
                           <th>อันดับ</th>
@@ -1879,7 +1974,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="berry-table">
+                  <table className="berry-table stack-sm">
                     <thead>
                       <tr>
                         <th>ร้านค้า</th>
@@ -1916,10 +2011,10 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               {/* ===== Modal ดูรายละเอียดเมนูขายดีสำหรับร้านที่เลือก ===== */}
               {detailStoreId && (
                 <div className="berry-modal-overlay" onClick={() => setDetailStoreId(null)}>
-                  <div className="berry-modal-content" onClick={e => e.stopPropagation()}>
+                  <div className="berry-modal-content" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
                     <div className="berry-modal-header">
                       <h3>รายละเอียดเมนู: {salesStoreSummary.find(s => s.storeId === detailStoreId)?.storeName || 'ไม่ทราบชื่อร้าน'}</h3>
-                      <button className="berry-icon-btn" onClick={() => setDetailStoreId(null)}>
+                      <button className="berry-icon-btn" aria-label="ปิด" onClick={() => setDetailStoreId(null)}>
                         <Icon name="close" size={20} />
                       </button>
                     </div>
@@ -2089,7 +2184,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </div>
 
                     <div style={{ overflowX: 'auto' }}>
-                      <table className="berry-table">
+                      <table className="berry-table stack-sm">
                         <thead>
                           <tr>
                             <th>วันที่ / เวลา</th><th>คิว</th>{showStoreCol && <th>ร้านค้า</th>}<th>ลูกค้า</th><th>ยอดออเดอร์</th><th>เหตุผลการยกเลิก</th><th></th>
@@ -2123,10 +2218,10 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
               {detailOrder && (
                 <div className="berry-modal-overlay" onClick={() => setCancelDetailId(null)}>
-                  <div className="berry-modal-content wide" onClick={e => e.stopPropagation()}>
+                  <div className="berry-modal-content wide" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
                     <div className="berry-modal-header">
                       <h3 style={{ margin: 0 }}>ออเดอร์ที่ยกเลิก · คิว {detailOrder.QueueNo}</h3>
-                      <button className="berry-icon-btn" onClick={() => setCancelDetailId(null)}>
+                      <button className="berry-icon-btn" aria-label="ปิด" onClick={() => setCancelDetailId(null)}>
                         <Icon name="close" size={20} />
                       </button>
                     </div>
@@ -2228,7 +2323,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="berry-table audit-table">
+                  <table className="berry-table audit-table stack-sm">
                     <thead><tr><th>เวลา</th><th>เหตุการณ์</th><th>ออเดอร์</th><th>ผู้ทำรายการ</th><th>รายละเอียด</th></tr></thead>
                     <tbody>
                       {auditGroups.map(g => (
@@ -2450,8 +2545,10 @@ const STYLES = `
   position: fixed;
   top: 0;
   left: 0;
-  width: 100vw;
+  right: 0;
+  bottom: 0;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   margin: 0;
   padding: 0;
@@ -2804,5 +2901,169 @@ const STYLES = `
   /* Modals */
   .berry-modal-content { width: 95%; max-height: 80vh; }
   .berry-modal-header h3 { font-size: 14px; }
+}
+
+/* ============================================================
+   RESPONSIVE LAYER + INTERACTION POLISH
+   (ต่อยอดจากสไตล์เดิม ไม่เปลี่ยนสี/ฟอนต์/โครงสร้าง)
+   ============================================================ */
+:root { --berry-ease: 180ms cubic-bezier(0.2, 0, 0, 1); --berry-shadow-hover: 0 6px 16px rgba(42, 44, 65, 0.10); --berry-focus: #2A2C41; }
+.berry-root, .berry-root *, .berry-root *::before, .berry-root *::after { box-sizing: border-box; }
+.berry-root { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+.berry-body { min-height: 0; position: relative; }
+.berry-content { min-width: 0; overscroll-behavior: contain; }
+/* เดสก์ท็อปจอกว้าง: จำกัดความกว้างเนื้อหาและจัดกึ่งกลางเพื่อไม่ให้ยืดจนอ่านยาก */
+.berry-content > * { width: 100%; max-width: 1440px; margin-left: auto; margin-right: auto; }
+.berry-chart-row > .berry-panel { min-width: 0; }
+.berry-panel, .berry-small-card { min-width: 0; }
+.berry-topbar-left, .berry-brand { min-width: 0; }
+.berry-backdrop { display: none; }
+.berry-panel-header { flex-wrap: wrap; gap: 12px 16px; }
+.berry-toggle-pills button { white-space: nowrap; }
+
+/* ----- transitions (150-250ms) ----- */
+.berry-nav-item, .berry-chip, .berry-toggle-pills button, .berry-select-card, .dropdown-item, .berry-user-chip,
+.berry-icon-btn, .berry-row-click, .berry-link, .alert-link, .berry-btn, .berry-input {
+  transition: background-color var(--berry-ease), color var(--berry-ease), border-color var(--berry-ease),
+              box-shadow var(--berry-ease), transform var(--berry-ease), filter var(--berry-ease);
+}
+.berry-link, .alert-link { text-underline-offset: 3px; }
+.berry-btn:not(.primary) { background: var(--berry-blue-light); color: var(--berry-text-dark); }
+
+/* ----- hover: เฉพาะอุปกรณ์ที่มีเมาส์ (จอสัมผัสใช้สถานะ :active/ขยายแทน) ----- */
+@media (hover: hover) and (pointer: fine) {
+  .berry-btn:hover { box-shadow: var(--berry-shadow-hover); transform: translateY(-1px); }
+  .berry-btn:not(.primary):hover { background: #dce0e5; }
+  .berry-icon-btn:hover { transform: translateY(-1px); box-shadow: var(--berry-shadow-hover); }
+  .berry-nav-item:hover { transform: translateX(2px); }
+  .berry-toggle-pills button:not(.active):hover { background: rgba(255, 114, 76, 0.16); }
+  .berry-toggle-pills button.active:hover { background: var(--berry-purple-dark); }
+  .berry-chip:not(.active):hover { background: var(--berry-purple-light); transform: translateY(-1px); }
+  .berry-chip.active:hover { background: var(--berry-purple-dark); border-color: var(--berry-purple-dark); }
+  .berry-select-card:hover { border-color: var(--berry-purple); background: var(--berry-purple-light); transform: translateY(-2px); box-shadow: var(--berry-shadow-hover); }
+  .berry-link:hover, .alert-link:hover { color: var(--berry-purple-dark); text-decoration: underline; }
+  .berry-row-click:hover td { background: var(--berry-purple-light); }
+}
+
+/* ----- pressed / active (ใช้ได้ทุกอุปกรณ์) ----- */
+.berry-btn:active, .berry-icon-btn:active, .berry-chip:active, .berry-toggle-pills button:active,
+.berry-select-card:active, .berry-user-chip:active { transform: scale(0.97); box-shadow: none; }
+.berry-nav-item:active, .dropdown-item:active { background: var(--berry-purple-light); }
+.berry-row-click:active td { background: #ffe3db; }
+
+/* ----- keyboard focus ----- */
+.berry-root :focus { outline: none; }
+.berry-root :focus-visible { outline: 2px solid var(--berry-focus); outline-offset: 2px; border-radius: 8px; }
+.berry-nav-item:focus-visible, .berry-select-card:focus-visible { border-radius: 12px; }
+.berry-row-click:focus-visible { outline-offset: -2px; }
+.berry-input:focus { border-color: var(--berry-purple); box-shadow: 0 0 0 3px rgba(255, 114, 76, 0.18); }
+.berry-input:focus-visible { outline: none; }
+.berry-btn:disabled, .berry-input:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* ----- เป้าสัมผัสใหญ่ขึ้นบนจอสัมผัส ----- */
+@media (pointer: coarse) {
+  .berry-icon-btn { width: 44px; height: 44px; }
+  .berry-btn { min-height: 44px; }
+  .berry-input { min-height: 44px; font-size: 16px; }
+  .berry-toggle-pills button { min-height: 40px; padding: 8px 14px; font-size: 13px; }
+  .berry-chip { min-height: 40px; padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; }
+  .berry-nav-item { min-height: 48px; }
+  .dropdown-item { min-height: 44px; }
+  .berry-select-card { min-height: 56px; }
+  .berry-link, .alert-link { display: inline-flex; align-items: center; min-height: 44px; }
+  .berry-user-chip { min-height: 44px; }
+  .berry-modal-header .berry-icon-btn { flex-shrink: 0; }
+}
+
+/* ----- ลดการเคลื่อนไหวตามที่ผู้ใช้ตั้งค่าในระบบ ----- */
+@media (prefers-reduced-motion: reduce) {
+  .berry-root *, .berry-root *::before, .berry-root *::after,
+  .berry-modal-overlay, .berry-modal-content { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  .berry-btn:hover, .berry-icon-btn:hover, .berry-nav-item:hover, .berry-chip:hover, .berry-select-card:hover { transform: none !important; }
+}
+
+/* ----- Desktop ใหญ่ ----- */
+@media (min-width: 1440px) {
+  .berry-content { padding: 32px 40px; }
+}
+
+/* ----- Tablet 769-1024: เมนูเป็นแถบไอคอน กดแล้วขยายทับเนื้อหา (เนื้อหาไม่ขยับ) ----- */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .berry-body { padding-left: 80px; }
+  .berry-sidebar { position: absolute; top: 0; bottom: 0; left: 0; z-index: 900; width: 80px; overflow-y: auto; }
+  .berry-sidebar.open { width: 260px; box-shadow: 4px 0 24px rgba(42, 44, 65, 0.18); }
+  .berry-sidebar.collapsed { width: 80px; }
+  .berry-backdrop.show { display: block; position: absolute; inset: 0; z-index: 850; background: rgba(42, 44, 65, 0.35); animation: fadeIn 0.2s ease; }
+  .berry-content { padding: 20px; }
+  .berry-stats-row-4 { gap: 16px; }
+  .berry-chart-row { gap: 16px; }
+}
+
+/* ----- Mobile <=768 ----- */
+@media (max-width: 768px) {
+  .berry-sidebar { box-shadow: none; overflow-y: auto; }
+  .berry-sidebar.open { box-shadow: 4px 0 24px rgba(42, 44, 65, 0.25); }
+  .berry-backdrop.show { display: block; position: fixed; left: 0; right: 0; bottom: 0; top: 60px; z-index: 950; background: rgba(42, 44, 65, 0.45); animation: fadeIn 0.2s ease; }
+  .berry-topbar-left { gap: 12px; flex: 1 1 auto; }
+  .berry-topbar-right { gap: 10px; flex-shrink: 0; }
+  .berry-brand .brand-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .berry-brand { overflow: hidden; }
+  .berry-stats-row-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .berry-table.stack-sm th, .berry-table.stack-sm td { white-space: normal; }
+  .berry-stat-value { font-size: 22px; }
+  .berry-stat-card.primary .berry-stat-value { font-size: 24px; }
+  .berry-small-card { padding: 16px; }
+  /* ปุ่มช่วงเวลา: ตัดบรรทัดแทนการเลื่อนแนวนอน */
+  .berry-toggle-pills { flex-wrap: wrap; overflow: visible; gap: 2px; }
+  .berry-toggle-pills button { flex: 1 1 auto; min-width: 72px; }
+  .berry-filter-row .berry-toggle-pills button { width: auto; }
+  .berry-filter-row label { margin-bottom: -6px; }
+  /* เมนูแจ้งเตือน/โปรไฟล์: เต็มความกว้างจอ ไม่ล้นขอบ */
+  .berry-profile-dropdown { position: fixed; top: 64px; left: 12px !important; right: 12px !important; width: auto !important; max-height: calc(100dvh - 80px); overflow-y: auto; }
+  .berry-toast { left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  /* Bullet chart: ชื่อร้านอยู่บรรทัดบน แถบอยู่บรรทัดล่าง */
+  .berry-bullet-row { flex-wrap: wrap; row-gap: 4px; }
+  .berry-bullet-label { width: 100%; }
+  .berry-bullet-track { flex: 1 1 0; min-width: 0; }
+  .berry-hbar-label { width: 90px; }
+  .berry-hbar-value { width: 76px; }
+  .berry-select-grid { gap: 10px; }
+  .berry-legend { gap: 8px 14px; }
+}
+
+/* ----- Mobile เล็ก <=600: ตารางเป็นการ์ด อ่านได้โดยไม่ต้องเลื่อนแนวนอน ----- */
+@media (max-width: 600px) {
+  .berry-table.stack-sm thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .berry-table.stack-sm, .berry-table.stack-sm tbody { display: block; width: 100%; }
+  .berry-table.stack-sm tr { display: block; border: 1px solid var(--berry-border); border-radius: 12px; padding: 6px 14px; margin-bottom: 10px; background: var(--berry-card-bg); }
+  .berry-table.stack-sm td { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; width: 100%; padding: 7px 0; border: 0; border-bottom: 1px dashed var(--berry-border); text-align: right; white-space: normal !important; overflow-wrap: anywhere; }
+  .berry-table.stack-sm td:last-child { border-bottom: 0; }
+  .berry-table.stack-sm td[data-label]::before { content: attr(data-label); flex: 0 0 38%; max-width: 38%; text-align: left; font-size: 12px; font-weight: 600; color: var(--berry-text-muted); }
+  .berry-table.stack-sm td[data-label=""]::before { display: none; }
+  .berry-table.stack-sm td:not([data-label]) { display: block; text-align: left; }
+  .berry-table.stack-sm tr.audit-day { background: transparent; border: 0; padding: 4px 0; margin: 6px 0 4px; }
+  .berry-table.stack-sm tr.audit-day td { padding: 8px 12px; border-radius: 8px; }
+  .audit-table td > div { text-align: right; }
+  /* ตารางที่ยังเลื่อนในกรอบ (เช่น พรีวิวรายงาน): ให้เห็นว่าเลื่อนได้ */
+  .berry-panel [style*="overflow-x"] { -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .berry-stats-row-4 { grid-template-columns: 1fr; }
+  .berry-stat-value { font-size: 24px; }
+  /* Modal เป็น bottom sheet บนมือถือ */
+  .berry-modal-overlay { align-items: flex-end; }
+  .berry-modal-content, .berry-modal-content.wide { width: 100%; max-width: 100%; max-height: 90dvh; border-radius: 16px 16px 0 0; animation: sheetUp 0.22s ease-out; }
+  .berry-modal-header { padding: 16px; }
+  .berry-modal-body { padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .berry-chip-row { gap: 6px; }
+  .berry-modal-body .berry-table td { white-space: normal; overflow-wrap: anywhere; padding: 8px 6px; }
+  .berry-modal-body .berry-table th { white-space: nowrap; padding: 8px 6px; }
+}
+@keyframes sheetUp { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+@media (max-width: 400px) {
+  .berry-topbar { padding: 0 12px; }
+  .berry-brand .brand-title { font-size: 15px; }
+  .berry-content { padding: 12px; }
+  .berry-panel { padding: 14px; }
+  .berry-dashboard-grid { gap: 14px; }
 }
 `;
