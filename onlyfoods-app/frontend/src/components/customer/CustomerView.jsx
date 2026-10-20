@@ -1774,6 +1774,15 @@ export default function CustomerView({ user, apiBase, onLogout }) {
               >
                 แก้ไขข้อมูลส่วนตัว
               </button>
+              <button
+                onClick={() => {
+                  fetchMyIssueReports();
+                  setIsViewReportsModalOpen(true);
+                }}
+                style={{ width: "100%", padding: "12px", background: COLORS.white, color: COLORS.navy, border: `1px solid ${COLORS.border}`, borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+              >
+                ดูปัญหาที่แจ้งไว้{Array.isArray(myIssueReports) && myIssueReports.length > 0 ? ` (${myIssueReports.length})` : ""}
+              </button>
             </div>
           </>
         )}
