@@ -2585,13 +2585,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       {/* FLOATING CART BUTTON */}
       <button
         onClick={() => setIsCartOpen(true)}
-        style={{display: (activeTab === "notifs" || activeTab === "profile") ? "none" : undefined,
+        style={{display: (activeTab === "notifs" || activeTab === "profile") ? "none" : "flex",
+          alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, boxSizing: "border-box",
           position: "fixed", right: "25px", bottom: "90px", width: "62px", height: "62px",
           border: "none", borderRadius: "50%", background: COLORS.orange, color: COLORS.white,
           fontSize: "26px", cursor: "pointer", zIndex: 500, boxShadow: "0 8px 25px rgba(255,114,76,0.35)"
         }}
       >
-        <CartIconPlus/>
+        <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "28px", height: "28px" }}>
+          <CartIconPlus/>
+        </span>
         {cartCount > 0 && (
           <span style={{
             position: "absolute", top: "-3px", right: "-3px", width: "23px", height: "23px",
