@@ -903,103 +903,151 @@ function BerryLineChart({ data, height = 220, valueFormat, axisFormat, color = '
   );
 }
 
-function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ยอดสุทธิรวม' }) {
+// สีของร้าน: ใช้พาเลตเดิม ถ้าร้านเกิน 8 ร้านจะวนสีเดิมในเฉดอ่อน/เข้มขึ้นเพื่อให้ยังแยกกันออก
+const donutShade = (hex, cycle) => {
+  if (!cycle) return hex;
+  const n = parseInt(hex.slice(1), 16);
+  const base = [n >> 16, (n >> 8) & 255, n & 255];
+  const mix = cycle % 2 ? [255, 255, 255] : [42, 44, 65];
+  return `#${base.map((c, i) => Math.round(c + (mix[i] - c) * 0.38).toString(16).padStart(2, '0')).join('')}`;
+};
+const storeColorAt = (i) => donutShade(STORE_COLORS[i % STORE_COLORS.length], Math.floor(i / STORE_COLORS.length));
+const DONUT_PAGE_SIZE = 6;
+
+// เลขหน้าสำหรับ pagination: แสดงทุกหน้าถ้าไม่เกิน 7 หน้า ไม่เช่นนั้นย่อด้วย "…"
+function pagerItems(page, count) {
+  if (count <= 7) return Array.from({ length: count }, (_, i) => i);
+  const keep = [...new Set([0, count - 1, page - 1, page, page + 1])].filter(p => p >= 0 && p < count).sort((x, y) => x - y);
+  const out = [];
+  keep.forEach((p, i) => { if (i && p - keep[i - 1] > 1) out.push(`gap-${p}`); out.push(p); });
+  return out;
+}
+
+/* Donut Chart + รายการร้าน (แบ่งหน้าละ 6 ร้าน)
+   - วงกลมและ % คำนวณจาก "ทุกร้าน" เสมอ การเปลี่ยนหน้าเปลี่ยนเฉพาะรายการด้านข้าง
+   - สีของร้านเดียวกันทั้งในวงกลม รายการ และ tooltip */
+function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ยอดสุทธิรวม', pageSize = DONUT_PAGE_SIZE, unitLabel = 'ร้านค้า' }) {
   const [hoverIndex, setHoverIndex] = useState(null);
+  const [page, setPage] = useState(0);
   const donutRef = useRef(null);
   useTapAway(donutRef, () => setHoverIndex(null));
-  const tapSelect = (i) => (e) => { if (e.pointerType !== 'mouse') setHoverIndex(cur => (cur === i ? null : i)); };
-
-  const clean = (data || []).filter(d => Number(d.value || 0) > 0);
-  if (clean.length === 0) {
-    return <div className="berry-empty-note" style={{ height }}>ยังไม่มียอดขายในช่วงเวลานี้</div>;
-  }
+  const listId = useRef(`donut-list-${Math.random().toString(36).slice(2, 8)}`).current;
+  const itemCount = (data || []).length;
+  useEffect(() => { setPage(0); setHoverIndex(null); }, [itemCount]);
 
   const fmt = (v) => (valueFormat ? valueFormat(v) : v);
-  const total = clean.reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const items = (data || []).map((d, i) => ({ ...d, idx: i, value: Number(d.value || 0), color: d.color || storeColorAt(i) }));
+  const total = items.reduce((sum, d) => sum + d.value, 0);
+  const pctOf = (v) => (total > 0 ? ((v / total) * 100).toFixed(1) : '0.0');
 
-  const size = 190;
-  const center = size / 2;
-  const radius = 62;
-  const strokeWidth = 22;
+  if (items.length === 0 || total <= 0) {
+    return <div className="berry-empty-note" style={{ minHeight: height }}>ยังไม่มียอดขายในช่วงเวลานี้</div>;
+  }
+
+  const size = 190, center = size / 2, radius = 62, strokeWidth = 22;
   const circumference = 2 * Math.PI * radius;
-
-  let accumulated = 0;
-  const slices = clean.map((d, i) => {
-    const val = Number(d.value || 0);
-    const ratio = val / total;
-    const len = ratio * circumference;
-    const slice = {
-      ...d,
-      pct: (ratio * 100).toFixed(1),
-      dashArray: `${len} ${circumference - len}`,
-      strokeDashoffset: -accumulated * circumference,
-      color: d.color || STORE_COLORS[i % STORE_COLORS.length],
-    };
-    accumulated += ratio;
-    return slice;
+  let acc = 0;
+  const arcs = items.filter(d => d.value > 0).map(d => {
+    const ratio = d.value / total;
+    const arc = { ...d, dashArray: `${ratio * circumference} ${circumference - ratio * circumference}`, offset: -acc * circumference };
+    acc += ratio;
+    return arc;
   });
 
-  const activeSlice = hoverIndex !== null ? slices[hoverIndex] : null;
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, pageCount - 1);
+  const from = safePage * pageSize;
+  const pageItems = items.slice(from, from + pageSize);
+  const active = hoverIndex !== null ? items[hoverIndex] : null;
+  const goPage = (p) => { setPage(Math.max(0, Math.min(pageCount - 1, p))); setHoverIndex(null); };
+  const jumpToItem = (idx) => setPage(Math.floor(idx / pageSize));
+  const mouseOnly = (fn) => (e) => { if (e.pointerType === 'mouse') fn(); };
+  const touchSelect = (idx) => (e) => {
+    if (e.pointerType === 'mouse') return;
+    setHoverIndex(cur => (cur === idx ? null : idx));
+    jumpToItem(idx);
+  };
 
   return (
-    <div ref={donutRef} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '28px', flexWrap: 'wrap', minHeight: height, padding: '10px 0' }}>
-      <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <div ref={donutRef} className="berry-donut-wrap" style={{ minHeight: height }}>
+      <div className="berry-donut-chart" role="img" aria-label={`สัดส่วนยอดขายสุทธิของ ${items.length} ${unitLabel} รวม ${fmt(total)}`}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+          <circle cx={center} cy={center} r={radius} fill="transparent" stroke="var(--berry-border)" strokeWidth={strokeWidth} opacity="0.45" />
           <g transform={`rotate(-90 ${center} ${center})`}>
-            {slices.map((slice, i) => (
+            {arcs.map(arc => (
               <circle
-                key={i}
-                cx={center}
-                cy={center}
-                r={radius}
-                fill="transparent"
-                stroke={slice.color}
-                strokeWidth={hoverIndex === i ? strokeWidth + 5 : strokeWidth}
-                strokeDasharray={slice.dashArray}
-                strokeDashoffset={slice.strokeDashoffset}
+                key={arc.key ?? arc.idx}
+                cx={center} cy={center} r={radius} fill="transparent"
+                stroke={arc.color}
+                strokeWidth={hoverIndex === arc.idx ? strokeWidth + 5 : strokeWidth}
+                strokeDasharray={arc.dashArray}
+                strokeDashoffset={arc.offset}
                 strokeLinecap="butt"
-                style={{ transition: 'all 0.2s ease', cursor: 'pointer', opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.4 }}
-                onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHoverIndex(i); }}
-                onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHoverIndex(null); }}
-                onPointerDown={tapSelect(i)}
+                style={{ transition: 'stroke-width 0.18s ease, opacity 0.18s ease', cursor: 'pointer', opacity: hoverIndex === null || hoverIndex === arc.idx ? 1 : 0.35 }}
+                onPointerEnter={mouseOnly(() => setHoverIndex(arc.idx))}
+                onPointerLeave={mouseOnly(() => setHoverIndex(null))}
+                onPointerDown={touchSelect(arc.idx)}
+                onClick={() => jumpToItem(arc.idx)}
               />
             ))}
           </g>
         </svg>
-
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', textAlign: 'center', padding: '12px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--berry-text-muted)', fontWeight: 500, whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {activeSlice ? activeSlice.label : centerLabel}
+        <div className="berry-donut-center">
+          <span className="berry-donut-center-label" title={active ? active.label : undefined}>{active ? active.label : centerLabel}</span>
+          <span className="berry-donut-center-value">{fmt(active ? active.value : total)}</span>
+          <span className="berry-donut-center-sub" style={active ? { color: active.color, fontWeight: 700 } : undefined}>
+            {active ? `${pctOf(active.value)}%` : `${items.length} ${unitLabel}`}
           </span>
-          <span style={{ fontSize: '17px', fontWeight: 700, color: 'var(--berry-text-dark)', marginTop: '2px' }}>
-            {fmt(activeSlice ? activeSlice.value : total)}
-          </span>
-          {activeSlice && (
-            <span style={{ fontSize: '12px', color: activeSlice.color, fontWeight: 700, marginTop: '2px' }}>{activeSlice.pct}%</span>
-          )}
         </div>
       </div>
 
-      {/* Legend: ชื่อร้าน | ยอดขาย | % */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: '1 1 260px', maxWidth: 420, minWidth: 240 }}>
-        {slices.map((slice, i) => (
-          <div
-            key={i}
-            style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', cursor: 'pointer', opacity: hoverIndex === null || hoverIndex === i ? 1 : 0.45, transition: 'opacity 0.2s' }}
-            onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHoverIndex(i); }}
-            onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHoverIndex(null); }}
-            onPointerDown={tapSelect(i)}
-          >
-            <span style={{ width: 11, height: 11, borderRadius: '50%', backgroundColor: slice.color, flexShrink: 0 }} />
-            <span title={slice.label} style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: hoverIndex === i ? 700 : 500, color: 'var(--berry-text-dark)' }}>
-              {slice.label}
-            </span>
-            <span style={{ color: 'var(--berry-text-muted)', whiteSpace: 'nowrap', textAlign: 'right' }}>{fmt(slice.value)}</span>
-            <span style={{ fontWeight: 700, color: 'var(--berry-text-dark)', width: 52, textAlign: 'right', flexShrink: 0 }}>{slice.pct}%</span>
-          </div>
-        ))}
+      <div className="berry-donut-side">
+        <ul id={listId} className="berry-donut-list" style={pageCount > 1 ? { minHeight: pageSize * 44 } : undefined}>
+          {pageItems.map(it => (
+            <li
+              key={it.key ?? it.idx}
+              tabIndex={0}
+              className={`berry-donut-row${hoverIndex === it.idx ? ' is-active' : ''}${it.value <= 0 ? ' is-zero' : ''}`}
+              aria-label={`${it.label} ยอดสุทธิ ${fmt(it.value)} ${pctOf(it.value)}%`}
+              onPointerEnter={mouseOnly(() => setHoverIndex(it.idx))}
+              onPointerLeave={mouseOnly(() => setHoverIndex(null))}
+              onPointerDown={(e) => { if (e.pointerType !== 'mouse') setHoverIndex(cur => (cur === it.idx ? null : it.idx)); }}
+              onFocus={() => setHoverIndex(it.idx)}
+              onBlur={() => setHoverIndex(cur => (cur === it.idx ? null : cur))}
+            >
+              <span className="dot" style={{ backgroundColor: it.color }} />
+              <span className="name" title={it.label}>{it.label}</span>
+              <span className="amt">{fmt(it.value)}</span>
+              <span className="pct">{pctOf(it.value)}%</span>
+            </li>
+          ))}
+        </ul>
+
+        {pageCount > 1 && (
+          <nav className="berry-pager" aria-label="เปลี่ยนหน้ารายชื่อร้านค้า" aria-controls={listId}>
+            <span className="berry-pager-info" aria-live="polite">แสดง {from + 1}–{from + pageItems.length} จาก {items.length} {unitLabel}</span>
+            <div className="berry-pager-controls">
+              <button type="button" className="berry-pager-btn nav" disabled={safePage === 0} onClick={() => goPage(safePage - 1)} aria-label="หน้าก่อนหน้า">‹ ก่อนหน้า</button>
+              {pagerItems(safePage, pageCount).map(p => (typeof p === 'string'
+                ? <span key={p} className="berry-pager-gap" aria-hidden="true">…</span>
+                : <button type="button" key={p} className={`berry-pager-btn${p === safePage ? ' active' : ''}`} aria-label={`หน้า ${p + 1}`} aria-current={p === safePage ? 'page' : undefined} onClick={() => goPage(p)}>{p + 1}</button>
+              ))}
+              <button type="button" className="berry-pager-btn nav" disabled={safePage === pageCount - 1} onClick={() => goPage(safePage + 1)} aria-label="หน้าถัดไป">ถัดไป ›</button>
+            </div>
+          </nav>
+        )}
       </div>
     </div>
+  );
+}
+
+/* ปุ่ม ดูเพิ่มเติม / แสดงน้อยลง สำหรับส่วนที่ข้อมูลเยอะ */
+function ShowMoreToggle({ expanded, onToggle, hiddenCount, controls, moreLabel = 'ดูเพิ่มเติม', lessLabel = 'แสดงน้อยลง' }) {
+  return (
+    <button type="button" className="berry-showmore" aria-expanded={expanded} aria-controls={controls} onClick={onToggle}>
+      <span>{expanded ? lessLabel : `${moreLabel} (${hiddenCount})`}</span>
+      <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg>
+    </button>
   );
 }
 
@@ -1136,6 +1184,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [cancelReasonFilter, setCancelReasonFilter] = useState('');
   const [cancelDetailId, setCancelDetailId] = useState(null);
   const [cancelShowAll, setCancelShowAll] = useState(false);
+  // ส่วนที่ข้อมูลเยอะ: เริ่มต้นย่อไว้ ผู้ใช้กดขยายได้
+  const [watchOpen, setWatchOpen] = useState(false);
+  const [salesRowsOpen, setSalesRowsOpen] = useState(false);
+  const [alertOpen, setAlertOpen] = useState(false);
+  const [reportRowsOpen, setReportRowsOpen] = useState(false);
+  const [menusOpen, setMenusOpen] = useState(false);
   const [auditCat, setAuditCat] = useState('all');
   const [auditLimit, setAuditLimit] = useState(100);
   const [cancelRange, setCancelRange] = useState('all');   // 'all' | 'today' | 7 | 14 | 30 | 'custom' — ค่าเริ่มต้น: ทั้งหมด
@@ -1258,6 +1312,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     fetchData();
     return startPolling(fetchData, 15000); // fetchData คืน Promise : ไม่ยิงซ้อนรอบที่ยังไม่เสร็จ
   }, [apiBase]);
+
+  useEffect(() => { setMenusOpen(false); }, [detailStoreId]);
 
   // ปุ่ม Esc ปิดป๊อปอัป เมนูแจ้งเตือน/โปรไฟล์ และลิ้นชักเมนูบนจอเล็ก
   useEffect(() => {
@@ -1587,8 +1643,16 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   ];
 
   if (loading) {
-    return <div className="berry-root"><style>{STYLES}</style><div style={{padding: '24px'}}>กำลังโหลดข้อมูล...</div></div>;
+    return (
+      <div className="berry-root">
+        <style>{STYLES}</style>
+        <div className="berry-loading" role="status" aria-live="polite"><span className="berry-spinner" aria-hidden="true" />กำลังโหลดข้อมูล...</div>
+      </div>
+    );
   }
+
+  const WATCH_LIMIT = 5, SALES_LIMIT = 8, ALERT_LIMIT = 3, REPORT_LIMIT = 8, MENU_LIMIT = 8;
+  const watchRows = [...periodStats.curr.storesData].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
 
   return (
     <div className="berry-root" ref={rootRef}>
@@ -1788,11 +1852,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </div>
                   </div>
 
+                  {/* วงกลมใช้ข้อมูลทุกร้าน (ไม่ตัดเหลือแค่หน้าที่เห็น) ร้านที่ยอดเป็น 0 ยังอยู่ในรายการ */}
                   <BerryDonutChart
                     data={[...periodStats.curr.storesData]
-                      .filter(s => s.netSales > 0)
-                      .sort((x, y) => y.netSales - x.netSales)
-                      .map(s => ({ label: s.storeName, value: s.netSales }))}
+                      .filter(s => s.netSales > 0 || !s.isDeleted)
+                      .sort((x, y) => y.netSales - x.netSales || String(x.storeName).localeCompare(String(y.storeName), 'th'))
+                      .map(s => ({ key: s.storeId, label: s.storeName, value: s.netSales }))}
                     valueFormat={(v) => `฿${fmtMoney(v)}`}
                   />
                 </div>
@@ -1806,7 +1871,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                   <span className="berry-link" onClick={() => setPage('cancel')}>ดูการวิเคราะห์ทั้งหมด →</span>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
+                <div id="watch-table" style={{ overflowX: 'auto' }}>
                   <table className="berry-table stack-sm">
                     <thead>
                       <tr>
@@ -1820,8 +1885,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {[...periodStats.curr.storesData].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1)).map(s => (
-                        <tr key={s.storeId}>
+                      {watchRows.slice(0, watchOpen ? watchRows.length : WATCH_LIMIT).map((s, i) => (
+                        <tr key={s.storeId} className={i >= WATCH_LIMIT ? 'berry-reveal' : undefined}>
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.totalOrders)}</td>
                           <td>฿{fmtMoney(s.grossSales)}</td> 
@@ -1834,6 +1899,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </tbody>
                   </table>
                 </div>
+                {watchRows.length > WATCH_LIMIT && (
+                  <ShowMoreToggle expanded={watchOpen} onToggle={() => setWatchOpen(v => !v)} hiddenCount={watchRows.length - WATCH_LIMIT} controls="watch-table" moreLabel="ดูร้านค้าเพิ่มเติม" />
+                )}
               </div>
 
               <div className="berry-panel">
@@ -1973,7 +2041,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     )}
                   </div>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
+                <div id="sales-table" style={{ overflowX: 'auto' }}>
                   <table className="berry-table stack-sm">
                     <thead>
                       <tr>
@@ -1986,8 +2054,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {salesFilteredRows.map(s => (
-                        <tr key={s.storeId}>
+                      {salesFilteredRows.slice(0, salesRowsOpen ? salesFilteredRows.length : SALES_LIMIT).map((s, i) => (
+                        <tr key={s.storeId} className={i >= SALES_LIMIT ? 'berry-reveal' : undefined}>
                           <td><b>{s.storeName}</b></td>
                           <td>{fmtMoney(s.completedOrders)}</td>
                           <td>฿{fmtMoney(s.grossSales)}</td>
@@ -2006,6 +2074,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </tbody>
                   </table>
                 </div>
+                {salesFilteredRows.length > SALES_LIMIT && (
+                  <ShowMoreToggle expanded={salesRowsOpen} onToggle={() => setSalesRowsOpen(v => !v)} hiddenCount={salesFilteredRows.length - SALES_LIMIT} controls="sales-table" moreLabel="ดูร้านค้าเพิ่มเติม" />
+                )}
               </div>
 
               {/* ===== Modal ดูรายละเอียดเมนูขายดีสำหรับร้านที่เลือก ===== */}
@@ -2022,7 +2093,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       {detailStoreMenus.length === 0 ? (
                         <div className="berry-empty-note">ไม่พบข้อมูลเมนูที่ขายได้ของร้านนี้ในช่วงเวลาที่เลือก</div>
                       ) : (
-                        <table className="berry-table">
+                        <>
+                        <table className="berry-table" id="menu-table">
                           <thead>
                             <tr>
                               <th>ชื่อเมนู</th>
@@ -2030,14 +2102,18 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {detailStoreMenus.map((m, idx) => (
-                              <tr key={idx}>
+                            {detailStoreMenus.slice(0, menusOpen ? detailStoreMenus.length : MENU_LIMIT).map((m, idx) => (
+                              <tr key={idx} className={idx >= MENU_LIMIT ? 'berry-reveal' : undefined}>
                                 <td>{m.name}</td>
                                 <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{fmtMoney(m.qty)}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
+                        {detailStoreMenus.length > MENU_LIMIT && (
+                          <ShowMoreToggle expanded={menusOpen} onToggle={() => setMenusOpen(v => !v)} hiddenCount={detailStoreMenus.length - MENU_LIMIT} controls="menu-table" moreLabel="ดูเมนูเพิ่มเติม" />
+                        )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -2138,8 +2214,10 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                   {alertStores.length === 0 ? (
                     <div className="berry-empty-note">ไม่มีร้านที่เกินเกณฑ์ใน {ALERT_WINDOW_DAYS} วันล่าสุด</div>
-                  ) : alertStores.map(x => (
-                    <div className="berry-alert-item" key={x.storeId}>
+                  ) : (
+                    <>
+                  {alertStores.slice(0, alertOpen ? alertStores.length : ALERT_LIMIT).map((x, i) => (
+                    <div className={`berry-alert-item${i >= ALERT_LIMIT ? ' berry-reveal' : ''}`} key={x.storeId}>
                       <Icon name="cancel" size={20} color="#FF4D4F" />
                       <div>
                         <div className="alert-title">{x.storeName}</div>
@@ -2150,6 +2228,11 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </div>
                     </div>
                   ))}
+                  {alertStores.length > ALERT_LIMIT && (
+                    <ShowMoreToggle expanded={alertOpen} onToggle={() => setAlertOpen(v => !v)} hiddenCount={alertStores.length - ALERT_LIMIT} moreLabel="ดูร้านที่เกินเกณฑ์ทั้งหมด" />
+                  )}
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -2183,7 +2266,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       ))}
                     </div>
 
-                    <div style={{ overflowX: 'auto' }}>
+                    <div id="cancel-orders-table" style={{ overflowX: 'auto' }}>
                       <table className="berry-table stack-sm">
                         <thead>
                           <tr>
@@ -2191,8 +2274,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {rowsShown.map(({ o, info, reason }) => (
-                            <tr key={o.OrderID} className="berry-row-click" onClick={() => setCancelDetailId(o.OrderID)}>
+                          {rowsShown.map(({ o, info, reason }, i) => (
+                            <tr key={o.OrderID} className={`berry-row-click${String(cancelDetailId) === String(o.OrderID) ? ' is-selected' : ''}${i >= 8 ? ' berry-reveal' : ''}`} onClick={() => setCancelDetailId(o.OrderID)}>
                               <td title={info.known ? 'เวลาที่ยกเลิก' : 'ไม่พบบันทึกเวลายกเลิก แสดงเวลาที่สั่งแทน'} style={{ whiteSpace: 'nowrap', color: info.known ? undefined : 'var(--berry-text-muted)' }}>
                                 {fmtDateTime(info.time)}
                               </td>
@@ -2208,9 +2291,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </table>
                     </div>
                     {rowsFiltered.length > 8 && (
-                      <button className="berry-btn" style={{ width: '100%', marginTop: 12 }} onClick={() => setCancelShowAll(v => !v)}>
-                        {cancelShowAll ? 'แสดงน้อยลง' : `ดูทั้งหมด (${rowsFiltered.length} ออเดอร์)`}
-                      </button>
+                      <ShowMoreToggle expanded={cancelShowAll} onToggle={() => setCancelShowAll(v => !v)} hiddenCount={rowsFiltered.length - 8} controls="cancel-orders-table" moreLabel="ดูออเดอร์ที่ยกเลิกทั้งหมด" />
                     )}
                   </>
                 )}
@@ -2459,15 +2540,15 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <h3>2. ตัวอย่างรายงานก่อน Export</h3>
                   <span style={{ fontSize: 12, color: 'var(--berry-text-muted)' }}>{reportPeriodLabel} · {rangeStart} ถึง {rangeEnd}</span>
                 </div>
-                <div style={{ overflowX: 'auto' }}>
+                <div id="report-preview-table" style={{ overflowX: 'auto' }}>
                   <table className="berry-table">
                     <thead><tr>{reportColumns.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
                     <tbody>
                       {reportSummary.length === 0 && (
                         <tr><td colSpan={reportColumns.length} style={{ textAlign: 'center', color: 'var(--berry-text-muted)' }}>ไม่พบข้อมูลในช่วงเวลาที่เลือก</td></tr>
                       )}
-                      {reportSummary.map(s => (
-                        <tr key={s.storeId}>
+                      {reportSummary.slice(0, reportRowsOpen ? reportSummary.length : REPORT_LIMIT).map((s, i) => (
+                        <tr key={s.storeId} className={i >= REPORT_LIMIT ? 'berry-reveal' : undefined}>
                           {reportColumns.map(c => (
                             <td key={c.key}>
                               {c.money ? `฿${fmtMoney(s[c.key])}` : c.percent ? fmtRate(s[c.key]) : s[c.key]}
@@ -2478,6 +2559,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </tbody>
                   </table>
                 </div>
+                {reportSummary.length > REPORT_LIMIT && (
+                  <>
+                    <ShowMoreToggle expanded={reportRowsOpen} onToggle={() => setReportRowsOpen(v => !v)} hiddenCount={reportSummary.length - REPORT_LIMIT} controls="report-preview-table" moreLabel="ดูตัวอย่างเพิ่มเติม" />
+                    <div className="berry-panel-caption" style={{ marginTop: 8, textAlign: 'center' }}>ไฟล์ที่ส่งออกจะมีครบทุกร้าน ({reportSummary.length} แถว) ไม่ว่าจะขยายตัวอย่างหรือไม่</div>
+                  </>
+                )}
               </div>
 
               <div className="berry-panel">
@@ -2699,7 +2786,7 @@ const STYLES = `
 .berry-alert-item .alert-title { font-weight: 700; color: var(--berry-red); font-size: 14px; }
 .berry-alert-item .alert-sub { font-size: 12px; color: var(--berry-text-dark); margin: 4px 0 6px; }
 .berry-alert-item .alert-link { font-size: 12px; color: var(--berry-purple); font-weight: 600; cursor: pointer; }
-.berry-empty-note { text-align: center; color: var(--berry-text-muted); padding: 20px; font-size: 13px; }
+.berry-empty-note { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--berry-text-muted); padding: 24px 16px; font-size: 13px; background: var(--berry-bg); border: 1px dashed var(--berry-border); border-radius: 12px; }
 
 /* Legend for Bullet Chart */
 .berry-legend { display: flex; gap: 16px; font-size: 12px; color: var(--berry-text-muted); margin-top: 10px; flex-wrap: wrap; }
@@ -3066,4 +3153,61 @@ const STYLES = `
   .berry-panel { padding: 14px; }
   .berry-dashboard-grid { gap: 14px; }
 }
+
+/* ============================================================
+   UX: โดนัท+รายการร้านแบ่งหน้า / ปุ่มขยาย / สถานะโหลด
+   ============================================================ */
+.berry-loading { display: flex; align-items: center; justify-content: center; gap: 12px; height: 100%; color: var(--berry-text-muted); font-size: 14px; }
+.berry-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--berry-border); border-top-color: var(--berry-purple); animation: berrySpin 0.8s linear infinite; }
+@keyframes berrySpin { to { transform: rotate(360deg); } }
+
+.berry-donut-wrap { display: flex; align-items: flex-start; justify-content: center; gap: 28px; flex-wrap: wrap; padding: 10px 0; }
+.berry-donut-chart { position: relative; width: 190px; height: 190px; flex-shrink: 0; margin-top: 4px; }
+.berry-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; text-align: center; padding: 30px; }
+.berry-donut-center-label { font-size: 11px; color: var(--berry-text-muted); font-weight: 500; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.berry-donut-center-value { font-size: 17px; font-weight: 700; color: var(--berry-text-dark); margin-top: 2px; }
+.berry-donut-center-sub { font-size: 12px; color: var(--berry-text-muted); margin-top: 2px; }
+.berry-donut-side { flex: 1 1 280px; min-width: 250px; max-width: 460px; }
+.berry-donut-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.berry-donut-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; min-height: 42px; border: 1px solid transparent; border-radius: 10px; font-size: 13px; transition: background-color 150ms ease, border-color 150ms ease; }
+.berry-donut-row .dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+.berry-donut-row .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; color: var(--berry-text-dark); }
+.berry-donut-row .amt { color: var(--berry-text-muted); white-space: nowrap; text-align: right; }
+.berry-donut-row .pct { width: 54px; text-align: right; font-weight: 700; color: var(--berry-text-dark); flex-shrink: 0; }
+.berry-donut-row.is-active { background: var(--berry-purple-light); border-color: rgba(255, 114, 76, 0.35); }
+.berry-donut-row.is-active .name { font-weight: 700; }
+.berry-donut-row.is-zero .name, .berry-donut-row.is-zero .pct { color: var(--berry-text-muted); font-weight: 500; }
+.berry-donut-row:focus-visible { outline: 2px solid var(--berry-focus); outline-offset: -2px; border-radius: 10px; }
+
+.berry-pager { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--berry-border); display: flex; flex-direction: column; gap: 8px; }
+.berry-pager-info { font-size: 12px; color: var(--berry-text-muted); }
+.berry-pager-controls { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.berry-pager-btn { min-width: 34px; height: 34px; padding: 0 10px; border: 1px solid var(--berry-border); border-radius: 8px; background: var(--berry-card-bg); color: var(--berry-text-dark); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease; }
+.berry-pager-btn.nav { padding: 0 12px; }
+.berry-pager-btn:hover:not(:disabled):not(.active) { background: var(--berry-purple-light); border-color: var(--berry-purple); }
+.berry-pager-btn.active { background: var(--berry-purple); border-color: var(--berry-purple); color: #fff; cursor: default; }
+.berry-pager-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.berry-pager-btn:active:not(:disabled) { transform: scale(0.96); }
+.berry-pager-gap { color: var(--berry-text-muted); padding: 0 2px; }
+.berry-pager-controls .nav:first-child { margin-right: 4px; }
+.berry-pager-controls .nav:last-child { margin-left: 4px; }
+@media (pointer: coarse) { .berry-pager-btn { min-width: 40px; height: 40px; } }
+@media (max-width: 600px) {
+  .berry-donut-wrap { justify-content: center; }
+  .berry-donut-side { flex-basis: 100%; max-width: 100%; min-width: 0; }
+  .berry-donut-row { padding: 9px 8px; gap: 8px; }
+  .berry-pager-controls { justify-content: center; }
+  .berry-pager-info { text-align: center; }
+}
+
+.berry-showmore { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 12px; padding: 10px 14px; border: 1px dashed var(--berry-border); border-radius: 10px; background: transparent; color: var(--berry-text-dark); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color 150ms ease, border-color 150ms ease; }
+.berry-showmore .chev { color: var(--berry-purple); transition: transform 200ms ease; }
+.berry-showmore[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.berry-showmore:hover { background: var(--berry-purple-light); border-color: var(--berry-purple); }
+.berry-showmore:active { transform: scale(0.99); }
+@media (pointer: coarse) { .berry-showmore { min-height: 44px; } }
+.berry-reveal { animation: berryReveal 0.2s ease-out; }
+@keyframes berryReveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.berry-row-click.is-selected td { background: var(--berry-purple-light); }
+@media (prefers-reduced-motion: reduce) { .berry-reveal, .berry-spinner { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; } .berry-showmore .chev { transition: none; } }
 `;
