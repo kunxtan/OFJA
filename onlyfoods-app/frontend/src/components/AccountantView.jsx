@@ -747,7 +747,7 @@ function BerryStatCard({ label, value, tone, delta, deltaSuffix = '%', invertDel
   }
 
   return (
-    <div className={`berry-small-card berry-stat-card ${primary && !isDarkBg ? 'primary' : ''}`} style={cardStyle}>
+    <div className={`berry-small-card berry-stat-card ${primary && !isDarkBg ? 'primary' : ''}${bgTone ? ` bg-${bgTone}` : ''}`} style={cardStyle}>
       <div className="berry-stat-value" style={valStyle}>{value}</div>
       <div className="berry-stat-label" style={labelStyle}>{label}</div>
       {deltaEl}
@@ -1002,7 +1002,7 @@ function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ย�
       </div>
 
       <div className="berry-donut-side">
-        <ul id={listId} className="berry-donut-list" style={pageCount > 1 ? { minHeight: pageSize * 44 } : undefined}>
+        <ul id={listId} className="berry-donut-list" style={pageCount > 1 ? { minHeight: pageSize * 34 } : undefined}>
           {pageItems.map(it => (
             <li
               key={it.key ?? it.idx}
@@ -1188,6 +1188,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [watchOpen, setWatchOpen] = useState(false);
   const [salesRowsOpen, setSalesRowsOpen] = useState(false);
   const [alertOpen, setAlertOpen] = useState(false);
+  const [rateOpen, setRateOpen] = useState(false);
   const [reportRowsOpen, setReportRowsOpen] = useState(false);
   const [menusOpen, setMenusOpen] = useState(false);
   const [auditCat, setAuditCat] = useState('all');
@@ -1203,7 +1204,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [reportStart] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 29); return dateOnly(d); });
   const [reportMode, setReportMode] = useState('month');   // 'month' รายเดือน | 'year' รายปี | 'custom' กำหนดเอง
   const [reportMonth, setReportMonth] = useState(curMonth);
-  const [reportYear, setReportYear] = useState(curYear);
+  const [reportYearSel, setReportYear] = useState(curYear);   // ปีที่ผู้ใช้เลือก (ปีจริงที่ใช้คือ reportYear ด้านล่าง)
   const [customStart, setCustomStart] = useState(reportStart);
   const [customEnd, setCustomEnd] = useState(reportEnd);
   const [reportStoreFilter, setReportStoreFilter] = useState('all');
@@ -1535,11 +1536,15 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   }, [auditFiltered, auditLimit]);
 
   // ช่วงเวลาของรายงานการเงิน: รายเดือน / รายปี / กำหนดเอง (เลือกได้ถึงวันที่ล่าสุด = วันนี้)
+  // ปีที่เลือกได้ = ปีที่มีข้อมูลออเดอร์จริงในฐานข้อมูลเท่านั้น (ไม่สร้างปีเปล่า) เรียงจากล่าสุดไปเก่าสุด
   const reportYearOptions = useMemo(() => {
-    let first = curYear - 1;
-    orders.forEach(o => { const y = Number(dateOnly(o.CreatedAt).slice(0, 4)); if (y && y < first) first = y; });
-    return Array.from({ length: curYear - first + 1 }, (_, i) => curYear - i);
-  }, [orders, curYear]);
+    const years = new Set();
+    orders.forEach(o => { const y = Number(dateOnly(o.CreatedAt).slice(0, 4)); if (y >= 2000) years.add(y); });
+    return [...years].sort((a, b) => b - a);
+  }, [orders]);
+  const hasReportYears = reportYearOptions.length > 0;
+  // ถ้าปีที่เลือกไว้ไม่มีข้อมูล (เช่น ปีปัจจุบันยังไม่มีออเดอร์) ใช้ปีล่าสุดที่มีข้อมูลแทน
+  const reportYear = reportYearOptions.includes(reportYearSel) ? reportYearSel : (reportYearOptions[0] ?? curYear);
   const reportMaxMonth = reportYear >= curYear ? curMonth : 12;
   const reportMonthEff = Math.min(reportMonth, reportMaxMonth);
   const { rangeStart, rangeEnd, reportPeriodLabel } = useMemo(() => {
@@ -1651,7 +1656,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     );
   }
 
-  const WATCH_LIMIT = 5, SALES_LIMIT = 8, ALERT_LIMIT = 3, REPORT_LIMIT = 8, MENU_LIMIT = 8;
+  const WATCH_LIMIT = 5, SALES_LIMIT = 8, ALERT_LIMIT = 2, RATE_LIMIT = 6, REPORT_LIMIT = 8, MENU_LIMIT = 8;
+  const yearSelect = hasReportYears ? (
+    <select className="berry-input" value={reportYear} onChange={e => setReportYear(Number(e.target.value))}>
+      {reportYearOptions.map(y => <option key={y} value={y}>{y} (พ.ศ. {y + 543})</option>)}
+    </select>
+  ) : (
+    <select className="berry-input" disabled aria-label="ไม่มีข้อมูลปี"><option>ไม่มีข้อมูล</option></select>
+  );
   const watchRows = [...periodStats.curr.storesData].filter(s => !s.isDeleted || !s.deletedDay || s.deletedDay >= dateOnly(new Date())).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
 
   return (
@@ -2196,16 +2208,21 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       </div>
                     </div>
                   </div>
-                  <BerryBulletChart
-                    data={cancelTableRows.map(x => ({ label: x.storeName, value: x.rate, status: x.status }))}
-                  />
+                  <div id="cancel-rate-chart">
+                    <BerryBulletChart
+                      data={cancelTableRows.slice(0, rateOpen ? cancelTableRows.length : RATE_LIMIT).map(x => ({ label: x.storeName, value: x.rate, status: x.status }))}
+                    />
+                  </div>
+                  {cancelTableRows.length > RATE_LIMIT && (
+                    <ShowMoreToggle expanded={rateOpen} onToggle={() => setRateOpen(v => !v)} hiddenCount={cancelTableRows.length - RATE_LIMIT} controls="cancel-rate-chart" moreLabel="ดูร้านค้าเพิ่มเติม" />
+                  )}
                   <div className="berry-legend">
                     <span><i style={{ background: '#e3f9e5' }}></i>ปกติ &lt; {RATE_WARN}%</span>
                     <span><i style={{ background: '#fff3d6' }}></i>เฝ้าระวัง {RATE_WARN}-{RATE_ALERT}%</span>
                     <span><i style={{ background: '#fde2e1' }}></i>แจ้งเตือน &gt; {RATE_ALERT}%</span>
                   </div>
                 </div>
-                <div className="berry-panel" style={{ flex: '1 1 320px' }}>
+                <div id="cancel-alert-list" className="berry-panel" style={{ flex: '1 1 320px' }}>
                   <div className="berry-panel-header">
                     <div>
                       <h3 style={{ margin: 0 }}>Cancellation Alert</h3>
@@ -2229,7 +2246,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     </div>
                   ))}
                   {alertStores.length > ALERT_LIMIT && (
-                    <ShowMoreToggle expanded={alertOpen} onToggle={() => setAlertOpen(v => !v)} hiddenCount={alertStores.length - ALERT_LIMIT} moreLabel="ดูร้านที่เกินเกณฑ์ทั้งหมด" />
+                    <ShowMoreToggle expanded={alertOpen} onToggle={() => setAlertOpen(v => !v)} hiddenCount={alertStores.length - ALERT_LIMIT} controls="cancel-alert-list" moreLabel="ดูร้านที่เกินเกณฑ์ทั้งหมด" />
                   )}
                     </>
                   )}
@@ -2492,24 +2509,20 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <>
                     <div>
                       <label style={{ display: 'block', marginBottom: 4 }}>เดือน</label>
-                      <select className="berry-input" value={reportMonthEff} onChange={e => setReportMonth(Number(e.target.value))}>
+                      <select className="berry-input" value={reportMonthEff} disabled={!hasReportYears} onChange={e => setReportMonth(Number(e.target.value))}>
                         {THAI_MONTHS.map((m, i) => (i + 1 <= reportMaxMonth ? <option key={m} value={i + 1}>{m}</option> : null))}
                       </select>
                     </div>
                     <div>
                       <label style={{ display: 'block', marginBottom: 4 }}>ปี</label>
-                      <select className="berry-input" value={reportYear} onChange={e => setReportYear(Number(e.target.value))}>
-                        {reportYearOptions.map(y => <option key={y} value={y}>{y} (พ.ศ. {y + 543})</option>)}
-                      </select>
+                      {yearSelect}
                     </div>
                   </>
                 )}
                 {reportMode === 'year' && (
                   <div>
                     <label style={{ display: 'block', marginBottom: 4 }}>ปี</label>
-                    <select className="berry-input" value={reportYear} onChange={e => setReportYear(Number(e.target.value))}>
-                      {reportYearOptions.map(y => <option key={y} value={y}>{y} (พ.ศ. {y + 543})</option>)}
-                    </select>
+                    {yearSelect}
                   </div>
                 )}
                 {reportMode === 'custom' && (
@@ -2535,11 +2548,18 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 </div>
               </div>
 
+              {!hasReportYears && reportMode !== 'custom' && (
+                <div className="berry-empty-note" role="status">ยังไม่มีข้อมูลทางการเงินในระบบ จึงยังไม่มีปีให้เลือก (เมื่อมีออเดอร์ ปีนั้นจะปรากฏในตัวเลือกโดยอัตโนมัติ)</div>
+              )}
+
               <div className="berry-panel">
                 <div className="berry-panel-header">
                   <h3>2. ตัวอย่างรายงานก่อน Export</h3>
                   <span style={{ fontSize: 12, color: 'var(--berry-text-muted)' }}>{reportPeriodLabel} · {rangeStart} ถึง {rangeEnd}</span>
                 </div>
+                {reportOrders.length === 0 && (
+                  <div className="berry-empty-note" role="status" style={{ marginBottom: 12 }}>ไม่พบข้อมูลออเดอร์ในช่วงเวลาที่เลือก</div>
+                )}
                 <div id="report-preview-table" style={{ overflowX: 'auto' }}>
                   <table className="berry-table">
                     <thead><tr>{reportColumns.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
@@ -3210,4 +3230,80 @@ const STYLES = `
 @keyframes berryReveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .berry-row-click.is-selected td { background: var(--berry-purple-light); }
 @media (prefers-reduced-motion: reduce) { .berry-reveal, .berry-spinner { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; } .berry-showmore .chev { transition: none; } }
+
+/* ============================================================
+   DEPTH LAYER: เงาหลายชั้น / ไล่เฉดอ่อนจากสีธีมเดิม / ขอบละเอียด
+   (ไม่เปลี่ยนพาเลตสี ฟอนต์ หรือโครงสร้าง)
+   ============================================================ */
+:root {
+  --berry-shadow-sm: 0 1px 2px rgba(42, 44, 65, 0.05), 0 1px 3px rgba(42, 44, 65, 0.06);
+  --berry-shadow-md: 0 1px 2px rgba(42, 44, 65, 0.04), 0 6px 18px rgba(42, 44, 65, 0.07);
+  --berry-shadow-lg: 0 4px 8px rgba(42, 44, 65, 0.06), 0 18px 40px rgba(42, 44, 65, 0.14);
+  --berry-card-grad: linear-gradient(180deg, #FFFFFF 0%, #FCFCFD 100%);
+  --berry-orange-grad: linear-gradient(180deg, #FF845F 0%, #FF724C 100%);
+  --berry-orange-grad-dark: linear-gradient(180deg, #F26540 0%, #E0532E 100%);
+}
+.berry-root { background-image: radial-gradient(900px 420px at 88% -8%, rgba(255, 114, 76, 0.06), transparent 65%); }
+
+.berry-topbar { box-shadow: 0 1px 0 var(--berry-border), 0 6px 18px rgba(42, 44, 65, 0.05); }
+@media (min-width: 1025px) { .berry-sidebar { box-shadow: 1px 0 0 var(--berry-border), 6px 0 18px rgba(42, 44, 65, 0.04); } }
+
+.berry-panel, .berry-small-card { background-image: var(--berry-card-grad); border-color: #E3E8EC; box-shadow: var(--berry-shadow-md); }
+.berry-stat-card:not(.bg-orange):not(.bg-dark) { box-shadow: var(--berry-shadow-sm); }
+.berry-stat-card.bg-orange { background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0) 55%); box-shadow: 0 10px 24px rgba(255, 114, 76, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.berry-stat-card.bg-dark { background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 55%); box-shadow: 0 10px 24px rgba(42, 44, 65, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10); }
+.berry-panel-header { padding-bottom: 2px; }
+.berry-mini-stat { background: linear-gradient(180deg, #FAFBFC, var(--berry-bg)); box-shadow: inset 0 0 0 1px var(--berry-border); }
+.berry-table thead th { background: #FBFCFD; }
+.berry-table tbody tr:last-child td { border-bottom: 0; }
+
+.berry-nav-item.active { background-image: linear-gradient(135deg, #FFF0EC 0%, #FFE5DC 100%); box-shadow: inset 3px 0 0 var(--berry-purple), var(--berry-shadow-sm); }
+.berry-icon-btn, .berry-user-chip { box-shadow: var(--berry-shadow-sm); }
+
+.berry-btn.primary { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+.berry-btn.primary:hover { background-image: var(--berry-orange-grad-dark); box-shadow: 0 6px 14px rgba(255, 114, 76, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+.berry-btn:not(.primary) { box-shadow: inset 0 0 0 1px var(--berry-border), var(--berry-shadow-sm); }
+.berry-btn.primary:disabled, .berry-btn:not(.primary):disabled { box-shadow: none; background-image: none; }
+@media (hover: hover) and (pointer: fine) {
+  .berry-btn:not(.primary):hover { box-shadow: inset 0 0 0 1px #D3D9DF, var(--berry-shadow-hover); }
+}
+.berry-input { box-shadow: inset 0 1px 2px rgba(42, 44, 65, 0.05); background: #fff; }
+.berry-input:focus { box-shadow: inset 0 1px 2px rgba(42, 44, 65, 0.04), 0 0 0 3px rgba(255, 114, 76, 0.20); }
+
+.berry-toggle-pills { box-shadow: inset 0 1px 2px rgba(255, 114, 76, 0.18); }
+.berry-toggle-pills button.active { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.35); }
+.berry-chip { box-shadow: var(--berry-shadow-sm); }
+.berry-chip.active { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.32); }
+.berry-select-card { box-shadow: var(--berry-shadow-sm); background-color: #fff; }
+.berry-select-card.active { box-shadow: 0 0 0 3px rgba(255, 114, 76, 0.16), var(--berry-shadow-sm); }
+.berry-alert-item { border-left: 4px solid var(--berry-red); box-shadow: var(--berry-shadow-sm); background-image: linear-gradient(135deg, #FFF5F5 0%, #FFEDED 100%); }
+.berry-showmore { background: #fff; box-shadow: var(--berry-shadow-sm); border-style: solid; }
+.berry-showmore:hover { background: var(--berry-purple-light); }
+
+.berry-profile-dropdown { box-shadow: var(--berry-shadow-lg); }
+.berry-modal-overlay { backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+.berry-modal-content { box-shadow: var(--berry-shadow-lg); border: 1px solid var(--berry-border); }
+.berry-toast { box-shadow: var(--berry-shadow-lg); }
+
+/* Donut: เงาวงแหวน + วงกลมกลางนูนเบา ๆ */
+.berry-donut-chart svg { filter: drop-shadow(0 6px 10px rgba(42, 44, 65, 0.12)); }
+.berry-donut-center { isolation: isolate; }
+.berry-donut-center::before { content: ''; position: absolute; inset: 39px; border-radius: 50%; background: #fff; box-shadow: inset 0 2px 8px rgba(42, 44, 65, 0.08); z-index: -1; }
+
+/* ----- รายการร้านในโดนัท: กระชับขึ้น ----- */
+.berry-donut-list { gap: 0; }
+.berry-donut-row { padding: 5px 10px; min-height: 34px; gap: 8px; }
+.berry-donut-row.is-active { background-image: linear-gradient(135deg, #FFF0EC 0%, #FFE9E2 100%); box-shadow: var(--berry-shadow-sm); }
+.berry-donut-row:not(:last-child) { border-bottom-color: #F1F3F5; }
+.berry-donut-row.is-active { border-bottom-color: rgba(255, 114, 76, 0.35); }
+
+/* ----- pagination อยู่กึ่งกลางใต้รายการ ----- */
+.berry-pager { align-items: center; margin-top: 8px; padding-top: 10px; }
+.berry-pager-info { text-align: center; }
+.berry-pager-controls { justify-content: center; width: 100%; }
+.berry-pager-btn { box-shadow: var(--berry-shadow-sm); }
+.berry-pager-btn.active { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.35); }
+.berry-pager-btn:disabled { box-shadow: none; }
+@media (max-width: 600px) { .berry-donut-row { padding: 5px 8px; } }
+@media (prefers-reduced-motion: reduce) { .berry-btn.primary, .berry-chip, .berry-pager-btn { transition: none; } }
 `;
