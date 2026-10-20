@@ -23,6 +23,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   // USER & PROFILE STATE
   const userId = user?.UserId || user?.id;
   const [fullName, setFullName] = useState(user?.FullName || user?.name || "Customer");
+  const username = user?.username || user?.Username || "";
   const [phone, setPhone] = useState(user?.Phone || "");
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(fullName);
@@ -1671,12 +1672,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
             <label
               htmlFor="profile-upload-input"
-              style={{position: "absolute", bottom: "2px", right: "2px", background: COLORS.navy, color: COLORS.white, borderRadius: "50%", width: "44px", 
-                height: "44px", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 3px 10px rgba(0,0,0,0.2)",fontSize: "16px"
+              style={{position: "absolute", bottom: "-2px", right: "-2px", background: COLORS.navy, color: COLORS.white, borderRadius: "50%", width: "44px", 
+                height: "44px", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 0, boxSizing: "border-box",
+                cursor: "pointer", boxShadow: "0 3px 10px rgba(0,0,0,0.2)", border: `3px solid ${COLORS.white}`
               }}
               title="เปลี่ยนรูปโปรไฟล์"
             >
-              <CameraIcon />
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "20px", height: "20px" }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: "block" }}>
+                  <path d="M3 8a2 2 0 0 1 2-2h2.5l1.4-2h6.2l1.4 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  <circle cx="12" cy="13" r="3.5" />
+                </svg>
+              </span>
             </label>
             <input
               id="profile-upload-input" type="file" accept="image/*" onChange={handleProfileImageChange}
@@ -1695,7 +1702,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           )}
 
           <h2 style={{ margin: "0", fontSize: "24px", fontWeight: "900" }}>{fullName}</h2>
-          <div style={{ color: COLORS.gray, fontSize: "13px", marginTop: "4px" }}>Customer</div>
+          <div style={{ color: COLORS.gray, fontSize: "13px", marginTop: "4px" }}>{username ? `@${username}` : "Customer"}</div>
         </div>
 
         {/* SECTION 1: EDIT PROFILE NAME & PHONE */}
@@ -1746,7 +1753,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           <>
             <div style={{ marginTop: "25px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
-                <span>ชื่อผู้ใช้</span><strong>{fullName}</strong>
+                <span>ชื่อผู้ใช้</span><strong>{username || fullName}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 5px", borderBottom: `1px solid ${COLORS.border}`, fontSize: "14px" }}>
                 <span>เบอร์โทรศัพท์</span><strong>{phone || "ยังไม่ได้ระบุ"}</strong>
@@ -1772,7 +1779,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         )}
 
         {/* LOGOUT BUTTON */}
-        <div style={{ marginTop: "25px" }}>
+        <div style={{ marginTop: "12px" }}>
           <button
             onClick={() => {
               customAlert("สำเร็จ", "ออกจากระบบสำเร็จ", "success");
