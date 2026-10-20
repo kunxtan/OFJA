@@ -1729,6 +1729,17 @@ const storeRows = Array.from(storeMap.values())
             avg: storeNow.avgOrder
         };
     })
+
+     // ร้านหมดสัญญาไม่แสดงในสรุปรายร้าน ยกเว้นช่วงที่เลือกมีออเดอร์ หรือช่วงนั้นเริ่มก่อน/ตรงวันสิ้นสุดสัญญา
+    // (หลักการเดียวกับร้านที่ถูกลบใน AccountantView.buildStoreSummary)
+    .filter((s) => {
+        if (s.ContractState !== 'EXPIRED') return true;
+        if (s.orderCount > 0) return true;
+       if (!s.ContractEndDate) return false;
+       const cEnd = new Date(`${String(s.ContractEndDate).slice(0, 10)}T00:00:00`);
+        cEnd.setDate(cEnd.getDate() + 1);  // สัญญามีผลถึง 23:59:59 ของวันสิ้นสุด
+       return cEnd > bounds.start;
+    })
     .sort((a, b) => b.sales - a.sales);
         
 const ordersByHour = Array.from({ length: 24 }, () => 0);
@@ -1777,12 +1788,16 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
     }, {})).sort((a, b) => b.count - a.count || String(a.StoreName).localeCompare(String(b.StoreName), 'th'));
     const maxStoreSales = Math.max(...report.storeRows.map((s) => Number(s.sales) || 0), 1);
     const bestStore = report.storeRows.find((s) => s.sales > 0) || null;
-    const storeStatus = useMemo(() => ({
-        open: stores.filter((s) => s.IsOpen && !s.IsSuspended).length,
-        closed: stores.filter((s) => !s.IsOpen && !s.IsSuspended).length,
-        suspended: stores.filter((s) => s.IsSuspended).length,
-        total: stores.length
-    }), [stores]);
+    // การ์ดสถานะร้านค้า: ไม่นับร้านที่หมดสัญญา (ร้านหมดสัญญาแสดงในแถบเหลืองด้านบนแทน)
+    const storeStatus = useMemo(() => {
+        const live = stores.filter((s) => s.ContractState !== 'EXPIRED');
+       return {
+            open: live.filter((s) => s.IsOpen && !s.IsSuspended).length,
+           closed: live.filter((s) => !s.IsOpen && !s.IsSuspended).length,
+           suspended: live.filter((s) => s.IsSuspended).length,
+           total: live.length
+        };
+    }, [stores]);
     // สัญญาที่ต้องดู (แถบเหลืองบนสุดของ Dashboard)
     const contractSoonStores = stores.filter(isContractSoon).sort((a, b) => a.ContractDaysLeft - b.ContractDaysLeft);
     const contractExpiredStores = stores.filter((s) => s.ContractState === 'EXPIRED');
@@ -2159,7 +2174,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         </Card>
       </div>
 
-      <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(ctx.stores.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
+        <Card title="สรุปผลรายร้าน" subtitle={`ทั้งหมด ${money(visibleStoreRows.length)} ร้าน · เปิดให้บริการ ${money(report.activeStores)} ร้าน`} style={{ marginTop: '16px' }}>
         {cancelAlertStores.length > 0 && (<AlertBanner style={{ marginBottom: '12px' }}>
           {money(cancelAlertStores.length)} ร้านอัตรายกเลิกเกิน {CANCEL_ALERT_RATE}% ในช่วงนี้:{' '}
           {cancelAlertStores.map((s, i) => (<span key={s.StoreId}>
