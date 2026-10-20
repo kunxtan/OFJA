@@ -3337,9 +3337,13 @@ function StoreSalesPage({ ctx }) {
                 >
                   จัดการร้านค้า
                 </Button> )}
-                <Badge tone={store.IsOpen ? 'ok' : 'neutral'}>
-                  {store.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}
-                </Badge>
+                                {store.ContractState === 'EXPIRED' ? (
+                  <Badge tone="danger">หมดสัญญา</Badge>
+                ) : (
+                  <Badge tone={store.IsOpen ? 'ok' : 'neutral'}>
+                    {store.IsOpen ? 'เปิดร้าน' : 'ปิดร้าน'}
+                  </Badge>
+                )}
                 
                 {Boolean(store?.IsDeleted) ? (
   <Badge tone="danger">
@@ -3347,9 +3351,11 @@ function StoreSalesPage({ ctx }) {
   </Badge>
 ) : (
   <>
-    <Badge tone={store.IsSuspended ? 'danger' : 'ok'}>
-      {store.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
-    </Badge>
+        {(store.IsSuspended || store.ContractState !== 'EXPIRED') && (
+      <Badge tone={store.IsSuspended ? 'danger' : 'ok'}>
+        {store.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
+      </Badge>
+    )}
 
     {selectedContract && (
       <button
