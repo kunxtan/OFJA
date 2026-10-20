@@ -2408,7 +2408,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   ))}
                 </div>
                 <div className="berry-legend" style={{ marginTop: 12 }}>
-                  <span><i style={{ background: '#FF4D4F' }}></i>แถวสีแดง: ยกเลิกออเดอร์</span>
+                  <span><i style={{ background: '#FF4D4F' }}></i>แถวสีแดง: ยกเลิกออเดอร์ (Cancelled)</span>
                   <span><i style={{ background: '#00C853' }}></i>แถวสีเขียว: ออเดอร์สำเร็จ (Completed)</span>
                 </div>
               </div>
@@ -2533,7 +2533,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                         onChange={e => { const v = e.target.value; if (!v) return; const nv = v > todayStr ? todayStr : v; setCustomStart(nv); if (nv > customEnd) setCustomEnd(nv); }} />
                     </div>
                     <div>
-                      <label style={{ display: 'block', marginBottom: 4 }}>ถึงวันที่ (ล่าสุดได้ถึงวันนี้)</label>
+                      <label style={{ display: 'block', marginBottom: 4 }}>ถึงวันที่</label>
                       <input type="date" className="berry-input" value={customEnd} min={customStart || undefined} max={todayStr}
                         onChange={e => { const v = e.target.value; if (!v) return; const nv = v > todayStr ? todayStr : v; setCustomEnd(nv); if (nv < customStart) setCustomStart(nv); }} />
                     </div>
@@ -2582,7 +2582,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 {reportSummary.length > REPORT_LIMIT && (
                   <>
                     <ShowMoreToggle expanded={reportRowsOpen} onToggle={() => setReportRowsOpen(v => !v)} hiddenCount={reportSummary.length - REPORT_LIMIT} controls="report-preview-table" moreLabel="ดูตัวอย่างเพิ่มเติม" />
-                    <div className="berry-panel-caption" style={{ marginTop: 8, textAlign: 'center' }}>ไฟล์ที่ส่งออกจะมีครบทุกร้าน ({reportSummary.length} แถว) ไม่ว่าจะขยายตัวอย่างหรือไม่</div>
+                    <div className="berry-panel-caption" style={{ marginTop: 8, textAlign: 'center' }}>ไฟล์ที่ส่งออกจะมีครบทุกร้าน ({reportSummary.length} แถว)</div>
                   </>
                 )}
               </div>
