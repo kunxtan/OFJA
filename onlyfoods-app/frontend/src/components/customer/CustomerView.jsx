@@ -1779,7 +1779,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                   fetchMyIssueReports();
                   setIsViewReportsModalOpen(true);
                 }}
-                style={{ width: "100%", padding: "12px", background: COLORS.white, color: COLORS.navy, border: `1px solid ${COLORS.border}`, borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
+                style={{ width: "100%", padding: "12px", background: COLORS.navy, color: COLORS.white, border: `“none”`, borderRadius: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit" }}
               >
                 ดูปัญหาที่แจ้งไว้{Array.isArray(myIssueReports) && myIssueReports.length > 0 ? ` (${myIssueReports.length})` : ""}
               </button>
@@ -2124,7 +2124,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     <button
                       onClick={handleReportClick}
                       style={{flex: 1, padding: "11px", border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`, borderRadius: "12px",
-                        background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED", color: hasReportedIssue ? COLORS.navy : COLORS.red, fontSize: "13px",
+                        background: hasReportedIssue ? COLORS.navy : "#FFF0ED", color: hasReportedIssue ? COLORS.navy : COLORS.red, fontSize: "13px",
                         fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
                       }}
                     >
@@ -2730,6 +2730,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         isViewReportsModalOpen={isViewReportsModalOpen}
         setIsViewReportsModalOpen={setIsViewReportsModalOpen}
         myIssueReports={myIssueReports}
+        myOrders={myOrders}
       />
       <CustomAlert
         alertData={alertData}

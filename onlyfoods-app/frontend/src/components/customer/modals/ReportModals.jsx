@@ -1,5 +1,6 @@
 // กลุ่มโมดัลรายงานปัญหา: ส่งรายงาน, ดูรายงานที่เคยส่ง
 import { COLORS } from "../constants";
+import { getOrderStatusLabel } from "../utils/orders";
 
 // ===== ReportModal =====
 export function ReportModal({
@@ -109,8 +110,76 @@ export function ReportModal({
 }
 
 // ===== ViewReportsModal =====
-export function ViewReportsModal({ isViewReportsModalOpen, setIsViewReportsModalOpen, myIssueReports }) {
+// หน้าต่าง "รายละเอียดปัญหาที่แจ้งไว้": แสดงออเดอร์ที่เกี่ยวข้อง (คิว, ร้าน, เวลาสั่ง, เมนู, ยอดรวม) ในแต่ละเรื่องด้วย
+// myOrders = รายการออเดอร์ของลูกค้า ใช้จับคู่กับรายงานด้วยเลขออเดอร์ (รายงานเองมีแค่ชื่อร้านกับเลขคิว)
+export function ViewReportsModal({ isViewReportsModalOpen, setIsViewReportsModalOpen, myIssueReports, myOrders = [] }) {
   if (!isViewReportsModalOpen) return null;
+
+  const findOrder = (report) => {
+    const id = Number(report.OrderID ?? report.order_id);
+    return id ? (myOrders || []).find((o) => Number(o.OrderID ?? o.OrderId) === id) || null : null;
+  };
+
+  const renderOrderBox = (report) => {
+    const hasOrderRef = Boolean(report.OrderID ?? report.order_id);
+    const order = findOrder(report);
+    const queueNo = report.QueueNo || order?.QueueNo;
+    const storeName = report.StoreName || order?.StoreName;
+
+    if (!hasOrderRef) {
+      return (
+        <div style={{ fontSize: "12px", color: "#64748b", margin: "8px 0" }}>
+          แจ้งปัญหาทั่วไป (ไม่ได้ระบุออเดอร์){storeName ? ` · ร้าน ${storeName}` : ""}
+        </div>
+      );
+    }
+
+    const items = Array.isArray(order?.items) ? order.items : [];
+    return (
+      <div style={{ margin: "8px 0 10px", padding: "10px 12px", background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ fontWeight: "800", fontSize: "13px", color: "#0f172a" }}>
+            ออเดอร์ {queueNo ? `#${queueNo}` : `เลขที่ ${report.OrderID ?? report.order_id}`}
+            {storeName && <span style={{ fontWeight: "600", color: "#475569" }}> · {storeName}</span>}
+          </div>
+          {order?.Status && (
+            <span style={{ fontSize: "11px", fontWeight: "700", color: "#475569", background: "#f1f5f9", padding: "2px 8px", borderRadius: "10px", whiteSpace: "nowrap" }}>
+              {getOrderStatusLabel(order.Status)}
+            </span>
+          )}
+        </div>
+
+        {order ? (
+          <>
+            {(order.OrderTime || order.order_time || order.CreatedAt) && (
+              <div style={{ fontSize: "11px", color: "#64748b", marginTop: "3px" }}>
+                สั่งเมื่อ: {order.OrderTime || order.order_time || order.CreatedAt}
+              </div>
+            )}
+            {items.length > 0 && (
+              <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px dashed #e2e8f0" }}>
+                {items.map((item, i) => (
+                  <div key={item.OrderDetailID || i} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px", padding: "2px 0", color: "#334155" }}>
+                    <div style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                      <b>{item.ProductName}</b> x{item.Qty}
+                      {item.ItemNote && <div style={{ fontSize: "11px", color: "#64748b" }}>หมายเหตุ: {item.ItemNote}</div>}
+                    </div>
+                    <span style={{ whiteSpace: "nowrap" }}>{(Number(item.UnitPrice || 0) * Number(item.Qty || 1)).toFixed(2)} ฿</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "12px", fontWeight: "800", color: "#0f172a" }}>
+              <span>ยอดรวม</span>
+              <span>{Number(order.TotalAmount || 0).toFixed(2)} ฿</span>
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "3px" }}>ไม่พบรายละเอียดเมนูของออเดอร์นี้ในรายการล่าสุด</div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
@@ -144,6 +213,8 @@ export function ViewReportsModal({ isViewReportsModalOpen, setIsViewReportsModal
                     {report.Status === "Resolved" ? "แก้ไขแล้ว" : report.Status === "In_Progress" ? "กำลังตรวจสอบ" : report.Status === "Rejected" ? "ไม่รับเรื่อง" : "รอดำเนินการ"}
                   </span>
                 </div>
+
+                {renderOrderBox(report)}
 
                 <div style={{ fontSize: "13px", color: "#334155", margin: "6px 0" }}>
                   <b>รายละเอียด:</b> {report.Description || report.description}
