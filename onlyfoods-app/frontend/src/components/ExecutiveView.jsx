@@ -161,7 +161,8 @@ function summarize(orders) {
     const settled = [...completed, ...noShow];
     const cancelled = orders.filter((o) => statusIs(o, 'Cancelled'));
     const sales = sumAmount(settled);
-    const grossSales = sumAmount([...settled, ...cancelled]);
+    const countedCancelled = cancelled.filter((o) => o.PaymentStatus !== 'REJECTED');
+    const grossSales = sumAmount([...settled, ...countedCancelled]);
     const totalRecorded = settled.length + cancelled.length;
 
     return {
