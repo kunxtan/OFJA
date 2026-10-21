@@ -865,9 +865,9 @@ function SearchableStorePicker({ stores, value, onChange }) {
           </button>)}
       </div>
       {open && (<div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(100% + 6px)', zIndex: 45, background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusMd, boxShadow: '0 14px 30px rgba(18,25,38,0.14)', maxHeight: '320px', overflowY: 'auto' }}>
-                    {filtered.length ? filtered.map((s) => (<button key={s.StoreId} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => choose(s)} style={{ width: '100%', border: 'none', borderBottom: `1px solid ${T.line}`, background: String(s.StoreId) === String(value) ? T.primarySoft : T.surface, color: T.text, padding: '10px 12px', textAlign: 'left', fontFamily: FONT_STACK, cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-              <span>{s.StoreName}</span>
-              {pickerStatusOf(s) && <Badge tone={pickerStatusOf(s).tone}>{pickerStatusOf(s).label}</Badge>}
+                       {filtered.length ? filtered.map((s) => (<button key={s.StoreId} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => choose(s)} style={{ width: '100%', border: 'none', borderBottom: `1px solid ${T.line}`, background: String(s.StoreId) === String(value) ? T.primarySoft : T.surface, color: T.text, padding: '10px 12px', textAlign: 'left', fontFamily: FONT_STACK, cursor: 'pointer', fontSize: '13px' }}>
+              {s.StoreName}
+              {pickerStatusOf(s) && <span style={{ color: T.muted, marginLeft: '6px' }}>({pickerStatusOf(s).label})</span>}
             </button>)) : (<div style={{ padding: '12px', color: T.muted, fontSize: '13px' }}>ยังไม่มีข้อมูลร้านค้า</div>)}
         </div>)}
     </div>);
