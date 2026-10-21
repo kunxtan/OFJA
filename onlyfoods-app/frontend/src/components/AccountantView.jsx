@@ -1838,7 +1838,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <div className="berry-panel-header">
                     <div>
                       <div className="berry-growth-title">ยอดขายตามช่วงเวลา</div>
-                      <div className="berry-panel-caption">แนวโน้มยอดขายที่สำเร็จแล้ว — ใช้ดูว่าช่วงไหนขายดีหรือขายตก</div>
+                      <div className="berry-panel-caption">แนวโน้มยอดขายที่สำเร็จแล้ว</div>
                     </div>
                     <div className="berry-toggle-pills">
                       {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['month', 'เลือกเดือน']].map(([val, label]) => (
