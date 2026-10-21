@@ -828,6 +828,11 @@ function StoreDonutChart({ rows }) {
       </div>
     </div>);
 }
+// ป้ายสถานะท้ายชื่อร้านในช่องเลือกร้าน — โชว์เฉพาะร้านที่ขายไม่ได้แล้ว
+const pickerStatusOf = (s) => Boolean(s?.IsDeleted) ? { label: 'ลบแล้ว', tone: 'neutral' }
+    : s?.ContractState === 'EXPIRED' ? { label: 'หมดสัญญา', tone: 'danger' }
+    : null;
+
 function SearchableStorePicker({ stores, value, onChange }) {
     const selected = stores.find((s) => String(s.StoreId) === String(value));
     const [query, setQuery] = useState(selected?.StoreName || '');
@@ -860,8 +865,9 @@ function SearchableStorePicker({ stores, value, onChange }) {
           </button>)}
       </div>
       {open && (<div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(100% + 6px)', zIndex: 45, background: T.surface, border: `1px solid ${T.line}`, borderRadius: T.radiusMd, boxShadow: '0 14px 30px rgba(18,25,38,0.14)', maxHeight: '320px', overflowY: 'auto' }}>
-          {filtered.length ? filtered.map((s) => (<button key={s.StoreId} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => choose(s)} style={{ width: '100%', border: 'none', borderBottom: `1px solid ${T.line}`, background: String(s.StoreId) === String(value) ? T.primarySoft : T.surface, color: T.text, padding: '10px 12px', textAlign: 'left', fontFamily: FONT_STACK, cursor: 'pointer', fontSize: '13px' }}>
-              {s.StoreName}
+                    {filtered.length ? filtered.map((s) => (<button key={s.StoreId} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => choose(s)} style={{ width: '100%', border: 'none', borderBottom: `1px solid ${T.line}`, background: String(s.StoreId) === String(value) ? T.primarySoft : T.surface, color: T.text, padding: '10px 12px', textAlign: 'left', fontFamily: FONT_STACK, cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+              <span>{s.StoreName}</span>
+              {pickerStatusOf(s) && <Badge tone={pickerStatusOf(s).tone}>{pickerStatusOf(s).label}</Badge>}
             </button>)) : (<div style={{ padding: '12px', color: T.muted, fontSize: '13px' }}>ยังไม่มีข้อมูลร้านค้า</div>)}
         </div>)}
     </div>);
