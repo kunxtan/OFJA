@@ -1697,7 +1697,7 @@ current.forEach((o) => {
     if (!storeMap.has(id)) {
         storeMap.set(id, {
             StoreId: o.StoreId,
-            StoreName: o.StoreName || `ร้าน #${o.StoreId}`,
+            StoreName: `${o.StoreName || `ร้าน #${o.StoreId}`} (Deleted)`,
             IsDeleted: 1,
             IsOpen: 0,
             IsSuspended: 0
@@ -2225,8 +2225,8 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
                   <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : isCancelAlert(s.cancelRate) ? <Badge tone="danger">{s.cancelRate.toFixed(2)}%</Badge> : `${s.cancelRate.toFixed(1)}%`}</td>
                   <td style={tdStyle}>
-                    <Badge tone={s.ContractState === 'EXPIRED' || s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
-                      {s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
+                   <Badge tone={s.IsDeleted ? 'neutral' : s.ContractState === 'EXPIRED' || s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
+                      {s.IsDeleted ? 'ลบแล้ว' : s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
                     </Badge>
                   </td>
                 </tr>))}
