@@ -4406,6 +4406,18 @@ function StoreDetailModal({ open, store, detail, account, onClose, onSaveStore, 
         />
     </>);
 }
+// แถบกรองสถานะหน้าจัดการร้านค้า — แต่ละร้านอยู่ได้กลุ่มเดียว: หมดสัญญา > ระงับสิทธิ์ > เปิด > ปิด
+const STORE_MANAGE_FILTERS = [
+    ['all', 'ทั้งหมด'],
+    ['open', 'เปิดอยู่'],
+    ['closed', 'ปิดอยู่'],
+    ['suspended', 'ระงับสิทธิ์'],
+    ['expired', 'หมดสัญญา']
+];
+const storeManageStatusKey = (s) => s.ContractState === 'EXPIRED' ? 'expired'
+    : s.IsSuspended ? 'suspended'
+    : s.IsOpen ? 'open'
+    : 'closed';
 // ===== จัดการร้านค้า: เพิ่ม แก้ไข เปิด/ปิด ระงับ และลบร้าน =====
 function StoreManagePage({ ctx }) {
     const { API, user, stores, search, pushToast, ask, reloadStores, focusStoreId, clearFocusStore, navigateTo } = ctx;
@@ -4442,9 +4454,16 @@ function StoreManagePage({ ctx }) {
     }, [loadDetails, loadStoreAccounts]);
     const detailOf = (storeId) => details.find((d) => String(d.StoreId) === String(storeId)) || {};
     const openView = (store) => {setViewStoreId(store.StoreId);};
-    const rows = stores
+        const [statusFilter, setStatusFilter] = useState('all');
+    useEffect(() => { setStatusFilter('all'); }, [focusStoreId]);
+    const searchedRows = stores
         .filter((s) => !focusStoreId || String(s.StoreId) === String(focusStoreId))
         .filter((s) => String(s.StoreName || '').toLowerCase().includes(search));
+    const countOf = (key) => searchedRows.filter((s) => storeManageStatusKey(s) === key).length;
+    const rows = statusFilter === 'all'
+        ? searchedRows
+        : searchedRows.filter((s) => storeManageStatusKey(s) === statusFilter);
+    const activeFilterLabel = STORE_MANAGE_FILTERS.find(([id]) => id === statusFilter)?.[1];
     const openCreate = () => {
         setMode('create');
         setForm(EMPTY_STORE_FORM);
@@ -4687,6 +4706,18 @@ function StoreManagePage({ ctx }) {
       </div>)}
             <Card title="รายชื่อร้านค้าทั้งหมด" subtitle={`${money(rows.length)} ร้านที่แสดงอยู่ · ใช้ช่องค้นหาด้านบนเพื่อกรองรายชื่อ`}
         right={<Button icon="plus" onClick={openCreate}>เพิ่มร้านค้า</Button>}>
+                  <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginBottom: '14px' }}>
+          {STORE_MANAGE_FILTERS.map(([id, label]) => {
+            const active = statusFilter === id;
+            const count = id === 'all' ? searchedRows.length : countOf(id);
+            return (<button key={id} type="button" onClick={() => setStatusFilter(id)} aria-pressed={active} style={{
+                border: `1px solid ${active ? T.primary : T.line}`,
+                background: active ? T.primarySoft : T.surface,
+                color: active ? T.primaryDark : T.text,
+                borderRadius: '999px', padding: '9px 13px', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer', fontFamily: FONT_STACK
+            }}>{label} ({money(count)})</button>);
+          })}
+        </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
             <thead>
@@ -4780,7 +4811,9 @@ function StoreManagePage({ ctx }) {
         })}
               {rows.length === 0 && (<tr>
                   <td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
-                    ไม่พบร้านค้าที่ตรงกับคำค้นหา
+                                        {statusFilter !== 'all' && searchedRows.length > 0
+                      ? `ไม่มีร้านสถานะ “${activeFilterLabel}”`
+                      : 'ไม่พบร้านค้าที่ตรงกับคำค้นหา'}
                   </td>
                 </tr>)}
             </tbody>
@@ -4790,14 +4823,14 @@ function StoreManagePage({ ctx }) {
 
       <StoreFormModal open={modalOpen} mode={mode} form={form} setForm={setForm} errors={errors} setErrors={setErrors} saving={saving} onClose={() => setModalOpen(false)} onSubmit={submitForm}/>
         <StoreDetailModal
-        store={rows.find((s) => String(s.StoreId) === String(viewStoreId))}
+        store={stores.find((s) => String(s.StoreId) === String(viewStoreId))}
         detail={detailOf(viewStoreId)}
         account={accountOf(viewStoreId)}
         open={Boolean(viewStoreId)}
         onClose={() => setViewStoreId(null)}
         saving={saving}
         pushToast={pushToast}
-        onSaveStore={(patch) => saveStoreField(rows.find((s) => String(s.StoreId) === String(viewStoreId)), patch)}
+        onSaveStore={(patch) => saveStoreField(stores.find((s) => String(s.StoreId) === String(viewStoreId)), patch)}
         onSaveAccount={(key, value) => saveAccountField(accountOf(viewStoreId), key, value)}
       />
     </>);
