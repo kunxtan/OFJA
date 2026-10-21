@@ -969,7 +969,8 @@ function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ย�
   };
 
   return (
-    <div ref={donutRef} className="berry-donut-wrap" style={{ minHeight: height }}>
+    <div ref={donutRef} className="berry-donut">
+    <div className="berry-donut-wrap" style={{ minHeight: height }}>
       <div className="berry-donut-chart" role="img" aria-label={`สัดส่วนยอดขายสุทธิของ ${items.length} ${unitLabel} รวม ${fmt(total)}`}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
           <circle cx={center} cy={center} r={radius} fill="transparent" stroke="var(--berry-border)" strokeWidth={strokeWidth} opacity="0.45" />
@@ -1022,21 +1023,23 @@ function BerryDonutChart({ data, valueFormat, height = 240, centerLabel = 'ย�
             </li>
           ))}
         </ul>
-
-        {pageCount > 1 && (
-          <nav className="berry-pager" aria-label="เปลี่ยนหน้ารายชื่อร้านค้า" aria-controls={listId}>
-            <span className="berry-pager-info" aria-live="polite">แสดง {from + 1}–{from + pageItems.length} จาก {items.length} {unitLabel}</span>
-            <div className="berry-pager-controls">
-              <button type="button" className="berry-pager-btn nav" disabled={safePage === 0} onClick={() => goPage(safePage - 1)} aria-label="หน้าก่อนหน้า">‹ ก่อนหน้า</button>
-              {pagerItems(safePage, pageCount).map(p => (typeof p === 'string'
-                ? <span key={p} className="berry-pager-gap" aria-hidden="true">…</span>
-                : <button type="button" key={p} className={`berry-pager-btn${p === safePage ? ' active' : ''}`} aria-label={`หน้า ${p + 1}`} aria-current={p === safePage ? 'page' : undefined} onClick={() => goPage(p)}>{p + 1}</button>
-              ))}
-              <button type="button" className="berry-pager-btn nav" disabled={safePage === pageCount - 1} onClick={() => goPage(safePage + 1)} aria-label="หน้าถัดไป">ถัดไป ›</button>
-            </div>
-          </nav>
-        )}
       </div>
+    </div>
+
+    {/* pagination: อยู่ใต้รายการร้าน และจัดกึ่งกลางทั้งการ์ด */}
+    {pageCount > 1 && (
+      <nav className="berry-pager" aria-label="เปลี่ยนหน้ารายชื่อร้านค้า" aria-controls={listId}>
+        <span className="berry-pager-info" aria-live="polite">แสดง {from + 1}–{from + pageItems.length} จาก {items.length} {unitLabel}</span>
+        <div className="berry-pager-controls">
+          <button type="button" className="berry-pager-btn nav" disabled={safePage === 0} onClick={() => goPage(safePage - 1)} aria-label="หน้าก่อนหน้า">‹ ก่อนหน้า</button>
+          {pagerItems(safePage, pageCount).map(p => (typeof p === 'string'
+            ? <span key={p} className="berry-pager-gap" aria-hidden="true">…</span>
+            : <button type="button" key={p} className={`berry-pager-btn${p === safePage ? ' active' : ''}`} aria-label={`หน้า ${p + 1}`} aria-current={p === safePage ? 'page' : undefined} onClick={() => goPage(p)}>{p + 1}</button>
+          ))}
+          <button type="button" className="berry-pager-btn nav" disabled={safePage === pageCount - 1} onClick={() => goPage(safePage + 1)} aria-label="หน้าถัดไป">ถัดไป ›</button>
+        </div>
+      </nav>
+    )}
     </div>
   );
 }
@@ -2408,7 +2411,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   ))}
                 </div>
                 <div className="berry-legend" style={{ marginTop: 12 }}>
-                  <span><i style={{ background: '#FF4D4F' }}></i>แถวสีแดง: ยกเลิกออเดอร์ (Cancelled)</span>
+                  <span><i style={{ background: '#FF4D4F' }}></i>แถวสีแดง: ยกเลิกออเดอร์</span>
                   <span><i style={{ background: '#00C853' }}></i>แถวสีเขียว: ออเดอร์สำเร็จ (Completed)</span>
                 </div>
               </div>
@@ -2533,7 +2536,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                         onChange={e => { const v = e.target.value; if (!v) return; const nv = v > todayStr ? todayStr : v; setCustomStart(nv); if (nv > customEnd) setCustomEnd(nv); }} />
                     </div>
                     <div>
-                      <label style={{ display: 'block', marginBottom: 4 }}>ถึงวันที่</label>
+                      <label style={{ display: 'block', marginBottom: 4 }}>ถึงวันที่ (ล่าสุดได้ถึงวันนี้)</label>
                       <input type="date" className="berry-input" value={customEnd} min={customStart || undefined} max={todayStr}
                         onChange={e => { const v = e.target.value; if (!v) return; const nv = v > todayStr ? todayStr : v; setCustomEnd(nv); if (nv < customStart) setCustomStart(nv); }} />
                     </div>
@@ -2582,7 +2585,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 {reportSummary.length > REPORT_LIMIT && (
                   <>
                     <ShowMoreToggle expanded={reportRowsOpen} onToggle={() => setReportRowsOpen(v => !v)} hiddenCount={reportSummary.length - REPORT_LIMIT} controls="report-preview-table" moreLabel="ดูตัวอย่างเพิ่มเติม" />
-                    <div className="berry-panel-caption" style={{ marginTop: 8, textAlign: 'center' }}>ไฟล์ที่ส่งออกจะมีครบทุกร้าน ({reportSummary.length} แถว)</div>
+                    <div className="berry-panel-caption" style={{ marginTop: 8, textAlign: 'center' }}>ไฟล์ที่ส่งออกจะมีครบทุกร้าน ({reportSummary.length} แถว) ไม่ว่าจะขยายตัวอย่างหรือไม่</div>
                   </>
                 )}
               </div>
@@ -3245,24 +3248,22 @@ const STYLES = `
 }
 .berry-root { background-image: radial-gradient(900px 420px at 88% -8%, rgba(255, 114, 76, 0.06), transparent 65%); }
 
-.berry-topbar { box-shadow: 0 1px 0 var(--berry-border), 0 6px 18px rgba(42, 44, 65, 0.05); }
-@media (min-width: 1025px) { .berry-sidebar { box-shadow: 1px 0 0 var(--berry-border), 6px 0 18px rgba(42, 44, 65, 0.04); } }
+.berry-topbar { box-shadow: 0 4px 14px rgba(42, 44, 65, 0.05); }
+@media (min-width: 1025px) { .berry-sidebar { box-shadow: 4px 0 14px rgba(42, 44, 65, 0.04); } }
 
 .berry-panel, .berry-small-card { background-image: var(--berry-card-grad); border-color: #E3E8EC; box-shadow: var(--berry-shadow-md); }
 .berry-stat-card:not(.bg-orange):not(.bg-dark) { box-shadow: var(--berry-shadow-sm); }
 .berry-stat-card.bg-orange { background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0) 55%); box-shadow: 0 10px 24px rgba(255, 114, 76, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.25); }
 .berry-stat-card.bg-dark { background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 55%); box-shadow: 0 10px 24px rgba(42, 44, 65, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.10); }
-.berry-panel-header { padding-bottom: 2px; }
 .berry-mini-stat { background: linear-gradient(180deg, #FAFBFC, var(--berry-bg)); box-shadow: inset 0 0 0 1px var(--berry-border); }
 .berry-table thead th { background: #FBFCFD; }
 .berry-table tbody tr:last-child td { border-bottom: 0; }
 
-.berry-nav-item.active { background-image: linear-gradient(135deg, #FFF0EC 0%, #FFE5DC 100%); box-shadow: inset 3px 0 0 var(--berry-purple), var(--berry-shadow-sm); }
-.berry-icon-btn, .berry-user-chip { box-shadow: var(--berry-shadow-sm); }
+.berry-nav-item.active { background-image: linear-gradient(135deg, #FFF0EC 0%, #FFE8E0 100%); box-shadow: none; }
 
 .berry-btn.primary { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
 .berry-btn.primary:hover { background-image: var(--berry-orange-grad-dark); box-shadow: 0 6px 14px rgba(255, 114, 76, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.18); }
-.berry-btn:not(.primary) { box-shadow: inset 0 0 0 1px var(--berry-border), var(--berry-shadow-sm); }
+.berry-btn:not(.primary) { box-shadow: inset 0 0 0 1px var(--berry-border); }
 .berry-btn.primary:disabled, .berry-btn:not(.primary):disabled { box-shadow: none; background-image: none; }
 @media (hover: hover) and (pointer: fine) {
   .berry-btn:not(.primary):hover { box-shadow: inset 0 0 0 1px #D3D9DF, var(--berry-shadow-hover); }
@@ -3270,19 +3271,17 @@ const STYLES = `
 .berry-input { box-shadow: inset 0 1px 2px rgba(42, 44, 65, 0.05); background: #fff; }
 .berry-input:focus { box-shadow: inset 0 1px 2px rgba(42, 44, 65, 0.04), 0 0 0 3px rgba(255, 114, 76, 0.20); }
 
-.berry-toggle-pills { box-shadow: inset 0 1px 2px rgba(255, 114, 76, 0.18); }
-.berry-toggle-pills button.active { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.35); }
-.berry-chip { box-shadow: var(--berry-shadow-sm); }
-.berry-chip.active { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.32); }
-.berry-select-card { box-shadow: var(--berry-shadow-sm); background-color: #fff; }
-.berry-select-card.active { box-shadow: 0 0 0 3px rgba(255, 114, 76, 0.16), var(--berry-shadow-sm); }
-.berry-alert-item { border-left: 4px solid var(--berry-red); box-shadow: var(--berry-shadow-sm); background-image: linear-gradient(135deg, #FFF5F5 0%, #FFEDED 100%); }
-.berry-showmore { background: #fff; box-shadow: var(--berry-shadow-sm); border-style: solid; }
+.berry-toggle-pills button.active { background-image: var(--berry-orange-grad); box-shadow: 0 1px 3px rgba(255, 114, 76, 0.40); }
+.berry-chip.active { background-image: var(--berry-orange-grad); box-shadow: none; }
+.berry-select-card { background-color: #fff; }
+.berry-select-card.active { box-shadow: 0 0 0 3px rgba(255, 114, 76, 0.16); }
+.berry-alert-item { background-image: linear-gradient(135deg, #FFF5F5 0%, #FFEDED 100%); }
+.berry-showmore { background: #fff; border-style: solid; }
 .berry-showmore:hover { background: var(--berry-purple-light); }
 
 .berry-profile-dropdown { box-shadow: var(--berry-shadow-lg); }
 .berry-modal-overlay { backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
-.berry-modal-content { box-shadow: var(--berry-shadow-lg); border: 1px solid var(--berry-border); }
+.berry-modal-content { box-shadow: var(--berry-shadow-lg); }
 .berry-toast { box-shadow: var(--berry-shadow-lg); }
 
 /* Donut: เงาวงแหวน + วงกลมกลางนูนเบา ๆ */
@@ -3293,17 +3292,15 @@ const STYLES = `
 /* ----- รายการร้านในโดนัท: กระชับขึ้น ----- */
 .berry-donut-list { gap: 0; }
 .berry-donut-row { padding: 5px 10px; min-height: 34px; gap: 8px; }
-.berry-donut-row.is-active { background-image: linear-gradient(135deg, #FFF0EC 0%, #FFE9E2 100%); box-shadow: var(--berry-shadow-sm); }
-.berry-donut-row:not(:last-child) { border-bottom-color: #F1F3F5; }
-.berry-donut-row.is-active { border-bottom-color: rgba(255, 114, 76, 0.35); }
+.berry-donut-row.is-active { background-image: linear-gradient(135deg, #FFF0EC 0%, #FFE9E2 100%); }
+.berry-donut-row:not(:last-child):not(.is-active) { border-bottom-color: #F1F3F5; }
 
 /* ----- pagination อยู่กึ่งกลางใต้รายการ ----- */
-.berry-pager { align-items: center; margin-top: 8px; padding-top: 10px; }
+.berry-donut { width: 100%; }
+.berry-pager { align-items: center; width: 100%; margin-top: 8px; padding-top: 10px; }
 .berry-pager-info { text-align: center; }
 .berry-pager-controls { justify-content: center; width: 100%; }
-.berry-pager-btn { box-shadow: var(--berry-shadow-sm); }
-.berry-pager-btn.active { background-image: var(--berry-orange-grad); box-shadow: 0 2px 6px rgba(255, 114, 76, 0.35); }
-.berry-pager-btn:disabled { box-shadow: none; }
+.berry-pager-btn.active { background-image: var(--berry-orange-grad); box-shadow: none; }
 @media (max-width: 600px) { .berry-donut-row { padding: 5px 8px; } }
 @media (prefers-reduced-motion: reduce) { .berry-btn.primary, .berry-chip, .berry-pager-btn { transition: none; } }
 `;
