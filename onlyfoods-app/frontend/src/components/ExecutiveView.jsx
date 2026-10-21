@@ -317,11 +317,9 @@ async function callApi(url, options = {}) {
         data = null;
     }
     if (!response.ok) {
-        if (response.status === 404 || response.status === 405) {
-            throw new Error('ยังไม่มี endpoint นี้ในหลังบ้าน — ให้เพิ่มโค้ดจากไฟล์ main_additions.py ลงใน main.py ก่อน');
-        }
+        
         const detail = data && (data.detail || data.message);
-        throw new Error(typeof detail === 'string' ? detail : `ทำรายการไม่สำเร็จ (HTTP ${response.status})`);
+        throw new Error(typeof detail === 'string' ? detail :'ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
     }
     return data;
 }
@@ -5920,9 +5918,7 @@ function StoreAccountsPage({ ctx }) {
             <div>
               <strong style={{ color: T.ink }}>ยังใช้งานหน้านี้ไม่ได้</strong>
               <p style={{ ...bodyStyle, margin: '6px 0 0' }}>{loadError}</p>
-              <p style={captionStyle}>
-                เปิดไฟล์ main_additions.py แล้วคัดลอกส่วน &quot;บัญชีร้านค้า&quot; ไปวางต่อท้าย main.py จากนั้นรัน backend ใหม่
-              </p>
+              
             </div>
           </div>
         </Card>)}
