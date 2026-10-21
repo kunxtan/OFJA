@@ -3115,7 +3115,7 @@ function StoreSalesPage({ ctx }) {
     const effectiveStart = customRange ? customStart : toISODate(new Date(new Date(`${anchor}T00:00:00`).setDate(new Date(`${anchor}T00:00:00`).getDate() - days + 1)));
     const effectiveEnd = customRange ? customEnd : anchor;
     const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
-    const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1
+    const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || `${thaiDate(customStart)} – ${thaiDate(customEnd)}` : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
     const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบเมื่อวาน' : `เทียบ ${days} วันก่อนหน้า`;
     const exportDateBounds = customRange
     ? customPeriodBounds(customStart, customEnd)
