@@ -1381,6 +1381,7 @@ const returnFoodCourtToAuto = async () => {
         search: search.trim().toLowerCase(),
         pushToast,
         ask,
+        askForceClose,
         reloadStores: loadStores,
         reloadOrders: loadOrders,
         focusStoreId,
@@ -4426,7 +4427,7 @@ const storeManageStatusKey = (s) => s.ContractState === 'EXPIRED' ? 'expired'
     : 'closed';
 // ===== จัดการร้านค้า: เพิ่ม แก้ไข เปิด/ปิด ระงับ และลบร้าน =====
 function StoreManagePage({ ctx }) {
-    const { API, user, stores, search, pushToast, ask, reloadStores, focusStoreId, clearFocusStore, navigateTo } = ctx;
+    const { API, user, stores, search, pushToast, ask, askForceClose, reloadStores, focusStoreId, clearFocusStore, navigateTo } = ctx;
     const [details, setDetails] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [mode, setMode] = useState('create');
