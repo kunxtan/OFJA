@@ -1819,7 +1819,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         Math.round(report.now.sales),
         report.now.cancelRate === null
             ? 'N/A'
-            : `${report.now.cancelRate.toFixed(2)}%`
+            : `${report.now.cancelRate.toFixed(1)}%`
     ];
 
     // 1 วัน: แสดงข้อมูลแยกร้าน
@@ -1842,7 +1842,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                 Math.round(s.sales),
                 s.cancelRate === null
                     ? 'N/A'
-                    : `${s.cancelRate.toFixed(2)}%`
+                    : `${s.cancelRate.toFixed(1)}%`
             ]),
 
             summaryRow
@@ -1866,7 +1866,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
             Math.round(summary.sales),
             summary.cancelRate === null
                 ? 'N/A'
-                : `${summary.cancelRate.toFixed(2)}%`
+                : `${summary.cancelRate.toFixed(1)}%`
         ];
     });
 
@@ -1899,7 +1899,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
             ['ตัวชี้วัด', 'ค่า'], ['ช่วงข้อมูล', periodLabel], ['ออกรายงานเมื่อ', nowStamp()],
             ['ออเดอร์สำเร็จ', report.now.completedCount], ['ออเดอร์ยกเลิก', report.now.cancelledCount],
             ['ยอดขายก่อนหักยกเลิก (บาท)', Math.round(report.now.grossSales)], ['ยอดขายสุทธิ (บาท)', Math.round(report.now.sales)],
-            ['อัตราการยกเลิก (%)', report.now.cancelRate === null ? 'N/A' : Number(report.now.cancelRate.toFixed(2))],
+            ['อัตราการยกเลิก (%)', report.now.cancelRate === null ? 'N/A' : Number(report.now.cancelRate.toFixed(1))],
            ['ยอดเฉลี่ยต่อออเดอร์ (บาท)', Number(report.now.avgOrder.toFixed(2))],
             ['ช่วงเวลาขายดี', peakTime],
             ['จำนวนออเดอร์ช่วงเวลาขายดี', report.peakHour === null ? '-' : report.peakOrderCount]
@@ -1907,7 +1907,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
 
         const storeRows = [
             ['ร้านค้า', 'ออเดอร์สำเร็จ', 'ออเดอร์ยกเลิก', 'ยอดขายก่อนหักยกเลิก (บาท)', 'ยอดขายสุทธิ (บาท)', 'อัตราการยกเลิก (%)'],
-            ...report.storeRows.map(s => [s.StoreName, s.completedCount, s.cancelledCount, Math.round(s.grossSales), Math.round(s.sales), s.cancelRate === null ? 'N/A' : Number(s.cancelRate.toFixed(2))])
+            ...report.storeRows.map(s => [s.StoreName, s.completedCount, s.cancelledCount, Math.round(s.grossSales), Math.round(s.sales), s.cancelRate === null ? 'N/A' : Number(s.cancelRate.toFixed(1))])
         ];
 
         const timelineRows = [[effectiveDays === 1 ? 'ช่วงเวลา' : 'วันที่', 'ออเดอร์สำเร็จ', 'ออเดอร์ยกเลิก', 'ยอดขายก่อนหักยกเลิก (บาท)', 'ยอดขายสุทธิ (บาท)', 'อัตราการยกเลิก (%)']];
@@ -1916,13 +1916,13 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
             for (let h = 0; h < 24; h += 1) {
                 const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && at.getHours() === h; });
                 const summary = summarize(bucketOrders);
-                timelineRows.push([`${pad2(h)}:00`, summary.completedCount, summary.cancelledCount, Math.round(summary.grossSales), Math.round(summary.sales), summary.cancelRate === null ? 'N/A' : Number(summary.cancelRate.toFixed(2))]);
+                timelineRows.push([`${pad2(h)}:00`, summary.completedCount, summary.cancelledCount, Math.round(summary.grossSales), Math.round(summary.sales), summary.cancelRate === null ? 'N/A' : Number(summary.cancelRate.toFixed(1))]);
             }
         } else {
             report.buckets.forEach(b => {
                 const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && b.key === toISODate(at); });
                 const summary = summarize(bucketOrders);
-                timelineRows.push([b.label, summary.completedCount, summary.cancelledCount, Math.round(summary.grossSales), Math.round(summary.sales), summary.cancelRate === null ? 'N/A' : Number(summary.cancelRate.toFixed(2))]);
+                timelineRows.push([b.label, summary.completedCount, summary.cancelledCount, Math.round(summary.grossSales), Math.round(summary.sales), summary.cancelRate === null ? 'N/A' : Number(summary.cancelRate.toFixed(1))]);
             });
         }
 
@@ -2187,7 +2187,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
             {i > 0 && ', '}
             <button type="button" onClick={() => ctx.navigateTo('store-sales', s.StoreId)} style={{ border: 'none', background: 'transparent', padding: 0, color: T.down, fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
               {s.StoreName}
-            </button> ({s.cancelRate.toFixed(2)}%)
+            </button> ({s.cancelRate.toFixed(1)}%)
           </span>))}
         </AlertBanner>)}
         <div style={{ overflowX: 'auto' }}>
@@ -2228,7 +2228,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                       </span>)}
                   </td>
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
-                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : isCancelAlert(s.cancelRate) ? <Badge tone="danger">{s.cancelRate.toFixed(2)}%</Badge> : `${s.cancelRate.toFixed(1)}%`}</td>
+                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : isCancelAlert(s.cancelRate) ? <Badge tone="danger">{s.cancelRate.toFixed(1)}%</Badge> : `${s.cancelRate.toFixed(1)}%`}</td>
                   <td style={tdStyle}>
                    <Badge tone={s.IsDeleted ? 'neutral' : s.ContractState === 'EXPIRED' || s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
                       {s.IsDeleted ? 'ลบแล้ว' : s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
@@ -2339,14 +2339,14 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                 </tr>;
             })}
             <tr style={{ ...trStyle, fontWeight: 700, background: T.bg }}>
-                <td style={tdStyle}>สรุปภาพรวม</td><td style={tdRightStyle}>{money(report.now.completedCount)}</td><td style={tdRightStyle}>{money(report.now.cancelledCount)}</td><td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td><td style={tdRightStyle}>{money(report.now.sales)} บาท</td><td style={tdRightStyle}>{report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(2)}%`}</td>
+                <td style={tdStyle}>สรุปภาพรวม</td><td style={tdRightStyle}>{money(report.now.completedCount)}</td><td style={tdRightStyle}>{money(report.now.cancelledCount)}</td><td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td><td style={tdRightStyle}>{money(report.now.sales)} บาท</td><td style={tdRightStyle}>{report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`}</td>
             </tr>
         </> : <>
             {report.storeRows.slice(0, 6).map(s => <tr key={s.StoreId} style={trStyle}>
                 <td style={tdStyle}>{s.StoreName}</td><td style={tdRightStyle}>{money(s.completedCount)}</td><td style={tdRightStyle}>{money(s.cancelledCount)}</td><td style={tdRightStyle}>{money(s.grossSales)} บาท</td><td style={tdRightStyle}>{money(s.sales)} บาท</td><td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : `${s.cancelRate.toFixed(1)}%`}</td>
             </tr>)}
             {exportPreview === 'csv' && <tr style={{ ...trStyle, fontWeight: 700, background: T.bg }}>
-                <td style={tdStyle}>สรุปภาพรวม</td><td style={tdRightStyle}>{money(report.now.completedCount)}</td><td style={tdRightStyle}>{money(report.now.cancelledCount)}</td><td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td><td style={tdRightStyle}>{money(report.now.sales)} บาท</td><td style={tdRightStyle}>{report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(2)}%`}</td>
+                <td style={tdStyle}>สรุปภาพรวม</td><td style={tdRightStyle}>{money(report.now.completedCount)}</td><td style={tdRightStyle}>{money(report.now.cancelledCount)}</td><td style={tdRightStyle}>{money(report.now.grossSales)} บาท</td><td style={tdRightStyle}>{money(report.now.sales)} บาท</td><td style={tdRightStyle}>{report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`}</td>
             </tr>}
         </>}
     </tbody>
@@ -3142,11 +3142,11 @@ function StoreSalesPage({ ctx }) {
     const salesTimelineRows = !report ? [] : (customRange ? effectiveDays : days) === 1
     ? Array.from({ length: 24 }, (_, h) => {
         const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && at.getHours() === h; }), summary = summarize(bucketOrders);
-        return { key: `h${h}`, label: `${pad2(h)}:00`, completedCount: summary.completedCount, cancelledCount: summary.cancelledCount, grossSales: summary.grossSales, netSales: summary.sales, cancelRate: summary.cancelRate === null ? 'N/A' : `${summary.cancelRate.toFixed(2)}%` };
+        return { key: `h${h}`, label: `${pad2(h)}:00`, completedCount: summary.completedCount, cancelledCount: summary.cancelledCount, grossSales: summary.grossSales, netSales: summary.sales, cancelRate: summary.cancelRate === null ? 'N/A' : `${summary.cancelRate.toFixed(1)}%` };
     })
     : (report?.buckets || []).map(b => {
         const bucketOrders = report.current.filter(o => { const at = parseOrderDate(o.CreatedAt); return at && b.key === toISODate(at); }), summary = summarize(bucketOrders);
-        return { key: b.key, label: b.label, completedCount: summary.completedCount, cancelledCount: summary.cancelledCount, grossSales: summary.grossSales, netSales: summary.sales, cancelRate: summary.cancelRate === null ? 'N/A' : `${summary.cancelRate.toFixed(2)}%` };
+        return { key: b.key, label: b.label, completedCount: summary.completedCount, cancelledCount: summary.cancelledCount, grossSales: summary.grossSales, netSales: summary.sales, cancelRate: summary.cancelRate === null ? 'N/A' : `${summary.cancelRate.toFixed(1)}%` };
     });
     const salesExportRows = () => [ [(customRange ? effectiveDays : days) === 1
         ? 'ช่วงเวลา'
@@ -3382,7 +3382,7 @@ function StoreSalesPage({ ctx }) {
           </Card>
 
           {isCancelAlert(report.now.cancelRate) && (<AlertBanner style={{ marginBottom: '16px' }}>
-            อัตรายกเลิกของร้านนี้ {report.now.cancelRate.toFixed(2)}% เกินเกณฑ์ {CANCEL_ALERT_RATE}% ในช่วงที่เลือก ({money(report.now.cancelledCount)} จาก {money(report.now.cancelledCount + report.now.completedCount)} ออเดอร์)
+            อัตรายกเลิกของร้านนี้ {report.now.cancelRate.toFixed(1)}% เกินเกณฑ์ {CANCEL_ALERT_RATE}% ในช่วงที่เลือก ({money(report.now.cancelledCount)} จาก {money(report.now.cancelledCount + report.now.completedCount)} ออเดอร์)
           </AlertBanner>)}
 
           <div className="of-kpi-hero">
