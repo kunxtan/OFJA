@@ -509,7 +509,7 @@ function KpiCard({ label, value, unit, delta, deltaLabel, deltaSuffix = '%', hin
 
       {showComparison ? (<div style={{position: 'relative',zIndex:2,marginTop:small? '10px': '14px',display: 'inline-flex',alignItems: 'center',gap: '6px',alignSelf: 'flex-start',padding: '5px 10px',borderRadius: '999px',fontSize: '12.5px',fontWeight:700,background:hasDelta&&delta===0?(solid? 'rgba(255,255,255,.18)': '#F1F3F7'):positive?(solid? 'rgba(220,252,231,.96)':T.greenSoft):(solid? 'rgba(254,226,226,.96)':T.redSoft),color:hasDelta&&delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
          <Icon name={hasDelta && delta === 0 ? 'arrowRight' : rising ? 'arrowUp' : 'arrowDown'} size={13}/>
-          <>{delta < 0 ? '-' : ''}{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}{deltaSuffix}</>
+                    <>{Number.isInteger(Math.abs(delta)) ? Math.abs(delta).toFixed(0) : Math.abs(delta).toFixed(1)}{deltaSuffix}</>
           {<span style={{fontWeight:500,opacity:solid&&delta===0?0.85:1,color:delta===0?(solid? '#FFFFFF':T.muted):positive?T.up:T.down}}>
             {deltaLabel}
           </span>}
