@@ -2124,7 +2124,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     <button
                       onClick={handleReportClick}
                       style={{flex: 1, padding: "11px", border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`, borderRadius: "12px",
-                        background: hasReportedIssue ? COLORS.navy : "#FFF0ED", color: hasReportedIssue ? COLORS.navy : COLORS.red, fontSize: "13px",
+                        background: hasReportedIssue ? COLORS.navy : "#FFF0ED", color: hasReportedIssue ? COLORS.white : COLORS.red, fontSize: "13px",
                         fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
                       }}
                     >
