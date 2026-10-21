@@ -1792,7 +1792,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div>
                   <h2 style={{ margin: 0 }}>ภาพรวมศูนย์อาหาร</h2>
                   <div style={{ color: 'var(--berry-text-muted)', fontSize: 13 }}>
-                    ยอดขายและอัตรายกเลิกของ{trendDays === 'today' ? 'วันนี้' : trendDays === 'month' ? `เดือน ${fmtThaiMonth(dashMonth)}` : `${trendDays} วันล่าสุด`}
+                    ยอดขายและอัตรายกเลิกของ {trendDays === 'today' ? 'วันนี้' : trendDays === 'month' ? `เดือน ${fmtThaiMonth(dashMonth)}` : `${trendDays} วันล่าสุด`}
                   </div>
                 </div>
                 {lastUpdated && (
@@ -1882,7 +1882,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div className="berry-panel-header">
                   <div>
                     <h3 style={{ margin: 0 }}>ร้านค้าที่ต้องเฝ้าระวัง</h3>
-                    <div className="berry-panel-caption">อัตรายกเลิกในช่วงเวลาที่เลือกด้านบน · เรียงจากสูงไปต่ำ</div>
+                    <div className="berry-panel-caption">อัตรายกเลิกในช่วงเวลาที่เลือกด้านบน</div>
                   </div>
                   <span className="berry-link" onClick={() => setPage('cancel')}>ดูการวิเคราะห์ทั้งหมด →</span>
                 </div>
@@ -2207,7 +2207,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     <div>
                       <h3 style={{ margin: 0 }}>Cancellation Rate by Store</h3>
                       <div className="berry-panel-caption">
-                        {showStoreCol ? 'ทุกร้านค้า' : `เฉพาะร้าน ${cancelStoreName}`} · {cancelPeriodLabel} · แถบสีอ่อนคือช่วงเกณฑ์ เส้นดำคือเกณฑ์แจ้งเตือนที่ {RATE_ALERT}%
+                        {showStoreCol ? 'ทุกร้านค้า' : `เฉพาะร้าน ${cancelStoreName}`} · {cancelPeriodLabel}
                       </div>
                     </div>
                   </div>
@@ -2229,7 +2229,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <div className="berry-panel-header">
                     <div>
                       <h3 style={{ margin: 0 }}>Cancellation Alert</h3>
-                      <div className="berry-panel-caption">อิงข้อมูล {ALERT_WINDOW_DAYS} วันย้อนหลัง · แจ้งเมื่อเกิน {RATE_ALERT}%</div>
+                      <div className="berry-panel-caption">อิงข้อมูล {ALERT_WINDOW_DAYS} วันย้อนหลัง</div>
                     </div>
                   </div>
                   {alertStores.length === 0 ? (
@@ -2260,7 +2260,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div className="berry-panel-header">
                   <div>
                     <h3 style={{ margin: 0 }}>รายงานออเดอร์ยกเลิก</h3>
-                    <div className="berry-panel-caption">{cancelStoreName} · {cancelPeriodLabel} · กดที่แถวเพื่อดูรายละเอียดออเดอร์</div>
+                    <div className="berry-panel-caption">{cancelStoreName} · {cancelPeriodLabel}</div>
                   </div>
                   <Badge tone={rowsAll.length ? 'bad' : 'ok'}>{fmtMoney(rowsAll.length)} ออเดอร์</Badge>
                 </div>
@@ -2411,7 +2411,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   ))}
                 </div>
                 <div className="berry-legend" style={{ marginTop: 12 }}>
-                  <span><i style={{ background: '#FF4D4F' }}></i>แถวสีแดง: ยกเลิกออเดอร์</span>
+                  <span><i style={{ background: '#FF4D4F' }}></i>แถวสีแดง: ยกเลิกออเดอร์ (Cancelled)</span>
                   <span><i style={{ background: '#00C853' }}></i>แถวสีเขียว: ออเดอร์สำเร็จ (Completed)</span>
                 </div>
               </div>
