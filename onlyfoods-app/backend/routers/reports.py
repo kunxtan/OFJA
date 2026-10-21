@@ -8,6 +8,7 @@ from auth import STORE_SCOPED, require_role
 from db import get_db
 from errors import DomainError
 from shapes import ORDER_SELECT, redact_order_contacts, shape_order
+from utils import CONTRACT_ACTIVE, contract_state
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -32,11 +33,12 @@ def get_dashboard(store_id: Optional[int] = None, user=Depends(require_role(*_RE
     (ใช้ยอดรับจริง ไม่ใช่ TotalAmount เพราะหลังเปลี่ยนเมนูถูกลง TotalAmount ลดก่อนคืนเงินจริง ทำให้ net > gross)"""
     sid = _scope_store(user, store_id)
     sql = """
-        SELECT s.StoreId, s.StoreName, s.IsOpen, s.IsSuspended,
+        SELECT s.StoreId, s.StoreName, s.IsOpen, s.IsSuspended ,  c.StartDate, c.EndDate ,
                COUNT(o.OrderId) AS total_orders,
                COALESCE(SUM(COALESCE(n.PaidAmount, o.TotalAmount)), 0) AS gross_sales,
                COALESCE(SUM(COALESCE(n.NetAmount, o.TotalAmount)), 0) AS net_sales
         FROM Store s
+        LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
         LEFT JOIN `Order` o ON o.StoreId = s.StoreId
              AND o.StatusId IN (SELECT StatusId FROM OrderStatus WHERE StatusCode IN ('COMPLETED', 'NO_SHOW'))
         LEFT JOIN v_order_net n ON n.OrderId = o.OrderId
@@ -45,10 +47,16 @@ def get_dashboard(store_id: Optional[int] = None, user=Depends(require_role(*_RE
     if sid:
         sql += " WHERE s.StoreId = %s"
         params.append(sid)
-    sql += " GROUP BY s.StoreId, s.StoreName, s.IsOpen, s.IsSuspended ORDER BY s.StoreId"
+    sql += " GROUP BY s.StoreId, s.StoreName, s.IsOpen, s.IsSuspended, c.StartDate, c.EndDate ORDER BY s.StoreId"
     with db.cursor() as cur:
         cur.execute(sql, params)
-        return cur.fetchall()
+        rows = cur.fetchall()
+    for r in rows:
+        # เปิดจริงก็ต่อเมื่อร้านกดเปิดไว้ และสัญญามีผลอยู่ (เหมือน shape_store ใน /api/stores)
+        state = contract_state(r.pop("StartDate"), r.pop("EndDate"))
+        r["ContractState"] = state
+        r["IsOpen"] = int(bool(r["IsOpen"]) and state == CONTRACT_ACTIVE)
+    return rows
 
 
 @router.get("/reports/cancellations")
