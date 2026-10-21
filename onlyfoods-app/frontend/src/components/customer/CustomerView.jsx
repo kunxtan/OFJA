@@ -2101,7 +2101,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       type="button"
                       onClick={handleReportClick}
                       style={{width: "100%", marginTop: "10px", padding: "12px", minHeight: "44px", border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
-                        borderRadius: "12px", background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED", color: hasReportedIssue ? COLORS.navy : COLORS.red,
+                        borderRadius: "12px", background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED", color: hasReportedIssue ? COLORS.white : COLORS.red,
                         fontSize: "13px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit",
                       }}
                     >
