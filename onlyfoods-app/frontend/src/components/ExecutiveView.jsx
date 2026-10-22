@@ -3275,7 +3275,7 @@ function StoreSalesPage({ ctx }) {
         ['ออเดอร์สำเร็จ', report.now.completedCount],
         ['ออเดอร์ยกเลิก', report.now.cancelledCount],
         ['อัตราการยกเลิก (%)', report.now.cancelRate === null  ? 'N/A' : Number(report.now.cancelRate.toFixed(1)) ],
-        ['คะแนนรีวิวเฉลี่ย', Number(exportReviewAverage.toFixed(1))],
+        ['คะแนนรีวิวเฉลี่ย', exportReviews.length ? Number(exportReviewAverage.toFixed(1)) : 'N/A'],
         ['จำนวนรีวิว', exportReviews.length],
         ['จำนวนรายงานปัญหา', exportIssues.length]
     ];
