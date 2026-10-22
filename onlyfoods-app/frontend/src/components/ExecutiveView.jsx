@@ -1388,6 +1388,30 @@ const returnFoodCourtToAuto = async () => {
             searchPlaceholder: 'ค้นหาประวัติการดำเนินการ...'
         }
     }[activeMenu];
+        // มือถือ: ใส่ชื่อหัวคอลัมน์ (data-label) ให้ทุกช่องตาราง เพื่อให้ CSS แสดงตารางเป็นการ์ดได้
+    useEffect(() => {
+        const root = document.getElementById('executive-main-scroll');
+        if (!root) return;
+        let frame = 0;
+        const labelCells = () => {
+            frame = 0;
+            root.querySelectorAll('table').forEach((table) => {
+                const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+                table.querySelectorAll('tbody tr').forEach((tr) => {
+                    let col = 0;
+                    [...tr.children].forEach((cell) => {
+                        const label = cell.colSpan > 1 ? '' : (heads[col] || '');
+                        if (cell.getAttribute('data-label') !== label) cell.setAttribute('data-label', label);
+                        col += cell.colSpan || 1;
+                    });
+                });
+            });
+        };
+        labelCells();
+        const observer = new MutationObserver(() => { if (!frame) frame = requestAnimationFrame(labelCells); });
+        observer.observe(root, { childList: true, subtree: true });
+        return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
+    }, []);
         const navigateTo = useCallback((menuId, storeId = '') => {
         setFocusStoreId(storeId ? String(storeId) : '');
         setActiveMenu(menuId);
@@ -1490,6 +1514,31 @@ const returnFoodCourtToAuto = async () => {
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-thumb { background: #D6D8E4; border-radius: 999px; }
         ::-webkit-scrollbar-track { background: transparent; }
+        
+        /* ===== จอเล็ก (iPad / มือถือ) ===== */
+        @media (max-width: 1200px) {
+          #executive-main-scroll table { min-width: 0 !important; }
+          #executive-main-scroll th, #executive-main-scroll td { padding: 12px 10px !important; }
+        }
+        @media (max-width: 640px) {
+          .of-brand { min-width: 0 !important; flex: 0 1 auto !important; overflow: hidden; }
+          .of-brand > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px !important; }
+
+          #executive-main-scroll table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+          #executive-main-scroll table, #executive-main-scroll tbody { display: block; width: 100% !important; margin-top: 8px !important; }
+          #executive-main-scroll tbody tr { display: block; border: 1px solid ${T.line}; border-radius: 12px; padding: 4px 14px; margin-bottom: 10px; background: ${T.surface} !important; }
+          #executive-main-scroll tbody td { display: grid; grid-template-columns: minmax(0, 38%) minmax(0, 1fr); column-gap: 12px; align-items: center; justify-items: end; width: auto !important; min-width: 0 !important; padding: 9px 0 !important; border: 0 !important; border-bottom: 1px dashed ${T.line} !important; text-align: right !important; white-space: normal !important; overflow-wrap: anywhere; }
+          #executive-main-scroll tbody td:last-child { border-bottom: 0 !important; }
+          #executive-main-scroll tbody td::before { content: attr(data-label); grid-column: 1; grid-row: 1 / span 9; justify-self: start; text-align: left; font-size: 12px; font-weight: 600; color: ${T.muted}; }
+          #executive-main-scroll tbody td > * { grid-column: 2; }
+          #executive-main-scroll tbody td[data-label=""] { display: block; text-align: left !important; }
+          #executive-main-scroll tbody td[data-label=""]::before { display: none; }
+
+          .of-store-status-grid { grid-template-columns: 52px minmax(0, 1fr) !important; row-gap: 16px; }
+          .of-store-status-nums { grid-column: 1 / -1; padding-right: 0 !important; }
+          .of-store-status-btn { margin-top: 12px !important; width: 100%; }
+          .of-store-status-btn > button { width: 100%; justify-content: center; }
+        }
       `}</style>
       <div style={{ ...shellStyle, fontFamily: FONT_STACK }}>
 
@@ -1498,7 +1547,7 @@ const returnFoodCourtToAuto = async () => {
             <Icon name="menu" size={19} color={T.primary}/>
           </button>
 
-          <div style={{ ...brandStyle, width: isNarrow ? 'auto' : brandStyle.width }}>
+          <div className="of-brand" style={{ ...brandStyle, width: isNarrow ? 'auto' : brandStyle.width }}>
             <div style={brandTitleStyle}>
               <span style={{ fontSize: '20px', lineHeight: 1 }}>🍽️</span>
               <span>Only Foods</span>
@@ -1529,7 +1578,7 @@ const returnFoodCourtToAuto = async () => {
 
           {isPhone && (<div style={{...courtPillStyle,padding: '6px 9px',fontSize: '11.5px',background:foodCourtOpen?T.greenSoft:T.redSoft,color:foodCourtOpen?T.up:T.down}}>
               <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor' }}/>
-              {foodCourtOpen ? 'ศูนย์อาหารเปิด' : 'ศูนย์อาหารปิด'}
+              {foodCourtOpen ? 'เปิด' : 'ปิด'}
             </div>)}
 
           <div style={{ position: 'relative' }}>
@@ -2024,7 +2073,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
             minHeight: '132px',
             padding: '18px 20px'
           }}>
-            <div style={{
+            <div className="of-store-status-grid" style={{
               display: 'grid',
               gridTemplateColumns: '52px minmax(0, 0.9fr) minmax(0, 1.6fr)',
               columnGap: 'clamp(8px, 1.5vw, 16px)',
@@ -2061,7 +2110,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                   </div>
 
               {/* Status numbers — กลางการ์ดยาวไปทางขวา */}
-              <div style={{
+             <div className="of-store-status-nums" style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
                 gap: 'clamp(8px, 2vw, 24px)',
@@ -2126,7 +2175,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
 
             </div>
 
-            <div style={{ marginTop: '-18px' }}>
+            <div className="of-store-status-btn" style={{ marginTop: '-18px' }}>
               <Button
                 variant="danger"
                 icon="store"
