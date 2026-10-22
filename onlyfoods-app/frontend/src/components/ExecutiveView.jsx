@@ -152,7 +152,7 @@ const sumAmount = (orders) => orders.reduce((s, o) => s + Number(o.TotalAmount |
 function changePct(current, previous) {
     const c = Number(current) || 0;
     const p = Number(previous) || 0;
-    if (p === 0) return null;
+        if (p === 0) return c === 0 ? 0 : null;
         return ((c - p) / p) * 100;
 }
 function summarize(orders) {
@@ -815,7 +815,7 @@ function StoreDonutChart({ rows }) {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '9px', minWidth: 0, flex: '1 1 240px', width: '100%', overflow: 'hidden' }}>
         {list.map((r, i) => {
-            const share = i === list.length - 1 ? 100 - list.slice(0, -1).reduce((s, x) => s + +(((+x.sales || 0) / total) * 100).toFixed(1), 0) : ((+r.sales || 0) / total) * 100;
+            const share = ((+r.sales || 0) / total) * 100;
             const active = hoveredStore && String(hoveredStore.StoreId ?? hoveredStore.StoreName) === String(r.StoreId ?? r.StoreName);
             return (<div key={r.StoreId ?? r.StoreName} onMouseEnter={() => setHoveredStore(r)} onMouseLeave={() => setHoveredStore(null)} style={{ display: 'grid', gridTemplateColumns: '12px minmax(0, 1fr) minmax(46px, auto)', gap: '8px', alignItems: 'center', width: '100%', minWidth: 0, padding: '3px 4px', borderRadius: '6px', background: active ? T.primarySoft : 'transparent', cursor: 'pointer' }}>
               <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: COLORS[i % COLORS.length] }}/>
