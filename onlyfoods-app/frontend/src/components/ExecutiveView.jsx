@@ -3263,7 +3263,7 @@ function StoreSalesPage({ ctx }) {
         pushToast('บันทึกไฟล์ CSV เรียบร้อยแล้ว');
     };
     const handleXlsx = () => {
-    if (!report || !store) return;
+    if (!report || !store) return
 
     const summaryRows = [
         ['ตัวชี้วัด', 'ค่า'],
@@ -3881,27 +3881,9 @@ function StoreFormModal({ open, mode, form, setForm, errors, setErrors, onClose,
     const [cropFileName, setCropFileName] = useState('');
     const [showPassword, setShowPassword] = useState(false);
 
-    const calculateContractEnd = (startISO, duration) => {
-        if (!startISO || !duration || duration === 'custom')
-            return '';
-        const [year, month, day] = startISO.split('-').map(Number);
-        if (!year || !month || !day)
-            return '';
-        const monthsToAdd = {
-            '6m': 6,
-            '1y': 12,
-            '2y': 24,
-            '3y': 36
-        }[duration];
-        if (!monthsToAdd)
-            return '';
-
-        const targetMonthIndex = (month - 1) + monthsToAdd;
-        const targetYear = year + Math.floor(targetMonthIndex / 12);
-        const targetMonth = targetMonthIndex % 12;
-        const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
-        const safeDay = Math.min(day, lastDay);
-        return `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+      const calculateContractEnd = (startISO, duration) => {
+        const months = { '6m': 6, '1y': 12, '2y': 24, '3y': 36 }[duration];
+        return contractEndISO(startISO, months);
     };
 
     const update = (key) => (e) => {
@@ -4992,13 +4974,17 @@ const CONTRACT_ACTION_LABEL = {
 };
 const CONTRACT_REASON_MIN = 5;
 
-function addYearsMinusOneDayISO(startISO, years = 1) {
+// วันสิ้นสุดสัญญา N เดือน (ทุกปุ่มใช้ตัวนี้ ให้ตรงกับ backend)
+// เช่น 2026-10-22 + 12 เดือน -> 2027-10-21
+function contractEndISO(startISO, months) {
     const [y, m, d] = String(startISO || '').split('-').map(Number);
-    if (!y || !m || !d) return '';
-    const lastDay = new Date(y + years, m, 0).getDate();
-    const target = new Date(y + years, m - 1, Math.min(d, lastDay));
-    target.setDate(target.getDate() - 1);
-    return toISODate(target);
+    if (!y || !m || !d || !months) return '';
+    const lastDay = new Date(y, m - 1 + months + 1, 0).getDate();
+    if (d > lastDay) return toISODate(new Date(y, m - 1 + months, lastDay));
+    return toISODate(new Date(y, m - 1 + months, d - 1));
+}
+function addYearsMinusOneDayISO(startISO, years = 1) {
+    return contractEndISO(startISO, years * 12);
 }
 function minusOneDayISO(iso) {
     const [y, m, d] = String(iso || '').split('-').map(Number);
@@ -5387,7 +5373,7 @@ function ContractTrackingPage({ ctx }) {
           <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', margin: '-4px 0 16px' }}>
             {isEdit
                 ? [quickChip('+6 เดือน', addMonthsToISO(oldEnd, 6)), quickChip('+1 ปี', addMonthsToISO(oldEnd, 12)), quickChip('คืนค่าเดิม', oldEnd), quickChip('ตัดสัญญาทันที', yesterday)]
-                : [quickChip('6 เดือน', minusOneDayISO(addMonthsToISO(startDate, 6))), quickChip('1 ปี', addYearsMinusOneDayISO(startDate, 1)), quickChip('2 ปี', addYearsMinusOneDayISO(startDate, 2))]}
+                : [quickChip('6 เดือน', contractEndISO(startDate, 6)), quickChip('1 ปี', addYearsMinusOneDayISO(startDate, 1)), quickChip('2 ปี', addYearsMinusOneDayISO(startDate, 2))]}
           </div>
 
           <Field label="เหตุผล / อ้างอิงเอกสาร" required
