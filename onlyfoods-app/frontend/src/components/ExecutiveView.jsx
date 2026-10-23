@@ -908,7 +908,8 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         return true;
     });
     // [CROSS-NAV] เก็บร้านที่ผู้บริหารคลิกมาจากอีกหน้า เพื่อเปิดรายละเอียดร้านเดิมต่อเนื่อง
-        const [focusPeriod, setFocusPeriod] = useState(null); // ช่วงเวลาที่ส่งต่อจากหน้าภาพรวมไปหน้าวิเคราะห์การยกเลิก
+    const [focusStoreId, setFocusStoreId] = useState('');
+    const [focusPeriod, setFocusPeriod] = useState(null); // ช่วงเวลาที่ส่งต่อจากหน้าภาพรวมไปหน้าวิเคราะห์การยกเลิก
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [search, setSearch] = useState('');
     const searchRef = useRef(null);
