@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // 💸 รายการคืนเงิน (ใช้ร่วมกันหลายหน้า)
 //  ยกเลิกออเดอร์ / เปลี่ยนเป็นเมนูที่ถูกกว่า -> "รอคืน" (ไม่นับเป็นรายได้แล้ว)
@@ -61,6 +61,69 @@ export function payoutLabel(r) {
   const kind = PAYOUT_KIND_TH[r.PayoutKind] || 'โอน';
   return `โอน · ${kind}${r.PayoutAccountNo ? ` ${r.PayoutAccountNo}` : ''}`;
 }
+
+const fmtBytes = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+// ช่องแนบสลิปโอน : ลากไฟล์มาวาง / คลิกเลือก -> การ์ดตัวอย่าง (เปลี่ยนรูป / นำออก) ; ไม่มีครอป (สลิปต้องเห็นครบทั้งใบ)
+function SlipPicker({ slip, onPick, onClear, disabled, error }) {
+  const inputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const openPicker = () => { if (!disabled) inputRef.current?.click(); };
+  return (
+    <div className="rf-slip-field">
+      <input ref={inputRef} type="file" accept="image/*" hidden disabled={disabled}
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onPick(f); }} />
+      {slip ? (
+        <div className="rf-slip-card">
+          <button type="button" className="rf-slip-thumb" onClick={() => window.open(slip.dataUrl, '_blank', 'noopener')} title="ดูรูปเต็ม">
+            <img src={slip.dataUrl} alt="สลิปโอนที่เลือก" />
+          </button>
+          <div className="rf-slip-meta">
+            <div className="name" title={slip.name}>{slip.name}</div>
+            <div className="sub">{fmtBytes(slip.size)}{slip.width ? ` · ${slip.width}×${slip.height}px` : ''}</div>
+            <div className="rf-slip-actions">
+              <button type="button" className="rf-mini-btn" onClick={openPicker} disabled={disabled}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 9l5 -5l5 5" /><path d="M12 4l0 12" /></svg>
+                เปลี่ยนรูป
+              </button>
+              <button type="button" className="rf-mini-btn danger" onClick={onClear} disabled={disabled}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></svg>
+                นำรูปออก
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div
+          className={`rf-dropzone ${dragging ? 'dragging' : ''} ${error ? 'has-error' : ''}`}
+          role="button" tabIndex={disabled ? -1 : 0} aria-label="แนบสลิปโอนเงินคืน"
+          onClick={openPicker}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); } }}
+          onDragOver={e => { e.preventDefault(); if (!disabled) setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f && !disabled) onPick(f); }}
+        >
+          <span className="rf-dropzone-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 8h.01" /><path d="M3 6a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-12z" />
+              <path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5" /><path d="M14 14l1 -1c.928 -.893 2.072 -.893 3 0l3 3" />
+            </svg>
+          </span>
+          <div className="rf-dropzone-title"><span>คลิกเพื่อเลือกสลิป</span> หรือลากไฟล์มาวางที่นี่</div>
+          <div className="rf-dropzone-hint">PNG, JPG, WEBP · ไม่เกิน {MAX_SLIP_MB} MB</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ขนาดรูป (แสดงในการ์ดตัวอย่าง) ; อ่านไม่ได้ก็ไม่เป็นไร
+const imageSize = (dataUrl) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+  img.onerror = () => resolve({});
+  img.src = dataUrl;
+});
 
 async function readError(res, fallback) {
   try {
@@ -412,14 +475,12 @@ function ConfirmRefundModal({ apiBase, isOwner, row: confirming, onClose, onDone
     return () => { alive = false; };
   }, [apiBase, confirming.RefundId, transferRequested]);
 
-  const pickSlip = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  const pickSlip = async (file) => {
     if (!file.type.startsWith('image/')) { setConfirmError('กรุณาเลือกไฟล์รูปภาพ'); return; }
     if (file.size > MAX_SLIP_MB * 1024 * 1024) { setConfirmError(`ไฟล์รูปต้องไม่เกิน ${MAX_SLIP_MB} MB`); return; }
     try {
-      setSlip({ name: file.name, dataUrl: await readFileAsDataUrl(file) });
+      const dataUrl = await readFileAsDataUrl(file);
+      setSlip({ name: file.name, size: file.size, dataUrl, ...(await imageSize(dataUrl)) });
       setConfirmError('');
     } catch (err) {
       setConfirmError(err.message);
@@ -471,11 +532,11 @@ function ConfirmRefundModal({ apiBase, isOwner, row: confirming, onClose, onDone
                 {payInfo.qr_image && (<><dt>QR</dt><dd><AuthImage apiBase={apiBase} className="rf-qr" src={payInfo.qr_image} alt="QR รับเงินของลูกค้า" /></dd></>)}
               </dl>
             )}
-            <label className="rf-slip">
-              <span>แนบสลิปโอน <b>(บังคับ)</b></span>
-              <input type="file" accept="image/*" onChange={pickSlip} disabled={busy} />
-              {slip && <img className="rf-slip-preview" src={slip.dataUrl} alt="สลิปโอนที่เลือก" />}
-            </label>
+            <div className="rf-slip">
+              <span className="rf-slip-label">แนบสลิปโอน <b>*</b></span>
+              <SlipPicker slip={slip} onPick={pickSlip} onClear={() => setSlip(null)} disabled={busy}
+                error={Boolean(confirmError) && !slip} />
+            </div>
           </div>
         )}
         <p className="rf-modal-note">
@@ -507,6 +568,26 @@ const RF_STYLES = `
 .rf-qr { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid ${C.border}; }
 .rf-slip { display: grid; gap: 6px; font-size: 13px; }
 .rf-slip-preview { max-width: 180px; max-height: 220px; border-radius: 8px; border: 1px solid ${C.border}; }
+.rf-slip-label { font-weight: 700; color: ${C.text}; }
+.rf-slip-label b { color: ${C.red}; }
+.rf-dropzone { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 14px; border: 2px dashed ${C.border}; border-radius: 14px; background: ${C.bg}; text-align: center; cursor: pointer; outline: none; transition: border-color 0.2s ease, background 0.2s ease; }
+.rf-dropzone:hover, .rf-dropzone:focus-visible, .rf-dropzone.dragging { border-color: ${C.primary}; background: ${C.primarySoft}; }
+.rf-dropzone.has-error { border-color: ${C.red}; }
+.rf-dropzone-icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; background: ${C.bg}; color: ${C.primary}; box-shadow: 0 4px 12px rgba(30,41,59,0.08); }
+.rf-dropzone-title { margin-top: 2px; font-size: 13px; color: ${C.text}; }
+.rf-dropzone-title span { color: ${C.primary}; font-weight: 700; }
+.rf-dropzone-hint { font-size: 12px; color: ${C.sub}; }
+.rf-slip-card { display: flex; gap: 12px; align-items: center; padding: 10px; border: 1px solid ${C.border}; border-radius: 14px; background: ${C.bg}; }
+.rf-slip-thumb { padding: 0; border: 0; background: #F1F5F9; border-radius: 10px; cursor: zoom-in; flex-shrink: 0; }
+.rf-slip-thumb img { display: block; width: 84px; height: 108px; object-fit: contain; border-radius: 10px; }
+.rf-slip-meta { min-width: 0; flex: 1; }
+.rf-slip-meta .name { font-size: 13.5px; font-weight: 700; color: ${C.text}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-slip-meta .sub { margin-top: 2px; font-size: 12px; color: ${C.sub}; }
+.rf-slip-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.rf-mini-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border: 1px solid ${C.border}; border-radius: 9px; background: ${C.bg}; font: inherit; font-size: 12.5px; font-weight: 600; color: ${C.text}; cursor: pointer; }
+.rf-mini-btn:hover:not(:disabled) { border-color: ${C.primary}; color: ${C.primaryDark}; }
+.rf-mini-btn.danger:hover:not(:disabled) { border-color: ${C.red}; color: ${C.red}; }
+.rf-mini-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .rf-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .rf-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
 .rf-stat { border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
