@@ -839,13 +839,27 @@ function SearchableStorePicker({ stores, value, onChange }) {
         const next = stores.find((s) => String(s.StoreId) === String(value));
         setQuery(next?.StoreName || '');
     }, [value, stores]);
-    const filtered = stores.filter((s) => String(s.StoreName || '').toLowerCase().includes(query.trim().toLowerCase()));
+        // all = ทั้งหมด (ค่าเริ่มต้น) | active = ยังไม่ถูกลบ | deleted = ถูกลบแล้ว
+    const [statusFilter, setStatusFilter] = useState('all');
+    const deletedCount = stores.filter((s) => Boolean(s?.IsDeleted)).length;
+    const statusOptions = [
+        ['all', 'ทั้งหมด', stores.length],
+        ['active', 'ร้านที่ยังอยู่', stores.length - deletedCount],
+        ['deleted', 'ร้านที่ถูกลบ', deletedCount]
+    ];
+    const byStatus = stores.filter((s) => statusFilter === 'all' || (statusFilter === 'deleted') === Boolean(s?.IsDeleted));
+    const filtered = byStatus.filter((s) => String(s.StoreName || '').toLowerCase().includes(query.trim().toLowerCase()));
     const choose = (store) => {
         onChange(String(store.StoreId));
         setQuery(store.StoreName || '');
         setOpen(false);
     };
     return (<div style={{ position: 'relative', marginTop: '8px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+        {statusOptions.map(([key, label, count]) => (<button key={key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setStatusFilter(key); setOpen(true); }} style={cancelChipStyle(statusFilter === key)}>
+            {label} ({count})
+          </button>))}
+      </div>
       <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: '8px', padding: '0 10px' }}>
         <Icon name="search" size={16} color={T.muted}/>
         <input value={query} onFocus={() => setOpen(true)} onChange={(e) => {
@@ -866,7 +880,7 @@ function SearchableStorePicker({ stores, value, onChange }) {
                        {filtered.length ? filtered.map((s) => (<button key={s.StoreId} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => choose(s)} style={{ width: '100%', border: 'none', borderBottom: `1px solid ${T.line}`, background: String(s.StoreId) === String(value) ? T.primarySoft : T.surface, color: T.text, padding: '10px 12px', textAlign: 'left', fontFamily: FONT_STACK, cursor: 'pointer', fontSize: '13px' }}>
               {s.StoreName}
               {pickerStatusOf(s) && <span style={{ color: T.muted, marginLeft: '6px' }}>({pickerStatusOf(s).label})</span>}
-            </button>)) : (<div style={{ padding: '12px', color: T.muted, fontSize: '13px' }}>ยังไม่มีข้อมูลร้านค้า</div>)}
+            </button>)) : (<div style={{ padding: '12px', color: T.muted, fontSize: '13px' }}>{stores.length ? 'ไม่พบร้านที่ตรงกับตัวกรอง' : 'ยังไม่มีข้อมูลร้านค้า'}</div>)}
         </div>)}
     </div>);
 }
