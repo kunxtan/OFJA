@@ -54,7 +54,8 @@ function OnViewMounted({ onMounted }) {
 export default function App() {
   // refresh แล้วไม่หลุด : กู้ผู้ใช้จาก sessionStorage (มี token อยู่เท่านั้น ; token ใช้ไม่ได้แล้ว backend ตอบ 401 -> กลับหน้า login)
   const [currentUser, setCurrentUser] = useState(() => savedUser());
-  // หน้าโหลดรูปอาหาร : null | 'login' (รอ server) | 'loading' (หน้า+ข้อมูลโหลดอยู่ข้างหลัง) | 'leaving' (เฟดออก)
+  // หน้าโหลดรูปอาหาร : null | 'loading' (หน้า+ข้อมูลโหลดอยู่ข้างหลัง) | 'leaving' (เฟดออก)
+  // เริ่มหลัง server ยืนยันว่าเข้าสู่ระบบได้แล้วเท่านั้น (รหัสผิด = ไม่ขึ้นหน้าโหลด เห็นข้อความ error ทันที)
   // เปิดเว็บที่ล็อกอินค้างไว้ = เริ่มที่ loading เลย
   const [splash, setSplash] = useState(() => (savedUser() ? 'loading' : null));
   const splashStartedAt = useRef(performance.now());
@@ -105,17 +106,10 @@ export default function App() {
   
   useEffect(() => { saveUser(currentUser); }, [currentUser]);
 
-  const startSplash = (phase) => {
-    setSplash(prev => {
-      if (!prev || prev === 'leaving') splashStartedAt.current = performance.now();
-      return phase;
-    });
+  const startSplash = () => {
+    splashStartedAt.current = performance.now();
     splashRun.current += 1;
-  };
-  // เข้าสู่ระบบไม่สำเร็จ / ออกจากระบบ : เฟดออกกลับไปหน้าเดิม
-  const cancelSplash = () => {
-    splashRun.current += 1;
-    setSplash(prev => (prev ? 'leaving' : prev));
+    setSplash('loading');
   };
   useEffect(() => {
     if (splash !== 'leaving') return undefined;
@@ -262,7 +256,7 @@ export default function App() {
   const applyGoogleLogin = (data, credential) => {
     const payload = decodeJwtPayload(credential);  // ชื่อ/รูปไว้เติมฟอร์มโปรไฟล์เท่านั้น (ตัวตนจริง server ตรวจกับ Google)
     const user = data.user;
-    startSplash('loading');
+    startSplash();
     setCurrentUser({
       UserId: user.UserId, id: user.UserId,
       username: user.Username,
@@ -286,7 +280,6 @@ export default function App() {
     if (res.status === 409 && data.link_required) {
       // ไม่ผูกให้เอง: ต้องใส่รหัสผ่านของบัญชีเดิมก่อน (กันคนสมัครด้วยอีเมลของคนอื่นแล้วรอให้เจ้าของจริงผูก Google ให้)
       setGoogleLink({ credential, username: data.username, message: data.detail, password: '', error: '', busy: false });
-      cancelSplash(); // ต้องใส่รหัสผ่านบัญชีเดิมก่อน : เปิดหน้าต่างเชื่อมบัญชี
       return;
     }
     if (!res.ok) throw new Error(apiErrorText(data, 'เข้าสู่ระบบด้วย Google ไม่สำเร็จ'));
@@ -295,11 +288,9 @@ export default function App() {
   };
 
   const handleGoogleResponse = async (response) => {
-    startSplash('login');
     try {
       await googleLogin(response.credential);
     } catch (err) {
-      cancelSplash();
       alert(`Google Auth Error: ${err.message}`);
     }
   };
@@ -351,7 +342,6 @@ export default function App() {
     if (authBusy) return;
     setAuthError('');
     setAuthBusy(true);
-    startSplash('login'); // แทนข้อความ "กำลังเชื่อมต่อ..." บนปุ่ม
 
     const endpoint = authTab === 'login' ? '/api/login' : '/api/register';
     const bodyData = authTab === 'login' 
@@ -369,7 +359,7 @@ export default function App() {
 
       const finalRole = mapRole(data.Role);
 
-      startSplash('loading');
+      startSplash();
       setCurrentUser({
         UserId: data.UserId, id: data.UserId,
         username: data.Username,
@@ -380,7 +370,6 @@ export default function App() {
       });
       setAuthForm({ username: '', password: '', name: '', phone: '' });
     } catch (err) {
-      cancelSplash();
       setAuthError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
     } finally {
       setAuthBusy(false);

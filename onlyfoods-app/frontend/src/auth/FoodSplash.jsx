@@ -1,12 +1,7 @@
 import { BurgerArt, EggArt, LimeArt, NoodleBowlArt, PizzaArt, SkewerArt, SparkleArt, ThaiTeaArt } from './FoodArt';
 
-// หน้าโหลดหลังกดเข้าสู่ระบบ : เบอร์เกอร์เด้งขึ้นกลางวงพระอาทิตย์ อาหาร 6 อย่างเด้งตามแล้วโคจรรอบ
-// phase : login (รอ server ตอบ) -> loading (โหลดหน้าและข้อมูลอยู่ข้างหลัง) -> leaving (เฟดออก เห็นหน้าที่พร้อมแล้ว)
-const MESSAGES = {
-  login: 'กำลังเข้าสู่ระบบ',
-  loading: 'กำลังเตรียมข้อมูลของคุณ',
-  leaving: 'พร้อมแล้ว',
-};
+// หน้าโหลดหลังเข้าสู่ระบบสำเร็จ : เบอร์เกอร์เด้งขึ้นกลางวงพระอาทิตย์ อาหาร 6 อย่างเด้งตามแล้วโคจรรอบ
+// phase : loading (โหลดหน้าและข้อมูลอยู่ข้างหลัง) -> leaving (เฟดออก เห็นหน้าที่พร้อมแล้ว)
 
 // อาหารรอบวง (เรียงตามเข็มนาฬิกาจากด้านบน) : w = ความกว้างเทียบช่อง, tilt = เอียงเล็กน้อยให้ดูมีชีวิต
 const ORBIT = [
@@ -19,9 +14,8 @@ const ORBIT = [
 ];
 
 export default function FoodSplash({ phase }) {
-  const message = MESSAGES[phase] || MESSAGES.loading;
   return (
-    <div className={`fs-root fs-${phase}`} role="status" aria-live="polite" aria-label={message}>
+    <div className={`fs-root fs-${phase}`} role="status" aria-label="กำลังโหลด">
       <style>{SPLASH_CSS}</style>
       <span className="fs-blob fs-blob1" aria-hidden="true" />
       <span className="fs-blob fs-blob2" aria-hidden="true" />
@@ -56,11 +50,6 @@ export default function FoodSplash({ phase }) {
 
       <div className="fs-text">
         <div className="fs-brand">ONLYFOODS</div>
-        <div className="fs-msg">
-          {message}
-          {phase !== 'leaving' && <span className="fs-dots" aria-hidden="true"><i /><i /><i /></span>}
-        </div>
-        <div className="fs-bar" aria-hidden="true"><span /></div>
       </div>
     </div>
   );
@@ -111,16 +100,6 @@ const SPLASH_CSS = `
 
 .fs-text { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; animation: fsFadeUp 0.6s ease 0.5s both; }
 .fs-brand { font-size: 13px; font-weight: 700; letter-spacing: 0.32em; opacity: 0.85; }
-.fs-msg { font-size: 18px; font-weight: 600; display: flex; align-items: baseline; gap: 2px; }
-.fs-dots { display: inline-flex; gap: 3px; margin-left: 4px; }
-.fs-dots i { width: 5px; height: 5px; border-radius: 50%; background: #FFFFFF; animation: fsDot 1.2s ease-in-out infinite; }
-.fs-dots i:nth-child(2) { animation-delay: 0.15s; }
-.fs-dots i:nth-child(3) { animation-delay: 0.3s; }
-.fs-bar { width: 180px; height: 5px; margin-top: 6px; border-radius: 999px; background: rgba(255,255,255,0.25); overflow: hidden; }
-.fs-bar span { display: block; height: 100%; width: 12%; border-radius: inherit; background: #FFFFFF; transition: width 0.4s ease; }
-.fs-login .fs-bar span { width: 35%; transition: width 1.2s ease; }
-.fs-loading .fs-bar span { width: 88%; transition: width 6s cubic-bezier(0.1, 0.7, 0.3, 1); }
-.fs-leaving .fs-bar span { width: 100%; transition: width 0.25s ease; }
 
 /* ออก : อาหารขยายเบา ๆ แล้วทั้งหน้าจางหาย เห็นหน้าที่โหลดเสร็จแล้วข้างหลัง */
 .fs-leaving { opacity: 0; pointer-events: none; }
@@ -133,7 +112,6 @@ const SPLASH_CSS = `
 @keyframes fsBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7%); } }
 @keyframes fsTwinkle { 0%, 100% { opacity: 0.2; transform: scale(0.6) rotate(0); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
 @keyframes fsFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-@keyframes fsDot { 0%, 80%, 100% { opacity: 0.3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-4px); } }
 
 @media (prefers-reduced-motion: reduce) {
   .fs-root *, .fs-root { animation: none !important; }
