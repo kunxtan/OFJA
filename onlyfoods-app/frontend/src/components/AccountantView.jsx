@@ -2357,9 +2357,6 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                     {salesMenuRows.length > SALES_LIMIT && (
                       <ShowMoreToggle expanded={salesRowsOpen} onToggle={() => setSalesRowsOpen(v => !v)} hiddenCount={salesMenuRows.length - SALES_LIMIT} controls="sales-menu-table" moreLabel="ดูเมนูเพิ่มเติม" />
                     )}
-                    <div style={{ marginTop: 10, fontSize: 12, color: 'var(--berry-text-muted)' }}>
-                      ยอดขาย = ออเดอร์ที่สำเร็จ (Completed/NoShow) • ยอดที่ยกเลิก = ออเดอร์ที่ถูกยกเลิก ไม่รวมออเดอร์ที่สลิปถูกปฏิเสธ (ร้านไม่ได้รับเงิน) แต่จำนวนที่ยกเลิกยังนับรวม
-                    </div>
                   </>
                 )}
               </div>
@@ -2592,7 +2589,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <>
                     <div className="berry-mini-stats">
                       <div className="berry-mini-stat"><span className="lbl">ออเดอร์ที่ยกเลิก</span><span className="val">{fmtMoney(rowsAll.length)}</span></div>
-                      <div className="berry-mini-stat"><span className="lbl">มูลค่าที่เสียไป</span><span className="val">฿{fmtMoney(lostAmount)}</span>{rejectedCount > 0 && <span className="berry-subtle">ไม่รวมสลิปถูกปฏิเสธ {fmtMoney(rejectedCount)} ออเดอร์ (ร้านไม่ได้รับเงิน)</span>}</div>
+                      <div className="berry-mini-stat"><span className="lbl">มูลค่าที่เสียไป</span><span className="val">฿{fmtMoney(lostAmount)}</span>{rejectedCount > 0 && <span className="berry-subtle">ไม่รวมสลิปถูกปฏิเสธ {fmtMoney(rejectedCount)} ออเดอร์ </span>}</div>
                       <div className="berry-mini-stat"><span className="lbl">เหตุผลที่พบบ่อยสุด</span><span className="val" style={{ fontSize: 14 }}>{reasons[0][0]} ({reasons[0][1]})</span></div>
                     </div>
 
