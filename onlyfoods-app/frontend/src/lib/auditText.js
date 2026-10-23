@@ -77,9 +77,13 @@ export const AUDIT_VERBS = {
     UPDATE_ISSUE: 'อัปเดตรายงานปัญหา',
     REFUND_SLIP_APPROVE: 'ตรวจสลิปผ่าน (ออเดอร์ที่ถูกบังคับยกเลิก)',
     REFUND_SLIP_REJECT: 'ตรวจสลิปไม่ผ่าน (ออเดอร์ที่ถูกบังคับยกเลิก)',
-    // ระบบระงับบัญชีลูกค้าถูกเอาออกแล้ว (PO) : เก็บคำแปลไว้ให้ประวัติเก่าใน AuditLog ยังอ่านออก
+    // ระงับบัญชีลูกค้า (ผู้บริหาร) : แถวเก่าก่อนมีระบบระงับแบบกำหนดวันใช้รหัสเดียวกัน
     BAN_USER: 'ระงับบัญชีลูกค้า',
-    UNBAN_USER: 'เปิดใช้งานบัญชีลูกค้า',
+    UNBAN_USER: 'ปลดระงับบัญชีลูกค้า',
+    AUTO_UNBAN_USER: 'ระบบปลดระงับบัญชีลูกค้า (ครบกำหนด)',
+    USER_APPEAL: 'ลูกค้ายื่นอุทธรณ์การระงับบัญชี',
+    USER_APPEAL_APPROVE: 'อนุมัติอุทธรณ์และปลดระงับบัญชี',
+    USER_APPEAL_REJECT: 'ไม่อนุมัติอุทธรณ์การระงับบัญชี',
     GOOGLE_LINK: 'เชื่อมบัญชีกับ Google'
 };
 
@@ -151,8 +155,12 @@ const AUDIT_DETAIL = {
     BACK_IN_STOCK: (p) => [auditQuote(p.name)],
     OUT_OF_STOCK_NOTIFY: (p) => [auditQuote(p.name), p.orders ? `${p.orders} ออเดอร์` : ''],
     LOGIN: (p) => [p.method === 'google' ? 'ด้วย Google' : p.method === 'google_link' ? 'ด้วย Google (เพิ่งเชื่อมบัญชี)' : ''],
-    BAN_USER: (p) => [who(p), why(p.reason)],
-    UNBAN_USER: (p) => [who(p), p.reason ? `หมายเหตุ: ${p.reason}` : ''],
+    BAN_USER: (p) => [who(p), p.days ? `${p.days} วัน (ถึง ${thaiDateTime(p.until)})` : p.suspension_id ? 'ไม่มีกำหนด' : '', why(p.reason)],
+    UNBAN_USER: (p) => [who(p), p.note ? `หมายเหตุ: ${p.note}` : !p.suspension_id && p.reason ? `หมายเหตุ: ${p.reason}` : ''],
+    AUTO_UNBAN_USER: (p) => [who(p), p.until ? `ครบกำหนด ${thaiDateTime(p.until)}` : ''],
+    USER_APPEAL: (p) => [who(p), p.text ? `ข้อความ: ${p.text}` : ''],
+    USER_APPEAL_APPROVE: (p) => [who(p), p.note ? `ข้อความ: ${p.note}` : ''],
+    USER_APPEAL_REJECT: (p) => [who(p), p.response ? `ข้อความ: ${p.response}` : ''],
     GOOGLE_LINK: (p) => [p.email ? `อีเมล ${p.email}` : ''],
     LOGIN_FAIL: (p, log) => [p.reason === 'unknown_username' ? `ไม่พบชื่อผู้ใช้ ${auditQuote(log.EntityId)}` : p.failed_count ? `รหัสผ่านไม่ถูกต้อง (ครั้งที่ ${p.failed_count})` : 'รหัสผ่านไม่ถูกต้อง', p.throttled_seconds ? `ต้องรอ ${p.throttled_seconds} วินาทีก่อนลองใหม่` : ''],
     ACCOUNT_LOCKED: (p) => [p.failed_count ? `ใส่รหัสผ่านผิด ${p.failed_count} ครั้ง` : ''],

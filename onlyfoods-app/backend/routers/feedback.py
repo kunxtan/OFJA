@@ -14,6 +14,7 @@ from errors import DomainError
 from schemas import CreateIssueReportSchema, IssueUpdateSchema, ReviewCreateSchema
 from services import is_duplicate_key, log_audit, send_notif
 from shapes import in_clause
+from suspension import assert_not_suspended
 from utils import bangkok_now, clean_text, mask_person_name, parse_date, queue_label, save_image
 
 router = APIRouter(prefix="/api", tags=["feedback"])
@@ -22,6 +23,8 @@ router = APIRouter(prefix="/api", tags=["feedback"])
 # ------------------------------------------------------------------ reviews
 @router.post("/reviews")
 def create_review(data: ReviewCreateSchema, user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
+    with db.cursor() as cur:
+        assert_not_suspended(cur, user, "การรีวิว")
     image = save_image(data.image_url, "reviews") if data.image_url else None
     with transaction(db):
         with db.cursor() as cur:
@@ -54,6 +57,8 @@ def create_review(data: ReviewCreateSchema, user=Depends(require_role("CUSTOMER"
 @router.put("/reviews/{order_id}")
 def update_review(order_id: int, data: ReviewCreateSchema, user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
     """ลูกค้าแก้รีวิวของตัวเอง (คะแนน / ข้อความ / รูป)"""
+    with db.cursor() as cur:
+        assert_not_suspended(cur, user, "การรีวิว")
     image = save_image(data.image_url, "reviews") if data.image_url else None
     with transaction(db):
         with db.cursor() as cur:

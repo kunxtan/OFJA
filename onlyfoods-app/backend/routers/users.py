@@ -120,11 +120,16 @@ def get_customer_profile(
 
 @router.get("/executive/customers")
 def search_customers(search: Optional[str] = None, user=Depends(require_role("EXECUTIVE")), db=Depends(get_db)):
+    """ค้นหาลูกค้า + สถานะการระงับที่มีผลอยู่ (Suspension = None คือใช้งานได้ตามปกติ)"""
     sql = """
-        SELECT u.UserId, u.Username, u.FullName, u.Email, u.Phone
-        FROM `User` u JOIN Role r ON r.RoleId = u.RoleId WHERE r.RoleCode = 'CUSTOMER'
+        SELECT u.UserId, u.Username, u.FullName, u.Email, u.Phone,
+               s.SuspensionId, s.Reason AS SuspendReason, s.StartAt AS SuspendedAt, s.EndAt AS SuspendedUntil,
+               s.AppealStatus
+        FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
+        LEFT JOIN UserSuspension s ON s.UserId = u.UserId AND s.LiftedAt IS NULL AND (s.EndAt IS NULL OR s.EndAt > %s)
+        WHERE r.RoleCode = 'CUSTOMER'
     """
-    params = []
+    params = [bangkok_now()]
     if search and search.strip():
         kw = search.strip()
         like = f"%{kw}%"
@@ -140,6 +145,7 @@ def search_customers(search: Optional[str] = None, user=Depends(require_role("EX
         rows = cur.fetchall()
     for r in rows:
         r["Role"] = "Customer"
+        r["IsSuspended"] = r["SuspensionId"] is not None
         r["Email"] = mask_email(r["Email"])
         r["Phone"] = mask_phone(r["Phone"])
     return rows

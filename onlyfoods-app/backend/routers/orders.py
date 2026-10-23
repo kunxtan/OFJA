@@ -20,6 +20,7 @@ from services import (add_top_up, assert_slip_not_reused, is_duplicate_key, redu
                       lock_order, log_audit, log_first_status, notify_menu_out_of_stock, pending_top_up,
                       refund_price_diff, send_notif, status_id)
 from shapes import ORDER_SELECT, attach_items, order_people, redact_order_contacts, shape_order
+from suspension import assert_not_suspended
 from utils import (STORE_OPEN, STORE_PAUSED, bangkok_now, clean_text, contract_active, foodcourt_is_open,
                    parse_pickup_time, queue_label, save_image, store_open_state)
 
@@ -169,6 +170,7 @@ def _create_order(data: CreateOrderSchema, user: dict, db, key: Optional[str], f
 
     with transaction(db):
         with db.cursor() as cur:
+            assert_not_suspended(cur, user, "การสั่งอาหาร")  # ลูกค้าที่ถูกผู้บริหารระงับ (ออเดอร์เดิมยังเดินต่อได้)
             fc = get_foodcourt(cur, share_lock=True)
             if not foodcourt_is_open(fc, now):
                 raise DomainError(400, "ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้")

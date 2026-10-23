@@ -81,6 +81,25 @@ class StaffActiveSchema(BaseModel):
     is_active: bool
 
 
+class SuspendSchema(BaseModel):
+    """ผู้บริหารระงับบัญชีลูกค้า : days = None คือไม่มีกำหนด (จนกว่าจะปลดเอง)"""
+    reason: str = Field(max_length=300)
+    days: Optional[int] = Field(default=None, ge=1, le=365)
+
+
+class UnsuspendSchema(BaseModel):
+    note: Optional[str] = Field(default=None, max_length=300)
+
+
+class AppealSchema(BaseModel):
+    text: str = Field(max_length=1200)
+
+
+class AppealDecisionSchema(BaseModel):
+    approve: bool
+    response: Optional[str] = Field(default=None, max_length=600)  # ไม่อนุมัติ = ต้องมีคำตอบ
+
+
 class StaffEraseSchema(BaseModel):
     confirm_username: str = Field(max_length=50)  # ต้องพิมพ์ชื่อผู้ใช้ของพนักงานให้ตรง กันกดลบผิดคน
 

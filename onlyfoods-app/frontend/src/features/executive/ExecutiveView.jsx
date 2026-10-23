@@ -397,6 +397,10 @@ const returnFoodCourtToAuto = async () => {
             setFocusStoreId(String(notif.StoreId || ''));
             setActiveMenu('contract-tracking');
             setSearch(''); }
+        // ลูกค้ายื่นอุทธรณ์การระงับบัญชี -> หน้าข้อมูลผู้ใช้ (มีรายการอุทธรณ์รอพิจารณาอยู่ด้านบน)
+        if (notif?.NotificationType === 'SYSTEM' && String(notif.Title || '').includes('อุทธรณ์')) {
+            setActiveMenu('customer-info');
+            setSearch(''); }
 
         if (!isRead(notif)) {
             try {

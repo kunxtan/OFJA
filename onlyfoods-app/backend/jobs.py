@@ -7,6 +7,8 @@
 ร้านแจ้งของหมด (PENDING_CANCELLATION) แล้วลูกค้าไม่เปลี่ยนเมนู/ไม่ยกเลิกจนเลย CancelDeadline
 -> ระบบยกเลิกให้ (ผู้กระทำ = SYSTEM) สร้างรายการคืนเงินรอลูกค้ามารับที่ร้าน และแจ้งลูกค้า
 
+บัญชีลูกค้าที่ถูกระงับครบกำหนดแล้ว -> ปลดระงับอัตโนมัติ + แจ้งลูกค้า (suspension.py)
+
 ปลอดภัยเมื่อรันหลาย worker / รีสตาร์ท: ใช้ UPDATE ... WHERE PickupReminderAt IS NULL เป็นตัวจอง
 ใครจองได้ (rowcount = 1) คนนั้นเท่านั้นที่ส่งแจ้งเตือน
 """
@@ -21,6 +23,7 @@ from db import acquire
 from errors import DomainError
 from services import (apply_status_effects, do_transition, lock_order, log_audit, purge_expired_stores,
                       send_notif)
+from suspension import lift as lift_suspension
 from utils import bangkok_now, queue_label
 
 logger = logging.getLogger("onlyfood")
@@ -144,12 +147,58 @@ def cancel_expired_requests(db, now: Optional[datetime] = None) -> int:
     return cancelled
 
 
+def lift_expired_suspensions(db, now: Optional[datetime] = None) -> int:
+    """ครบกำหนดระงับบัญชีลูกค้า -> ปลดอัตโนมัติ + แจ้งลูกค้า + AuditLog (ผู้กระทำ = ระบบ) ; 1 แถว = 1 transaction
+    (การเช็คสิทธิ์สั่งอาหารเทียบเวลา EndAt อยู่แล้ว งานนี้เขียนประวัติและส่งแจ้งเตือนให้ครบ)"""
+    now = now or bangkok_now()
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT s.SuspensionId FROM UserSuspension s
+            WHERE s.LiftedAt IS NULL AND s.EndAt IS NOT NULL AND s.EndAt <= %s
+            ORDER BY s.EndAt
+            LIMIT 200
+            """,
+            (now,),
+        )
+        due = [r["SuspensionId"] for r in cur.fetchall()]
+    db.rollback()
+
+    lifted = 0
+    for sid in due:
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT s.SuspensionId, s.UserId, s.Reason, s.EndAt, s.LiftedAt, u.Username
+                    FROM UserSuspension s JOIN `User` u ON u.UserId = s.UserId
+                    WHERE s.SuspensionId = %s FOR UPDATE OF s
+                    """,
+                    (sid,),
+                )
+                row = cur.fetchone()
+                # ระหว่างเลือกกับล็อก ผู้บริหารอาจปลดไปแล้ว
+                if not row or row["LiftedAt"] is not None or row["EndAt"] is None or row["EndAt"] > now:
+                    db.rollback()
+                    continue
+                lift_suspension(db, cur, row, "AUTO", now)
+            db.commit()
+            lifted += 1
+        except Exception:  # noqa: BLE001 - แถวหนึ่งพัง ไม่ให้กระทบแถวอื่น
+            db.rollback()
+            logger.exception("auto-lift suspension failed id=%s", sid)
+    return lifted
+
+
 def _run_once() -> int:
     conn = acquire()
     try:
         cancelled = cancel_expired_requests(conn)
         if cancelled:
             logger.info("expired out-of-stock orders auto-cancelled: %s", cancelled)
+        lifted = lift_expired_suspensions(conn)
+        if lifted:
+            logger.info("customer suspensions auto-lifted: %s", lifted)
         return send_pickup_reminders(conn)
     finally:
         try:

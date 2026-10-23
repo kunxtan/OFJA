@@ -15,7 +15,7 @@ from errors import DomainError
 import jobs
 from utils import PUBLIC_UPLOAD_FOLDERS
 from routers import (auth as auth_routes, feedback, files, foodcourt, notifications, orders, payments, printing,
-                     products, reports, stores, users)
+                     products, reports, stores, suspensions, users)
 from services import request_ip
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
@@ -76,7 +76,7 @@ async def validation_error_handler(_: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": f"ข้อมูลไม่ถูกต้อง ({where}): {first.get('msg', '')}".strip()})
 
 
-for module in (auth_routes, users, stores, foodcourt, products, orders, payments, printing, feedback,
+for module in (auth_routes, users, suspensions, stores, foodcourt, products, orders, payments, printing, feedback,
                notifications, reports, files):
     app.include_router(module.router)
 

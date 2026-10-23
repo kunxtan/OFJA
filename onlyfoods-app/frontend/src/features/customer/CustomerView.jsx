@@ -17,6 +17,7 @@ import { ReviewModal, StoreReviewsModal } from "./modals/ReviewModals";
 import { ReportModal, ViewReportsModal } from "./modals/ReportModals";
 import NotifToasts from "./NotifToasts";
 import CustomAlert from "./modals/CustomAlert";
+import SuspensionNotice from "./SuspensionNotice";
 
 export default function CustomerView({ user, apiBase, onLogout }) {
 
@@ -42,6 +43,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [notifs, setNotifs] = useState([]);
   const [isFoodCourtOpen, setIsFoodCourtOpen] = useState(true);
   const [foodCourtMode, setFoodCourtMode] = useState("AUTO");
+  // ผู้บริหารระงับบัญชี (null = ใช้งานได้ตามปกติ) : สั่งอาหารใหม่/รีวิวไม่ได้ ออเดอร์เดิมเดินต่อ
+  const [suspension, setSuspension] = useState(null);
 
   // LATE PICKUP STATE
   const [latePickupOrder, setLatePickupOrder] = useState({});
@@ -317,6 +320,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     }
   };
 
+  const fetchSuspension = async () => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`${apiBase}/api/me/suspension`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setSuspension(data?.active || null);
+    } catch (error) {
+      console.error("Error fetching suspension:", error);
+    }
+  };
+
   const fetchNotifs = async () => {
     if (!userId) return;
     try {
@@ -332,6 +347,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         } else {
           const fresh = data.filter((n) => !seenToastKeysRef.current.has(getNotifKey(n)));
           fresh.forEach((n) => seenToastKeysRef.current.add(getNotifKey(n)));
+          // แจ้งเตือนระบบ (ถูกระงับ / ปลดระงับ / ผลอุทธรณ์) : โหลดสถานะการระงับใหม่ทันที
+          if (fresh.some((n) => n.NotificationType === "SYSTEM")) fetchSuspension();
         }
       }
     } catch (error) {
@@ -395,9 +412,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     fetchMyRefunds();
     fetchNotifs();
     fetchFoodCourtStatus();
+    fetchSuspension();
 
     const stopLive = startPolling(() => Promise.allSettled([fetchMyOrders(), fetchNotifs()]), 5000);
-    const stopSlow = startPolling(() => Promise.allSettled([fetchStores(), fetchMyRefunds()]), 30000);
+    const stopSlow = startPolling(() => Promise.allSettled([fetchStores(), fetchMyRefunds(), fetchSuspension()]), 30000);
     return () => { stopLive(); stopSlow(); };
   }, [userId, apiBase]);
 
@@ -896,6 +914,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const handleProceedToPayment = async () => {
+    if (suspension) return customAlert("บัญชีของคุณถูกระงับการสั่งอาหาร", `เหตุผล: ${suspension.Reason}`, "warning");
     if (!checkFoodCourtOrderTime()) return;
     if (isPickupInPast()) {
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
@@ -1208,6 +1227,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const handleStartEditReview = () => {
+    if (suspension) return customAlert("บัญชีของคุณถูกระงับการรีวิว", "แก้ไขรีวิวได้อีกครั้งหลังปลดระงับ", "warning");
     setIsReadOnlyReview(false);
     setIsEditingReview(true);
     setHoverRating(0);
@@ -1216,10 +1236,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const handleOpenReviewModal = (order) => {
+    const localReview = reviewedOrderIds[order.OrderID];
+    const alreadyReviewed = localReview || order.IsReviewed || order.review;
+    // ถูกระงับ : ดูรีวิวเดิมได้ แต่เขียนใหม่ไม่ได้
+    if (suspension && !alreadyReviewed) return customAlert("บัญชีของคุณถูกระงับการรีวิว", "รีวิวได้อีกครั้งหลังปลดระงับ", "warning");
     setIsEditingReview(false);
     setReviewOrder(order);
-    const localReview = reviewedOrderIds[order.OrderID];
-    if (localReview || order.IsReviewed || order.review) {
+    if (alreadyReviewed) {
       setIsReadOnlyReview(true);
       setRating(localReview?.rating || order.review?.rating || order.Rating || 5);
       setReviewComment(localReview?.comment || order.review?.comment || order.ReviewComment || "ไม่มีข้อความรีวิว");
@@ -2187,7 +2210,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         <div style={{ display: "grid", gap: "12px" }}>
           {notifs.map((notification, index) => (
             <div key={getNotifKey(notification) || index} style={{ ...cardStyle, padding: "18px", borderLeft: `5px solid ${COLORS.orange}` }}>
-              <div style={{ fontWeight: "900", marginBottom: "3px" }}><NotiIcon /> Only Foods</div>
+              {/* แจ้งเตือนระบบ (ระงับบัญชี / ผลอุทธรณ์) : หัวข้อคือใจความ จึงแสดงหัวข้อแทนชื่อแอป */}
+              <div style={{ fontWeight: "900", marginBottom: "3px" }}><NotiIcon /> {notification.NotificationType === "SYSTEM" && notification.Title ? notification.Title : "Only Foods"}</div>
               <div style={{ color: COLORS.gray, fontSize: "13px" }}>{notification.Message}</div>
               {notification.CreatedAt && <div style={{ color: "#aaa", fontSize: "11px", marginTop: "8px" }}>{notification.CreatedAt}</div>}
             </div>
@@ -2378,14 +2402,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                 <button 
                   onClick={handleProceedToPayment} 
-                  disabled={!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen}
+                  disabled={Boolean(suspension) || !isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen}
                   style={{
                     width: "100%", padding: "15px", marginTop: "15px", border: "none", borderRadius: "15px", 
-                    background: (!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
-                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (!isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
+                    background: (suspension || !isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
+                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (suspension || !isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
                   }}
                 >
-                  {cartStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !cartStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
+                  {suspension ? "บัญชีของคุณถูกระงับการสั่งอาหาร" : cartStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !cartStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
                 </button>
               </div>
             </>
@@ -2624,6 +2648,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
           {activeTab === "menu" && renderProfileChip()}
         </header>
+
+        {suspension && activeTab !== "notifs" && (
+          <SuspensionNotice active={suspension} apiBase={apiBase} onChanged={fetchSuspension} />
+        )}
 
         {/* ACTIVE TAB CONTENT */}
         {activeTab === "menu" && renderMenu()}

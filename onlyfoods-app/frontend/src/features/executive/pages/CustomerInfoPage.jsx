@@ -1,9 +1,10 @@
 import { T, searchInputStyle, inputStyle } from '../theme';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { parseOrderDate } from '../lib/dates';
 import { thaiDateTime } from '../lib/format';
 import { callApi } from '../lib/api';
 import { useIsNarrow, Icon, Card, Button, EmptyState } from '../components/ui';
+import { AppealDecisionModal, LiftModal, PendingAppeals, SuspendModal, SuspensionBadge, SuspensionHistory } from '../components/suspension';
 
 // ===== ข้อมูลผู้ใช้
 export const historyThStyle = { padding: '16px', textAlign: 'left', fontSize: '13px', fontWeight: 700, whiteSpace: 'nowrap' };
@@ -18,8 +19,90 @@ export function CustomerInfoPage({ ctx }) {
     const [activities, setActivities] = useState([]);
     const [activityLoading, setActivityLoading] = useState(false);
     const [activityError, setActivityError] = useState('');
-    const searchCustomers = async () => {
-    const keyword = query.trim();
+    // ระงับบัญชี : ประวัติของลูกค้าที่เปิดดู, อุทธรณ์รอพิจารณา, หน้าต่างระงับ/ปลด/ตอบอุทธรณ์
+    const [suspensions, setSuspensions] = useState([]);
+    const [suspensionsLoading, setSuspensionsLoading] = useState(false);
+    const [suspensionsError, setSuspensionsError] = useState('');
+    const [appeals, setAppeals] = useState([]);
+    const [suspendTarget, setSuspendTarget] = useState(null);   // { customer, mode, customDays, reason, busy, error }
+    const [liftTarget, setLiftTarget] = useState(null);         // { customer, note, busy, error }
+    const [decision, setDecision] = useState(null);             // { appeal, approve, response, busy, error }
+
+    const loadAppeals = useCallback(async () => {
+        try {
+            const data = await callApi(`${API}/api/executive/suspension-appeals`);
+            setAppeals(Array.isArray(data) ? data : []);
+        } catch (err) { console.debug('โหลดอุทธรณ์ไม่สำเร็จ:', err.message); }
+    }, [API]);
+    useEffect(() => { loadAppeals(); }, [loadAppeals]);
+
+    const loadSuspensions = async (userId) => {
+        setSuspensionsLoading(true); setSuspensionsError('');
+        try {
+            const data = await callApi(`${API}/api/executive/customers/${userId}/suspensions`);
+            setSuspensions(Array.isArray(data) ? data : []);
+        } catch (err) { setSuspensions([]); setSuspensionsError(err.message); }
+        finally { setSuspensionsLoading(false); }
+    };
+
+    // หลังระงับ/ปลด/ตอบอุทธรณ์ : อัปเดตสถานะในผลค้นหา + ประวัติของคนที่เปิดอยู่ + รายการอุทธรณ์
+    const refreshCustomer = async (userId) => {
+        try {
+            const data = await callApi(`${API}/api/executive/customers?search=${userId}`);
+            const fresh = (Array.isArray(data) ? data : []).find(c => c.UserId === userId);
+            if (fresh) {
+                setCustomers(list => list.map(c => (c.UserId === userId ? fresh : c)));
+                setSelectedCustomer(c => (c && c.UserId === userId ? fresh : c));
+            }
+        } catch (err) { console.debug('โหลดสถานะลูกค้าใหม่ไม่สำเร็จ:', err.message); }
+        if (selectedCustomer?.UserId === userId) loadSuspensions(userId);
+        loadAppeals();
+    };
+
+    const submitSuspend = async () => {
+        const s = suspendTarget;
+        if (!s || s.busy) return;
+        const reason = s.reason.trim();
+        const days = s.mode === 'none' ? null : s.mode === 'custom' ? Number(s.customDays) : s.mode;
+        if (reason.length < 5) return setSuspendTarget(v => ({ ...v, error: 'กรุณาระบุเหตุผลอย่างน้อย 5 ตัวอักษร' }));
+        if (days !== null && !(Number.isInteger(days) && days >= 1 && days <= 365)) return setSuspendTarget(v => ({ ...v, error: 'ระยะเวลาต้องเป็นจำนวนวัน 1–365' }));
+        setSuspendTarget(v => ({ ...v, busy: true, error: '' }));
+        try {
+            const data = await callApi(`${API}/api/executive/customers/${s.customer.UserId}/suspend`, { method: 'POST', body: JSON.stringify({ reason, days }) });
+            setSuspendTarget(null);
+            pushToast?.(data?.message || 'ระงับบัญชีแล้ว');
+            refreshCustomer(s.customer.UserId);
+        } catch (err) { setSuspendTarget(v => v && ({ ...v, busy: false, error: err.message })); }
+    };
+
+    const submitLift = async () => {
+        const s = liftTarget;
+        if (!s || s.busy) return;
+        setLiftTarget(v => ({ ...v, busy: true, error: '' }));
+        try {
+            const data = await callApi(`${API}/api/executive/customers/${s.customer.UserId}/unsuspend`, { method: 'POST', body: JSON.stringify({ note: s.note.trim() || null }) });
+            setLiftTarget(null);
+            pushToast?.(data?.message || 'ปลดระงับแล้ว');
+            refreshCustomer(s.customer.UserId);
+        } catch (err) { setLiftTarget(v => v && ({ ...v, busy: false, error: err.message })); }
+    };
+
+    const submitDecision = async () => {
+        const s = decision;
+        if (!s || s.busy) return;
+        const response = s.response.trim();
+        if (!s.approve && response.length < 5) return setDecision(v => ({ ...v, error: 'กรุณาระบุเหตุผลที่ไม่อนุมัติอย่างน้อย 5 ตัวอักษร' }));
+        setDecision(v => ({ ...v, busy: true, error: '' }));
+        try {
+            const data = await callApi(`${API}/api/executive/suspensions/${s.appeal.SuspensionId}/appeal`, { method: 'POST', body: JSON.stringify({ approve: s.approve, response: response || null }) });
+            setDecision(null);
+            pushToast?.(data?.message || 'บันทึกผลอุทธรณ์แล้ว');
+            refreshCustomer(s.appeal.UserId);
+        } catch (err) { setDecision(v => v && ({ ...v, busy: false, error: err.message })); }
+    };
+
+    const searchCustomers = async (keywordOverride) => {
+    const keyword = (keywordOverride ?? query).trim();
     if (!keyword) {
         setCustomers([]); setSearched(false); setError(''); setSelectedCustomer(null); setActivities([]); setActivityError(''); return;
     }
@@ -33,6 +116,7 @@ export function CustomerInfoPage({ ctx }) {
 };
     const openCustomer = async (customer) => {
     setSelectedCustomer(customer); setActivities([]); setActivityLoading(true); setActivityError('');
+    loadSuspensions(customer.UserId);
     try {
         const [orders, reviews, issues] = await Promise.all([
             callApi(`${API}/api/orders?user_id=${customer.UserId}`),
@@ -52,6 +136,9 @@ export function CustomerInfoPage({ ctx }) {
     finally { setActivityLoading(false); }};
     return (
         <Card title="ค้นหาข้อมูลผู้ใช้" subtitle="ค้นหาเฉพาะบัญชี Customer ด้วย User ID, Username หรือชื่อผู้ใช้">
+            <PendingAppeals appeals={appeals}
+                onDecide={(appeal, approve) => setDecision({ appeal, approve, response: '', busy: false, error: '' })}
+                onOpen={(appeal) => { setQuery(String(appeal.UserId)); searchCustomers(String(appeal.UserId)); }}/>
             <form onSubmit={e => { e.preventDefault(); searchCustomers(); }} style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', flex: '1 1 320px' }}>
                     <Icon name="search" size={17} color={T.muted}/>
@@ -65,8 +152,9 @@ export function CustomerInfoPage({ ctx }) {
 
             {customers.length > 0 && <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
     {customers.map(customer => <div key={customer.UserId} style={{ border: `1px solid ${T.line}`, borderRadius: T.radiusMd, padding: '16px', background: T.surface }}>
-        <div style={{ fontSize: '16px', fontWeight: 700, color: T.ink, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '16px', fontWeight: 700, color: T.ink, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
             {customer.FullName || 'ไม่ระบุชื่อ'}
+            <SuspensionBadge customer={customer}/>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: isCompact ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))', gap: '12px', minWidth: 0 }}>
             <div><strong>User ID:</strong> {customer.UserId}</div>
@@ -74,9 +162,13 @@ export function CustomerInfoPage({ ctx }) {
             <div><strong>Role:</strong> {customer.Role || '—'}</div>
             <div><strong>Email:</strong> {customer.Email || '—'}</div>
             <div><strong>Phone:</strong> {customer.Phone || '—'}</div>
+            {customer.IsSuspended && <div style={{ gridColumn: '1 / -1', color: T.down }}><strong>เหตุผลที่ระงับ:</strong> {customer.SuspendReason}</div>}
         </div>
         <div style={{ marginTop: '14px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <Button icon="history" onClick={() => openCustomer(customer)}>ดูข้อมูลและประวัติ</Button>
+            {customer.IsSuspended
+                ? <Button variant="soft" icon="check" onClick={() => setLiftTarget({ customer, note: '', busy: false, error: '' })}>ปลดระงับ</Button>
+                : <Button variant="danger" icon="ban" onClick={() => setSuspendTarget({ customer, mode: 7, customDays: '', reason: '', busy: false, error: '' })}>ระงับบัญชี</Button>}
         </div>
     </div>)}
 </div>}
@@ -89,6 +181,9 @@ export function CustomerInfoPage({ ctx }) {
         </div>
         {!activityLoading && !activityError && <div style={{ fontSize: '13px', color: T.muted }}>ทั้งหมด {activities.length} รายการ</div>}
     </div>
+
+    <SuspensionHistory items={suspensions} loading={suspensionsLoading} error={suspensionsError}/>
+    <div style={{ fontSize: '16px', fontWeight: 700, color: T.ink, marginBottom: '10px' }}>กิจกรรมการใช้งาน</div>
 
     {activityLoading && <div style={{ padding: '28px 0', textAlign: 'center', color: T.muted }}>กำลังโหลดประวัติ...</div>}
     {activityError && <div style={{ padding: '12px 14px', borderRadius: T.radiusMd, background: T.redSoft, color: T.down }}>{activityError}</div>}
@@ -143,6 +238,9 @@ export function CustomerInfoPage({ ctx }) {
     </div>}
 </div>}
 
+<SuspendModal state={suspendTarget} setState={setSuspendTarget} onSubmit={submitSuspend}/>
+<LiftModal state={liftTarget} setState={setLiftTarget} onSubmit={submitLift}/>
+<AppealDecisionModal state={decision} setState={setDecision} onSubmit={submitDecision}/>
 </Card>
 );
 }
