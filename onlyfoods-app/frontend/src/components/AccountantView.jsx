@@ -136,6 +136,8 @@ function buildAuditRows(logs, orders) {
     if (t && t.getTime() < cutoff) return;
     let details = String(l.Details ?? l.Detail ?? l.Description ?? '');
     if (!details && (l.NewValue || l.OldValue)) details = [l.OldValue, l.NewValue].filter(Boolean).map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' → ');
+    const jsonNorm = normalizeAuditJsonDetails(details);
+    if (jsonNorm) details = jsonNorm.details;
     const stm = details.match(/Order(?:\s*ID)?\s*[:#]?\s*(\d+)\s*->\s*([A-Za-z_]+)/i);
     if (stm) loggedStatus.add(`${stm[1]}|${normStatus(stm[2])}`);
     if (String(l.Action) === 'CREATE_ORDER') {
@@ -167,7 +169,7 @@ function buildAuditRows(logs, orders) {
     if (m && tone === 'bad') coveredCancels.add(m[1]);
     if (m && /APPROVE/i.test(String(action))) loggedApprove.add(m[1]);
 
-    rows.push({ key: `log-${l.LogID ?? l.LogId ?? l.logId ?? idx}`, orderId: order ? String(order.OrderID) : (m ? m[1] : null), time: logTime, action, by: performerOf(l, order), details, tone, derived: false, raw: l });
+    rows.push({ key: `log-${l.LogID ?? l.LogId ?? l.logId ?? idx}`, orderId: order ? String(order.OrderID) : (m ? m[1] : null), time: logTime, action, by: performerOf(l, order), details, tone, derived: false, fromJson: Boolean(jsonNorm), raw: l });
   });
 
   // เติมจากข้อมูลออเดอร์: ออเดอร์ที่ถูกยกเลิกแต่ไม่มี log รองรับ (เช่น log เก่าถูกตัดออกจากรายการ 50 ล่าสุด)
@@ -233,6 +235,34 @@ function buildAuditRows(logs, orders) {
       };
     })
     .sort((x, y) => ts(y) - ts(x));
+}
+
+// ---- รายละเอียด log ที่ backend เก็บเป็น JSON เช่น: Order 195 {"reason": null, "status": "COMPLETED", "store_id": 1} ----
+// แปลงเป็นรูปแบบเดียวกับ log ปกติ ("Order 195 -> Completed เหตุผล: ...") เพื่อให้สี/หมวด/การจับคู่ ทำงานเหมือนเดิม
+// และไม่แสดงฟิลด์ภายใน (store_id ฯลฯ) ; ถ้า JSON พังหรืออ่านไม่ได้ จะคืนข้อความเดิมโดยไม่แตะ
+const AUDIT_STATUS_ALIAS = { noshow: 'NoShow', cooked: 'Cooked', pendingcancellation: 'Pending_Cancellation', verifyingslip: 'Verifying_Slip' };
+const normAuditStatus = (raw) => {
+  const t = String(raw || '').trim();
+  const alias = AUDIT_STATUS_ALIAS[t.toLowerCase().replace(/[\s_-]/g, '')];
+  return alias || normStatus(t);
+};
+const meaningfulText = (v) => {
+  if (v === null || v === undefined || typeof v === 'object') return '';
+  const t = String(v).trim();
+  return !t || /^(null|none|undefined|n\/a|-)$/i.test(t) ? '' : t;
+};
+function normalizeAuditJsonDetails(details) {
+  const m = String(details || '').match(/^\s*(?:Order(?:\s*ID)?\s*[:#]?\s*(\d+)\s*[:,-]?\s*)?(\{[\s\S]*\})\s*$/i);
+  if (!m) return null;
+  let payload;
+  try { payload = JSON.parse(m[2]); } catch (e) { return null; }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const orderId = m[1] || meaningfulText(payload.order_id ?? payload.OrderId ?? payload.OrderID);
+  const status = meaningfulText(payload.status ?? payload.Status);
+  const reason = meaningfulText(payload.reason ?? payload.Reason ?? payload.cancel_reason ?? payload.CancelReason);
+  const head = orderId ? `Order ${orderId}` : '';
+  const text = [status ? `${head ? `${head} ` : ''}-> ${normAuditStatus(status)}` : head, reason ? `เหตุผล: ${reason}` : ''].filter(Boolean).join(' ');
+  return text ? { details: text } : null;
 }
 
 // ชื่อเหตุการณ์ภาษาไทย + หมวด (ใช้กรองใน Audit Log)
@@ -330,6 +360,18 @@ function auditSummary(r, order) {
   if (isKitchenAudit(r)) {
     const k = kitchenAuditSummary(r, order);
     if (k) return k;
+  }
+  // log ที่เดิมเป็น JSON: เขียนเป็นประโยคไทยสั้น ๆ จากสถานะ/เหตุผลที่มีจริงเท่านั้น
+  if (r.fromJson) {
+    const id = r.orderId ? ` #${r.orderId}` : '';
+    const stRaw = (d.match(/->\s*([A-Za-z_]+)/) || [])[1];
+    const st = stRaw ? normAuditStatus(stRaw) : '';
+    const why = meaningfulText((d.match(/เหตุผล:\s*([^|]+)/) || [])[1]);
+    const whyText = why ? ` — เหตุผล: ${why}` : '';
+    if (st === 'Cancelled') return `ยกเลิกออเดอร์${id}${whyText}`;
+    if (st && STATUS_ACTION_LABEL[st]) return `อัปเดตสถานะออเดอร์${id} เป็น "${STATUS_ACTION_LABEL[st]}"${whyText}`;
+    if (st || a === 'UPDATE_STATUS') return `อัปเดตสถานะออเดอร์${id}${whyText}`;
+    return `${auditMeta(r).label}${id}${whyText}`;
   }
   const parsedReason = (d.match(/เหตุผล:\s*([^|]+)/) || d.match(/ยืนยันยกเลิก:\s*([^|]+)/) || [])[1];
   const reason = String((order && order.CancelReason) || parsedReason || '').trim();
@@ -569,7 +611,9 @@ function buildTopMenu(orders, storeId, limit = 10, stores = []) {
 //  - ขายได้ = ออเดอร์ Completed/NoShow ; ยกเลิก = ออเดอร์ Cancelled (ไม่รวมออเดอร์ที่ยังดำเนินการ/รอยืนยันยกเลิก)
 //  - จำนวนที่ยกเลิก นับทุกออเดอร์ Cancelled (รวมสลิปถูกปฏิเสธ) แต่ยอดเงินตัดออเดอร์ REJECTED ออก (moneyOf) เหมือน buildStoreSummary
 //  - ยอดเงินต่อเมนู = แบ่งสัดส่วนจาก TotalAmount ของออเดอร์ตามมูลค่าแต่ละรายการ จึงรวมแล้วเท่ากับยอดร้านเสมอ (ไม่นับซ้ำ/ไม่ตกหล่น)
-//  - ยอดสุทธิ = (ยอดที่บันทึกทั้งหมด) - (ยอดที่ยกเลิก) เช่นเดียวกับ netSales ระดับร้าน
+//  - recorded = ยอดรวมก่อนหักยกเลิก (สำเร็จ + ยกเลิก ที่ไม่ใช่ REJECTED) = grossSales ระดับร้าน → คอลัมน์ "ยอดขาย"
+//  - ยอดสุทธิ = recorded - cancelledAmount เช่นเดียวกับ netSales ระดับร้าน (หักยกเลิกครั้งเดียว)
+//  - salesAmount = เฉพาะออเดอร์ที่สำเร็จ (ไม่ได้แสดงในตารางแล้ว แต่คงไว้เป็นข้อมูลอ้างอิง)
 const MENU_NAME_UNKNOWN = 'ไม่พบรายการเมนูในออเดอร์';
 function buildMenuBreakdown(orders, storeId) {
   const map = {};
@@ -2109,9 +2153,11 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       ))}
                     </div>
                     {trendDays === 'month' && (
-                      <input type="month" className="berry-input" aria-label="เลือกเดือน" value={dashMonth}
-                        max={dateOnly(new Date()).slice(0, 7)} onChange={e => e.target.value && setDashMonth(e.target.value)}
-                        style={{ width: 'auto' }} />
+                      <div className="berry-range-row">
+                        <label htmlFor="dash-month">เดือน:</label>
+                        <input id="dash-month" type="month" className="berry-input" aria-label="เลือกเดือน" value={dashMonth}
+                          max={dateOnly(new Date()).slice(0, 7)} onChange={e => e.target.value && setDashMonth(e.target.value)} />
+                      </div>
                     )}
                     {trendDays === 'custom' && (
                       <div className="berry-range-row">
@@ -2345,7 +2391,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                             <tr key={m.name} className={i >= SALES_LIMIT ? 'berry-reveal' : undefined}>
                               <td><b>{m.name}</b></td>
                               <td>{fmtMoney(m.soldQty)}</td>
-                              <td>฿{fmtMoney(m.salesAmount)}</td>
+                              <td>฿{fmtMoney(m.recorded)}</td>
                               <td style={{ color: m.cancelledQty > 0 ? 'var(--berry-red)' : 'var(--berry-text-muted)' }}>{fmtMoney(m.cancelledQty)}</td>
                               <td style={{ color: m.cancelledAmount > 0 ? 'var(--berry-red)' : 'var(--berry-text-muted)' }}>฿{fmtMoney(m.cancelledAmount)}</td>
                               <td style={{ fontWeight: 700 }}>฿{fmtMoney(m.netSales)}</td>
@@ -2358,7 +2404,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       <ShowMoreToggle expanded={salesRowsOpen} onToggle={() => setSalesRowsOpen(v => !v)} hiddenCount={salesMenuRows.length - SALES_LIMIT} controls="sales-menu-table" moreLabel="ดูเมนูเพิ่มเติม" />
                     )}
                     <div style={{ marginTop: 10, fontSize: 12, color: 'var(--berry-text-muted)' }}>
-                      ยอดขาย = ออเดอร์ที่สำเร็จ (Completed/NoShow) • ยอดที่ยกเลิก = ออเดอร์ที่ถูกยกเลิก ไม่รวมออเดอร์ที่สลิปถูกปฏิเสธ (ร้านไม่ได้รับเงิน) แต่จำนวนที่ยกเลิกยังนับรวม
+                      ยอดขาย = ยอดรวมก่อนหักยกเลิก (ออเดอร์ที่สำเร็จ + ออเดอร์ที่ยกเลิก) • ยอดสุทธิ = ยอดขาย − ยอดที่ยกเลิก • ออเดอร์ที่สลิปถูกปฏิเสธ (ร้านไม่ได้รับเงิน) ไม่นับในยอดเงิน แต่จำนวนที่ยกเลิกยังนับรวม
                     </div>
                   </>
                 )}
