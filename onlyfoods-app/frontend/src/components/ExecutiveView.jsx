@@ -902,13 +902,13 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const [activeMenu, setActiveMenu] = useState('overview');
     useHistoryNav(activeMenu, (hash) => {
         const m = hash ?? 'overview';
-        if (!['overview', 'store-manage', 'store-accounts', 'store-sales', 'contract-tracking', 'customer-info',
+        if (!['overview', 'cancellation', 'store-manage', 'store-accounts', 'store-sales', 'contract-tracking', 'customer-info',
               'issue-reports', 'refund-log', 'audit-history'].includes(m)) return false;
         setActiveMenu(m);
         return true;
     });
     // [CROSS-NAV] เก็บร้านที่ผู้บริหารคลิกมาจากอีกหน้า เพื่อเปิดรายละเอียดร้านเดิมต่อเนื่อง
-    const [focusStoreId, setFocusStoreId] = useState('');
+        const [focusPeriod, setFocusPeriod] = useState(null); // ช่วงเวลาที่ส่งต่อจากหน้าภาพรวมไปหน้าวิเคราะห์การยกเลิก
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [search, setSearch] = useState('');
     const searchRef = useRef(null);
@@ -1333,6 +1333,7 @@ const returnFoodCourtToAuto = async () => {
     const MENUS = [
         { id: 'overview', icon: 'overview', label: 'Dashboard', caption: 'ภาพรวมศูนย์อาหาร' },
         { id: 'store-sales', icon: 'trend', label: 'Sales Summary', caption: 'ยอดขายรายร้าน' },
+                { id: 'cancellation', icon: 'ban', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก' },
         { id: 'store-manage', icon: 'store', label: 'Store Management', caption: 'จัดการร้านค้า' },
         { id: 'issue-reports', icon: 'alert', label: 'Issue Reports', caption: 'รายงานปัญหา' },
         { id: 'store-accounts', icon: 'account', label: 'Store Accounts', caption: 'บัญชีร้านค้า' },
@@ -1377,6 +1378,11 @@ const returnFoodCourtToAuto = async () => {
             subtitle: 'ตรวจสอบวันเริ่มสัญญา วันสิ้นสุดสัญญา และร้านค้าที่ใกล้หมดอายุ',
             searchPlaceholder: 'ค้นหาร้านค้า...'
         },
+          'cancellation': {
+            title: 'วิเคราะห์การยกเลิก',
+            subtitle: 'อัตราการยกเลิกรายร้าน ร้านที่ต้องจับตา และสาเหตุของออเดอร์ที่ถูกยกเลิก',
+            searchPlaceholder: ''
+        },
         'refund-log': {
             title: 'ประวัติการคืนเงิน',
             subtitle: 'เงินคืนที่รอลูกค้ามารับที่ร้าน และที่ร้านคืนแล้ว (ไม่นับเป็นรายได้)',
@@ -1412,8 +1418,9 @@ const returnFoodCourtToAuto = async () => {
         observer.observe(root, { childList: true, subtree: true });
         return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
     }, []);
-        const navigateTo = useCallback((menuId, storeId = '') => {
+        const navigateTo = useCallback((menuId, storeId = '', period = null) => {
         setFocusStoreId(storeId ? String(storeId) : '');
+        setFocusPeriod(period);
         setActiveMenu(menuId);
         setSearch('');
         if (isNarrow) setSidebarOpen(false);
@@ -1431,6 +1438,7 @@ const returnFoodCourtToAuto = async () => {
         reloadStores: loadStores,
         reloadOrders: loadOrders,
         focusStoreId,
+        focusPeriod,
         navigateTo,
         clearFocusStore: () => setFocusStoreId('')
     };
@@ -1506,7 +1514,7 @@ const returnFoodCourtToAuto = async () => {
         .of-user-chip:hover { background: #E2E4EE !important; }
         .of-dropdown-item:hover { background: ${T.primarySoft}; color: ${T.primary}; }
         .of-dropdown-item:hover svg { stroke: ${T.primary}; }
-
+        .of-click-row:hover { background: ${T.bg} !important; }
         /* ช่องกรอกเวลาโฟกัส */
         input:focus, select:focus, textarea:focus { outline: 2px solid ${T.primarySoft}; border-color: ${T.primary} !important; }
 
@@ -1649,6 +1657,7 @@ const returnFoodCourtToAuto = async () => {
                 {MENUS.map((m) => (<button key={m.id} type="button" className="of-nav-item" title={!sidebarOpen ? m.label : undefined} aria-label={m.label} onClick={() => {
                     setActiveMenu(m.id);
                     setFocusStoreId('');
+                    setFocusPeriod(null);
                     setSearch('');
                     if (isNarrow)
                         setSidebarOpen(false);
@@ -1686,6 +1695,7 @@ const returnFoodCourtToAuto = async () => {
 
               {activeMenu === 'overview' && (<OverviewPage ctx={ctx} foodCourtOpen={foodCourtOpen} foodCourtOpenTime={foodCourtOpenTime} foodCourtCloseTime={foodCourtCloseTime} foodCourtMode={foodCourtMode} switchingCourt={switchingCourt} returningFoodCourtAuto={returningFoodCourtAuto} onToggleCourt={toggleFoodCourt} onOpenSettings={openFoodCourtSettings} onReturnAuto={returnFoodCourtToAuto} />)}
               {activeMenu === 'store-sales' && <StoreSalesPage ctx={ctx}/>}
+              {activeMenu === 'cancellation' && <CancellationPage ctx={ctx}/>}
               {activeMenu === 'store-manage' && <StoreManagePage ctx={ctx}/>}
               {activeMenu === 'store-accounts' && <StoreAccountsPage ctx={ctx}/>}
               {activeMenu === 'customer-info' && <CustomerInfoPage ctx={ctx}/>}
@@ -1717,6 +1727,140 @@ const returnFoodCourtToAuto = async () => {
       <ForceCloseDialog state={forceCloseState} onCancel={() => closeForceClose(null)} onChoose={closeForceClose}/>
       <ToastStack toasts={toasts} onDismiss={dismissToast}/>
       </div>
+    </>);
+}
+// ===== วิเคราะห์การยกเลิก (Cancellation): อัตรายกเลิกรายร้าน + ร้านที่ต้องจับตา + รายงานออเดอร์ยกเลิก =====
+// ทุกตัวเลขคิดตาม "ช่วงเวลาที่เลือก" แบบเดียวกับหน้าภาพรวม (ไม่ใช้ 30 วันตายตัวแบบฝ่ายบัญชี)
+const CANCEL_WARN_RATE = 5; // ตั้งแต่ 5% = เฝ้าระวัง (แค่ใช้แสดงสีเหลือง ตัวแจ้งเตือนจริงยังเป็น > CANCEL_ALERT_RATE)
+const cancelRateTone = (rate) => rate === null || rate === undefined ? 'na'
+    : isCancelAlert(rate) ? 'bad'
+    : rate >= CANCEL_WARN_RATE ? 'warn'
+    : 'ok';
+
+// กราฟแท่งอัตรายกเลิกรายร้าน: พื้นหลังแบ่งโซน เขียว < 5% · เหลือง 5–10% · แดง > 10% และเส้นเกณฑ์ที่ 10%
+function CancelRateBars({ rows, selectedId, onSelect }) {
+    if (!rows.length)
+        return <EmptyState text="ช่วงเวลานี้ยังไม่มีออเดอร์" minHeight="160px"/>;
+    const max = Math.max(20, CANCEL_ALERT_RATE + 5, ...rows.map((r) => r.cancelRate || 0));
+    const pct = (v) => `${Math.min(100, ((v || 0) / max) * 100)}%`;
+    const barColor = { ok: T.up, warn: T.amber, bad: T.down };
+    return (<div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
+      {rows.map((r) => {
+            const tone = cancelRateTone(r.cancelRate);
+            const active = String(selectedId) === String(r.StoreId);
+            return (<button key={r.StoreId} type="button" onClick={() => onSelect(active ? '' : String(r.StoreId))} title={`${r.StoreName}: ยกเลิก ${money(r.cancelledCount)} จาก ${money(r.orderCount)} ออเดอร์ · กดเพื่อดูเฉพาะร้านนี้`} style={{ display: 'grid', gridTemplateColumns: 'minmax(80px, 170px) minmax(0, 1fr) 52px', gap: '12px', alignItems: 'center', width: '100%', padding: '7px 8px', border: 'none', borderRadius: '8px', background: active ? T.primarySoft : 'transparent', cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left' }}>
+              <span style={{ fontSize: '13px', color: active ? T.ink : T.text, fontWeight: active ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.StoreName}</span>
+              <span style={{ position: 'relative', height: '16px', borderRadius: '999px', overflow: 'hidden', background: T.greenSoft }}>
+                <span style={{ position: 'absolute', top: 0, bottom: 0, left: pct(CANCEL_WARN_RATE), width: `calc(${pct(CANCEL_ALERT_RATE)} - ${pct(CANCEL_WARN_RATE)})`, background: T.amberSoft }}/>
+                <span style={{ position: 'absolute', top: 0, bottom: 0, left: pct(CANCEL_ALERT_RATE), right: 0, background: T.redSoft }}/>
+                <span style={{ position: 'absolute', top: '4px', bottom: '4px', left: 0, width: pct(r.cancelRate), minWidth: r.cancelRate > 0 ? '6px' : 0, borderRadius: '999px', background: barColor[tone] }}/>
+                <span style={{ position: 'absolute', top: 0, bottom: 0, left: pct(CANCEL_ALERT_RATE), width: '2px', background: T.down, opacity: 0.6 }}/>
+              </span>
+              <strong style={{ fontSize: '13px', color: tone === 'bad' ? T.down : T.ink, textAlign: 'right' }}>{r.cancelRate.toFixed(1)}%</strong>
+            </button>);
+        })}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', marginTop: '8px', fontSize: '12px', color: T.muted }}>
+        {[[T.greenSoft, `ปกติ < ${CANCEL_WARN_RATE}%`], [T.amberSoft, `เฝ้าระวัง ${CANCEL_WARN_RATE}–${CANCEL_ALERT_RATE}%`], [T.redSoft, `แจ้งเตือน > ${CANCEL_ALERT_RATE}%`]].map(([bg, text]) => (<span key={text} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: bg, border: `1px solid ${T.line}` }}/>{text}
+          </span>))}
+      </div>
+    </div>);
+}
+
+function CancellationPage({ ctx }) {
+    const { orders, stores, loading, focusStoreId, focusPeriod, navigateTo } = ctx;
+    // ถ้ากดมาจากหน้าภาพรวม จะได้ช่วงเวลาเดียวกับที่ดูอยู่ (focusPeriod) ไม่งั้นเริ่มที่ "วันนี้"
+    const from = focusPeriod || {};
+    const [anchor, setAnchor] = useState(from.anchor || todayISO());
+    const [days, setDays] = useState(from.days || 1);
+    const [customRange, setCustomRange] = useState(Boolean(from.customRange));
+    const [customStart, setCustomStart] = useState(from.customStart || todayISO());
+    const [customEnd, setCustomEnd] = useState(from.customEnd || todayISO());
+    const [storeId, setStoreId] = useState(focusStoreId ? String(focusStoreId) : '');
+    useEffect(() => { if (focusStoreId) setStoreId(String(focusStoreId)); }, [focusStoreId]);
+
+    const effectiveDays = customRange ? rangeDayCount(customStart, customEnd) : days;
+    const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || (effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}`) : days === 1 ? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
+    const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบวันก่อนหน้า' : `เทียบ ${days} วันก่อนหน้า`;
+
+    const report = useMemo(() => {
+        const bounds = customRange ? customPeriodBounds(customStart, customEnd) : periodBounds(anchor, days);
+        const prevBounds = customRange ? previousBoundsForRange(customStart, customEnd) : previousBounds(anchor, days);
+        const current = orders.filter((o) => inRange(o, bounds));
+        const previous = orders.filter((o) => inRange(o, prevBounds));
+        // ร้านที่มีออเดอร์ในช่วงนี้ (ร้านที่ถูกลบไปแล้วยังแสดง พร้อมป้าย Deleted เหมือนหน้าภาพรวม)
+        const nameOf = new Map(stores.map((s) => [String(s.StoreId), s.StoreName]));
+        const storeRows = [...new Set(current.map((o) => String(o.StoreId)))]
+            .map((id) => {
+                const own = current.filter((o) => String(o.StoreId) === id);
+                const sum = summarize(own);
+                return {
+                    StoreId: id,
+                    StoreName: nameOf.get(id) || `${own[0]?.StoreName || `ร้าน #${id}`} (Deleted)`,
+                    cancelledCount: sum.cancelledCount,
+                    orderCount: sum.completedCount + sum.cancelledCount,
+                    cancelRate: sum.cancelRate
+                };
+            })
+            .filter((r) => r.cancelRate !== null)
+            .sort((a, b) => b.cancelRate - a.cancelRate || b.cancelledCount - a.cancelledCount);
+        const scopedNow = storeId ? current.filter((o) => String(o.StoreId) === storeId) : current;
+        const scopedBefore = storeId ? previous.filter((o) => String(o.StoreId) === storeId) : previous;
+        return { now: summarize(scopedNow), before: summarize(scopedBefore), hasPreviousData: scopedBefore.length > 0, storeRows };
+    }, [orders, stores, anchor, days, customRange, customStart, customEnd, storeId]);
+
+    const selectedRow = report.storeRows.find((r) => String(r.StoreId) === storeId);
+    const selectedName = selectedRow?.StoreName || stores.find((s) => String(s.StoreId) === storeId)?.StoreName || '';
+    const alertRows = report.storeRows.filter((r) => cancelRateTone(r.cancelRate) === 'bad');
+    const watchRows = report.storeRows.filter((r) => ['bad', 'warn'].includes(cancelRateTone(r.cancelRate)));
+    const pickerStores = [...report.storeRows, ...stores.filter((s) => !report.storeRows.some((r) => String(r.StoreId) === String(s.StoreId)))];
+
+    return (<>
+      <Card style={{ marginBottom: '18px' }}>
+        <div style={toolbarStyle}>
+          <div>
+            <h3 style={h3Style}>ช่วงข้อมูลที่กำลังดู</h3>
+            <p style={captionStyle}>{storeId ? `เฉพาะร้าน ${selectedName}` : 'ทุกร้านค้า'} · {periodLabel}</p>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={storeId} onChange={(e) => setStoreId(e.target.value)} aria-label="เลือกร้านค้า" style={{ ...inputStyle, width: 'auto', minWidth: '200px', padding: '9px 12px' }}>
+              <option value="">ทุกร้านค้า</option>
+              {pickerStores.map((s) => <option key={s.StoreId} value={String(s.StoreId)}>{s.StoreName}</option>)}
+            </select>
+            <StorePeriodPicker anchor={anchor} setAnchor={setAnchor} days={days} setDays={setDays} custom={customRange} setCustom={setCustomRange} startDate={customStart} setStartDate={setCustomStart} endDate={customEnd} setEndDate={setCustomEnd}/>
+          </div>
+        </div>
+      </Card>
+
+      <div className="of-kpi-small">
+        <KpiCard size="sm" label="ออเดอร์ทั้งหมด (สำเร็จ + ยกเลิก)" value={money(report.now.completedCount + report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.completedCount + report.now.cancelledCount, report.before.completedCount + report.before.cancelledCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="check" tone="blue"/>
+        <KpiCard size="sm" label="ออเดอร์ยกเลิก" value={money(report.now.cancelledCount)} unit="ออเดอร์" delta={changePct(report.now.cancelledCount, report.before.cancelledCount)} deltaLabel={compareLabel} hasPreviousData={report.hasPreviousData} icon="ban" tone="amber" invertDelta/>
+        <KpiCard size="sm" label="อัตราการยกเลิก" value={report.now.cancelRate === null ? 'N/A' : `${report.now.cancelRate.toFixed(1)}%`} delta={report.now.cancelRate !== null && report.before.cancelRate !== null ? report.now.cancelRate - report.before.cancelRate : null} deltaSuffix=" จุดเปอร์เซ็นต์" deltaLabel="" hasPreviousData={report.hasPreviousData} hint={report.now.cancelRate === null ? 'ไม่มีออเดอร์ในช่วงนี้' : undefined} icon="info" tone="amber" invertDelta/>
+        <KpiCard size="sm" label={`ร้านที่อัตรายกเลิกเกิน ${CANCEL_ALERT_RATE}%`} value={money(alertRows.length)} unit="ร้าน" hint={`จาก ${money(report.storeRows.length)} ร้านที่มีออเดอร์ในช่วงนี้`} delta={null} icon="alert" tone={alertRows.length ? 'amber' : 'green'}/>
+      </div>
+
+      <div style={chartGridStyle}>
+        <Card title="อัตราการยกเลิกรายร้าน" subtitle={`เรียงจากร้านที่ยกเลิกมากสุด · ${periodLabel} · กดที่ร้านเพื่อดูเฉพาะร้านนั้น`}>
+          {loading ? <EmptyState text="กำลังโหลดข้อมูล..."/> : <CancelRateBars rows={report.storeRows} selectedId={storeId} onSelect={setStoreId}/>}
+        </Card>
+        <Card title="ร้านที่ต้องจับตา" subtitle={`อัตรายกเลิกตั้งแต่ ${CANCEL_WARN_RATE}% ขึ้นไป ในช่วงที่เลือก`} right={<Badge tone={alertRows.length ? 'danger' : 'ok'}>{money(watchRows.length)} ร้าน</Badge>}>
+          {watchRows.length === 0 ? (<EmptyState text="ไม่มีร้านที่น่ากังวลในช่วงนี้" minHeight="160px"/>) : (<div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+              {watchRows.map((r) => {
+                const bad = cancelRateTone(r.cancelRate) === 'bad';
+                return (<div key={r.StoreId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '12px 14px', borderRadius: T.radiusMd, border: `1px solid ${bad ? '#F6C9C0' : '#F3DFAE'}`, background: bad ? T.redSoft : T.amberSoft }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: T.ink, fontWeight: 700, fontSize: '13.5px' }}>{r.StoreName}</div>
+                      <div style={{ color: T.muted, fontSize: '12px', marginTop: '3px' }}>ยกเลิก {money(r.cancelledCount)} จาก {money(r.orderCount)} ออเดอร์</div>
+                      <button type="button" onClick={() => navigateTo('store-sales', r.StoreId)} style={{ border: 'none', background: 'transparent', padding: 0, marginTop: '6px', color: T.primaryDark, fontWeight: 700, fontSize: '12.5px', cursor: 'pointer', fontFamily: FONT_STACK }}>ดูยอดขายร้าน →</button>
+                    </div>
+                    <Badge tone={bad ? 'danger' : 'warn'}>{r.cancelRate.toFixed(1)}%</Badge>
+                  </div>);
+            })}
+            </div>)}
+        </Card>
+      </div>
+
+      <CancelledOrdersCard api={ctx.API} cancelled={report.now.cancelled} periodLabel={storeId ? `${selectedName} · ${periodLabel}` : periodLabel} loading={loading} showStore={!storeId} onStoreClick={(id) => setStoreId(String(id))}/>
     </>);
 }
 // ===== ภาพรวมศูนย์อาหาร: สรุปยอดขาย ออเดอร์ ร้านค้า และกราฟ =====
@@ -1852,6 +1996,8 @@ return {
 const periodLabel = customRange ? monthLabelOf(customStart, customEnd) || (effectiveDays === 1 ? `วันที่ ${thaiDate(customStart)}` : `${thaiDate(customStart)} – ${thaiDate(customEnd)}`) : days === 1? `วันที่ ${thaiDate(anchor)}` : `${days} วันย้อนหลังถึง ${thaiDate(anchor)}`;
 const compareLabel = customRange ? `เทียบ ${effectiveDays} วันก่อนหน้า` : days === 1 ? 'เทียบวันก่อนหน้า' : `เทียบ ${days} วันก่อนหน้า`;
     const visibleStoreRows = report.storeRows;
+        // ไปหน้าวิเคราะห์การยกเลิก โดยส่งช่วงเวลาที่ดูอยู่ไปด้วย (storeId ว่าง = ทุกร้าน)
+    const goCancellation = (storeId = '') => navigateTo('cancellation', storeId, { anchor, days, customRange, customStart, customEnd });
     const issueBounds = customRange
     ? customPeriodBounds(customStart, customEnd)
     : periodBounds(anchor, days);
@@ -2258,10 +2404,14 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
           {money(cancelAlertStores.length)} ร้านอัตรายกเลิกเกิน {CANCEL_ALERT_RATE}% ในช่วงนี้:{' '}
           {cancelAlertStores.map((s, i) => (<span key={s.StoreId}>
             {i > 0 && ', '}
-            <button type="button" onClick={() => ctx.navigateTo('store-sales', s.StoreId)} style={{ border: 'none', background: 'transparent', padding: 0, color: T.down, fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
+            <button type="button" onClick={() => goCancellation(s.StoreId)} style={{ border: 'none', background: 'transparent', padding: 0, color: T.down, fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
               {s.StoreName}
             </button> ({s.cancelRate.toFixed(1)}%)
           </span>))}
+                    {' — '}
+          <button type="button" onClick={() => goCancellation()} style={{ border: 'none', background: 'transparent', padding: 0, color: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '13px' }}>
+            ดูวิเคราะห์การยกเลิก →
+          </button>
         </AlertBanner>)}
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
@@ -2301,7 +2451,9 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
                       </span>)}
                   </td>
                   <td style={tdRightStyle}>{money(s.cancelledCount)}</td>
-                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : isCancelAlert(s.cancelRate) ? <Badge tone="danger">{s.cancelRate.toFixed(1)}%</Badge> : `${s.cancelRate.toFixed(1)}%`}</td>
+                  <td style={tdRightStyle}>{s.cancelRate === null ? 'N/A' : (<button type="button" onClick={() => goCancellation(s.StoreId)} title={`ดูการยกเลิกของร้าน ${s.StoreName}`} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', fontFamily: FONT_STACK, fontSize: '14px', color: T.text, textDecoration: 'underline', textUnderlineOffset: '3px' }}>
+                      {isCancelAlert(s.cancelRate) ? <Badge tone="danger">{s.cancelRate.toFixed(1)}%</Badge> : `${s.cancelRate.toFixed(1)}%`}
+                    </button>)}</td>
                   <td style={tdStyle}>
                    <Badge tone={s.IsDeleted ? 'neutral' : s.ContractState === 'EXPIRED' || s.IsSuspended ? 'danger' : s.IsOpen ? 'ok' : 'neutral'}>
                       {s.IsDeleted ? 'ลบแล้ว' : s.ContractState === 'EXPIRED' ? 'หมดสัญญา' : s.IsSuspended ? 'ระงับสิทธิ์' : s.IsOpen ? 'เปิดบริการ' : 'ปิดร้าน'}
@@ -2318,7 +2470,13 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
         </div>
       </Card>
 
-      <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={periodLabel} loading={loading} showStore onStoreClick={(storeId) => ctx.navigateTo('store-sales', storeId)}/>
+           <Card title="ออเดอร์ที่ถูกยกเลิก" subtitle={`${periodLabel} · ดูอัตรายกเลิกรายร้าน สาเหตุ และรายการออเดอร์ได้ในหน้าวิเคราะห์การยกเลิก`} style={{ marginTop: '16px' }} right={<Button variant="ghost" icon="ban" onClick={() => goCancellation()}>ดูวิเคราะห์การยกเลิก →</Button>}>
+        <div style={{ display: 'flex', gap: '28px', flexWrap: 'wrap', marginTop: '6px' }}>
+          <div><div style={captionStyle}>ออเดอร์ที่ยกเลิก</div><strong style={{ fontSize: '20px', color: T.ink }}>{money(report.now.cancelledCount)} ออเดอร์</strong></div>
+          <div><div style={captionStyle}>มูลค่าออเดอร์ที่ถูกยกเลิก</div><strong style={{ fontSize: '20px', color: T.ink }}>{money(sumAmount(report.now.cancelled))} บาท</strong></div>
+          <div><div style={captionStyle}>ร้านที่อัตรายกเลิกเกิน {CANCEL_ALERT_RATE}%</div><strong style={{ fontSize: '20px', color: cancelAlertStores.length ? T.down : T.ink }}>{money(cancelAlertStores.length)} ร้าน</strong></div>
+        </div>
+      </Card>
 
      <Card title="รายงานปัญหาจากลูกค้า" subtitle={effectiveDays === 1 ? `รายงานที่แจ้งใน${periodLabel}` : `จำนวนรายงานแยกตามร้าน · ${periodLabel}`} style={{ marginTop: '16px' }} right={<Badge tone="warning">{money(periodIssueReports.length)} รายการ</Badge>}>
         {issueLoading ? <EmptyState text="กำลังโหลดรายงานปัญหา..."/> : periodIssueReports.length === 0 ? (
@@ -2903,7 +3061,7 @@ function summarizeCancelReasons(cancelledOrders) {
     return rows.sort((a, b) => b.count - a.count);
 }
 // ===== ออเดอร์ยกเลิก: สรุปและตรวจสอบรายการที่ถูกยกเลิก =====
-function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, loading = false, style, onStoreClick }) {
+function CancelledOrdersCard({ api, cancelled = [], periodLabel, showStore = true, loading = false, style, onStoreClick }) {
     const [reasonFilter, setReasonFilter] = useState('');
     const [openId, setOpenId] = useState(null);
     const [showAll, setShowAll] = useState(false);
@@ -2921,8 +3079,8 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
     const lostAmount = sumAmount(cancelled);
     const topReason = reasons[0] || null;
     const visibleRows = showAll ? rows : rows.slice(0, 8);
-    const toggleRow = (orderId) => setOpenId((prev) => (prev === orderId ? null : orderId));
-    return (<Card title="รายงานออเดอร์ยกเลิก" subtitle={`${periodLabel} · กดที่แถวเพื่อดูรายการอาหารในออเดอร์นั้น`} right={<Badge tone={cancelled.length ? 'danger' : 'ok'}>{money(cancelled.length)} ออเดอร์</Badge>} style={{ marginTop: '16px', ...style }}>
+    const openOrder = cancelled.find((o) => o.OrderID === openId) || null;
+    return (<Card title="รายงานออเดอร์ยกเลิก" subtitle={`${periodLabel} · กดที่แถวเพื่อดูว่าใครสั่ง ใครยกเลิก เพราะอะไร และสั่งอะไรไปบ้าง`} right={<Badge tone={cancelled.length ? 'danger' : 'ok'}>{money(cancelled.length)} ออเดอร์</Badge>} style={{ marginTop: '16px', ...style }}>
       {loading && <EmptyState text="กำลังโหลดข้อมูล..." minHeight="160px"/>}
 
       {!loading && !cancelled.length && (<EmptyState text="ช่วงเวลานี้ไม่มีออเดอร์ที่ถูกยกเลิก" minHeight="160px"/>)}
@@ -2961,61 +3119,33 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
             <table style={tableStyle}>
               <thead>
                 <tr>
-                  <th style={thStyle}>เวลาที่ยกเลิก</th>
+                  <th style={thStyle}>เวลาที่สั่ง</th>
                   <th style={thStyle}>คิว</th>
                   {showStore && <th style={thStyle}>ร้านค้า</th>}
-                  <th style={thStyle}>ช่องทางชำระ</th>
+                  <th style={thStyle}>ลูกค้า</th>
                   <th style={thRightStyle}>ยอดออเดอร์</th>
                   <th style={thStyle}>เหตุผลการยกเลิก</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((o) => {
-                const isOpen = openId === o.OrderID;
-                const items = o.items || [];
-                return (<React.Fragment key={o.OrderID}>
-                      <tr style={{ ...trStyle, cursor: 'pointer', background: isOpen ? T.bg : 'transparent' }} onClick={() => toggleRow(o.OrderID)}>
-                        <td style={tdStyle}>{thaiDateTime(o.CreatedAt)}</td>
-                        <td style={tdStyle}>
-                          <strong style={{ color: T.ink }}>{o.QueueNo || '-'}</strong>
-                          {Boolean(o.IsWalkIn) && (<span style={{ marginLeft: '8px' }}>
-                              <Badge tone="neutral">หน้าร้าน</Badge>
-                            </span>)}
-                        </td>
-                        {showStore && <td style={tdStyle}>{onStoreClick ? (<button type="button" onClick={(event) => { event.stopPropagation(); onStoreClick(o.StoreId); }} title={`ดูยอดขายรายร้าน ${o.StoreName || `ร้าน #${o.StoreId}`}`} style={{ border: 'none', background: 'transparent', padding: 0, color: T.ink, fontWeight: 600, cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: '3px' }}>{o.StoreName || `ร้าน #${o.StoreId}`}</button>) : (o.StoreName || `ร้าน #${o.StoreId}`)}</td>}
-                        <td style={tdStyle}>{o.PaymentMethod || '-'}</td>
-                        <td style={{ ...tdRightStyle, color: T.down, fontWeight: 600 }}>
-                          {money(o.TotalAmount)} บาท
-                        </td>
-                        <td style={tdStyle}>
-                          {String(o.CancelReason || '').trim() || (<span style={{ color: T.muted }}>{CANCEL_REASON_FALLBACK}</span>)}
-                        </td>
-                      </tr>
-
-                      {isOpen && (<tr style={trStyle}>
-                          <td colSpan={showStore ? 6 : 5} style={{ ...tdStyle, background: T.bg }}>
-                            {items.length ? (<div style={cancelItemWrapStyle}>
-                                {items.map((it) => (<div key={it.DetailID} style={cancelItemRowStyle}>
-                                    <span style={{ color: T.ink, fontWeight: 600 }}>
-                                      {it.ProductName || `สินค้า #${it.ProductId}`}
-                                    </span>
-                                    <span style={{ color: T.muted }}>× {money(it.Qty)}</span>
-                                    <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-                                      {money2(Number(it.Qty || 0) * Number(it.UnitPrice || 0))} บาท
-                                    </span>
-                                  </div>))}
-                                {o.Note && (<p style={{ ...captionStyle, marginTop: '10px' }}>
-                                    หมายเหตุจากลูกค้า: {o.Note}
-                                  </p>)}
-                              </div>) : (<span style={{ color: T.muted, fontSize: '13px' }}>
-                                ออเดอร์นี้ไม่มีรายการอาหารบันทึกไว้
-                              </span>)}
-                          </td>
-                        </tr>)}
-                    </React.Fragment>);
-            })}
-
-                {!visibleRows.length && (<tr>
+                {visibleRows.map((o) => (<tr key={o.OrderID} className="of-click-row" title="กดเพื่อดูรายละเอียดออเดอร์นี้" style={{ ...trStyle, cursor: 'pointer', background: openId === o.OrderID ? T.bg : 'transparent' }} onClick={() => setOpenId(o.OrderID)}>
+                      <td style={tdStyle}>{thaiDateTime(o.CreatedAt)}</td>
+                      <td style={tdStyle}>
+                        <strong style={{ color: T.ink }}>{o.QueueNo || '-'}</strong>
+                        {Boolean(o.IsWalkIn) && (<span style={{ marginLeft: '8px' }}>
+                            <Badge tone="neutral">หน้าร้าน</Badge>
+                          </span>)}
+                      </td>
+                      {showStore && <td style={tdStyle}>{onStoreClick ? (<button type="button" onClick={(event) => { event.stopPropagation(); onStoreClick(o.StoreId); }} title={`ดูเฉพาะร้าน ${o.StoreName || `ร้าน #${o.StoreId}`}`} style={{ border: 'none', background: 'transparent', padding: 0, color: T.ink, fontWeight: 600, cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left', textDecoration: 'underline', textUnderlineOffset: '3px' }}>{o.StoreName || `ร้าน #${o.StoreId}`}</button>) : (o.StoreName || `ร้าน #${o.StoreId}`)}</td>}
+                      <td style={tdStyle}>{cancelCustomerName(o)}</td>
+                      <td style={{ ...tdRightStyle, color: T.down, fontWeight: 600 }}>
+                        {money(o.TotalAmount)} บาท
+                      </td>
+                      <td style={tdStyle}>
+                        {String(o.CancelReason || '').trim() || (<span style={{ color: T.muted }}>{CANCEL_REASON_FALLBACK}</span>)}
+                      </td>
+                    </tr>))}
+                {rows.length === 0 && (<tr>
                     <td colSpan={showStore ? 6 : 5} style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
                       ไม่มีออเดอร์ที่ตรงกับเหตุผลที่เลือก
                     </td>
@@ -3023,15 +3153,80 @@ function CancelledOrdersCard({ cancelled = [], periodLabel, showStore = true, lo
               </tbody>
             </table>
           </div>
-
+          
           {rows.length > 8 && (<div style={{ marginTop: '14px', textAlign: 'center' }}>
               <Button variant="ghost" onClick={() => setShowAll((v) => !v)}>
                 {showAll ? 'ย่อรายการ' : `ดูทั้งหมด ${money(rows.length)} ออเดอร์`}
               </Button>
             </div>)}
         </>)}
+              <CancelledOrderDetailModal api={api} order={openOrder} onClose={() => setOpenId(null)}/>
     </Card>);
 }
+// ชื่อลูกค้าของออเดอร์ (walk-in ไม่มีบัญชีลูกค้า)
+const cancelCustomerName = (o) => o.CustomerName || o.UserName || (Number(o.IsWalkIn) === 1 ? 'ลูกค้าหน้าร้าน (Walk-in)' : 'ไม่ระบุ');
+const PAYMENT_STATUS_TH = { VERIFIED: 'ชำระแล้ว', PENDING: 'รอตรวจสอบการชำระ', REJECTED: 'สลิปไม่ผ่าน (ไม่ได้รับเงิน)' };
+const REFUND_STATUS_TH = { PENDING: 'รอลูกค้ามารับเงินคืน', DONE: 'คืนเงินแล้ว', FAILED: 'คืนเงินไม่สำเร็จ' };
+const ITEM_STATUS_TH = { OUT_OF_STOCK: 'สินค้าหมด', CANCELLED: 'ยกเลิกรายการ' };
+
+// รายละเอียดออเดอร์ที่ยกเลิก: ดึง /api/orders/{id}/detail (ใครกดยกเลิก + เวลา จาก OrderStatusLog, การชำระ, การคืนเงิน)
+function CancelledOrderDetailModal({ api, order, onClose }) {
+    const [detail, setDetail] = useState(null);
+    const [error, setError] = useState('');
+    useEffect(() => {
+        if (!order || !api) return undefined;
+        let stop = false;
+        setDetail(null);
+        setError('');
+        callApi(`${api}/api/orders/${order.OrderID}/detail`)
+            .then((data) => { if (!stop) setDetail(data); })
+            .catch((err) => { if (!stop) setError(err.message || 'โหลดรายละเอียดไม่สำเร็จ'); });
+        return () => { stop = true; };
+    }, [api, order]);
+    if (!order) return null;
+    const o = detail?.order || order;
+    const cancelStep = [...(detail?.timeline || [])].reverse().find((t) => t.NewStatusCode === 'CANCELLED');
+    const cancelledBy = !cancelStep ? null
+        : cancelStep.ChangedByType === 'SYSTEM' ? 'ระบบ (ยกเลิกอัตโนมัติ)'
+        : `${cancelStep.ChangedByName || 'ไม่ทราบชื่อ'}${cancelStep.ChangedByRoleTh ? ` · ${cancelStep.ChangedByRoleTh}` : ''}`;
+    const payment = (detail?.payments || []).filter((p) => p.PaymentType === 'ORDER').slice(-1)[0];
+    const refunds = detail?.refunds || [];
+    const items = (detail?.order?.items || order.items || []).filter((it) => it.ItemStatus !== 'REPLACED');
+    const info = (label, value, full) => (<div style={{ gridColumn: full ? '1 / -1' : 'auto', minWidth: 0 }}>
+        <div style={{ color: T.muted, fontSize: '12px', fontWeight: 600 }}>{label}</div>
+        <div style={{ color: T.ink, fontSize: '14px', marginTop: '3px', overflowWrap: 'anywhere' }}>{value}</div>
+      </div>);
+    const waiting = !detail && !error ? <span style={{ color: T.muted }}>กำลังโหลด...</span> : null;
+    return (<Modal open title={`ออเดอร์ที่ยกเลิก · คิว ${o.QueueNo || '-'}`} subtitle={o.StoreName} onClose={onClose} width={680}>
+      {error && <AlertBanner style={{ marginBottom: '12px' }}>โหลดข้อมูลบางส่วนไม่สำเร็จ: {error}</AlertBanner>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: '14px 20px', padding: '14px 16px', borderRadius: T.radiusMd, background: T.bg }}>
+        {info('ลูกค้า', <>{cancelCustomerName(o)}{o.CustomerPhone && <span style={{ color: T.muted }}> · {o.CustomerPhone}</span>}</>)}
+        {info('ผู้กดยกเลิก', waiting || cancelledBy || <span style={{ color: T.muted }}>ไม่พบบันทึกในระบบ</span>)}
+        {info('สั่งเมื่อ', `${thaiDateTime(o.CreatedAt)} น.`)}
+        {info('ยกเลิกเมื่อ', waiting || (cancelStep ? `${thaiDateTime(cancelStep.CreatedAt)} น.` : <span style={{ color: T.muted }}>ไม่พบบันทึกในระบบ</span>))}
+        {info('ช่องทางชำระ', <>{o.PaymentMethod || '-'}{(payment?.PaymentStatus || o.PaymentStatus) && <span style={{ color: T.muted }}> · {PAYMENT_STATUS_TH[payment?.PaymentStatus || o.PaymentStatus] || (payment?.PaymentStatus || o.PaymentStatus)}</span>}</>)}
+        {info('การคืนเงิน', waiting || (refunds.length ? refunds.map((r) => (<div key={r.RefundId}>{money2(r.Amount)} บาท · <span style={{ color: r.RefundStatus === 'DONE' ? T.up : T.amber, fontWeight: 600 }}>{REFUND_STATUS_TH[r.RefundStatus] || r.RefundStatus}</span>{r.RefundedAt ? ` (${thaiDateTime(r.RefundedAt)})` : ''}</div>)) : <span style={{ color: T.muted }}>ไม่มีการคืนเงิน</span>))}
+        {info('เหตุผลการยกเลิก', String(o.CancelReason || '').trim() || CANCEL_REASON_FALLBACK, true)}
+        {o.Note && info('หมายเหตุจากลูกค้า', o.Note, true)}
+      </div>
+
+      <h4 style={{ margin: '18px 0 0', color: T.ink, fontSize: '14.5px' }}>รายการอาหาร</h4>
+      <table style={{ ...tableStyle, minWidth: 0 }}>
+        <thead><tr><th style={thStyle}>เมนู</th><th style={thRightStyle}>จำนวน</th><th style={thRightStyle}>ราคา/หน่วย</th><th style={thRightStyle}>รวม</th></tr></thead>
+        <tbody>
+          {items.length === 0 && (<tr><td colSpan={4} style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>ไม่พบรายการอาหารของออเดอร์นี้</td></tr>)}
+          {items.map((it, i) => (<tr key={it.OrderItemId || it.DetailID || i} style={trStyle}>
+              <td style={tdStyle}>{it.ProductName || `สินค้า #${it.ProductId}`}{ITEM_STATUS_TH[it.ItemStatus] && <span style={{ marginLeft: '8px' }}><Badge tone="warn">{ITEM_STATUS_TH[it.ItemStatus]}</Badge></span>}</td>
+              <td style={tdRightStyle}>{money(it.Qty)}</td>
+              <td style={tdRightStyle}>{money2(it.UnitPrice)} บาท</td>
+              <td style={tdRightStyle}>{money2(Number(it.Qty || 0) * Number(it.UnitPrice || 0))} บาท</td>
+            </tr>))}
+          <tr><td colSpan={3} style={{ ...tdRightStyle, fontWeight: 700, color: T.ink }}>ยอดรวมออเดอร์</td><td style={{ ...tdRightStyle, fontWeight: 700, color: T.ink }}>{money2(o.TotalAmount)} บาท</td></tr>
+        </tbody>
+      </table>
+    </Modal>);
+}
+
 // ===== เลือกเป็นเดือน (ใช้กับ Dashboard + ยอดขายรายร้าน และไฟล์ CSV/XLSX ที่ export ตามช่วงนี้) =====
 const TH_MONTH_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 // เดือน m (1–12) ของปี y -> [วันที่ 1, วันสุดท้าย] ; เดือนปัจจุบันตัดที่วันนี้
@@ -3502,7 +3697,7 @@ function StoreSalesPage({ ctx }) {
             </Card>
           </div>
           <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
-            <CancelledOrdersCard cancelled={report.now.cancelled} periodLabel={`${store.StoreName} · ${periodLabel}`} showStore={false} style={{ marginTop: 0 }}/>
+           <CancelledOrdersCard api={ctx.API} cancelled= {report.now.cancelled} periodLabel={`${store.StoreName} · ${periodLabel}`} showStore={false} style={{ marginTop: 0 }}/>
             <StoreReviewSection ctx={ctx} storeId={storeId}/>
             <div id="store-issue-reports" style={{ scrollMarginTop: '20px' }}>
               <StoreIssueReportSection ctx={ctx} storeId={storeId}/>
@@ -6135,8 +6330,6 @@ const cancelStatLabelStyle = { fontSize: '12.5px', color: T.muted, fontWeight: 6
 const cancelStatValueStyle = { fontSize: '20px', color: T.ink, fontWeight: 700, lineHeight: 1.3 };
 const cancelChipRowStyle = { display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '4px' };
 const cancelChipStyle = (active) => ({ padding: '7px 14px', borderRadius: '999px', fontSize: '12.5px', fontWeight: 600, fontFamily: FONT_STACK, cursor: 'pointer', whiteSpace: 'nowrap', background: active ? T.primarySoft : T.surface, color: active ? T.primaryDark : T.text, border: `1px solid ${active ? T.primary : T.line}` });
-const cancelItemWrapStyle = { display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px 2px' };
-const cancelItemRowStyle = { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px', color: T.text };
 const storeThumbStyle = { width: '38px', height: '38px', borderRadius: T.radiusMd, display: 'grid', placeItems: 'center', background: T.primarySoft, color: T.primary, fontWeight: 700 };
 // ===== ตัวเลือกเวลา (ชั่วโมง : นาที) + ปุ่มลัด ใช้แทน <input type="time"> =====
 const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
