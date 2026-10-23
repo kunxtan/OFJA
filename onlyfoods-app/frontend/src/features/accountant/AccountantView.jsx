@@ -7,6 +7,7 @@ import { normStatus, dedupeOrders, classifyCancelledOrder, customerNameOf, build
 import { AUDIT_PAGE, mergeLogs, buildAuditRows, AUDIT_ACTION_META } from './lib/audit';
 import { buildXlsxBlob, downloadBlob, REPORT_TYPES, REPORT_COLUMNS } from './lib/report';
 import { Icon, useResponsiveEnhancements } from './components/ui';
+import { BellButton, BrandLogo, BurgerButton, StatusPill, TopbarStyles, UserChip } from '../../shared/ui/Topbar';
 
 // CSS ของหน้าฝ่ายบัญชี : แทรกเป็น <style> ตอนเปิดหน้า (ปิดหน้าแล้วหายไป)
 import STYLES from './accountant.css?inline';
@@ -37,6 +38,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   });
   // เดสก์ท็อป (>1024px) เปิดเมนูข้างไว้, แท็บเล็ตเป็นแถบไอคอน, มือถือเป็นลิ้นชัก
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 1024);
+  const [foodCourtOpen, setFoodCourtOpen] = useState(null); // ป้ายสถานะศูนย์อาหารบนแถบด้านบน (null = ยังไม่รู้)
   const rootRef = useRef(null);
   useResponsiveEnhancements(rootRef);
   useEffect(() => {
@@ -159,6 +161,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       .then(d => (Array.isArray(d) ? d : Promise.reject(new Error(`${path} → ข้อมูลไม่ใช่รายการ`))));
 
     const storesReq = getList('/api/stores/history').catch(() => getList('/api/stores'));  // ถ้า history ใช้ไม่ได้ ถอยไปใช้รายชื่อร้านปกติ
+    // สถานะศูนย์อาหาร (ป้ายบนแถบด้านบน) : โหลดไม่ได้ไม่นับเป็น error ของข้อมูลบัญชี
+    fetch(`${base}/api/food-court/status`).then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d && typeof d.is_open !== 'undefined') setFoodCourtOpen(Boolean(d.is_open)); }).catch(() => {});
     const [st, od, lg] = await Promise.allSettled([storesReq, getList('/api/orders'), getList(`/api/audit-logs?limit=${AUDIT_PAGE}`)]);
     if (st.status === 'fulfilled') setStores(st.value);
     if (od.status === 'fulfilled') setOrders(dedupeOrders(od.value));   // กันออเดอร์ซ้ำตั้งแต่โหลด : จำนวน/ยอดเงินทุกหน้าจึงไม่นับซ้ำ
@@ -586,30 +591,24 @@ export default function AccountantView({ apiBase, user, onLogout }) {
       <style>{STYLES}</style>
       
       {/* ===== TOPBAR (HEADER) ===== */}
-      <header className="berry-topbar">
-        <div className="berry-topbar-left">
-          <button className="berry-icon-btn purple-light" aria-label="เปิด/ปิดเมนู" aria-expanded={sidebarOpen} aria-controls="berry-sidebar" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            <Icon name="menu" size={20} color="var(--berry-purple)" />
-          </button>
+      <header className="berry-topbar oft-bar">
+        <TopbarStyles />
+        <div className="oft-left">
+          <BurgerButton open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} aria-controls="berry-sidebar" />
 
-          <div className="berry-brand">
-            <div className="brand-title">
-              <span>OnlyFoods - Accountant</span>
-            </div>
-            <div className="brand-subtitle">
-              ระบบจัดการบัญชีส่วนกลาง
-            </div>
+          <div className="oft-brand">
+            <BrandLogo onClick={() => setPage('dashboard')} title="กลับหน้า Dashboard" />
+            {foodCourtOpen !== null && (
+              <StatusPill tone={foodCourtOpen ? 'green' : 'red'} pulse={foodCourtOpen}
+                label={foodCourtOpen ? 'ศูนย์อาหารเปิดให้บริการ' : 'ศูนย์อาหารปิดให้บริการ'} short={foodCourtOpen ? 'เปิด' : 'ปิด'} />
+            )}
           </div>
         </div>
 
-        <div className="berry-topbar-right">
+        <div className="oft-right">
           <div style={{ position: 'relative' }}>
-            <button className="berry-icon-btn amber-light" aria-label={`การแจ้งเตือน${alertStores.length ? ` ${alertStores.length} รายการ` : ''}`} aria-haspopup="true" aria-expanded={dropdown === 'notif'} onClick={() => { setNotificationsRead(true); toggleDropdown('notif');}}>
-              <Icon name="bell" size={20} color="var(--berry-amber)" />
-              {!notificationsRead && alertStores.length > 0 && (
-                <span className="berry-nav-badge" style={{ position: 'absolute', top: -5, right: -5 }}>{alertStores.length}</span>
-              )}
-            </button>
+            <BellButton count={notificationsRead ? 0 : alertStores.length} active={dropdown === 'notif'} aria-haspopup="true"
+              onClick={() => { setNotificationsRead(true); toggleDropdown('notif'); }} />
             {dropdown === 'notif' && (
               <div className="berry-profile-dropdown" style={{ right: 0, width: '300px' }}>
                 <div className="dropdown-header">
@@ -632,12 +631,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
           </div>
           
           <div className="berry-profile-container" ref={profileRef}>
-            <div className="berry-user-chip" aria-label="บัญชีผู้ใช้" aria-expanded={profileOpen} onClick={() => setProfileOpen(!profileOpen)}>
-              <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--berry-text-dark)' }}>
-                {user?.name || user?.FullName || 'Accountant'}
-              </span>
-              <Icon name="settings" size={18} color="var(--berry-text-dark)" />
-            </div>
+            <UserChip name={user?.name || user?.FullName || 'Accountant'} role="Accountant" expanded={profileOpen} onClick={() => setProfileOpen(!profileOpen)} />
 
             {profileOpen && (
               <div className="berry-profile-dropdown">

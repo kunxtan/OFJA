@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { BrandLogo, BurgerButton, StatusPill, TopbarStyles, UserChip } from '../../shared/ui/Topbar';
 import { startPolling } from '../../lib/polling';
 import { useHistoryNav } from '../../lib/historyNav';
 import { printReceipt } from '../../lib/receiptPrint';
@@ -280,6 +281,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
   }, []);
 
   const currentStore = stores.find(s => s.StoreId === activeStoreId);
+  // ป้ายสถานะร้านบนแถบด้านบน (ศูนย์อาหารปิด = ร้านรับออเดอร์ไม่ได้ด้วย)
+  const storeState = currentStore?.IsSuspended ? { tone: 'red', label: 'ถูกระงับสิทธิ์', short: 'ระงับ' }
+    : foodCourtOpen && currentStore?.IsOpen ? { tone: 'green', label: 'เปิดรับออเดอร์', short: 'ร้านเปิด' }
+      : currentStore?.OpenState === 'PAUSED' ? { tone: 'amber', label: 'หยุดรับออเดอร์ชั่วคราว', short: 'หยุดรับ' }
+        : { tone: 'red', label: 'ปิดอยู่', short: 'ร้านปิด' };
 
   // --- Handlers ---
   const verifyingRef = useRef(new Set()); // กดซ้ำระหว่างรอคำตอบ = ไม่ยิงซ้ำ (ครั้งที่ 2 เคยขึ้น error ทับข้อความสำเร็จ)
@@ -877,38 +883,22 @@ export default function CounterView({ user, apiBase, onLogout }) {
       <style>{CV_STYLES}</style>
 
       {/* ===== TOPBAR ===== */}
-      <header className="cv-topbar">
-        <div className="cv-topbar-left">
-          <div className="cv-brand">
-            <div className="brand-title">
-              <span className="brand-icon">🍽️</span>
-              <span>Only Foods</span>
-            </div>
-            <div className="brand-subtitle">
-              โรงอาหาร: <span className={`status-dot ${foodCourtOpen ? 'open' : 'closed'}`}></span>
-              <span className={`status-text ${foodCourtOpen ? 'open' : 'closed'}`}>{foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}</span>
-            </div>
-          </div>
+      <header className="cv-topbar oft-bar">
+        <TopbarStyles />
+        <div className="oft-left">
+          <BurgerButton open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
 
-          <button className="cv-icon-btn coral-light" onClick={() => setSidebarOpen(!sidebarOpen)} title="ย่อ/ขยายเมนู">
-            <Icon name="menu" size={20} />
-          </button>
+          <div className="oft-brand">
+            <BrandLogo onClick={() => setActiveTab('orders')} title="กลับหน้าคิวอาหาร" />
+            <StatusPill tone={foodCourtOpen ? 'green' : 'red'} pulse={foodCourtOpen} hideOnPhone
+              label={foodCourtOpen ? 'ศูนย์อาหารเปิดให้บริการ' : 'ศูนย์อาหารปิดให้บริการ'} />
+            <StatusPill tone={storeState.tone} label={`${currentStore?.StoreName || `ร้านค้า #${activeStoreId}`} · ${storeState.label}`} short={storeState.short} />
+          </div>
         </div>
 
-        <div className="cv-topbar-right">
-          <div className="cv-store-chip">
-            <Icon name="store" size={16} />
-            <span>{currentStore?.StoreName || `ร้านค้า #${activeStoreId}`}</span>
-            <span className={`store-status-pill ${foodCourtOpen && currentStore?.IsOpen && !currentStore?.IsSuspended ? 'open' : 'closed'}`}>
-              {currentStore?.IsSuspended ? 'ระงับ' : (foodCourtOpen && currentStore?.IsOpen ? 'เปิด' : 'ปิด')}
-            </span>
-          </div>
-
+        <div className="oft-right">
           <div className="cv-profile-container" ref={profileRef}>
-            <div className="cv-user-chip" onClick={() => setProfileOpen(!profileOpen)}>
-              <span className="user-name">{user?.FullName || user?.name || 'พนักงานหน้าร้าน'}</span>
-              <span className="role-tag">Front Staff</span>
-            </div>
+            <UserChip name={user?.FullName || user?.name || 'พนักงานหน้าร้าน'} role="Front Staff" expanded={profileOpen} onClick={() => setProfileOpen(!profileOpen)} />
 
             {profileOpen && (
               <div className="cv-profile-dropdown">

@@ -9,7 +9,8 @@ import { formatBangkokTime, getCurrentDateTimeForBackend, getCurrentTimeFormatte
 import { getPickupHours, getPickupRange, isPickupMinuteDisabled, pad2, toMinutes } from "./utils/pickupTime";
 import { COLORS, MAX_FILE_SIZE } from "./constants";
 import { buildQueueSchedule, canEstimateOrder, countOrderDishes, formatPickupRange, formatScheduledPickupRange, isImmediatePickup, kitchenBuffer, orderStatusKey, scheduledWindowMinutes } from "./utils/queueEstimate";
-import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, logoStyle, pageStyle, profileStyle, searchStyle } from "./styles";
+import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, pageStyle, profileStyle, searchStyle } from "./styles";
+import { BrandLogo, TopbarStyles } from "../../shared/ui/Topbar";
 import { BigUserIcon, CameraIcon, CartIcon, CartIconPlus, HiIcon, HomeIcon, NoodleBowlArt, NotiIcon, OrderIcon, SparkleArt, StarIcon, ThaiTeaArt, UserIcon } from "./icons";
 import { PaymentModal, TopUpModal, OutOfStockModal } from "./modals/PaymentModals";
 import RefundPayoutModal from "./modals/RefundPayoutModal";
@@ -2616,9 +2617,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         {/* HEADER BAR */}
         <header style={headerStyle}>
           <div className={activeTab === "menu" ? "customer-header-brand" : "customer-header-brand customer-header-brand-inline"} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <div style={logoStyle} onClick={() => handleSelectTab("menu")}>
-              Only<span style={{ color: COLORS.orange }}>Foods</span>
-            </div>
+            {/* โลโก้แบบเดียวกับแถบด้านบนของทุกบทบาท (shared/ui/Topbar) */}
+            <TopbarStyles />
+            <BrandLogo onClick={() => handleSelectTab("menu")} title="กลับหน้าเมนู" />
             {activeTab === "menu" && (
               <div
                 style={{display: "flex", alignItems: "center", gap: "6px", padding: "5px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: "800",

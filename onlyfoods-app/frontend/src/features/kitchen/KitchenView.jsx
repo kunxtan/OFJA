@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { startPolling } from '../../lib/polling';
 import LiveClock from './LiveClock';
+import { BrandLogo, StatusPill, TopbarStyles, UserChip } from '../../shared/ui/Topbar';
 import { PALETTE } from './theme';
-import { KitchenIcon, SunIcon, MoonIcon, ClockIcon, CheckIcon, LogoutIcon, UserIcon, CookingIcon, HistoryIcon, AlertIcon, CloseIcon, NoteIcon, ListIcon, ChevronDownIcon } from './icons';
+import { SunIcon, MoonIcon, ClockIcon, CheckIcon, LogoutIcon, UserIcon, CookingIcon, HistoryIcon, AlertIcon, CloseIcon, NoteIcon, ListIcon, ChevronDownIcon } from './icons';
 import { getRoleLabel, parseDate, isToday } from './lib';
 
 export default function KitchenView({ user, apiBase, onLogout }) {
@@ -338,128 +339,38 @@ export default function KitchenView({ user, apiBase, onLogout }) {
         }
       `}</style>
 
-      {/* Header Bar */}
-      <header className="kv-header" style={{
-        background: theme.navBg,
-        borderBottom: `1px solid ${theme.border}`,
-        padding: '12px 24px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        width: '100%',
-        boxSizing: 'border-box',
-        boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.04)',
-        flexShrink: 0,
+      {/* Header Bar : หน้าตาเดียวกับทุกบทบาท (shared/ui/Topbar) ; โหมดมืดส่งสีของธีมเข้าไปทางตัวแปร --oft-* */}
+      <header className="kv-header oft-bar" style={{
         zIndex: 100,
-        gap: '16px'
+        ...(isDark ? {
+          '--oft-bg': theme.navBg, '--oft-border': theme.border, '--oft-ink': theme.textMain, '--oft-muted': theme.textMuted,
+          '--oft-chip': 'rgba(255,255,255,0.06)', '--oft-chip-hover': 'rgba(255,255,255,0.12)',
+          '--oft-orange-soft': 'rgba(255,114,76,0.16)', '--oft-green-soft': 'rgba(16,185,129,0.16)',
+          '--oft-red-soft': 'rgba(239,68,68,0.16)', '--oft-amber-soft': 'rgba(226,164,48,0.16)',
+        } : {}),
       }}>
+        <TopbarStyles />
         {/* โลโก้ และ สถานะครัว */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-          <div style={{
-            fontSize: "24px",
-            fontWeight: "900",
-            color: PALETTE.navy,
-            whiteSpace: "nowrap",
-            display: "flex",
-            alignItems: "center",
-            gap: "4px"
-          }}>
-            <span style={{ color: theme.textMain }}>Only</span>
-            <span style={{ color: PALETTE.coral }}>Foods</span>
-          </div>
-
-          <div style={{ width: '1px', height: '24px', background: theme.border }} />
-
-          <div style={{
-            width: '38px',
-            height: '38px',
-            borderRadius: '12px',
-            background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED',
-            color: PALETTE.coral,
-            display: 'grid',
-            placeItems: 'center'
-          }}>
-            <KitchenIcon />
-          </div>
-
-          <div>
-            <div style={{ fontSize: '18px', fontWeight: '800', color: theme.textMain, lineHeight: '1.2', letterSpacing: '-0.3px', whiteSpace: 'nowrap' }}>
-              ส่วนงานครัว
-            </div>
-            <div style={{ fontSize: '12px', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', whiteSpace: 'nowrap' }}>
-              <span>สถานะ:</span>
-              <span style={{
-                color: isStoreActive ? PALETTE.emerald : '#EF4444',
-                fontWeight: '700',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px'
-              }}>
-                <span style={{
-                  width: '7px',
-                  height: '7px',
-                  borderRadius: '50%',
-                  background: isStoreActive ? PALETTE.emerald : '#EF4444',
-                  animation: isStoreActive ? 'statusPulse 2s infinite' : 'none'
-                }} />
-                {getStatusText()}
-              </span>
-            </div>
+        <div className="oft-left">
+          <div className="oft-brand">
+            <BrandLogo />
+            <StatusPill tone={isStoreActive ? 'green' : 'red'} pulse={isStoreActive}
+              label={`ส่วนงานครัว · ${getStatusText()}`} short={isStoreActive ? 'เปิด' : 'ปิด'} />
           </div>
         </div>
 
-        {/* ส่วนขวา: เวลา + Dropdown สรุปรายการ + ปุ่มตั้งค่า */}
-        <div className="kv-header-right" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-          
+        {/* ส่วนขวา: เวลา + จำนวนคิว + Dropdown สรุปรายการ + โหมดมืด + โปรไฟล์ */}
+        <div className="oft-right kv-header-right">
           {/* นาฬิกา Realtime */}
-          <div style={{
-            background: theme.cardInner,
-            border: `1px solid ${theme.border}`,
-            padding: '7px 14px',
-            borderRadius: '99px',
-            fontSize: '13.5px',
-            fontWeight: '700',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            color: theme.textMain
-          }}>
-            <ClockIcon />
-            <LiveClock />
-          </div>
+          <span className="oft-chip"><ClockIcon /><LiveClock /></span>
 
           {/* จำนวนคิวรอปรุง */}
-          <div style={{
-            background: theme.cardInner,
-            border: `1px solid ${theme.border}`,
-            padding: '7px 14px',
-            borderRadius: '99px',
-            fontSize: '13.5px',
-            fontWeight: '600',
-            whiteSpace: 'nowrap'
-          }}>
-            คิวรอปรุง: <span style={{ color: PALETTE.coral, fontWeight: '800', fontSize: '15px', marginLeft: '2px' }}>{pendingOrders.length}</span>
-          </div>
+          <span className="oft-chip">คิวรอปรุง <b>{pendingOrders.length}</b></span>
 
           {/* Dropdown สรุปรายการอาหาร */}
           {summary.length > 0 && (
             <div style={{ position: 'relative' }}>
-              <button
-                onClick={() => setIsSummaryOpen(!isSummaryOpen)}
-                style={{
-                  background: isDark ? 'rgba(255, 114, 76, 0.15)' : '#FFF0ED',
-                  color: PALETTE.coral,
-                  border: `1px solid ${isDark ? 'rgba(255, 114, 76, 0.3)' : '#FFDCD3'}`,
-                  borderRadius: '99px',
-                  padding: '7px 14px',
-                  fontSize: '13px',
-                  fontWeight: '800',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px'
-                }}
-              >
+              <button type="button" className="oft-chip accent" onClick={() => setIsSummaryOpen(!isSummaryOpen)} aria-expanded={isSummaryOpen}>
                 <ListIcon />
                 <span>สรุปรายการ ({totalItemsToCook} จาน)</span>
                 <ChevronDownIcon />
@@ -514,64 +425,15 @@ export default function KitchenView({ user, apiBase, onLogout }) {
             </div>
           )}
 
-          {/* ปุ่ม Theme */}
-          <button
-            onClick={() => setIsDark(!isDark)}
-            style={{
-              background: theme.cardInner,
-              color: theme.textMain,
-              border: `1px solid ${theme.border}`,
-              borderRadius: '12px',
-              padding: '8px 14px',
-              fontSize: '13px',
-              fontWeight: '700',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
+          {/* ปุ่มโหมดมืด/สว่าง */}
+          <button type="button" className="oft-icon-btn neutral" onClick={() => setIsDark(!isDark)}
+            aria-label={isDark ? 'เปลี่ยนเป็นโหมดสว่าง' : 'เปลี่ยนเป็นโหมดมืด'} title={isDark ? 'โหมดสว่าง' : 'โหมดมืด'}>
             {isDark ? <SunIcon /> : <MoonIcon />}
-            {isDark ? 'Light' : 'Dark'}
           </button>
 
           {/* ปุ่ม Profile */}
           <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              style={{
-                background: theme.cardInner,
-                color: theme.textMain,
-                border: `1px solid ${theme.border}`,
-                borderRadius: '99px',
-                padding: '4px 14px 4px 5px',
-                fontSize: '13.5px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-            >
-              <div style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '50%',
-                background: PALETTE.yellow,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden',
-                flexShrink: 0
-              }}>
-                {profileImage ? (
-                  <img src={profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <UserIcon />
-                )}
-              </div>
-              <span style={{ whiteSpace: 'nowrap' }}>{displayName}</span>
-            </button>
+            <UserChip name={displayName} role={displayRole} image={profileImage} expanded={isDropdownOpen} onClick={() => setIsDropdownOpen(!isDropdownOpen)} />
 
             {isDropdownOpen && (
               <div style={{

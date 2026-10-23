@@ -3,7 +3,8 @@ import { startPolling } from '../../lib/polling';
 import { useHistoryNav } from '../../lib/historyNav';
 import RefundLog from '../../shared/refunds/RefundLog';
 import { REFRESH_MS, forceCloseMessage, callApi } from './lib/api';
-import { T, FONT_STACK, h2Style, captionStyle, ellipsisStyle, shellStyle, shellBodyStyle, mainScrollStyle, sidebarStyle, brandStyle, brandTitleStyle, brandSubtitleStyle, sidebarLabelStyle, sidebarItemStyle, avatarStyle, backdropStyle, topbarStyle, iconButtonStyle, searchWrapStyle, searchInputStyle, courtPillStyle, notifBadgeStyle, dropdownBackdropStyle, notifPanelStyle, notifHeadStyle, notifItemStyle, topAccountStyle, profilePanelStyle, dropdownItemStyle, contentStyle, courtBannerStyle } from './theme';
+import { T, FONT_STACK, h2Style, captionStyle, shellStyle, shellBodyStyle, mainScrollStyle, sidebarStyle, sidebarLabelStyle, sidebarItemStyle, backdropStyle, iconButtonStyle, searchWrapStyle, searchInputStyle, dropdownBackdropStyle, notifPanelStyle, notifHeadStyle, notifItemStyle, profilePanelStyle, dropdownItemStyle, contentStyle, courtBannerStyle } from './theme';
+import { BellButton, BrandLogo, BurgerButton, StatusPill, TopbarStyles, UserChip } from '../../shared/ui/Topbar';
 import { parseOrderDate } from './lib/dates';
 import { thaiDateTime } from './lib/format';
 import { useIsNarrow, greetingText, Icon, Button, Modal, ConfirmDialog, ForceCloseDialog, ToastStack, Field, TimeSelect } from './components/ui';
@@ -656,8 +657,6 @@ const returnFoodCourtToAuto = async () => {
           #executive-main-scroll th, #executive-main-scroll td { padding: 12px 10px !important; }
         }
         @media (max-width: 640px) {
-          .of-brand { min-width: 0 !important; flex: 0 1 auto !important; overflow: hidden; }
-          .of-brand > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px !important; }
 
           #executive-main-scroll table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
           #executive-main-scroll table, #executive-main-scroll tbody { display: block; width: 100% !important; margin-top: 8px !important; }
@@ -677,23 +676,15 @@ const returnFoodCourtToAuto = async () => {
       `}</style>
       <div style={{ ...shellStyle, fontFamily: FONT_STACK }}>
 
-        <header style={{...topbarStyle,padding:isPhone? '10px 12px':topbarStyle.padding,gap:isPhone? '8px':topbarStyle.gap}}>
-          <button type="button" className="of-icon-btn purple" onClick={() => setSidebarOpen((v) => !v)} style={iconButtonStyle} aria-label={sidebarOpen ? 'ซ่อนแถบเมนู' : 'แสดงแถบเมนู'}>
-            <Icon name="menu" size={19} color={T.primary}/>
-          </button>
-
-          <div className="of-brand" style={{ ...brandStyle, width: isNarrow ? 'auto' : brandStyle.width }}>
-            <div style={brandTitleStyle}>
-              <span style={{ fontSize: '20px', lineHeight: 1 }}>🍽️</span>
-              <span>Only Foods</span>
+        <header className="oft-bar" style={{ position: 'sticky', top: 0, zIndex: 70, flexWrap: 'wrap', ...(isPhone ? { padding: '10px 12px' } : {}) }}>
+          <TopbarStyles/>
+          <div className="oft-left">
+            <BurgerButton open={sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)}/>
+            <div className="oft-brand">
+              <BrandLogo onClick={() => navigateTo('overview')} title="กลับหน้า Dashboard"/>
+              <StatusPill tone={foodCourtOpen ? 'green' : 'red'} pulse={foodCourtOpen}
+                label={foodCourtOpen ? 'ศูนย์อาหารเปิดให้บริการ' : 'ศูนย์อาหารปิดให้บริการ'} short={foodCourtOpen ? 'เปิด' : 'ปิด'}/>
             </div>
-            {!isPhone && (<div style={brandSubtitleStyle}>
-                สถานะศูนย์อาหาร:
-                <span style={{width: '8px',height: '8px',borderRadius: '50%',background:foodCourtOpen?T.up:T.down,display: 'inline-block'}}/>
-                <span style={{ color: foodCourtOpen ? T.up : T.down, fontWeight: 600 }}>
-                  {foodCourtOpen ? 'เปิดให้บริการ' : 'ปิดให้บริการ'}
-                </span>
-              </div>)}
           </div>
 
           {(activeMenu === 'store-manage' || activeMenu === 'store-accounts') && (<form onSubmit={(e) => {
@@ -710,17 +701,9 @@ const returnFoodCourtToAuto = async () => {
             </form>)}
 
           <div style={{ flex: 1, minWidth: '8px' }}/>
-
-          {isPhone && (<div style={{...courtPillStyle,padding: '6px 9px',fontSize: '11.5px',background:foodCourtOpen?T.greenSoft:T.redSoft,color:foodCourtOpen?T.up:T.down}}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'currentColor' }}/>
-              {foodCourtOpen ? 'เปิด' : 'ปิด'}
-            </div>)}
-
+          <div className="oft-right">
           <div style={{ position: 'relative' }}>
-            <button type="button" className="of-icon-btn amber" onClick={() => setNotifOpen((v) => !v)} style={{ ...iconButtonStyle, background: T.amberSoft, color: T.amber }} aria-label="การแจ้งเตือน">
-              <Icon name="bell" size={19} color={T.amber}/>
-              {unreadCount > 0 && (<span style={notifBadgeStyle}>{unreadCount > 99 ? '99+' : unreadCount}</span>)}
-            </button>
+            <BellButton count={unreadCount} active={notifOpen} onClick={() => setNotifOpen((v) => !v)}/>
 
             {notifOpen && (<>
                 <div style={dropdownBackdropStyle} onClick={() => setNotifOpen(false)}/>
@@ -753,26 +736,13 @@ const returnFoodCourtToAuto = async () => {
           </div>
 
           <div style={{ position: 'relative' }} ref={profileRef}>
-            <button type="button" className="of-user-chip" onClick={() => setProfileOpen((v) => !v)} style={{ ...topAccountStyle, padding: isPhone ? '5px' : topAccountStyle.padding }} aria-label="เมนูบัญชีผู้ใช้">
-              <div style={{ ...avatarStyle, background: T.primary }}>
-                {String(accountName).charAt(0).toUpperCase()}
-              </div>
-
-              {!isPhone && (<>
-                  <div style={{ minWidth: 0, textAlign: 'left' }}>
-                    <div style={{ color: T.ink, fontWeight: 600, fontSize: '13px', ...ellipsisStyle }}>
-                      {accountName}
-                    </div>
-                    <div style={{ color: T.muted, fontSize: '11.5px' }}>{accountRole}</div>
-                  </div>
-                  <Icon name="settings" size={17} color={T.ink}/>
-                </>)}
-            </button>
+            <UserChip name={accountName} role={accountRole} expanded={profileOpen} onClick={() => setProfileOpen((v) => !v)}/>
                 {profileOpen && <div style={{ ...profilePanelStyle, ...(isPhone ? { position: 'fixed', top: '92px', left: '16px', right: '16px', width: 'auto', maxWidth: 'none', boxSizing: 'border-box', zIndex: 9999 } : {}) }}>
     <div><h4 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: T.ink, lineHeight: 1.5 }}>{greetingText()}, {accountName}</h4><p style={{ margin: '4px 0 16px', fontSize: '13px', color: T.muted }}>{accountRole} (ผู้บริหารศูนย์อาหาร)</p></div>
     <hr style={{ border: 'none', borderTop: `1px solid ${T.line}`, margin: '0 0 12px' }}/>
     <button type="button" className="of-dropdown-item" style={dropdownItemStyle} onClick={handleLogout}><Icon name="logout" size={18}/> ออกจากระบบ</button>
 </div>}
+          </div>
           </div>
         </header>
 

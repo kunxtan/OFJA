@@ -335,9 +335,9 @@
   /* Sidebar เปลี่ยนเป็น Off-Canvas (ลิ้นชักซ่อนด้านซ้าย) */
   .berry-sidebar {
     position: fixed;
-    top: 60px;
+    top: 64px;
     left: -260px;
-    height: calc(100vh - 60px);
+    height: calc(100vh - 64px);
     z-index: 1000;
     box-shadow: 4px 0 15px rgba(42, 44, 65, 0.1);
     transition: left 0.3s ease;

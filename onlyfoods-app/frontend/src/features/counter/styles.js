@@ -22,8 +22,9 @@ export const CV_STYLES = `
 .cv-root * { box-sizing: border-box; }
 
 /* ---------- Topbar ---------- */
+/* หน้าตาแถบด้านบนมาจาก shared/ui/Topbar (.oft-bar : สูง 80px / มือถือ 64px) */
 .cv-topbar {
-  height: 80px; background: ${PALETTE.white}; display: flex; align-items: center;
+  background: ${PALETTE.white}; display: flex; align-items: center;
   justify-content: space-between; padding: 0 24px; border-bottom: 1px solid ${PALETTE.border};
   flex-shrink: 0; z-index: 110;
 }
