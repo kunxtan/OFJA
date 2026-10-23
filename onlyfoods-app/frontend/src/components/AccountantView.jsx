@@ -33,6 +33,23 @@ const normStatus = (st) => {
 };
 const isSettled = (o) => SETTLED_STATUSES.includes(normStatus(o.Status));
 
+// กติกาบัญชีกลาง (ใช้ร่วมกันทุกหน้า: Dashboard / Sales Summary / Cancellation / รายงาน)
+//  - ออเดอร์ที่สลิปถูกปฏิเสธ (PaymentStatus === 'REJECTED') = ร้านไม่เคยได้รับเงิน : ยังนับเป็น "จำนวนออเดอร์" ได้ แต่ห้ามนับเป็น "ยอดเงิน"
+const isPaymentRejected = (o) => Boolean(o) && o.PaymentStatus === 'REJECTED';
+const moneyOf = (o) => (!o || isPaymentRejected(o) ? 0 : Number(o.TotalAmount || 0));
+// กันออเดอร์ซ้ำ (OrderID เดียวกัน) ไม่ให้ถูกนับจำนวน/ยอดเงินซ้ำ
+const dedupeOrders = (list) => {
+  const seen = new Set();
+  return (list || []).filter(o => {
+    if (!o) return false;
+    if (o.OrderID === undefined || o.OrderID === null) return true;
+    const k = String(o.OrderID);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+};
+
 // โทนสีสำหรับแต่ละร้านค้า (ใช้เนกทีฟ/ส้ม/เหลือง/เทา ไม่แย่งซีนสีแจ้งเตือน)
 // สีประจำร้าน/กราฟโดนัท: เลือกให้แต่ละสีต่างกันชัดเจน (ส้ม / กรมท่า / เหลือง / เขียว / ฟ้า / ม่วง / ชมพู / เขียวมิ้นต์)
 const STORE_COLORS = ['#FF724C', '#2A2C41', '#FDBF50', '#16A679', '#4C8DF6', '#9B5DE5', '#E5487A', '#2EC4B6'];
@@ -237,7 +254,7 @@ const AUDIT_ACTION_META = {
   DELETE_STORE_ACCOUNT: { label: 'ลบบัญชีร้าน', cat: 'store' },
 };
 const STATUS_ACTION_LABEL = {
-  Cooking: 'เริ่มปรุงอาหาร', Ready: 'อาหารพร้อมรับ', Completed: 'ส่งมอบสำเร็จ',
+  Cooking: 'เริ่มปรุงอาหาร', Cooked: 'ปรุงเสร็จแล้ว', Ready: 'อาหารพร้อมรับ', Completed: 'ส่งมอบสำเร็จ',
   NoShow: 'ลูกค้าไม่มารับ', Cancelled: 'ยกเลิกออเดอร์', Pending: 'รับออเดอร์',
 };
 const AUDIT_CATS = [['all', 'ทั้งหมด'], ['cancel', 'ยกเลิก'], ['done', 'สำเร็จ'], ['slip', 'สลิป'], ['order', 'ออเดอร์'], ['store', 'ร้านค้า/บัญชี']];
@@ -259,10 +276,61 @@ function itemsText(order, max = 3) {
   return items.length > max ? `${txt} และอีก ${items.length - max} รายการ` : txt;
 }
 
+// ---- พนักงานครัว: แปลงข้อความ/รหัสสถานะดิบ ให้เป็นประโยคภาษาไทยที่อ่านรู้เรื่อง ----
+// ใช้คำเดียวกับป้ายเหตุการณ์ (STATUS_ACTION_LABEL) เช่น "เริ่มปรุงอาหาร" / "อาหารพร้อมรับ" เพื่อให้ศัพท์ตรงกันทั้งหน้า
+const KITCHEN_STATUS_TEXT = {
+  Pending: 'ปรับสถานะออเดอร์เป็นรอดำเนินการ',
+  Cooking: 'เริ่มปรุงอาหาร',
+  Cooked: 'ปรุงอาหารเสร็จแล้ว',
+  Ready: 'แจ้งว่าอาหารพร้อมรับ ให้ลูกค้ามารับได้',
+  Completed: 'บันทึกว่าส่งมอบอาหารให้ลูกค้าเรียบร้อย',
+  NoShow: 'บันทึกว่าลูกค้าไม่มารับอาหาร',
+  Cancelled: 'ยกเลิกออเดอร์',
+  Pending_Cancellation: 'แจ้งขอยกเลิกออเดอร์ รอลูกค้ายืนยัน',
+};
+const isKitchenAudit = (r) => {
+  const raw = (r && r.raw) || {};
+  return [raw.PerformerRole, raw.PerformedBy, raw.PerformerLabel].some(v => /kitchen|พนักงานครัว/i.test(String(v || '')));
+};
+// คืน null เมื่อไม่รู้จักการกระทำนั้น (ให้ใช้ข้อความมาตรฐานเดิมแทน — ไม่เดาเอง)
+function kitchenAuditSummary(r, order) {
+  const a = String(r.action || '');
+  const d = String(r.details || '');
+  const reasonRaw = String((order && order.CancelReason) || (d.match(/เหตุผล:\s*([^|]+)/) || [])[1] || '').trim();
+  const reason = reasonRaw.replace(/^วัตถุดิบหมด:\s*/, '').trim();
+  let verb = null;
+  if (a === 'UPDATE_STATUS') {
+    const to = normStatus((d.match(/->\s*([A-Za-z_]+)/) || [])[1]);
+    verb = KITCHEN_STATUS_TEXT[to] || 'อัปเดตสถานะออเดอร์';
+    if (to === 'Cancelled' && reason) verb += ` (เหตุผล: ${reason})`;
+  } else if (a === 'STORE_CANCEL_ORDER') {
+    verb = `ยกเลิกออเดอร์${reason ? ` (เหตุผล: ${reason})` : ''}`;
+  } else if (a === 'OUT_OF_STOCK_NOTIFY') {
+    verb = `แจ้งว่าวัตถุดิบ/เมนูในออเดอร์หมด${reason ? ` (${reason})` : ''}`;
+  } else if (a === 'CANCEL_REQUEST') {
+    verb = `แจ้งขอยกเลิกออเดอร์เพราะสินค้าหมด รอลูกค้าตัดสินใจ${reason ? ` (${reason})` : ''}`;
+  }
+  if (!verb) return null;
+  // บริบท: ใส่เฉพาะที่มีข้อมูลจริง ไม่เดาข้อมูลที่ขาด
+  const orderId = order ? order.OrderID : (d.match(ORDER_ID_RE) || [])[1];
+  const queue = order ? order.QueueNo : (d.match(/คิว\s*([A-Za-z0-9-]+)/) || [])[1];
+  const ctx = [];
+  if (queue) ctx.push(`คิว ${queue}`);
+  if (orderId) ctx.push(`Order ${orderId}`);
+  if (order && order.StoreName) ctx.push(`ร้าน ${order.StoreName}`);
+  const menu = itemsText(order);
+  if (menu) ctx.push(`เมนู: ${menu}`);
+  return ctx.length ? `${verb} — ${ctx.join(' · ')}` : verb;
+}
+
 // ข้อความอธิบายแบบอ่านง่าย (ส่วนคิว/ร้าน/ยอดแยกไปแสดงเป็นคอลัมน์เอง)
 function auditSummary(r, order) {
   const a = String(r.action || '');
   const d = String(r.details || '');
+  if (isKitchenAudit(r)) {
+    const k = kitchenAuditSummary(r, order);
+    if (k) return k;
+  }
   const parsedReason = (d.match(/เหตุผล:\s*([^|]+)/) || d.match(/ยืนยันยกเลิก:\s*([^|]+)/) || [])[1];
   const reason = String((order && order.CancelReason) || parsedReason || '').trim();
   const plain = d.replace(/\s*\|.*$/, '').trim();
@@ -376,9 +444,8 @@ function buildStoreSummary(stores, orders, rangeStart) {
     if (!RECORDED_STATUSES.includes(st)) return;
     if (!map[o.StoreId]) map[o.StoreId] = blank(o.StoreId, o.StoreName || `ร้าน #${o.StoreId}`, false);
     const row = map[o.StoreId];
-    // ยกเลิกเพราะสลิปถูกปฏิเสธ = ร้านไม่เคยรับเงินนี้ : ไม่นับเข้ายอด (เดิมทำให้ GROSS สูงเกินจริง)
-    const neverPaid = st === 'Cancelled' && o.PaymentStatus === 'REJECTED';
-    const amount = neverPaid ? 0 : Number(o.TotalAmount || 0);
+    // สลิปถูกปฏิเสธ = ร้านไม่เคยรับเงินนี้ : ไม่นับเข้ายอด (เดิมทำให้ GROSS สูงเกินจริง) — ยังนับเป็นจำนวนออเดอร์
+    const amount = moneyOf(o);
     row.totalOrders += 1;
     row.grossSales += amount;
     if (isSettled(o)) row.completedOrders += 1;
@@ -414,8 +481,19 @@ function filterOrdersByRange(orders, start, end, storeId) {
   });
 }
 
-// range = 'today' | จำนวนวัน | 'month' (ใช้ month = 'YYYY-MM' ; ช่วงก่อนหน้า = เดือนก่อน)
-function getPeriodBounds(range, month) {
+// จำนวนวันแบบรวมวันแรกและวันสุดท้าย (YYYY-MM-DD ถึง YYYY-MM-DD)
+const daysInclusive = (start, end) => Math.round((new Date(`${end}T12:00:00`) - new Date(`${start}T12:00:00`)) / 86400000) + 1;
+const shiftDay = (day, delta) => { const d = new Date(`${day}T12:00:00`); d.setDate(d.getDate() + delta); return dateOnly(d); };
+const MAX_CUSTOM_DAYS = 366;   // ช่วงวันที่กำหนดเองยาวสุด (ตรงกับจำนวนจุดสูงสุดของกราฟรายวัน)
+const fmtDayTh = (key) => String(key || '').split('-').reverse().join('/');
+
+// range = 'today' | จำนวนวัน | 'month' (ใช้ month = 'YYYY-MM' ; ช่วงก่อนหน้า = เดือนก่อน) | 'custom' (ใช้ custom = { start, end } ; ช่วงก่อนหน้า = ช่วงที่ยาวเท่ากันก่อนวันเริ่ม)
+function getPeriodBounds(range, month, custom) {
+  if (range === 'custom' && custom && custom.start && custom.end && custom.start <= custom.end) {
+    const n = daysInclusive(custom.start, custom.end);
+    const prevEnd = shiftDay(custom.start, -1);
+    return { currStart: custom.start, currEnd: custom.end, prevStart: shiftDay(prevEnd, -(n - 1)), prevEnd };
+  }
   if (range === 'month' && /^\d{4}-\d{2}$/.test(month || '')) {
     const [y, m] = month.split('-').map(Number);
     const pad = (n) => String(n).padStart(2, '0');
@@ -448,7 +526,7 @@ function buildSalesTrend(orders, range) {
     completed.forEach(o => {
       const dt = parseOrderDate(o.CreatedAt);
       if (!dt || dateOnly(dt) !== todayStr) return;
-      buckets[dt.getHours()].value += Number(o.TotalAmount || 0);
+      buckets[dt.getHours()].value += moneyOf(o);
     });
     return buckets;
   }
@@ -462,7 +540,7 @@ function buildSalesTrend(orders, range) {
   completed.forEach(o => {
     const key = dateOnly(o.CreatedAt);
     const bucket = buckets.find(b => b.key === key);
-    if (bucket) bucket.value += Number(o.TotalAmount || 0);
+    if (bucket) bucket.value += moneyOf(o);
   });
   return buckets;
 }
@@ -487,6 +565,62 @@ function buildTopMenu(orders, storeId, limit = 10, stores = []) {
   return Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, limit);
 }
 
+// แยกรายการเมนูของร้านที่เลือก (Sales Summary) — orders ควรผ่านการกรองช่วงวันที่มาแล้ว
+//  - ขายได้ = ออเดอร์ Completed/NoShow ; ยกเลิก = ออเดอร์ Cancelled (ไม่รวมออเดอร์ที่ยังดำเนินการ/รอยืนยันยกเลิก)
+//  - จำนวนที่ยกเลิก นับทุกออเดอร์ Cancelled (รวมสลิปถูกปฏิเสธ) แต่ยอดเงินตัดออเดอร์ REJECTED ออก (moneyOf) เหมือน buildStoreSummary
+//  - ยอดเงินต่อเมนู = แบ่งสัดส่วนจาก TotalAmount ของออเดอร์ตามมูลค่าแต่ละรายการ จึงรวมแล้วเท่ากับยอดร้านเสมอ (ไม่นับซ้ำ/ไม่ตกหล่น)
+//  - ยอดสุทธิ = (ยอดที่บันทึกทั้งหมด) - (ยอดที่ยกเลิก) เช่นเดียวกับ netSales ระดับร้าน
+const MENU_NAME_UNKNOWN = 'ไม่พบรายการเมนูในออเดอร์';
+function buildMenuBreakdown(orders, storeId) {
+  const map = {};
+  const rowOf = (name, unknown) => {
+    if (!map[name]) map[name] = { name, unknown: Boolean(unknown), soldQty: 0, salesAmount: 0, cancelledQty: 0, cancelledAmount: 0, recorded: 0 };
+    return map[name];
+  };
+  dedupeOrders(orders).forEach(o => {
+    if (storeId && storeId !== 'all' && String(o.StoreId) !== String(storeId)) return;
+    const st = normStatus(o.Status);
+    if (!RECORDED_STATUSES.includes(st)) return;
+    const settled = SETTLED_STATUSES.includes(st);
+    const total = moneyOf(o);
+    // รวมรายการเมนูชื่อเดียวกันในออเดอร์เดียวกัน และข้ามแถวที่ซ้ำ id เดียวกัน
+    const seenItem = new Set();
+    const lines = {};
+    orderItemsOf(o).forEach(it => {
+      const iid = it.OrderItemId ?? it.OrderItemID ?? it.OrderDetailId ?? it.OrderDetailID;
+      if (iid !== undefined && iid !== null) { if (seenItem.has(String(iid))) return; seenItem.add(String(iid)); }
+      const name = String(it.MenuName || it.ItemName || it.ProductName || it.Name || it.menuName || '-');
+      const qty = Number(it.Quantity ?? it.Qty ?? it.quantity ?? 1) || 0;
+      const unit = Number(it.UnitPrice ?? it.Price ?? it.unitPrice ?? 0) || 0;
+      const lineVal = Number(it.LineTotal ?? it.Subtotal ?? it.TotalPrice ?? qty * unit) || 0;
+      if (!lines[name]) lines[name] = { qty: 0, val: 0 };
+      lines[name].qty += qty;
+      lines[name].val += lineVal;
+    });
+    const names = Object.keys(lines);
+    const alloc = {};
+    if (names.length === 0) {
+      alloc[MENU_NAME_UNKNOWN] = { qty: 0, amt: total, unknown: true };
+    } else {
+      const sumVal = names.reduce((a, n) => a + lines[n].val, 0);
+      const sumQty = names.reduce((a, n) => a + lines[n].qty, 0);
+      names.forEach(n => {
+        const w = sumVal > 0 ? lines[n].val / sumVal : sumQty > 0 ? lines[n].qty / sumQty : 1 / names.length;
+        alloc[n] = { qty: lines[n].qty, amt: total * w };
+      });
+    }
+    Object.keys(alloc).forEach(n => {
+      const r = rowOf(n, alloc[n].unknown);
+      if (settled) { r.soldQty += alloc[n].qty; r.salesAmount += alloc[n].amt; }
+      else { r.cancelledQty += alloc[n].qty; r.cancelledAmount += alloc[n].amt; }
+      r.recorded += alloc[n].amt;
+    });
+  });
+  return Object.values(map)
+    .map(r => ({ ...r, netSales: r.recorded - r.cancelledAmount }))
+    .sort((a, b) => b.netSales - a.netSales || b.salesAmount - a.salesAmount || b.soldQty - a.soldQty || String(a.name).localeCompare(String(b.name), 'th'));
+}
+
 // ยอดขายตามช่วงวันที่ที่เลือก (Sales Summary): วันเดียว = รายชั่วโมง, หลายวัน = รายวัน
 function buildRangeTrend(orders, start, end) {
   const completed = (orders || []).filter(isSettled);
@@ -496,7 +630,7 @@ function buildRangeTrend(orders, start, end) {
     completed.forEach(o => {
       const dt = parseOrderDate(o.CreatedAt);
       if (!dt || dateOnly(dt) !== start) return;
-      buckets[dt.getHours()].value += Number(o.TotalAmount || 0);
+      buckets[dt.getHours()].value += moneyOf(o);
     });
     return buckets;
   }
@@ -511,7 +645,7 @@ function buildRangeTrend(orders, start, end) {
   buckets.forEach(b => { index[b.key] = b; });
   completed.forEach(o => {
     const b = index[dateOnly(o.CreatedAt)];
-    if (b) b.value += Number(o.TotalAmount || 0);
+    if (b) b.value += moneyOf(o);
   });
   return buckets;
 }
@@ -1055,15 +1189,76 @@ function ShowMoreToggle({ expanded, onToggle, hiddenCount, controls, moreLabel =
 }
 
 /* Bullet chart */
+const BULLET_LEVEL = {
+  bad: { text: `แจ้งเตือน (> ${RATE_ALERT}%)`, color: 'var(--berry-red)' },
+  warn: { text: `เฝ้าระวัง (${RATE_WARN}-${RATE_ALERT}%)`, color: 'var(--berry-amber)' },
+  ok: { text: `ปกติ (< ${RATE_WARN}%)`, color: 'var(--berry-green)' },
+};
+
+// data: [{ label, value (rate %), status, cancelled, total }]
+// Tooltip: ชี้เมาส์ / แตะ (จอสัมผัส) / โฟกัสด้วยคีย์บอร์ด ที่แถวของร้าน — วางแบบ fixed และบีบให้อยู่ในหน้าจอเสมอ จึงไม่ถูกตัดโดยกรอบกราฟ
 function BerryBulletChart({ data, target = RATE_ALERT, warn = RATE_WARN }) {
   const max = Math.max(20, target + 5, ...data.map(d => (typeof d.value === 'number' ? d.value : 0)));
   const pct = (v) => `${Math.min(100, ((v || 0) / max) * 100)}%`;
+  const wrapRef = useRef(null);
+  const tipRef = useRef(null);
+  const [active, setActive] = useState(null);   // { i, x, y } จุดอ้างอิงเป็นพิกเซลของหน้าจอ
+  const [pos, setPos] = useState(null);         // { left, top } หลังวัดขนาด tooltip แล้ว
+  const hide = () => { setActive(null); setPos(null); };
+  useTapAway(wrapRef, hide);
+
+  // ปิดเมื่อเลื่อนหน้า/ปรับขนาด/กด Esc (ตำแหน่ง fixed จะเพี้ยนถ้าไม่ปิด)
+  useEffect(() => {
+    if (!active) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') hide(); };
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
+    document.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('scroll', hide, true); window.removeEventListener('resize', hide); document.removeEventListener('keydown', onKey); };
+  }, [active]);
+
+  // วาง tooltip เหนือจุดอ้างอิง (ถ้าไม่พอให้ไปอยู่ด้านล่าง) และบีบไม่ให้เกินขอบจอ
+  useLayoutEffect(() => {
+    if (!active || !tipRef.current) return;
+    const M = 8;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = window.innerHeight;
+    const { width: w, height: h } = tipRef.current.getBoundingClientRect();
+    let left = active.x - w / 2;
+    left = Math.max(M, Math.min(left, vw - w - M));
+    let top = active.y - h - 14;
+    if (top < M) top = active.y + 18;
+    top = Math.max(M, Math.min(top, vh - h - M));
+    setPos({ left, top });
+  }, [active]);
+
+  const showFromEvent = (i, e) => setActive({ i, x: e.clientX, y: e.clientY });
+  const showFromRow = (i, el) => { const r = el.getBoundingClientRect(); setActive({ i, x: r.left + r.width / 2, y: r.top + r.height / 2 }); };
+  const cur = active ? data[active.i] : null;
+  const level = cur && cur.status && BULLET_LEVEL[cur.status];
+
   return (
-    <div className="berry-bullet-list">
+    <div className="berry-bullet-list" ref={wrapRef}>
       {data.length === 0 ? (
         <div className="berry-empty-note">ยังไม่มีข้อมูล</div>
       ) : data.map((d, i) => (
-        <div className="berry-bullet-row" key={i}>
+        <div
+          className={`berry-bullet-row${active && active.i === i ? ' is-active' : ''}`}
+          key={i}
+          tabIndex={0}
+          aria-describedby={active && active.i === i ? 'berry-bullet-tip' : undefined}
+          onPointerEnter={(e) => { if (e.pointerType === 'mouse') showFromEvent(i, e); }}
+          onPointerMove={(e) => { if (e.pointerType === 'mouse') showFromEvent(i, e); }}
+          onPointerLeave={(e) => { if (e.pointerType === 'mouse') hide(); }}
+          onPointerDown={(e) => { if (e.pointerType !== 'mouse') { if (active && active.i === i) hide(); else showFromEvent(i, e); } }}
+          onFocus={(e) => {
+            // แสดงเฉพาะเมื่อโฟกัสด้วยคีย์บอร์ด (การคลิก/แตะใช้ pointer ด้านบน กันแสดงซ้อน/กระพริบ)
+            let kb = true;
+            try { kb = e.currentTarget.matches(':focus-visible'); } catch (err) { kb = true; }
+            if (kb) showFromRow(i, e.currentTarget);
+          }}
+          onBlur={(e) => { if (!wrapRef.current || !wrapRef.current.contains(e.relatedTarget)) hide(); }}
+        >
           <div className="berry-bullet-label" title={d.label}>{d.label}</div>
           <div className="berry-bullet-track">
             <div className="berry-bullet-zones">
@@ -1080,6 +1275,28 @@ function BerryBulletChart({ data, target = RATE_ALERT, warn = RATE_WARN }) {
           <div className="berry-bullet-value">{fmtRate(d.value)}</div>
         </div>
       ))}
+
+      {cur && (
+        <div
+          ref={tipRef}
+          id="berry-bullet-tip"
+          role="tooltip"
+          className="berry-bullet-tip"
+          style={{ left: pos ? pos.left : 0, top: pos ? pos.top : 0, visibility: pos ? 'visible' : 'hidden' }}
+        >
+          <div className="tip-store">{cur.label}</div>
+          <div className="tip-grid">
+            <span>อัตราการยกเลิก</span><b>{fmtRate(cur.value)}</b>
+            <span>ออเดอร์ที่ยกเลิก</span><b>{fmtMoney(cur.cancelled)} ออเดอร์</b>
+            <span>ออเดอร์ที่บันทึกทั้งหมด</span><b>{fmtMoney(cur.total)} ออเดอร์</b>
+          </div>
+          {level ? (
+            <div className="tip-level"><i style={{ background: level.color }} />{level.text}</div>
+          ) : (
+            <div className="tip-level muted">ยังไม่มีข้อมูลให้คำนวณ (N/A)</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1178,8 +1395,12 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [notificationsRead, setNotificationsRead] = useState(false);
   const [dropdown, setDropdown] = useState('');
 
-  const [trendDays, setTrendDays] = useState(7);   // 'today' | 7 | 14 | 30 | 'month'
+  const [trendDays, setTrendDays] = useState(7);   // 'today' | 7 | 14 | 30 | 'month' | 'custom'
   const [dashMonth, setDashMonth] = useState(() => dateOnly(new Date()).slice(0, 7));   // ใช้เมื่อ trendDays = 'month'
+  // ช่วงวันที่กำหนดเองของ Dashboard (ใช้เมื่อ trendDays = 'custom') : เริ่มต้น = 7 วันล่าสุด
+  const [dashCustomStart, setDashCustomStart] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 6); return dateOnly(d); });
+  const [dashCustomEnd, setDashCustomEnd] = useState(() => dateOnly(new Date()));
+  const [dashRangeError, setDashRangeError] = useState('');
   const [salesStoreFilter, setSalesStoreFilter] = useState('all');
   const [detailStoreId, setDetailStoreId] = useState(null);
   const [auditSearch, setAuditSearch] = useState('');
@@ -1281,7 +1502,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     const storesReq = getList('/api/stores/history').catch(() => getList('/api/stores'));  // ถ้า history ใช้ไม่ได้ ถอยไปใช้รายชื่อร้านปกติ
     const [st, od, lg] = await Promise.allSettled([storesReq, getList('/api/orders'), getList(`/api/audit-logs?limit=${AUDIT_PAGE}`)]);
     if (st.status === 'fulfilled') setStores(st.value);
-    if (od.status === 'fulfilled') setOrders(od.value);
+    if (od.status === 'fulfilled') setOrders(dedupeOrders(od.value));   // กันออเดอร์ซ้ำตั้งแต่โหลด : จำนวน/ยอดเงินทุกหน้าจึงไม่นับซ้ำ
     if (lg.status === 'fulfilled') {
       setLogs(prev => mergeLogs(lg.value, prev));
       setAuditHasMore(prev => prev || lg.value.length >= AUDIT_PAGE);
@@ -1393,8 +1614,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     const totalCancelled = cancelTableRows.reduce((a, s) => a + s.cancelledOrders, 0);
     return { totalOrders, totalCancelled, rate: totalOrders > 0 ? +((totalCancelled / totalOrders) * 100).toFixed(1) : null };
   })();
+  // จำนวนออเดอร์ยกเลิก = ทุกออเดอร์ที่สถานะ Cancelled (รวมสลิปถูกปฏิเสธ) ตามช่วงวันที่/ร้านที่เลือก ; ไม่รวม Pending_Cancellation ฯลฯ ; นับออเดอร์ละครั้ง
   const cancelledOrdersList = useMemo(
-    () => cancelOrders.filter(o => normStatus(o.Status) === 'Cancelled' && (cancelStoreFilter === 'all' || String(o.StoreId) === String(cancelStoreFilter))),
+    () => dedupeOrders(cancelOrders.filter(o => normStatus(o.Status) === 'Cancelled' && (cancelStoreFilter === 'all' || String(o.StoreId) === String(cancelStoreFilter)))),
     [cancelOrders, cancelStoreFilter]
   );
 
@@ -1435,11 +1657,18 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     const ords = salesOrders.filter(o => String(o.StoreId) === String(salesStoreFilter));
     return buildRangeTrend(ords, salesStart, salesEnd);
   }, [salesOrders, salesStoreFilter, salesStart, salesEnd]);
+  // รายเมนูของร้านที่เลือก (แทนตารางรายร้านเมื่อเลือกร้านใดร้านหนึ่ง)
+  const salesMenuRows = useMemo(
+    () => (salesStoreFilter === 'all' ? [] : buildMenuBreakdown(salesOrders, salesStoreFilter)),
+    [salesOrders, salesStoreFilter]
+  );
   const hourlyTrend = useMemo(() => {
+    // กำหนดเอง: วันเดียว = รายชั่วโมง, หลายวัน = รายวัน (buildRangeTrend ตัดข้อมูลนอกช่วงออกให้แล้ว)
+    if (trendDays === 'custom') return buildRangeTrend(orders, dashCustomStart, dashCustomEnd);
     if (trendDays !== 'month') return buildSalesTrend(orders, trendDays);
     const { currStart, currEnd } = getPeriodBounds('month', dashMonth);
     return buildRangeTrend(orders, currStart, currEnd);
-  }, [orders, trendDays, dashMonth]);
+  }, [orders, trendDays, dashMonth, dashCustomStart, dashCustomEnd]);
 
   // ดึงข้อมูลเมนูของร้านที่ถูกเลือกเพื่อแสดงใน Modal แบบละเอียด
   const detailStoreMenus = useMemo(() => {
@@ -1448,7 +1677,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   }, [salesOrders, detailStoreId, stores]);
 
   const periodStats = useMemo(() => {
-    const { currStart, currEnd, prevStart, prevEnd } = getPeriodBounds(trendDays, dashMonth);
+    const { currStart, currEnd, prevStart, prevEnd } = getPeriodBounds(trendDays, dashMonth, { start: dashCustomStart, end: dashCustomEnd });
     const summarize = (ords, startDay) => {
       const s = buildStoreSummary(stores, ords, startDay);
       const gross = s.reduce((a, x) => a + x.grossSales, 0);
@@ -1468,16 +1697,40 @@ export default function AccountantView({ apiBase, user, onLogout }) {
         }
         return +(((c - p) / p) * 100).toFixed(1);
       };
-      const compareLabel = trendDays === 'today' ? 'เทียบกับเมื่อวาน' : trendDays === 'month' ? 'เทียบกับเดือนก่อน' : `เทียบกับ ${trendDays} วันก่อนหน้า`;
+      // กำหนดเอง: เทียบกับช่วงก่อนหน้าที่ยาวเท่ากัน (ติดกับวันเริ่มต้น)
+      const customDays = trendDays === 'custom' ? daysInclusive(currStart, currEnd) : 0;
+      const compareLabel = trendDays === 'today' ? 'เทียบกับเมื่อวาน'
+        : trendDays === 'month' ? 'เทียบกับเดือนก่อน'
+        : trendDays === 'custom' ? (customDays === 1 ? 'เทียบกับวันก่อนหน้า' : `เทียบกับ ${customDays} วันก่อนหน้า`)
+        : `เทียบกับ ${trendDays} วันก่อนหน้า`;
       return {
-        curr, prev, compareLabel,
+        curr, prev, compareLabel, bounds: { currStart, currEnd, prevStart, prevEnd, days: daysInclusive(currStart, currEnd) },
         deltaGross: pctChange(curr.gross, prev.gross),
         deltaNet: pctChange(curr.net, prev.net), 
         deltaOrders: pctChange(curr.completed, prev.completed),
         deltaCancelled: pctChange(curr.cancelled, prev.cancelled),
         deltaRate: curr.rate === null || prev.rate === null ? null : +(curr.rate - prev.rate).toFixed(1),
       };
-    }, [orders, stores, trendDays, dashMonth]);
+    }, [orders, stores, trendDays, dashMonth, dashCustomStart, dashCustomEnd]);
+
+  // ตรวจวันที่ของช่วงกำหนดเอง (Dashboard): วันสิ้นสุดห้ามก่อนวันเริ่ม, ห้ามเป็นอนาคต, ยาวไม่เกิน MAX_CUSTOM_DAYS วัน
+  const changeDashStart = (v) => {
+    if (!v) return;
+    if (v > todayStr) { setDashRangeError('ไม่สามารถเลือกวันที่ในอนาคตได้'); return; }
+    const end = v > dashCustomEnd ? v : dashCustomEnd;   // เลือกวันเริ่มหลังวันสิ้นสุด -> ปรับวันสิ้นสุดตาม
+    if (daysInclusive(v, end) > MAX_CUSTOM_DAYS) { setDashRangeError(`เลือกช่วงวันที่ได้ไม่เกิน ${MAX_CUSTOM_DAYS} วัน`); return; }
+    setDashRangeError('');
+    setDashCustomStart(v);
+    if (end !== dashCustomEnd) setDashCustomEnd(end);
+  };
+  const changeDashEnd = (v) => {
+    if (!v) return;
+    if (v < dashCustomStart) { setDashRangeError('วันที่สิ้นสุดต้องไม่ก่อนวันที่เริ่มต้น'); return; }
+    if (v > todayStr) { setDashRangeError('ไม่สามารถเลือกวันที่ในอนาคตได้'); return; }
+    if (daysInclusive(dashCustomStart, v) > MAX_CUSTOM_DAYS) { setDashRangeError(`เลือกช่วงวันที่ได้ไม่เกิน ${MAX_CUSTOM_DAYS} วัน`); return; }
+    setDashRangeError('');
+    setDashCustomEnd(v);
+  };
 
   // ร้านค้ายอดนิยม (Dashboard): ตามช่วงเวลาที่เลือก เรียงตามยอดสุทธิ ตัดร้านที่ไม่มียอดและร้านที่ถูกลบออก
   const topStores = useMemo(
@@ -1792,7 +2045,11 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div>
                   <h2 style={{ margin: 0 }}>ภาพรวมศูนย์อาหาร</h2>
                   <div style={{ color: 'var(--berry-text-muted)', fontSize: 13 }}>
-                    ยอดขายและอัตรายกเลิกของ {trendDays === 'today' ? 'วันนี้' : trendDays === 'month' ? `เดือน ${fmtThaiMonth(dashMonth)}` : `${trendDays} วันล่าสุด`}
+                    ยอดขายและอัตรายกเลิกของ {trendDays === 'today' ? 'วันนี้' : trendDays === 'month' ? `เดือน ${fmtThaiMonth(dashMonth)}`
+                      : trendDays === 'custom' ? (periodStats.bounds.days === 1
+                        ? `วันที่ ${fmtDayTh(periodStats.bounds.currStart)} · เทียบกับวันที่ ${fmtDayTh(periodStats.bounds.prevStart)}`
+                        : `${fmtDayTh(periodStats.bounds.currStart)} – ${fmtDayTh(periodStats.bounds.currEnd)} (${periodStats.bounds.days} วัน) · เทียบกับ ${fmtDayTh(periodStats.bounds.prevStart)} – ${fmtDayTh(periodStats.bounds.prevEnd)}`)
+                      : `${trendDays} วันล่าสุด`}
                   </div>
                 </div>
                 {lastUpdated && (
@@ -1838,14 +2095,14 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <div className="berry-panel-header">
                     <div>
                       <div className="berry-growth-title">ยอดขายตามช่วงเวลา</div>
-                      <div className="berry-panel-caption">แนวโน้มยอดขายที่สำเร็จแล้ว</div>
+                      <div className="berry-panel-caption">แนวโน้มยอดขายที่สำเร็จแล้ว{trendDays === 'custom' ? ` • ${dashCustomStart === dashCustomEnd ? 'รายชั่วโมง' : 'รายวัน'}` : ''}</div>
                     </div>
                     <div className="berry-toggle-pills">
-                      {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['month', 'เลือกเดือน']].map(([val, label]) => (
+                      {[['today', 'วันนี้'], [7, '7 วัน'], [14, '14 วัน'], [30, '30 วัน'], ['month', 'เลือกเดือน'], ['custom', 'กำหนดเอง']].map(([val, label]) => (
                         <button
                           key={val}
                           className={trendDays === val ? 'active' : ''}
-                          onClick={() => setTrendDays(val)}
+                          onClick={() => { setDashRangeError(''); setTrendDays(val); }}
                         >
                           {label}
                         </button>
@@ -1855,6 +2112,17 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                       <input type="month" className="berry-input" aria-label="เลือกเดือน" value={dashMonth}
                         max={dateOnly(new Date()).slice(0, 7)} onChange={e => e.target.value && setDashMonth(e.target.value)}
                         style={{ width: 'auto' }} />
+                    )}
+                    {trendDays === 'custom' && (
+                      <div className="berry-range-row">
+                        <label htmlFor="dash-range-start">ตั้งแต่วันที่</label>
+                        <input id="dash-range-start" type="date" className="berry-input" aria-label="วันที่เริ่มต้น" value={dashCustomStart}
+                          max={todayStr} onChange={e => changeDashStart(e.target.value)} />
+                        <label htmlFor="dash-range-end">ถึงวันที่</label>
+                        <input id="dash-range-end" type="date" className="berry-input" aria-label="วันที่สิ้นสุด" value={dashCustomEnd}
+                          min={dashCustomStart} max={todayStr} onChange={e => changeDashEnd(e.target.value)} />
+                        {dashRangeError && <div className="berry-range-error" role="alert">{dashRangeError}</div>}
+                      </div>
                     )}
                   </div>
                   <BerryLineChart data={hourlyTrend} height={290} valueFormat={(v) => `฿${fmtMoney(v)}`} axisFormat={(v) => (v >= 1000 ? `฿${(v / 1000).toFixed(1)}k` : `฿${Math.round(v)}`)} />
@@ -1963,7 +2231,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
             <div className="berry-dashboard-grid">
               <div className="berry-panel berry-filter-row">
                 <label>ร้านค้า:</label>
-                <select className="berry-input" value={salesStoreFilter} onChange={e => { setSalesStoreFilter(e.target.value); setDetailStoreId(null); }}>
+                <select className="berry-input" value={salesStoreFilter} onChange={e => { setSalesStoreFilter(e.target.value); setDetailStoreId(null); setSalesRowsOpen(false); }}>
                   <option value="all">ทุกร้านค้า</option>
                   {salesStoreSummary.map(s => <option key={s.storeId} value={s.storeId}>{s.storeName}</option>)}
                 </select>
@@ -2046,6 +2314,56 @@ export default function AccountantView({ apiBase, user, onLogout }) {
               
               </div>
 
+              {salesStoreFilter !== 'all' ? (
+              <div className="berry-panel">
+                <div className="berry-panel-header">
+                  <div>
+                    <h3 style={{ margin: 0 }}>ตารางยอดขายรายเมนู</h3>
+                    <div className="berry-panel-caption">
+                      {salesStoreSummary.find(x => String(x.storeId) === String(salesStoreFilter))?.storeName || ''} • {salesStart === salesEnd ? fmtDayTh(salesStart) : `${fmtDayTh(salesStart)} – ${fmtDayTh(salesEnd)}`} • เรียงตามยอดสุทธิ
+                    </div>
+                  </div>
+                </div>
+                {salesMenuRows.length === 0 ? (
+                  <div className="berry-empty-note">ไม่พบข้อมูลเมนูของร้านนี้ในช่วงเวลาที่เลือก</div>
+                ) : (
+                  <>
+                    <div id="sales-menu-table" style={{ overflowX: 'auto' }}>
+                      <table className="berry-table stack-sm">
+                        <thead>
+                          <tr>
+                            <th>ชื่อเมนู</th>
+                            <th>จำนวนที่ขายได้</th>
+                            <th>ยอดขาย</th>
+                            <th>จำนวนที่ยกเลิก</th>
+                            <th>ยอดที่ยกเลิก</th>
+                            <th>ยอดสุทธิ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {salesMenuRows.slice(0, salesRowsOpen ? salesMenuRows.length : SALES_LIMIT).map((m, i) => (
+                            <tr key={m.name} className={i >= SALES_LIMIT ? 'berry-reveal' : undefined}>
+                              <td><b>{m.name}</b></td>
+                              <td>{fmtMoney(m.soldQty)}</td>
+                              <td>฿{fmtMoney(m.salesAmount)}</td>
+                              <td style={{ color: m.cancelledQty > 0 ? 'var(--berry-red)' : 'var(--berry-text-muted)' }}>{fmtMoney(m.cancelledQty)}</td>
+                              <td style={{ color: m.cancelledAmount > 0 ? 'var(--berry-red)' : 'var(--berry-text-muted)' }}>฿{fmtMoney(m.cancelledAmount)}</td>
+                              <td style={{ fontWeight: 700 }}>฿{fmtMoney(m.netSales)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {salesMenuRows.length > SALES_LIMIT && (
+                      <ShowMoreToggle expanded={salesRowsOpen} onToggle={() => setSalesRowsOpen(v => !v)} hiddenCount={salesMenuRows.length - SALES_LIMIT} controls="sales-menu-table" moreLabel="ดูเมนูเพิ่มเติม" />
+                    )}
+                    <div style={{ marginTop: 10, fontSize: 12, color: 'var(--berry-text-muted)' }}>
+                      ยอดขาย = ออเดอร์ที่สำเร็จ (Completed/NoShow) • ยอดที่ยกเลิก = ออเดอร์ที่ถูกยกเลิก ไม่รวมออเดอร์ที่สลิปถูกปฏิเสธ (ร้านไม่ได้รับเงิน) แต่จำนวนที่ยกเลิกยังนับรวม
+                    </div>
+                  </>
+                )}
+              </div>
+              ) : (
               <div className="berry-panel">
                 <div className="berry-panel-header">
                   <div>
@@ -2093,6 +2411,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <ShowMoreToggle expanded={salesRowsOpen} onToggle={() => setSalesRowsOpen(v => !v)} hiddenCount={salesFilteredRows.length - SALES_LIMIT} controls="sales-table" moreLabel="ดูร้านค้าเพิ่มเติม" />
                 )}
               </div>
+              )}
 
               {/* ===== Modal ดูรายละเอียดเมนูขายดีสำหรับร้านที่เลือก ===== */}
               {detailStoreId && (
@@ -2152,7 +2471,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
             const activeReason = reasons.some(([k]) => k === cancelReasonFilter) ? cancelReasonFilter : '';
             const rowsFiltered = activeReason ? rowsAll.filter(r => r.reason === activeReason) : rowsAll;
             const rowsShown = cancelShowAll ? rowsFiltered : rowsFiltered.slice(0, 8);
-            const lostAmount = rowsAll.reduce((a, r) => a + Number(r.o.TotalAmount || 0), 0);
+            // มูลค่าที่เสียไป = ผลรวม TotalAmount ของออเดอร์ที่ถูกยกเลิก ยกเว้นสลิปถูกปฏิเสธ (ร้านไม่เคยได้รับเงิน) — จำนวนออเดอร์ยังนับครบทุกใบ
+            const lostAmount = rowsAll.reduce((a, r) => a + moneyOf(r.o), 0);
+            const rejectedCount = rowsAll.filter(r => isPaymentRejected(r.o)).length;
             const showStoreCol = cancelStoreFilter === 'all';
 
             const detailOrder = cancelDetailId ? orders.find(o => String(o.OrderID) === String(cancelDetailId)) : null;
@@ -2213,7 +2534,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   </div>
                   <div id="cancel-rate-chart">
                     <BerryBulletChart
-                      data={cancelTableRows.slice(0, rateOpen ? cancelTableRows.length : RATE_LIMIT).map(x => ({ label: x.storeName, value: x.rate, status: x.status }))}
+                      data={cancelTableRows.slice(0, rateOpen ? cancelTableRows.length : RATE_LIMIT).map(x => ({ label: x.storeName, value: x.rate, status: x.status, cancelled: x.cancelledOrders, total: x.totalOrders }))}
                     />
                   </div>
                   {cancelTableRows.length > RATE_LIMIT && (
@@ -2271,7 +2592,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                   <>
                     <div className="berry-mini-stats">
                       <div className="berry-mini-stat"><span className="lbl">ออเดอร์ที่ยกเลิก</span><span className="val">{fmtMoney(rowsAll.length)}</span></div>
-                      <div className="berry-mini-stat"><span className="lbl">มูลค่าที่เสียไป</span><span className="val">฿{fmtMoney(lostAmount)}</span></div>
+                      <div className="berry-mini-stat"><span className="lbl">มูลค่าที่เสียไป</span><span className="val">฿{fmtMoney(lostAmount)}</span>{rejectedCount > 0 && <span className="berry-subtle">ไม่รวมสลิปถูกปฏิเสธ {fmtMoney(rejectedCount)} ออเดอร์ (ร้านไม่ได้รับเงิน)</span>}</div>
                       <div className="berry-mini-stat"><span className="lbl">เหตุผลที่พบบ่อยสุด</span><span className="val" style={{ fontSize: 14 }}>{reasons[0][0]} ({reasons[0][1]})</span></div>
                     </div>
 
@@ -2302,7 +2623,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                               <td><b>{o.QueueNo}</b></td>
                               {showStoreCol && <td>{o.StoreName}</td>}
                               <td>{customerNameOf(o)}</td>
-                              <td>฿{fmtMoney2(o.TotalAmount)}</td>
+                              <td>฿{fmtMoney2(o.TotalAmount)}{isPaymentRejected(o) && <div className="berry-subtle">ไม่นับเป็นมูลค่าที่เสีย</div>}</td>
                               <td>{reason}</td>
                               <td style={{ color: 'var(--berry-purple)', whiteSpace: 'nowrap', fontWeight: 600 }}>รายละเอียด →</td>
                             </tr>
@@ -2862,6 +3183,22 @@ const STYLES = `
 .berry-bullet-bar { position: absolute; top: 6px; bottom: 6px; left: 0; border-radius: 3px; transition: width 0.3s; }
 .berry-bullet-target { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--berry-text-dark); }
 .berry-bullet-value { width: 52px; text-align: right; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.berry-bullet-row { border-radius: 8px; padding: 2px 4px; margin: -2px -4px; cursor: default; }
+.berry-bullet-row.is-active { background: rgba(255, 114, 76, 0.08); }
+.berry-bullet-row:focus { outline: none; }
+.berry-bullet-row:focus-visible { outline: 2px solid var(--berry-purple); outline-offset: 2px; }
+.berry-bullet-tip { position: fixed; z-index: 1000; max-width: min(280px, calc(100vw - 16px)); background: #2A2C41; color: #fff; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45; pointer-events: none; box-shadow: 0 4px 14px rgba(42, 44, 65, 0.28); }
+.berry-bullet-tip .tip-store { font-weight: 700; color: #FDBF50; margin-bottom: 6px; overflow-wrap: anywhere; }
+.berry-bullet-tip .tip-grid { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; row-gap: 2px; }
+.berry-bullet-tip .tip-grid span { color: rgba(255, 255, 255, 0.75); }
+.berry-bullet-tip .tip-grid b { text-align: right; white-space: nowrap; }
+.berry-bullet-tip .tip-level { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.18); font-weight: 600; }
+.berry-bullet-tip .tip-level i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.berry-bullet-tip .tip-level.muted { color: rgba(255, 255, 255, 0.7); font-weight: 500; }
+@media (pointer: coarse) { .berry-bullet-row { min-height: 44px; } }
+.berry-range-row { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.berry-range-row label { font-weight: 600; font-size: 13px; color: var(--berry-text-muted); }
+.berry-range-error { flex-basis: 100%; color: var(--berry-red); font-size: 12px; font-weight: 600; }
 
 /* ============================================================
    MODAL STYLES (NEW)
