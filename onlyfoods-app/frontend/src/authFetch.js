@@ -51,6 +51,25 @@ const friendlyServerError = async (res) => {
   return jsonError(res.status, SERVER_DOWN);
 };
 
+// จำนวน request ไป /api ที่ยังไม่ได้คำตอบ : หน้าโหลด (FoodSplash ใน App.jsx) รอจนว่างก่อนเฟดเข้าหน้า
+let inflight = 0;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// รอจนไม่มี request ไป /api ค้างติดต่อกัน quietMs (กันช่วงที่ข้อมูลชุดแรกมาแล้วหน้ายิงชุดถัดไปต่อ) ; ไม่เกิน maxMs
+export async function waitForApiIdle(quietMs = 400, maxMs = 8000) {
+  const until = performance.now() + maxMs;
+  let quietSince = inflight === 0 ? performance.now() : null;
+  while (performance.now() < until) {
+    if (inflight === 0) {
+      if (quietSince === null) quietSince = performance.now();
+      if (performance.now() - quietSince >= quietMs) return true;
+    } else {
+      quietSince = null;
+    }
+    await sleep(50);
+  }
+  return false;
+}
+
 window.fetch = async (input, init = {}) => {
   let url;
   try {
@@ -61,6 +80,15 @@ window.fetch = async (input, init = {}) => {
   if (url.origin !== API_ORIGIN || !url.pathname.startsWith('/api/')) {
     return originalFetch(input, init);
   }
+  inflight += 1;
+  try {
+    return await apiFetch(url, input, init);
+  } finally {
+    inflight -= 1;
+  }
+};
+
+async function apiFetch(url, input, init) {
 
   const headers = new Headers(init.headers || (typeof input !== 'string' ? input.headers : undefined));
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
@@ -91,4 +119,4 @@ window.fetch = async (input, init = {}) => {
     window.dispatchEvent(new CustomEvent('auth:expired', { detail: message }));
   }
   return res;
-};
+}

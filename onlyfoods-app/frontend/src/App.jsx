@@ -1,12 +1,12 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { startPolling } from './lib/polling';
-import { savedUser, saveUser } from './authFetch.js';
+import { savedUser, saveUser, waitForApiIdle } from './authFetch.js';
 import { clearHistoryNav } from './lib/historyNav';
 import { PALETTE } from './auth/theme';
 import { APP_STYLES } from './auth/styles';
 import { GOOGLE_CLIENT_ID, decodeJwtPayload } from './auth/google';
 import LoginScreen from './auth/LoginScreen';
-import PageLoading from './shared/ui/PageLoading';
+import FoodSplash from './auth/FoodSplash';
 
 // หน้าของแต่ละบทบาทแยกเป็นไฟล์ JS ของตัวเอง : โหลดเฉพาะบทบาทที่ login (ลูกค้าบนมือถือไม่ต้องโหลดหน้าผู้บริหาร)
 const VIEW_LOADERS = {
@@ -26,9 +26,39 @@ const OwnerView = lazy(VIEW_LOADERS.Owner);
 // บทบาทล่าสุดที่ใช้เครื่องนี้ : เปิดหน้า login ครั้งถัดไปโหลดไฟล์ของบทบาทนั้นไว้ก่อน (กด login แล้วไม่ต้องรอ)
 const LAST_ROLE_KEY = 'onlyfoods.lastRole';
 
+// หน้าโหลดรูปอาหาร : แสดงอย่างน้อยเท่านี้ (ให้อาหารเด้งครบก่อน) ; เฟดออกใช้เวลา SPLASH_FADE_MS
+const SPLASH_MIN_MS = 1200;
+const SPLASH_FADE_MS = 650;
+const IMAGE_WAIT_MS = 2500;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// รูปที่อยู่ในหน้าแล้วแต่ยังโหลดไม่เสร็จ (เช่นรูปเมนู) : รอไม่เกิน maxMs
+const waitForImages = (maxMs) => {
+  const pending = [...document.images].filter(img => !img.complete);
+  if (!pending.length) return Promise.resolve();
+  return Promise.race([
+    Promise.all(pending.map(img => new Promise(r => {
+      img.addEventListener('load', r, { once: true });
+      img.addEventListener('error', r, { once: true });
+    }))),
+    sleep(maxMs),
+  ]);
+};
+
+// วางต่อท้ายหน้าของบทบาทใน <Suspense> เดียวกัน : effect นี้ทำงานเมื่อไฟล์ของหน้าโหลดเสร็จและหน้า mount แล้ว
+// (หลัง effect ของหน้า ซึ่งเริ่มดึงข้อมูลไปแล้ว)
+function OnViewMounted({ onMounted }) {
+  useEffect(() => { onMounted(); }, []);
+  return null;
+}
+
 export default function App() {
   // refresh แล้วไม่หลุด : กู้ผู้ใช้จาก sessionStorage (มี token อยู่เท่านั้น ; token ใช้ไม่ได้แล้ว backend ตอบ 401 -> กลับหน้า login)
   const [currentUser, setCurrentUser] = useState(() => savedUser());
+  // หน้าโหลดรูปอาหาร : null | 'login' (รอ server) | 'loading' (หน้า+ข้อมูลโหลดอยู่ข้างหลัง) | 'leaving' (เฟดออก)
+  // เปิดเว็บที่ล็อกอินค้างไว้ = เริ่มที่ loading เลย
+  const [splash, setSplash] = useState(() => (savedUser() ? 'loading' : null));
+  const splashStartedAt = useRef(performance.now());
+  const splashRun = useRef(0); // เปลี่ยนทุกครั้งที่เริ่ม/ยกเลิก : งานรอของรอบเก่าไม่มาปิดหน้าโหลดรอบใหม่
   // เข้าสู่ระบบด้วย Google แต่อีเมลนี้มีบัญชีที่ใช้รหัสผ่านอยู่แล้ว : { credential, username, message, password, error, busy }
   const [googleLink, setGoogleLink] = useState(null);
   const [stores, setStores] = useState([]);
@@ -75,9 +105,40 @@ export default function App() {
   
   useEffect(() => { saveUser(currentUser); }, [currentUser]);
 
+  const startSplash = (phase) => {
+    setSplash(prev => {
+      if (!prev || prev === 'leaving') splashStartedAt.current = performance.now();
+      return phase;
+    });
+    splashRun.current += 1;
+  };
+  // เข้าสู่ระบบไม่สำเร็จ / ออกจากระบบ : เฟดออกกลับไปหน้าเดิม
+  const cancelSplash = () => {
+    splashRun.current += 1;
+    setSplash(prev => (prev ? 'leaving' : prev));
+  };
+  useEffect(() => {
+    if (splash !== 'leaving') return undefined;
+    const t = setTimeout(() => setSplash(s => (s === 'leaving' ? null : s)), SPLASH_FADE_MS);
+    return () => clearTimeout(t);
+  }, [splash]);
+
+  // หน้าของบทบาท mount แล้ว : รอข้อมูล (ไม่มี request ไป /api ค้าง) + รูป + เวลาขั้นต่ำ แล้วค่อยเฟดเข้า
+  // จึงไม่เห็น skeleton/ข้อมูลทยอยขึ้นตอนเข้าหน้า
+  const onViewMounted = async () => {
+    const run = splashRun.current;
+    await waitForApiIdle(400, 8000);
+    await waitForImages(IMAGE_WAIT_MS);
+    await sleep(Math.max(0, SPLASH_MIN_MS - (performance.now() - splashStartedAt.current)));
+    if (run !== splashRun.current) return;
+    requestAnimationFrame(() => setSplash(s => (s === 'loading' ? 'leaving' : s)));
+  };
+
   const logout = () => {
     window.dispatchEvent(new Event('auth:logout'));  // authFetch.js ทิ้ง token + ข้อมูลใน sessionStorage
     clearHistoryNav();
+    splashRun.current += 1;
+    setSplash(null);
     setCurrentUser(null);
   };
 
@@ -85,6 +146,8 @@ export default function App() {
   useEffect(() => {
     const onExpired = (e) => {
       clearHistoryNav();
+      splashRun.current += 1;
+      setSplash(null);
       setCurrentUser(null);
       setAuthTab('login');
       setAuthError(e.detail || 'กรุณาเข้าสู่ระบบใหม่');
@@ -199,6 +262,7 @@ export default function App() {
   const applyGoogleLogin = (data, credential) => {
     const payload = decodeJwtPayload(credential);  // ชื่อ/รูปไว้เติมฟอร์มโปรไฟล์เท่านั้น (ตัวตนจริง server ตรวจกับ Google)
     const user = data.user;
+    startSplash('loading');
     setCurrentUser({
       UserId: user.UserId, id: user.UserId,
       username: user.Username,
@@ -222,6 +286,7 @@ export default function App() {
     if (res.status === 409 && data.link_required) {
       // ไม่ผูกให้เอง: ต้องใส่รหัสผ่านของบัญชีเดิมก่อน (กันคนสมัครด้วยอีเมลของคนอื่นแล้วรอให้เจ้าของจริงผูก Google ให้)
       setGoogleLink({ credential, username: data.username, message: data.detail, password: '', error: '', busy: false });
+      cancelSplash(); // ต้องใส่รหัสผ่านบัญชีเดิมก่อน : เปิดหน้าต่างเชื่อมบัญชี
       return;
     }
     if (!res.ok) throw new Error(apiErrorText(data, 'เข้าสู่ระบบด้วย Google ไม่สำเร็จ'));
@@ -230,9 +295,11 @@ export default function App() {
   };
 
   const handleGoogleResponse = async (response) => {
+    startSplash('login');
     try {
       await googleLogin(response.credential);
     } catch (err) {
+      cancelSplash();
       alert(`Google Auth Error: ${err.message}`);
     }
   };
@@ -284,6 +351,7 @@ export default function App() {
     if (authBusy) return;
     setAuthError('');
     setAuthBusy(true);
+    startSplash('login'); // แทนข้อความ "กำลังเชื่อมต่อ..." บนปุ่ม
 
     const endpoint = authTab === 'login' ? '/api/login' : '/api/register';
     const bodyData = authTab === 'login' 
@@ -301,6 +369,7 @@ export default function App() {
 
       const finalRole = mapRole(data.Role);
 
+      startSplash('loading');
       setCurrentUser({
         UserId: data.UserId, id: data.UserId,
         username: data.Username,
@@ -311,6 +380,7 @@ export default function App() {
       });
       setAuthForm({ username: '', password: '', name: '', phone: '' });
     } catch (err) {
+      cancelSplash();
       setAuthError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
     } finally {
       setAuthBusy(false);
@@ -349,6 +419,7 @@ export default function App() {
   return (
     <div style={{ width: '100vw', height: '100dvh', overflow: 'hidden', margin: 0, padding: 0 }}>
       <style>{APP_STYLES}</style>
+      {splash && <FoodSplash phase={splash} />}
 
       {!currentUser ? (
         <LoginScreen {...{
@@ -357,14 +428,15 @@ export default function App() {
         }} />
       ) : (
         <div style={{ width: '100%', minHeight: '100vh', background: '#F8FAFC', padding: 0, margin: 0 }}>
-          {/* ระหว่างโหลดไฟล์ของบทบาทนั้น (ครั้งแรกเท่านั้น) : เกิน 0.25 วิ แสดงวงหมุน */}
-          <Suspense fallback={<PageLoading />}>
+          {/* ระหว่างโหลดไฟล์ของบทบาทนั้น : หน้าโหลดรูปอาหาร (FoodSplash) บังอยู่ด้านบน */}
+          <Suspense fallback={null}>
           {currentUser.role === 'Customer' && <CustomerView user={currentUser} apiBase={API_BASE} stores={stores} products={products} foodCourtOpen={foodCourtOpen} onLogout={logout} />}
           {currentUser.role === 'Kitchen' && <KitchenView user={currentUser} apiBase={API_BASE} onLogout={logout} />}
           {currentUser.role === 'Front' && <CounterView user={currentUser} apiBase={API_BASE} stores={stores} onLogout={logout} />}
           {currentUser.role === 'Owner' && <OwnerView user={currentUser} apiBase={API_BASE} onLogout={logout} />}
           {currentUser.role === 'Accountant' && <AccountantView user={currentUser} apiBase={API_BASE} onLogout={logout} />}
           {currentUser.role === 'Executive' && <ExecutiveView user={currentUser} apiBase={API_BASE} onStatusChange={fetchFoodCourtStatus} onLogout={logout} />}
+          <OnViewMounted key={`${currentUser.UserId}-${currentUser.role}`} onMounted={onViewMounted} />
           </Suspense>
         </div>
       )}
