@@ -1741,7 +1741,7 @@ const cancelRateTone = (rate) => rate === null || rate === undefined ? 'na'
 // กราฟแท่งอัตรายกเลิกรายร้าน: พื้นหลังแบ่งโซน เขียว < 5% · เหลือง 5–10% · แดง > 10% และเส้นเกณฑ์ที่ 10%
 function CancelRateBars({ rows, selectedId, onSelect }) {
     if (!rows.length)
-        return <EmptyState text="ช่วงเวลานี้ยังไม่มีออเดอร์" minHeight="160px"/>;
+        return <EmptyState text="ยังไม่มีร้านค้าในระบบ" minHeight="160px"/>;
     const max = Math.max(20, CANCEL_ALERT_RATE + 5, ...rows.map((r) => r.cancelRate || 0));
     const pct = (v) => `${Math.min(100, ((v || 0) / max) * 100)}%`;
     const barColor = { ok: T.up, warn: T.amber, bad: T.down };
@@ -1749,15 +1749,15 @@ function CancelRateBars({ rows, selectedId, onSelect }) {
       {rows.map((r) => {
             const tone = cancelRateTone(r.cancelRate);
             const active = String(selectedId) === String(r.StoreId);
-            return (<button key={r.StoreId} type="button" onClick={() => onSelect(active ? '' : String(r.StoreId))} title={`${r.StoreName}: ยกเลิก ${money(r.cancelledCount)} จาก ${money(r.orderCount)} ออเดอร์ · กดเพื่อดูเฉพาะร้านนี้`} style={{ display: 'grid', gridTemplateColumns: 'minmax(80px, 170px) minmax(0, 1fr) 52px', gap: '12px', alignItems: 'center', width: '100%', padding: '7px 8px', border: 'none', borderRadius: '8px', background: active ? T.primarySoft : 'transparent', cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left' }}>
-              <span style={{ fontSize: '13px', color: active ? T.ink : T.text, fontWeight: active ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.StoreName}</span>
+            return (<button key={r.StoreId} type="button" onClick={() => onSelect(active ? '' : String(r.StoreId))} title={r.cancelRate === null ? `${r.StoreName}: ไม่มีออเดอร์ในช่วงนี้ · กดเพื่อดูเฉพาะร้านนี้` : `${r.StoreName}: ยกเลิก ${money(r.cancelledCount)} จาก ${money(r.orderCount)} ออเดอร์ · กดเพื่อดูเฉพาะร้านนี้`} style={{ display: 'grid', gridTemplateColumns: 'minmax(80px, 170px) minmax(0, 1fr) 52px', gap: '12px', alignItems: 'center', width: '100%', padding: '7px 8px', border: 'none', borderRadius: '8px', background: active ? T.primarySoft : 'transparent', cursor: 'pointer', fontFamily: FONT_STACK, textAlign: 'left' }}>
+              <span style={{ fontSize: '13px', color: active ? T.ink : (r.cancelRate === null ? T.muted : T.text), fontWeight: active ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.StoreName}</span>
               <span style={{ position: 'relative', height: '16px', borderRadius: '999px', overflow: 'hidden', background: T.greenSoft }}>
                 <span style={{ position: 'absolute', top: 0, bottom: 0, left: pct(CANCEL_WARN_RATE), width: `calc(${pct(CANCEL_ALERT_RATE)} - ${pct(CANCEL_WARN_RATE)})`, background: T.amberSoft }}/>
                 <span style={{ position: 'absolute', top: 0, bottom: 0, left: pct(CANCEL_ALERT_RATE), right: 0, background: T.redSoft }}/>
                 <span style={{ position: 'absolute', top: '4px', bottom: '4px', left: 0, width: pct(r.cancelRate), minWidth: r.cancelRate > 0 ? '6px' : 0, borderRadius: '999px', background: barColor[tone] }}/>
                 <span style={{ position: 'absolute', top: 0, bottom: 0, left: pct(CANCEL_ALERT_RATE), width: '2px', background: T.down, opacity: 0.6 }}/>
               </span>
-              <strong style={{ fontSize: '13px', color: tone === 'bad' ? T.down : T.ink, textAlign: 'right' }}>{r.cancelRate.toFixed(1)}%</strong>
+              <strong style={{ fontSize: '13px', color: tone === 'bad' ? T.down : r.cancelRate === null ? T.muted : T.ink, textAlign: 'right' }}>{r.cancelRate === null ? 'N/A' : `${r.cancelRate.toFixed(1)}%`}</strong>
             </button>);
         })}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', marginTop: '8px', fontSize: '12px', color: T.muted }}>
@@ -1789,22 +1789,44 @@ function CancellationPage({ ctx }) {
         const prevBounds = customRange ? previousBoundsForRange(customStart, customEnd) : previousBounds(anchor, days);
         const current = orders.filter((o) => inRange(o, bounds));
         const previous = orders.filter((o) => inRange(o, prevBounds));
-        // ร้านที่มีออเดอร์ในช่วงนี้ (ร้านที่ถูกลบไปแล้วยังแสดง พร้อมป้าย Deleted เหมือนหน้าภาพรวม)
-        const nameOf = new Map(stores.map((s) => [String(s.StoreId), s.StoreName]));
-        const storeRows = [...new Set(current.map((o) => String(o.StoreId)))]
-            .map((id) => {
-                const own = current.filter((o) => String(o.StoreId) === id);
+                // เริ่มจากร้านทั้งหมดในระบบ (เหมือน AccountantView.buildStoreSummary) ร้านที่ไม่มีออเดอร์ในช่วงนี้จะขึ้นเป็น N/A
+        // ร้านที่ถูกลบไปแล้วแต่ยังมีออเดอร์ในช่วงนี้ แสดงพร้อมป้าย Deleted เหมือนหน้าภาพรวม
+        const storeMap = new Map(stores.map((s) => [String(s.StoreId), { id: String(s.StoreId), name: s.StoreName, contractState: s.ContractState, contractEnd: s.ContractEndDate }]));
+        current.forEach((o) => {
+            const id = String(o.StoreId);
+            if (!storeMap.has(id))
+                storeMap.set(id, { id, name: `${o.StoreName || `ร้าน #${id}`} (Deleted)` });
+        });
+        const storeRows = [...storeMap.values()]
+            .map((st) => {
+                const own = current.filter((o) => String(o.StoreId) === st.id);
                 const sum = summarize(own);
                 return {
-                    StoreId: id,
-                    StoreName: nameOf.get(id) || `${own[0]?.StoreName || `ร้าน #${id}`} (Deleted)`,
+                    StoreId: st.id,
+                    StoreName: st.name,
                     cancelledCount: sum.cancelledCount,
                     orderCount: sum.completedCount + sum.cancelledCount,
-                    cancelRate: sum.cancelRate
+                    cancelRate: sum.cancelRate,
+                    contractState: st.contractState,
+                    contractEnd: st.contractEnd
                 };
             })
-            .filter((r) => r.cancelRate !== null)
-            .sort((a, b) => b.cancelRate - a.cancelRate || b.cancelledCount - a.cancelledCount);
+            // ร้านหมดสัญญาที่ไม่มีออเดอร์ในช่วงนี้ ไม่ต้องแสดง (หลักการเดียวกับหน้าภาพรวม)
+            .filter((r) => {
+                if (r.contractState !== 'EXPIRED' || r.orderCount > 0) return true;
+                if (!r.contractEnd) return false;
+                const cEnd = new Date(`${String(r.contractEnd).slice(0, 10)}T00:00:00`);
+                cEnd.setDate(cEnd.getDate() + 1);
+                return cEnd > bounds.start;
+            })
+            // มีข้อมูลเรียงตามอัตรายกเลิกมากสุดก่อน ร้านที่ไม่มีออเดอร์ (N/A) ไว้ท้ายสุดเรียงตามชื่อ
+            .sort((a, b) => {
+                if (a.cancelRate === null && b.cancelRate === null)
+                    return String(a.StoreName).localeCompare(String(b.StoreName), 'th');
+                if (a.cancelRate === null) return 1;
+                if (b.cancelRate === null) return -1;
+                return b.cancelRate - a.cancelRate || b.cancelledCount - a.cancelledCount;
+            });
         const scopedNow = storeId ? current.filter((o) => String(o.StoreId) === storeId) : current;
         const scopedBefore = storeId ? previous.filter((o) => String(o.StoreId) === storeId) : previous;
         return { now: summarize(scopedNow), before: summarize(scopedBefore), hasPreviousData: scopedBefore.length > 0, storeRows };
@@ -1814,6 +1836,7 @@ function CancellationPage({ ctx }) {
     const selectedName = selectedRow?.StoreName || stores.find((s) => String(s.StoreId) === storeId)?.StoreName || '';
     const alertRows = report.storeRows.filter((r) => cancelRateTone(r.cancelRate) === 'bad');
     const watchRows = report.storeRows.filter((r) => ['bad', 'warn'].includes(cancelRateTone(r.cancelRate)));
+        const storesWithOrders = report.storeRows.filter((r) => r.orderCount > 0).length;
     const pickerStores = [...report.storeRows, ...stores.filter((s) => !report.storeRows.some((r) => String(r.StoreId) === String(s.StoreId)))];
 
     return (<>
