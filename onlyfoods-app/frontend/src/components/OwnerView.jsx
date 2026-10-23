@@ -277,8 +277,9 @@ function Badge({ tone, children }) {
   return <span className={`berry-badge tone-${tone}`}>{children}</span>;
 }
 
-function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom, startDate, setStartDate, endDate, setEndDate }) {
-  const choosePreset = (value) => { setCustom(false); setDays(value); };
+function StorePeriodPicker({ setAnchor, days, setDays, custom, setCustom, startDate, setStartDate, endDate, setEndDate }) {
+  // ปุ่มสำเร็จรูป = ย้อนหลังจากวันนี้เสมอ ; อยากเลือกวันเองให้กด "กำหนดเอง"
+  const choosePreset = (value) => { setCustom(false); setDays(value); setAnchor(todayISO()); };
   return (
     <div className="berry-period-picker">
       <div className="berry-period-group">
@@ -296,7 +297,7 @@ function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom
           กำหนดเอง
         </button>
       </div>
-      {custom ? (
+      {custom && (
         <div className="berry-date-range">
           <label>
             ตั้งแต่วันที่
@@ -319,11 +320,6 @@ function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom
               aria-label="ถึงวันที่"
             />
           </label>
-        </div>
-      ) : (
-        <div className="berry-date-wrap">
-          <Icon name="calendar" size={16} />
-          <input type="date" value={anchor} max={todayISO()} onChange={e => setAnchor(e.target.value || todayISO())} aria-label="เลือกวันที่สิ้นสุด" />
         </div>
       )}
     </div>
@@ -518,32 +514,42 @@ function MenuBreakdown({ rows, products }) {
 // กราฟเส้นแนวโน้มยอดขาย (แบบเดียวกับหน้า Executive) ชี้ที่จุดเพื่อดูยอดขายของช่วงนั้น
 function SalesLineChart({ buckets }) {
   const [hover, setHover] = useState(null);
-  // จอแคบ: ใช้ผืนวาดเล็กลง ตัวหนังสือบนแกนจะได้ไม่เล็กเกินอ่าน
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 600);
-  useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth <= 600);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
+  // วาดเต็มกล่องที่ CSS กำหนด (หน้าจอใหญ่ = สูงเท่าที่เหลือในหน้า) : วัดขนาดจริงแล้ววาด 1:1 ตัวหนังสือไม่ยืด/หด
+  const boxRef = useRef(null);
+  const [size, setSize] = useState({ w: 880, h: 300 });
   const data = buckets || [];
-  if (!data.length) {
-    return <div style={{ minHeight: '300px', display: 'grid', placeItems: 'center', color: 'var(--berry-text-muted)' }}>ช่วงเวลานี้ยังไม่มีออเดอร์ที่สำเร็จ</div>;
+  const hasData = data.length > 0;
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setSize(prev => (Math.abs(prev.w - width) < 1 && Math.abs(prev.h - height) < 1) ? prev : { w: width, h: height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasData]); // กล่องว่าง -> กล่องกราฟ เป็นคนละ element ต้องผูกใหม่
+  if (!hasData) {
+    return <div ref={boxRef} className="od-line-chart empty">ช่วงเวลานี้ยังไม่มีออเดอร์ที่สำเร็จ</div>;
   }
-  const W = narrow ? 380 : 880, H = narrow ? 240 : 320, L = narrow ? 40 : 66, R = narrow ? 12 : 22, TOP = 18, BOT = narrow ? 34 : 46;
+  const narrow = size.w < 520;
+  const W = Math.max(size.w, 240), H = Math.max(size.h, 140), L = narrow ? 40 : 52, R = narrow ? 12 : 16, TOP = 12, BOT = 30;
   const gw = W - L - R, gh = H - TOP - BOT;
   const maxValue = Math.max(...data.map(b => b.sales), 1);
   const xAt = (i) => (data.length === 1 ? L + gw / 2 : L + (i / (data.length - 1)) * gw);
   const yAt = (v) => TOP + gh - (v / maxValue) * gh;
   const linePath = data.map((b, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(b.sales)}`).join(' ');
   const areaPath = `${linePath} L ${xAt(data.length - 1)} ${TOP + gh} L ${xAt(0)} ${TOP + gh} Z`;
-  const labelStep = Math.max(1, Math.ceil(data.length / (narrow ? 5 : 10)));
+  // ป้ายแกน X ห่างกันอย่างน้อย ~64px ; ป้ายสุดท้ายแสดงเสมอ จึงซ่อนป้ายก่อนหน้าที่อยู่ใกล้เกินไป
+  const slot = data.length > 1 ? gw / (data.length - 1) : gw;
+  const labelStep = Math.max(1, Math.ceil(64 / slot));
   const shortNumber = (n) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(Math.round(n));
   const hoverBucket = hover !== null ? data[hover] : null;
   const hoverRatio = hover !== null ? xAt(hover) / W : 0;
 
   return (
-    <div style={{ position: 'relative', marginTop: '10px' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', display: 'block' }} onMouseLeave={() => setHover(null)}>
+    <div ref={boxRef} className="od-line-chart">
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ position: 'absolute', inset: 0, display: 'block' }} onMouseLeave={() => setHover(null)}>
         <defs>
           <linearGradient id="ownerAreaFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#FF724C" stopOpacity="0.26" />
@@ -567,8 +573,8 @@ function SalesLineChart({ buckets }) {
 
         {data.map((b, i) => (
           <g key={b.key}>
-            {(i === data.length - 1 || (i % labelStep === 0 && data.length - 1 - i >= labelStep / 2)) && (
-              <text x={xAt(i)} y={H - 16} textAnchor={data.length > 1 && i === 0 ? 'start' : data.length > 1 && i === data.length - 1 ? 'end' : 'middle'} fontSize="11" fill="var(--berry-text-muted)">{b.label}</text>
+            {(i === data.length - 1 || (i % labelStep === 0 && (data.length - 1 - i) * slot >= 56)) && (
+              <text x={xAt(i)} y={H - 10} textAnchor={data.length > 1 && i === 0 ? 'start' : data.length > 1 && i === data.length - 1 ? 'end' : 'middle'} fontSize="11" fill="var(--berry-text-muted)">{b.label}</text>
             )}
             <circle cx={xAt(i)} cy={yAt(b.sales)} r={hover === i ? 5.5 : 3} fill={hover === i ? 'var(--berry-purple)' : 'var(--berry-paper)'} stroke="var(--berry-purple)" strokeWidth="2" />
             <rect
@@ -3286,7 +3292,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     ? new Date(value).toLocaleDateString('th-TH-u-ca-gregory', { day: 'numeric', month: 'short', year: 'numeric' })
     : '-';
   const contractTone = daysLeft === null ? 'neutral' : daysLeft > 30 ? 'success' : daysLeft > 0 ? 'warning' : 'danger';
-  const contractLabel = daysLeft === null ? 'ยังไม่ระบุ' : daysLeft > 30 ? 'ปกติ' : daysLeft > 0 ? 'ใกล้หมดอายุ' : 'หมดอายุแล้ว';
   // สัดส่วนเวลาที่ผ่านไปแล้วของสัญญา (0-100) ใช้วาดแถบความคืบหน้า
   const contractProgress = (() => {
     if (!storeDetail?.ContractStartDate || !storeDetail?.ContractEndDate) return null;
@@ -3295,9 +3300,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     if (!(end > start)) return null;
     return Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100));
   })();
-  const scrollToContract = () => {
-    document.getElementById('owner-contract')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
 
   
 
@@ -3581,16 +3583,28 @@ export default function OwnerView({ user, apiBase, onLogout }) {
               { key: 'out', label: 'เมนูที่หมดอยู่', value: liveStats.outOfStock, icon: 'soldout', tone: 'red', go: 'menu' },
             ];
             return (
-            <div className="berry-dashboard-grid">
+            <div className="berry-dashboard-grid od-fit">
               <PageHeader title="ภาพรวมร้าน" subtitle={dash.StoreName ? `${dash.StoreName} · ยอดขาย แนวโน้ม และเมนูขายดี` : 'ยอดขาย แนวโน้ม และเมนูขายดีของร้าน'} icon="dashboard">
                 <Badge tone={storeDetail?.IsSuspended ? 'danger' : 'success'}>
                   {storeDetail?.IsSuspended ? 'ถูกระงับสิทธิ์' : 'สิทธิ์ปกติ'}
                 </Badge>
-                {daysLeft !== null && (
-                  <button onClick={scrollToContract} className={`berry-badge tone-${contractTone} od-badge-btn`}>
-                    สัญญา: {daysLeft < 0 ? 'หมดอายุแล้ว' : `เหลือ ${daysLeft} วัน`}
-                  </button>
-                )}
+                {/* สัญญาเช่า (ย่อ) : จำนวนวันที่เหลือ + แถบเวลาที่ผ่านไป ; ชี้ดูวันเริ่ม-สิ้นสุด */}
+                <span className={`od-contract-chip tone-${contractTone}`}
+                  title={daysLeft === null ? 'ยังไม่มีข้อมูลสัญญาของร้าน'
+                    : `สัญญาเช่า ${formatContractDate(storeDetail?.ContractStartDate)} – ${formatContractDate(storeDetail?.ContractEndDate)}${daysLeft <= 30 ? ' · กรุณาติดต่อผู้บริหารเพื่อต่อสัญญา' : ''}`}>
+                  <Icon name="calendar" size={14} />
+                  {daysLeft === null ? 'ยังไม่มีข้อมูลสัญญา' : (
+                    <>
+                      <span>สัญญา{daysLeft < 0 ? 'หมดอายุแล้ว' : <> เหลือ <b>{fmtMoney(daysLeft)}</b> วัน</>}</span>
+                      {contractProgress !== null && (
+                        <span className="bar" role="progressbar" aria-valuenow={Math.round(contractProgress)} aria-valuemin={0} aria-valuemax={100}>
+                          <span style={{ width: `${contractProgress}%` }} />
+                        </span>
+                      )}
+                      <span className="end">ถึง {formatContractDate(storeDetail?.ContractEndDate)}</span>
+                    </>
+                  )}
+                </span>
               </PageHeader>
 
               {/* ===== ตอนนี้ในร้าน (ไม่ขึ้นกับช่วงวันที่) ===== */}
@@ -3630,7 +3644,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   <span><strong>{periodLabel}</strong> · {compareLabel}</span>
                 </div>
                 <StorePeriodPicker
-                  anchor={storeAnchor} setAnchor={setStoreAnchor}
+                  setAnchor={setStoreAnchor}
                   days={storeDays} setDays={setStoreDays}
                   custom={customRange} setCustom={setCustomRange}
                   startDate={customStart} setStartDate={setCustomStart}
@@ -3638,77 +3652,43 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 />
               </div>
 
-              {/* ===== การ์ดสรุปยอดขาย (รวมยอดขาย + ออเดอร์ + กราฟเล็ก) ===== */}
-              <div className="od-summary">
-                <span className="od-hero-circle one" />
-                <span className="od-hero-circle two" />
-                {ready ? (
-                  <>
-                    <div className="od-summary-block">
-                      <div className="od-summary-label"><Icon name="trend" size={16} /> ยอดขายสุทธิ</div>
-                      <div className="od-summary-value">{fmtMoney(now.sales)}<small>บาท</small></div>
-                      {(now.noShowCount > 0 || now.refunded > 0) && (
-                        <div className="od-summary-note">
-                          {now.noShowCount > 0 && <span>รวมไม่มารับ {fmtMoney(now.noShowCount)} ออเดอร์ ฿{fmtMoney(now.noShowSales)}</span>}
-                          {now.refunded > 0 && <span>หักคืนเงินแล้ว ฿{fmtMoney(now.refunded)}</span>}
-                        </div>
-                      )}
-                      <DeltaChip solid delta={changePct(now.sales, before.sales)} label={compareLabel} hasPreviousData={hasPrev} />
-                    </div>
-                    <div className="od-summary-divider" />
-                    <div className="od-summary-block">
-                      <div className="od-summary-label"><Icon name="check" size={16} /> ออเดอร์ที่ขายได้</div>
-                      <div className="od-summary-value">{fmtMoney(now.revenueCount)}<small>ออเดอร์</small></div>
-                      {now.noShowCount > 0 && (
-                        <div className="od-summary-note"><span>สำเร็จ {fmtMoney(now.completedCount)} · ไม่มารับ {fmtMoney(now.noShowCount)}</span></div>
-                      )}
-                      <DeltaChip solid delta={changePct(now.revenueCount, before.revenueCount)} label={compareLabel} hasPreviousData={hasPrev} />
-                    </div>
-                  </>
-                ) : (
-                  <div className="od-summary-skel">
-                    <Skeleton height={14} width={110} style={{ opacity: 0.5 }} />
-                    <Skeleton height={34} width={180} style={{ opacity: 0.5 }} />
-                    <Skeleton height={22} width={150} style={{ opacity: 0.5 }} />
-                  </div>
-                )}
-
-                {/* สัญญาเช่า (ย่อ) : ป้าย "สัญญา: เหลือ N วัน" บนหัวหน้ากดแล้วเลื่อนมาที่นี่ */}
-                <div id="owner-contract" className={`od-contract tone-${contractTone}`}>
-                  <div className="od-contract-head">
-                    <span className="od-contract-icon"><Icon name="calendar" size={15} /></span>
-                    <span className="od-contract-title">สัญญาเช่า</span>
-                    <span className="od-contract-pill">{contractLabel}</span>
-                  </div>
-                  {daysLeft === null ? (
-                    <div className="od-contract-empty">ยังไม่มีข้อมูลสัญญาของร้าน</div>
-                  ) : (
+              {/* ===== สรุปยอดขาย + ตัวเลขเล็ก (แถวเดียวกันบนจอใหญ่) ===== */}
+              <div className="od-stats">
+                <div className="od-summary">
+                  <span className="od-hero-circle one" />
+                  <span className="od-hero-circle two" />
+                  {ready ? (
                     <>
-                      <div className="od-contract-days">
-                        {daysLeft < 0
-                          ? <>หมดอายุมาแล้ว <strong>{fmtMoney(Math.abs(daysLeft))}</strong> วัน</>
-                          : <>เหลืออีก <strong>{fmtMoney(daysLeft)}</strong> วัน</>}
+                      <div className="od-summary-block">
+                        <div className="od-summary-label"><Icon name="trend" size={16} /> ยอดขายสุทธิ</div>
+                        <div className="od-summary-value">{fmtMoney(now.sales)}<small>บาท</small></div>
+                        {(now.noShowCount > 0 || now.refunded > 0) && (
+                          <div className="od-summary-note">
+                            {now.noShowCount > 0 && <span>รวมไม่มารับ {fmtMoney(now.noShowCount)} ออเดอร์ ฿{fmtMoney(now.noShowSales)}</span>}
+                            {now.refunded > 0 && <span>หักคืนเงินแล้ว ฿{fmtMoney(now.refunded)}</span>}
+                          </div>
+                        )}
+                        <DeltaChip solid delta={changePct(now.sales, before.sales)} label={compareLabel} hasPreviousData={hasPrev} />
                       </div>
-                      {contractProgress !== null && (
-                        <div className="od-contract-bar" role="progressbar" aria-valuenow={Math.round(contractProgress)} aria-valuemin={0} aria-valuemax={100}>
-                          <div style={{ width: `${contractProgress}%` }} />
-                        </div>
-                      )}
-                      <div className="od-contract-dates">
-                        <span>{formatContractDate(storeDetail?.ContractStartDate)}</span>
-                        <span>{formatContractDate(storeDetail?.ContractEndDate)}</span>
+                      <div className="od-summary-divider" />
+                      <div className="od-summary-block">
+                        <div className="od-summary-label"><Icon name="check" size={16} /> ออเดอร์ที่ขายได้</div>
+                        <div className="od-summary-value">{fmtMoney(now.revenueCount)}<small>ออเดอร์</small></div>
+                        {now.noShowCount > 0 && (
+                          <div className="od-summary-note"><span>สำเร็จ {fmtMoney(now.completedCount)} · ไม่มารับ {fmtMoney(now.noShowCount)}</span></div>
+                        )}
+                        <DeltaChip solid delta={changePct(now.revenueCount, before.revenueCount)} label={compareLabel} hasPreviousData={hasPrev} />
                       </div>
-                      {daysLeft <= 30 && (
-                        <div className="od-contract-note">
-                          {daysLeft < 0 ? 'ร้านรับออเดอร์ใหม่ไม่ได้ · ติดต่อผู้บริหารเพื่อต่อสัญญา' : 'ติดต่อผู้บริหารเพื่อต่อสัญญา'}
-                        </div>
-                      )}
                     </>
+                  ) : (
+                    <div className="od-summary-skel">
+                      <Skeleton height={14} width={110} style={{ opacity: 0.5 }} />
+                      <Skeleton height={34} width={180} style={{ opacity: 0.5 }} />
+                      <Skeleton height={22} width={150} style={{ opacity: 0.5 }} />
+                    </div>
                   )}
                 </div>
-              </div>
 
-              <div className="od-kpi-grid">
                 {ready ? (
                   <>
                     <KpiSmall tone="blue" icon="receipt" value={fmtMoney(now.grossSales)} unit="บาท" label="มูลค่าออเดอร์รวมก่อนหักยกเลิก">
@@ -3724,45 +3704,46 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                     </KpiSmall>
                   </>
                 ) : [0, 1, 2].map(i => (
-                  <div key={i} className="od-kpi">
+                  <div key={i} className={`od-kpi ${i === 2 ? 'wide' : ''}`}>
                     <div className="od-kpi-main">
-                      <Skeleton height={46} width={46} radius={10} />
+                      <Skeleton height={42} width={42} radius={10} />
                       <div style={{ flex: 1, display: 'grid', gap: 8 }}><Skeleton height={20} width="60%" /><Skeleton height={12} width="85%" /></div>
                     </div>
-                    <Skeleton height={20} width={140} radius={999} style={{ marginTop: 14 }} />
+                    <Skeleton height={20} width={140} radius={999} style={{ marginTop: 12 }} />
                   </div>
                 ))}
               </div>
 
-              {/* ===== กราฟแนวโน้ม ===== */}
-              <div className="berry-card">
-                <div className="od-card-head">
-                  <div>
-                    <h3>{storePeriod.days === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}</h3>
-                    <p>ชี้ที่จุดบนกราฟเพื่อดูยอดขายของช่วงเวลานั้น{hoursNote}</p>
+              {/* ===== กราฟแนวโน้ม + เมนูขายดี (กินความสูงที่เหลือของหน้าจอ) ===== */}
+              <div className="od-main-row">
+                <div className="berry-card od-fill-card">
+                  <div className="od-card-head">
+                    <div>
+                      <h3>{storePeriod.days === 1 ? 'แนวโน้มยอดขายรายชั่วโมง' : 'แนวโน้มยอดขายรายวัน'}</h3>
+                      <p>ชี้ที่จุดบนกราฟเพื่อดูยอดขายของช่วงเวลานั้น{hoursNote}</p>
+                    </div>
+                    {ready && <div className="od-head-total">{fmtMoney(now.sales)} <small>บาท</small></div>}
                   </div>
-                  {ready && <div className="od-head-total">{fmtMoney(now.sales)} <small>บาท</small></div>}
+                  {ready ? <SalesLineChart buckets={storeReport?.buckets || []} /> : <div className="od-line-chart"><Skeleton height="100%" radius={12} /></div>}
                 </div>
-                {ready ? <SalesLineChart buckets={storeReport?.buckets || []} /> : <Skeleton height={300} radius={12} style={{ marginTop: 16 }} />}
-              </div>
 
-              {/* ===== เมนูขายดี + สัดส่วนยอดขาย ===== */}
-              <div className="berry-card">
-                <div className="od-card-head">
-                  <div>
-                    <h3>เมนูขายดีและสัดส่วนยอดขาย</h3>
-                    <p>{periodLabel} · เรียงตามจำนวนจาน · ชี้ที่วงกลมหรือรายการเพื่อดูยอดขาย</p>
+                <div className="berry-card od-fill-card">
+                  <div className="od-card-head">
+                    <div>
+                      <h3>เมนูขายดีและสัดส่วนยอดขาย</h3>
+                      <p>เรียงตามจำนวนจาน · ชี้ที่วงกลมหรือรายการเพื่อดูยอดขาย</p>
+                    </div>
+                    {ready && (storeReport?.menus || []).length > 0 && (
+                      <span className="od-chip">{fmtMoney((storeReport?.menus || []).length)} เมนูที่ขายได้</span>
+                    )}
                   </div>
-                  {ready && (storeReport?.menus || []).length > 0 && (
-                    <span className="od-chip">{fmtMoney((storeReport?.menus || []).length)} เมนูที่ขายได้</span>
+                  {ready ? <MenuBreakdown rows={storeReport?.menus || []} products={products} /> : (
+                    <div className="od-menu-wrap">
+                      <div className="od-donut-box"><Skeleton height="100%" width="100%" radius={999} /></div>
+                      <div className="od-menu-legend">{[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={40} radius={10} />)}</div>
+                    </div>
                   )}
                 </div>
-                {ready ? <MenuBreakdown rows={storeReport?.menus || []} products={products} /> : (
-                  <div className="od-menu-wrap">
-                    <Skeleton height={300} width={300} radius={999} style={{ margin: '0 auto' }} />
-                    <div className="od-menu-legend">{[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={44} radius={10} />)}</div>
-                  </div>
-                )}
               </div>
             </div>
             );
@@ -5355,8 +5336,6 @@ body, html {
 .berry-period-group { display: flex; gap: 4px; flex-wrap: wrap; background: var(--berry-purple-light); padding: 4px; border-radius: var(--radius-md); }
 .berry-period-group .berry-period-btn { font-weight: 600; }
 .berry-period-group .berry-period-btn.active { color: var(--berry-purple); }
-.berry-date-wrap { display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper); color: var(--berry-text-muted); }
-.berry-date-wrap input { min-width: 0; border: none; outline: none; background: transparent; color: var(--berry-text-dark); font-size: 13px; font-family: inherit; }
 .berry-date-range { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper); }
 .berry-date-range label { display: flex; align-items: center; gap: 8px; color: var(--berry-text-dark); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .berry-date-range input { width: 136px; box-sizing: border-box; padding: 8px 9px; border: 1px solid var(--berry-border); border-radius: 7px; background: #FFFFFF; color: var(--berry-text-dark); font-size: 12.5px; font-family: inherit; }
@@ -5838,21 +5817,6 @@ body, html {
 .od-summary-note { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 2px 0 4px; font-size: 12px; font-weight: 600; opacity: 0.92; }
 .od-summary-value small { margin-left: 6px; font-size: 14px; font-weight: 500; opacity: 0.85; }
 .od-summary-divider { position: relative; z-index: 1; width: 1px; align-self: stretch; background: rgba(255,255,255,0.25); }
-.od-contract { --contract-color: var(--berry-green); position: relative; z-index: 1; margin-left: auto; width: 270px; padding: 14px 16px; border-radius: 14px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.24); backdrop-filter: blur(6px); scroll-margin-top: 100px; }
-.od-contract.tone-warning { --contract-color: var(--berry-amber); border-color: rgba(255,255,255,0.55); }
-.od-contract.tone-danger { --contract-color: var(--berry-red); border-color: rgba(255,255,255,0.55); }
-.od-contract.tone-neutral { --contract-color: var(--berry-text-muted); }
-.od-contract-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.od-contract-icon { width: 26px; height: 26px; min-width: 26px; display: grid; place-items: center; border-radius: 8px; background: rgba(255,255,255,0.2); }
-.od-contract-title { font-weight: 600; opacity: 0.95; }
-.od-contract-pill { margin-left: auto; padding: 2px 9px; border-radius: 999px; background: #FFFFFF; color: var(--contract-color); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
-.od-contract-days { margin-top: 10px; font-size: 13px; }
-.od-contract-days strong { margin: 0 3px; font-size: 26px; font-weight: 700; line-height: 1; }
-.od-contract-bar { margin-top: 8px; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.22); overflow: hidden; }
-.od-contract-bar > div { height: 100%; border-radius: 999px; background: #FFFFFF; transition: width 0.4s ease; }
-.od-contract-dates { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 11.5px; opacity: 0.85; }
-.od-contract-note { margin-top: 8px; padding: 5px 9px; border-radius: 8px; background: #FFFFFF; color: var(--contract-color); font-size: 11.5px; font-weight: 600; }
-.od-contract-empty { margin-top: 10px; font-size: 12.5px; opacity: 0.85; }
 .od-summary-skel { position: relative; z-index: 1; display: grid; gap: 10px; }
 .od-summary .od-delta, .od-summary .od-delta-empty { margin-top: 10px; }
 
@@ -5861,7 +5825,6 @@ body, html {
   .od-summary { gap: 18px; padding: 20px; }
   .od-summary-divider { display: none; }
   .od-summary-value { font-size: 28px; }
-  .od-contract { width: 100%; margin-left: 0; }
   .od-period-bar { top: -16px; margin: 0; }
   .op-page-head h1 { font-size: 20px; }
 }
@@ -5873,7 +5836,14 @@ body, html {
 .od-banner-badges { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .od-outline-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--berry-border) !important; background: var(--berry-paper) !important; color: var(--berry-text-dark) !important; padding: 6px 12px !important; font-family: inherit; }
 .od-outline-btn:hover { border-color: var(--berry-purple) !important; color: var(--berry-purple) !important; }
-.od-badge-btn { cursor: pointer; border: none; font-family: inherit; padding: 6px 12px; }
+.od-contract-chip { --chip: var(--berry-green); --chip-soft: var(--berry-green-light); display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; background: var(--chip-soft); color: var(--chip); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: default; }
+.od-contract-chip.tone-warning { --chip: var(--berry-amber); --chip-soft: var(--berry-amber-light); }
+.od-contract-chip.tone-danger { --chip: var(--berry-red); --chip-soft: var(--berry-red-light); }
+.od-contract-chip.tone-neutral { --chip: var(--berry-text-muted); --chip-soft: var(--berry-blue-light); }
+.od-contract-chip b { font-size: 13px; }
+.od-contract-chip .bar { display: inline-block; width: 56px; height: 5px; border-radius: 999px; background: rgba(42,44,65,0.10); overflow: hidden; }
+.od-contract-chip .bar > span { display: block; height: 100%; border-radius: 999px; background: var(--chip); }
+.od-contract-chip .end { padding-left: 8px; border-left: 1px solid rgba(42,44,65,0.14); font-weight: 500; opacity: 0.85; }
 .od-period { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; padding: 18px 24px; }
 .od-period h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--berry-text-dark); }
 .od-period p { margin: 3px 0 0; font-size: 13px; color: var(--berry-text-muted); }
@@ -5892,7 +5862,12 @@ body, html {
 .od-hero-label { margin-top: 3px; font-size: 14px; opacity: 0.9; }
 .od-hero .od-delta, .od-hero .od-delta-empty { position: relative; z-index: 1; }
 
-.od-kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.od-stats { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr); gap: 16px; }
+.od-stats > .od-summary { min-width: 0; flex-wrap: nowrap; gap: 22px; min-height: 0; padding: 18px 22px; }
+.od-stats .od-summary-block { flex: 1 1 0; min-width: 0; }
+/* ช่องแคบ: ตัดคำว่า "เทียบ..." บนป้ายในแถบส้มออก (แถบช่วงเวลาบอกไว้แล้ว) */
+@media (max-width: 1750px) { .od-stats .od-summary .od-delta span { display: none; } }
+.od-stats .od-summary-value { font-size: 30px; }
 .od-kpi { background: var(--berry-paper); border-radius: var(--radius-lg); padding: 18px 20px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; justify-content: center; min-height: 128px; transition: transform 0.2s ease, box-shadow 0.2s ease; }
 .od-kpi:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(42,44,65,0.08); }
 .od-kpi-main { display: flex; align-items: center; gap: 14px; }
@@ -5921,6 +5896,10 @@ body, html {
 .od-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 6px; }
 .od-card-head h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--berry-text-dark); }
 .od-card-head p { margin: 3px 0 0; font-size: 12.5px; color: var(--berry-text-muted); }
+.od-main-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; }
+.od-fill-card { display: flex; flex-direction: column; min-width: 0; }
+.od-line-chart { position: relative; height: 300px; margin-top: 10px; }
+.od-line-chart.empty { display: grid; place-items: center; color: var(--berry-text-muted); font-size: 13px; }
 .od-head-total { font-size: 22px; font-weight: 700; color: var(--berry-purple); white-space: nowrap; }
 .od-head-total small { font-size: 13px; font-weight: 500; color: var(--berry-text-muted); }
 .od-chip { padding: 4px 10px; border-radius: 999px; background: var(--berry-purple-light); color: var(--berry-purple); font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -5957,17 +5936,85 @@ body, html {
 .od-menu-item .pct { font-size: 15px; color: var(--berry-text-dark); }
 .od-menu-item.other .name { font-weight: 500; color: var(--berry-text-muted); }
 
+/* จอกลาง: ป้ายเทียบช่วงก่อนหน้าในการ์ดตัวเลขเหลือแค่ตัวเลข (แถบช่วงเวลาบอกว่าเทียบกับอะไรแล้ว) */
+@media (max-width: 1500px) {
+  .od-stats .od-delta span { display: none; }
+  .od-stats .od-kpi-label { font-size: 12px; }
+}
 @media (max-width: 1280px) {
-  .od-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .od-kpi.wide { grid-column: 1 / -1; }
+  .od-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .od-stats > .od-summary, .od-kpi.wide { grid-column: 1 / -1; }
+  .od-main-row { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
   .od-menu-wrap { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .od-donut-box { max-width: 290px; }
 }
 @media (max-width: 700px) {
-  .od-hero-grid, .od-kpi-grid { grid-template-columns: minmax(0, 1fr); }
+  .od-hero-grid, .od-stats { grid-template-columns: minmax(0, 1fr); }
   .od-hero-value { font-size: 26px; }
+}
+
+/* ===== แดชบอร์ดพอดีหนึ่งหน้าจอ (จอกว้าง > 1280px และสูง ≥ 640px) ===== */
+@media (min-width: 1281px) and (min-height: 640px) {
+  .berry-content:has(> .od-fit) { padding: 18px 24px; }
+  .berry-dashboard-grid.od-fit { height: 100%; gap: 14px; }
+  .od-fit > * { flex-shrink: 0; }
+  .od-fit .op-page-icon { width: 40px; height: 40px; min-width: 40px; border-radius: 12px; }
+  .od-fit .op-page-head h1 { font-size: 21px; }
+  .od-fit .op-page-head p { margin-top: 1px; font-size: 12.5px; }
+  .od-fit .od-live { padding: 12px 16px; }
+  .od-fit .od-live-grid { margin-top: 10px; gap: 10px; }
+  .od-fit .od-live-item { padding: 8px 12px; }
+  .od-fit .od-live-item .icon { width: 32px; height: 32px; min-width: 32px; }
+  .od-fit .od-live-item .text strong { font-size: 19px; }
+  .od-fit .od-period-bar { padding: 7px 14px; }
+  .od-fit .od-kpi { padding: 14px 16px; min-height: 0; }
+  .od-fit .od-kpi-icon { width: 42px; height: 42px; min-width: 42px; }
+  .od-fit .od-kpi-value { font-size: 21px; }
+  .od-fit .od-delta, .od-fit .od-delta-empty { margin-top: 10px; }
+  .od-fit .od-main-row { flex: 1 1 0; min-height: 300px; }
+  .od-fit .od-fill-card { min-height: 0; padding: 18px 20px; }
+  .od-fit .od-line-chart { flex: 1; height: auto; min-height: 0; }
+  .od-fit .od-menu-wrap { flex: 1; min-height: 0; display: flex; align-items: center; gap: 24px; margin-top: 10px; container-type: size; }
+  .od-fit .od-donut-box { flex: 0 0 auto; width: min(46cqw, 100cqh, 320px); max-width: none; margin: 0; }
+  .od-fit .od-donut-center strong { font-size: 28px; }
+  .od-fit .od-menu-legend { flex: 1; min-width: 0; max-height: 100%; overflow-y: auto; }
+  .od-fit .od-menu-item { padding: 7px 10px; }
+}
+/* จอเตี้ย (เช่นโน้ตบุ๊ก) : ตัดคำอธิบายรองออกให้กราฟมีที่มากขึ้น */
+@media (min-width: 1281px) and (min-height: 640px) and (max-height: 860px) {
+  .berry-content:has(> .od-fit) { padding: 14px 20px; }
+  .berry-dashboard-grid.od-fit { gap: 12px; }
+  .od-fit .op-page-head p, .od-fit .od-card-head p { display: none; }
+  .od-fit .op-page-icon { width: 36px; height: 36px; min-width: 36px; }
+  .od-fit .op-page-head h1 { font-size: 19px; }
+  .od-fit .od-live { padding: 10px 14px; }
+  .od-fit .od-live-grid { margin-top: 8px; }
+  .od-fit .od-live-item { padding: 6px 10px; }
+  .od-fit .od-live-item .text strong { font-size: 17px; }
+  .od-fit .od-stats > .od-summary { padding: 14px 20px; }
+  .od-fit .od-stats .od-summary-value { font-size: 26px; }
+  .od-fit .od-kpi { padding: 12px 14px; }
+  .od-fit .od-kpi-icon { width: 38px; height: 38px; min-width: 38px; }
+  .od-fit .od-delta, .od-fit .od-delta-empty { margin-top: 8px; }
+  .od-fit .od-fill-card { padding: 14px 18px; }
+  .od-fit .od-menu-item .meta { display: none; }
+  .od-fit .od-main-row { min-height: 260px; }
+}
+@media (min-width: 1281px) and (min-height: 640px) and (max-height: 700px) {
+  .berry-content:has(> .od-fit) { padding: 10px 20px; }
+  .berry-dashboard-grid.od-fit { gap: 10px; }
+  .od-fit .op-page-icon { width: 32px; height: 32px; min-width: 32px; border-radius: 10px; }
+  .od-fit .op-page-head h1 { font-size: 18px; }
+  .od-fit .od-live { padding: 8px 12px; }
+  .od-fit .od-live-grid { margin-top: 6px; }
+  .od-fit .od-live-item .icon { width: 28px; height: 28px; min-width: 28px; }
+  .od-fit .od-period-bar { padding: 5px 12px; }
+  .od-fit .od-stats > .od-summary { padding: 12px 18px; }
+  .od-fit .od-kpi { padding: 10px 14px; }
+  .od-fit .od-main-row { min-height: 220px; }
+  .od-fit .od-fill-card { padding: 12px 16px; }
 }
 
 
@@ -6907,7 +6954,6 @@ body, html {
   .berry-period-group { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .berry-period-group::-webkit-scrollbar { display: none; }
   .berry-period-group .berry-period-btn { flex: 1 0 auto; white-space: nowrap; text-align: center; }
-  .berry-date-wrap { justify-content: center; }
   .berry-date-range { flex-direction: column; align-items: stretch; }
   .berry-date-range label { justify-content: space-between; }
 
@@ -6919,10 +6965,10 @@ body, html {
   .od-summary-label { font-size: 12.5px; }
   .od-summary .od-delta, .od-summary .od-delta-empty { font-size: 11px; }
   .od-summary .od-delta span { display: none; }
-  .od-contract { grid-column: 1 / -1; }
+  .od-stats > .od-summary { grid-column: 1 / -1; }
 
   /* การ์ดตัวเลขเล็ก: 2 คอลัมน์ */
-  .od-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .od-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .od-kpi { padding: 12px; min-height: 0; }
   .od-kpi-main { flex-direction: column; align-items: flex-start; gap: 8px; }
   .od-kpi.wide { grid-column: 1 / -1; }
