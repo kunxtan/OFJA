@@ -4,7 +4,8 @@ from typing import Dict, Iterable, List
 import config
 
 from state import legacy_role, legacy_status
-from utils import CONTRACT_ACTIVE, CONTRACT_EXPIRED, bangkok_now, contract_state, queue_label
+from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, STORE_CLOSED, STORE_OPEN, STORE_PAUSED, bangkok_now,
+                   contract_state, foodcourt_mode, queue_label, store_hours, store_open_state, time_to_hhmm)
 USER_SELECT = """
 SELECT u.UserId, u.Username, u.FullName, u.Phone, u.Email,
        u.ProfileImageUrl AS ProfileImg, u.StoreId, u.IsActive,
@@ -22,7 +23,8 @@ def shape_user(row: dict) -> dict:
 
 STORE_SELECT = """
 SELECT s.StoreId, s.StoreName, sc.CategoryName AS Category, s.StoreCategoryId, s.FoodCourtId,
-       s.Description, s.ImageUrl, s.IsOpen, s.IsSuspended, s.AvgPrepMinutes, s.QueueCode,
+       s.Description, s.ImageUrl, s.IsSuspended, s.AvgPrepMinutes, s.QueueCode,
+       s.OpenTime, s.CloseTime, s.ManualOverride, s.OverrideUntil, s.PausedUntil,
        s.ContactName, s.ContactPhone, s.ContactLine, s.ContactEmail,
        s.IsDeleted, s.DeletedAt, s.CreatedAt,
        c.StartDate AS ContractStartDate, c.StartDate AS CurrentContractStartDate,
@@ -35,15 +37,23 @@ LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
 """
 
 
-def shape_store(row: dict, today=None) -> dict:
-    """เติมสถานะสัญญาที่คำนวณจากวันที่ + IsOpen ที่ "ใช้ได้จริง"
+def _fmt_dt(value):
+    return value.strftime("%Y-%m-%d %H:%M:%S") if value else None
+
+
+def shape_store(row: dict, fc: dict, now=None) -> dict:
+    """เติมสถานะสัญญาที่คำนวณจากวันที่ + สถานะเปิดร้านที่คำนวณจากเวลา (fc = แถว FoodCourt)
 
     - ContractState : NONE / UPCOMING / ACTIVE / EXPIRED
     - ContractDaysLeft : วันที่เหลือถึงวันสิ้นสุด (0 = หมดคืนนี้ 23:59:59, ติดลบ = หมดมาแล้ว)
-    - IsOpen : เปิดจริงก็ต่อเมื่อร้านกดเปิด และสัญญายังมีผล (frontend ทุกบทบาทอ่านค่านี้ได้เลย)
+    - OpenState : OPEN / PAUSED (หยุดรับออเดอร์ชั่วคราว) / CLOSED  (utils.store_open_state + สัญญา)
+    - IsOpen : รับออเดอร์ได้จริงตอนนี้ (OpenState == OPEN) frontend ทุกบทบาทอ่านค่านี้ได้เลย
+    - OpenMode : AUTO = ตามเวลา ; OPEN/CLOSED = กดเองถึง OverrideUntil
+    - OpenTime/CloseTime : เวลาร้านที่ใช้จริง (HH:MM) ; HasOwnHours = ตั้งเวลาร้านเอง (ไม่ใช่เวลาศูนย์อาหาร)
     """
     row = dict(row)
-    today = today or bangkok_now().date()
+    now = now or bangkok_now()
+    today = now.date()
     state = contract_state(row.get("ContractStartDate"), row.get("ContractEndDate"), today)
     end = row.get("ContractEndDate")
     row["ContractState"] = state
@@ -54,7 +64,16 @@ def shape_store(row: dict, today=None) -> dict:
     # อีกกี่วันร้านที่หมดสัญญาจะถูกลบอัตโนมัติ (services.purge_expired_stores)
     row["AutoDeleteInDays"] = (config.CONTRACT_PURGE_AFTER_DAYS + row["ContractDaysLeft"] + 1
                                if state == CONTRACT_EXPIRED else None)
-    row["IsOpen"] = bool(row.get("IsOpen")) and state == CONTRACT_ACTIVE
+    open_state = store_open_state(row, fc, now) if state == CONTRACT_ACTIVE else STORE_CLOSED
+    o, c = store_hours(row, fc)
+    row["HasOwnHours"] = row.get("OpenTime") is not None
+    row["OpenTime"], row["CloseTime"] = time_to_hhmm(o), time_to_hhmm(c)
+    row["OpenMode"] = foodcourt_mode(row, now)
+    row["OverrideUntil"] = _fmt_dt(row.get("OverrideUntil")) if row["OpenMode"] != "AUTO" else None
+    row["PausedUntil"] = _fmt_dt(row.get("PausedUntil")) if open_state == STORE_PAUSED else None
+    row.pop("ManualOverride", None)
+    row["OpenState"] = open_state
+    row["IsOpen"] = open_state == STORE_OPEN
     return row
 
 

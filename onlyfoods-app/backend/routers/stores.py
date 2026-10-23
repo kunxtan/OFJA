@@ -8,7 +8,7 @@
   3. ทุกการแก้วันต้องมีเหตุผล -> AuditLog (ใคร/เมื่อไหร่/วันเดิม->วันใหม่/เหตุผล) ไม่มีการลบ log
 """
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -16,16 +16,21 @@ from fastapi import APIRouter, Depends, Query
 from auth import STORE_SCOPED, assert_store_access, get_optional_user, hash_password, require_role
 from db import get_db, transaction
 from errors import DomainError
-from schemas import ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema
+from schemas import (ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema,
+                     StoreScheduleSchema)
 from services import (force_cancel_open_orders, get_foodcourt, is_duplicate_key, log_audit, notify_owners_closed_by_executive,
                       notify_store_owners, open_order_count, open_orders, queue_summary)
 from shapes import STORE_SELECT, shape_store
-from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, add_years_minus_one_day,
-                   bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
-                   next_free_queue_code, parse_date, save_image, validate_password, validate_phone,
-                   validate_queue_code, validate_username)
+from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, STORE_CLOSED, STORE_PAUSED,
+                   add_years_minus_one_day, bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
+                   foodcourt_mode, next_free_queue_code, parse_date, save_image, store_next_transition,
+                   store_open_state, store_scheduled_open, time_to_hhmm, time_to_minutes, validate_password,
+                   validate_phone, validate_queue_code, validate_username)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
+
+# ปิดร้านไว้จนกว่าเจ้าของร้านจะกดเปิดเอง (ไม่เปิดเองตามเวลา) : ระงับสิทธิ์ / ตัดสัญญาย้อนหลัง / เริ่มสัญญารอบใหม่
+_CLOSE_UNTIL_OWNER_OPENS = "IsOpen = FALSE, ManualOverride = FALSE, OverrideUntil = NULL, PausedUntil = NULL"
 
 
 
@@ -107,9 +112,9 @@ def get_stores(viewer=Depends(get_optional_user), db=Depends(get_db)):
     role = viewer["RoleCode"] if viewer else None
     own_store = viewer.get("StoreId") if viewer and role in STORE_SCOPED else None
     with db.cursor() as cur:
+        fc, now = get_foodcourt(cur), bangkok_now()
         cur.execute(STORE_SELECT + " WHERE s.IsDeleted = FALSE ORDER BY s.StoreId")
-        today = bangkok_now().date()
-        rows = [shape_store(r, today) for r in cur.fetchall()]
+        rows = [shape_store(r, fc, now) for r in cur.fetchall()]
     if role not in ("EXECUTIVE", "ACCOUNTANT"):
         for r in rows:
             if own_store is None or int(r["StoreId"]) != int(own_store):
@@ -122,9 +127,9 @@ def get_stores(viewer=Depends(get_optional_user), db=Depends(get_db)):
 def get_store_history(user=Depends(require_role("EXECUTIVE", "ACCOUNTANT")), db=Depends(get_db)):
     """ร้านทั้งหมดรวมที่ถูกลบ (สำหรับผู้บริหาร/บัญชี)"""
     with db.cursor() as cur:
+        fc, now = get_foodcourt(cur), bangkok_now()
         cur.execute(STORE_SELECT + " ORDER BY s.StoreName")
-        today = bangkok_now().date()
-        return [shape_store(r, today) for r in cur.fetchall()]
+        return [shape_store(r, fc, now) for r in cur.fetchall()]
 
 
 @router.post("", status_code=201)
@@ -300,20 +305,12 @@ def toggle_store(store_id: int, open: Optional[bool] = None,
     forced = None
     with transaction(db):
         with db.cursor() as cur:
-            cur.execute(
-                """
-                SELECT s.StoreName, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate
-                FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
-                WHERE s.StoreId = %s FOR UPDATE OF s
-                """,
-                (store_id,),
-            )
-            store = cur.fetchone()
-            if not store or store["IsDeleted"]:
-                raise DomainError(404, "ไม่พบร้านค้า")
-            state = contract_state(store["StartDate"], store["EndDate"])
-            # ใช้สถานะ "เปิดจริง" (กดเปิดไว้ + สัญญามีผล) เป็นตัวตั้ง กดแล้วจึงตรงกับที่หน้าจอแสดง
-            current = bool(store["IsOpen"]) and state == CONTRACT_ACTIVE
+            store = _lock_store_state(cur, store_id)
+            fc, now = get_foodcourt(cur), bangkok_now()
+            state = contract_state(store["StartDate"], store["EndDate"], now.date())
+            # ใช้สถานะ "เปิดจริง" (ตามเวลา/กดเอง + สัญญามีผล) เป็นตัวตั้ง กดแล้วจึงตรงกับที่หน้าจอแสดง
+            # หยุดรับออเดอร์ชั่วคราว = ร้านยังเปิดอยู่ (ปิดร้านต่อจากตรงนั้นได้ ; รับออเดอร์ต่อใช้ /pause)
+            current = state == CONTRACT_ACTIVE and store_open_state(store, fc, now) != STORE_CLOSED
             if open is not None and bool(open) == current:
                 return {"success": True, "is_open": current, "unchanged": True,
                         "message": "ร้านเปิดอยู่แล้ว" if current else "ร้านปิดอยู่แล้ว"}
@@ -326,7 +323,7 @@ def toggle_store(store_id: int, open: Optional[bool] = None,
                     raise DomainError(400, f"สัญญาร้านเริ่มมีผลวันที่ {store['StartDate']} ยังเปิดร้านไม่ได้")
                 if state == CONTRACT_NONE:
                     raise DomainError(400, "ร้านนี้ยังไม่มีสัญญา ไม่สามารถเปิดร้านได้")
-                if not foodcourt_is_open(get_foodcourt(cur)):
+                if not foodcourt_is_open(fc, now):
                     raise DomainError(400, "ไม่สามารถเปิดร้านได้ เนื่องจากศูนย์อาหารปิดให้บริการ")
                 if store["IsSuspended"]:
                     raise DomainError(400, "ร้านถูกระงับสิทธิ์ ไม่สามารถเปิดร้านได้")
@@ -338,7 +335,13 @@ def toggle_store(store_id: int, open: Optional[bool] = None,
                 if pending and not on_open_orders:
                     raise DomainError(409, f"ร้านนี้ยังมีออเดอร์ที่ยังไม่จบ {len(pending)} ออเดอร์ "
                                            f"({queue_summary(pending)}) กรุณาเลือกว่าจะให้ทำต่อจนเสร็จหรือยกเลิกทั้งหมด")
-            cur.execute("UPDATE Store SET IsOpen = %s WHERE StoreId = %s", (new_open, store_id))
+            # ตรงกับเวลาของร้านอยู่แล้ว = กลับไปเปิด-ปิดตามเวลา ; ไม่ตรง = กดเองมีผลถึงรอบเปลี่ยนสถานะอัตโนมัติครั้งถัดไป
+            if new_open == store_scheduled_open(store, fc, now):
+                manual, until = None, None
+            else:
+                manual, until = new_open, store_next_transition(store, fc, now)
+            cur.execute("UPDATE Store SET IsOpen = %s, ManualOverride = %s, OverrideUntil = %s, PausedUntil = NULL "
+                        "WHERE StoreId = %s", (new_open, manual, until, store_id))
             if not new_open and pending and on_open_orders == "cancel":
                 forced = force_cancel_open_orders(db, cur, store_id, user["UserId"],
                                                   "ร้านปิดให้บริการกะทันหัน (ผู้บริหารสั่งปิด)")
@@ -354,6 +357,109 @@ def toggle_store(store_id: int, open: Optional[bool] = None,
             detail.update(open_orders=len(pending), on_open_orders=on_open_orders, **(forced or {}))
         log_audit(db, user["UserId"], "OPEN_STORE" if new_open else "CLOSE_STORE", "Store", store_id, None, detail)
     return {"success": True, "is_open": new_open, **({"forced": forced} if forced else {})}
+
+
+def _lock_store_state(cur, store_id: int) -> dict:
+    """แถวร้าน + สัญญา + คอลัมน์สถานะเปิด (ล็อกแถวร้าน)"""
+    cur.execute(
+        """
+        SELECT s.StoreName, s.IsSuspended, s.IsDeleted, s.OpenTime, s.CloseTime, s.ManualOverride, s.OverrideUntil,
+               s.PausedUntil, c.StartDate, c.EndDate
+        FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId
+        WHERE s.StoreId = %s FOR UPDATE OF s
+        """,
+        (store_id,),
+    )
+    store = cur.fetchone()
+    if not store or store["IsDeleted"]:
+        raise DomainError(404, "ไม่พบร้านค้า")
+    return store
+
+
+def _hhmm_or_none(value) -> Optional[str]:
+    return time_to_hhmm(value) if value is not None else None
+
+
+@router.put("/{store_id}/pause")
+def pause_store(store_id: int, paused: bool = True,
+                user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """paused=true หยุดรับออเดอร์ใหม่ชั่วคราว / false รับต่อ
+    ต่างจากปิดร้าน: ออเดอร์ที่ค้างทำต่อได้ตามปกติ (ไม่ติดกฎ PO 1) ; หยุดไว้จนกว่าจะกดรับต่อ
+    หรือถึงเวลาที่สถานะร้านเปลี่ยนเองครั้งถัดไป (เช่นเวลาปิดร้านวันนี้) จะได้ไม่ค้างข้ามวัน"""
+    assert_store_access(user, store_id)
+    with transaction(db):
+        with db.cursor() as cur:
+            store = _lock_store_state(cur, store_id)
+            fc, now = get_foodcourt(cur), bangkok_now()
+            active = contract_state(store["StartDate"], store["EndDate"], now.date()) == CONTRACT_ACTIVE
+            open_state = store_open_state(store, fc, now) if active else STORE_CLOSED
+            until = None
+            if paused:
+                if open_state == STORE_PAUSED:
+                    return {"success": True, "unchanged": True, "message": "ร้านหยุดรับออเดอร์อยู่แล้ว"}
+                if open_state == STORE_CLOSED or store["IsSuspended"]:
+                    raise DomainError(400, "ร้านปิดอยู่ ไม่ต้องหยุดรับออเดอร์ชั่วคราว")
+                until = store_next_transition(store, fc, now)
+                if foodcourt_mode(store, now) == "OPEN" and store["OverrideUntil"]:
+                    until = min(until, store["OverrideUntil"])
+            elif open_state != STORE_PAUSED:
+                return {"success": True, "unchanged": True, "message": "ร้านรับออเดอร์อยู่แล้ว"}
+            cur.execute("UPDATE Store SET PausedUntil = %s WHERE StoreId = %s", (until, store_id))
+        log_audit(db, user["UserId"], "PAUSE_STORE" if paused else "RESUME_STORE", "Store", store_id, None,
+                  {"name": store["StoreName"], "until": until})
+    return {"success": True, "paused": paused,
+            "paused_until": until.strftime("%Y-%m-%d %H:%M:%S") if until else None,
+            "message": "หยุดรับออเดอร์ชั่วคราวแล้ว" if paused else "เปิดรับออเดอร์ต่อแล้ว"}
+
+
+@router.put("/{store_id}/schedule")
+def update_store_schedule(store_id: int, data: StoreScheduleSchema,
+                          user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """เวลาเปิด-ปิดอัตโนมัติของร้าน ต้องอยู่ในเวลาทำการของศูนย์อาหาร ; ไม่ส่งเวลา = ใช้เวลาศูนย์อาหาร"""
+    assert_store_access(user, store_id)
+    if (data.open_time is None) != (data.close_time is None):
+        raise DomainError(400, "กรุณาระบุทั้งเวลาเปิดและเวลาปิด")
+    with transaction(db):
+        with db.cursor() as cur:
+            store = _lock_store_state(cur, store_id)
+            fc, now = get_foodcourt(cur), bangkok_now()
+            new_open = new_close = None
+            if data.open_time is not None:
+                try:
+                    o = time_to_minutes(datetime.strptime(data.open_time, "%H:%M").time())
+                    c = time_to_minutes(datetime.strptime(data.close_time, "%H:%M").time())
+                except ValueError:
+                    raise DomainError(400, "รูปแบบเวลาต้องเป็น HH:MM")
+                if o >= c:
+                    raise DomainError(400, "เวลาปิดต้องอยู่หลังเวลาเปิด")  # ไม่รองรับช่วงเวลาข้ามวัน (เหมือนศูนย์อาหาร)
+                fc_open, fc_close = time_to_minutes(fc["OpenTime"]), time_to_minutes(fc["CloseTime"])
+                if o < fc_open or c > fc_close:
+                    raise DomainError(400, f"เวลาร้านต้องอยู่ในเวลาทำการของศูนย์อาหาร "
+                                           f"({time_to_hhmm(fc_open)}–{time_to_hhmm(fc_close)} น.)")
+                new_open, new_close = time_to_hhmm(o), time_to_hhmm(c)
+            until = store["OverrideUntil"]
+            # กดเปิด/ปิดเองค้างอยู่ : เลื่อนเวลาหมดอายุให้ตรงกับเวลาใหม่ (NULL = รอเจ้าของร้านกดเอง คงไว้)
+            if foodcourt_mode(store, now) != "AUTO" and until is not None:
+                until = store_next_transition({**store, "OpenTime": new_open, "CloseTime": new_close}, fc, now)
+            cur.execute("UPDATE Store SET OpenTime = %s, CloseTime = %s, OverrideUntil = %s WHERE StoreId = %s",
+                        (new_open, new_close, until, store_id))
+        log_audit(db, user["UserId"], "UPDATE_STORE_SCHEDULE", "Store", store_id,
+                  {"open": _hhmm_or_none(store["OpenTime"]), "close": _hhmm_or_none(store["CloseTime"])},
+                  {"open": new_open, "close": new_close, "name": store["StoreName"]})
+    return {"success": True, "open_time": new_open, "close_time": new_close,
+            "message": "บันทึกเวลาเปิด-ปิดร้านเรียบร้อยแล้ว" if new_open else "ร้านใช้เวลาเปิด-ปิดตามศูนย์อาหารแล้ว"}
+
+
+@router.put("/{store_id}/auto")
+def return_store_to_auto(store_id: int, user=Depends(require_role("STORE_OWNER", "EXECUTIVE")), db=Depends(get_db)):
+    """ยกเลิกการกดเปิด/ปิดเอง กลับไปเปิด-ปิดตามเวลาของร้าน"""
+    assert_store_access(user, store_id)
+    with transaction(db):
+        with db.cursor() as cur:
+            store = _lock_store_state(cur, store_id)
+            cur.execute("UPDATE Store SET ManualOverride = NULL, OverrideUntil = NULL WHERE StoreId = %s", (store_id,))
+        log_audit(db, user["UserId"], "STORE_AUTO_MODE", "Store", store_id, None, {"name": store["StoreName"]})
+    return {"success": True, "message": "ร้านกลับไปเปิด-ปิดตามเวลาแล้ว"}
 
 
 @router.put("/{store_id}/suspend")
@@ -375,7 +481,8 @@ def suspend_store(store_id: int, user=Depends(require_role("EXECUTIVE")), db=Dep
                 raise DomainError(400, "ร้านนี้หมดสัญญาแล้ว ระงับ/ปลดระงับสิทธิ์ไม่ได้ (ร้านเปิดขายไม่ได้อยู่แล้ว)")
             suspended = not bool(store["IsSuspended"])
             if suspended:
-                cur.execute("UPDATE Store SET IsSuspended = TRUE, IsOpen = FALSE WHERE StoreId = %s", (store_id,))
+                cur.execute(f"UPDATE Store SET IsSuspended = TRUE, {_CLOSE_UNTIL_OWNER_OPENS} WHERE StoreId = %s",
+                            (store_id,))
             else:
                 cur.execute("UPDATE Store SET IsSuspended = FALSE WHERE StoreId = %s", (store_id,))
         log_audit(db, user["UserId"], "SUSPEND_STORE" if suspended else "UNSUSPEND_STORE", "Store", store_id,
@@ -422,7 +529,7 @@ def update_contract_end(store_id: int, data: ContractEndUpdateSchema, user=Depen
             backdated = new_end < today
             pending = open_order_count(cur, store_id) if backdated else 0
             if backdated:
-                cur.execute("UPDATE Store SET IsOpen = FALSE WHERE StoreId = %s", (store_id,))
+                cur.execute(f"UPDATE Store SET {_CLOSE_UNTIL_OWNER_OPENS} WHERE StoreId = %s", (store_id,))
             cur.execute("UPDATE StoreContract SET EndDate = %s WHERE StoreId = %s", (new_end, store_id))
         action = "CONTRACT_END_BACKDATED" if backdated else ("CONTRACT_EXTEND" if new_end > old_end else "CONTRACT_SHORTEN")
         log_audit(db, user["UserId"], action, "Store", store_id,
@@ -462,7 +569,7 @@ def restart_contract(store_id: int, data: ContractRestartSchema, user=Depends(re
                 raise DomainError(400, "สัญญาร้านนี้ยังไม่หมด ให้ใช้ \"แก้วันสิ้นสุด\" แทน")
             _upsert_contract(cur, store_id, start, end, user["UserId"])
             # เริ่มรอบใหม่แบบปิดร้านไว้ก่อน เจ้าของร้านล็อกอินแล้วกดเปิดเอง (เปิดได้เมื่อถึงวันเริ่ม)
-            cur.execute("UPDATE Store SET IsOpen = FALSE WHERE StoreId = %s", (store_id,))
+            cur.execute(f"UPDATE Store SET {_CLOSE_UNTIL_OWNER_OPENS} WHERE StoreId = %s", (store_id,))
         new_state = contract_state(start, end, today)
         log_audit(db, user["UserId"], "CONTRACT_RESTART", "Store", store_id,
                   {"start": row["StartDate"], "end": row["EndDate"], "state": old_state},

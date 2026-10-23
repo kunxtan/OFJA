@@ -177,15 +177,21 @@ def test_store_account_access_after_expiry():
     assert utils.store_account_access(None, "FRONT_STAFF", False, 30, date(2026, 6, 15)) == utils.ACCESS_FULL
 
 
+# ศูนย์อาหารเปิด 07:00-18:00 ตามเวลา ; เทสต์ที่ไม่ได้ดูเรื่องเวลาเรียกตอนเที่ยง (ร้านเปิดตามเวลา)
+FC = {"OpenTime": timedelta(hours=7), "CloseTime": timedelta(hours=18), "ManualOverride": None, "OverrideUntil": None}
+
+
 def test_shape_store_effective_open():
     from shapes import shape_store
-    today = date(2026, 6, 15)
-    base = {"IsOpen": 1, "ContractStartDate": date(2026, 1, 1)}
-    live = shape_store({**base, "ContractEndDate": date(2026, 6, 15)}, today)
+    noon = datetime(2026, 6, 15, 12, 0)
+    base = {"ContractStartDate": date(2026, 1, 1)}
+    live = shape_store({**base, "ContractEndDate": date(2026, 6, 15)}, FC, noon)
     assert live["IsOpen"] is True and live["ContractState"] == "ACTIVE" and live["ContractDaysLeft"] == 0
-    dead = shape_store({**base, "ContractEndDate": date(2026, 6, 14)}, today)
-    assert dead["IsOpen"] is False and dead["ContractState"] == "EXPIRED"
-    none = shape_store({"IsOpen": 1, "ContractStartDate": None, "ContractEndDate": None}, today)
+    assert live["OpenState"] == "OPEN" and live["OpenMode"] == "AUTO"
+    assert (live["OpenTime"], live["CloseTime"], live["HasOwnHours"]) == ("07:00", "18:00", False)
+    dead = shape_store({**base, "ContractEndDate": date(2026, 6, 14)}, FC, noon)
+    assert dead["IsOpen"] is False and dead["ContractState"] == "EXPIRED" and dead["OpenState"] == "CLOSED"
+    none = shape_store({"ContractStartDate": None, "ContractEndDate": None}, FC, noon)
     assert none["IsOpen"] is False and none["ContractDaysLeft"] is None
 
 
@@ -194,7 +200,8 @@ def test_shape_store_day_counts():
     from shapes import shape_store
     today = date(2026, 10, 16)
     row = lambda start, end, opened=0: shape_store(  # noqa: E731
-        {"IsOpen": 1, "ContractStartDate": start, "ContractEndDate": end, "OpenOrderCount": opened}, today)
+        {"ContractStartDate": start, "ContractEndDate": end, "OpenOrderCount": opened}, FC,
+        datetime(2026, 10, 16, 12, 0))
     one_year = row(date(2026, 10, 16), utils.add_years_minus_one_day(date(2026, 10, 16)))
     assert one_year["ContractEndDate"] == date(2027, 10, 15) and one_year["ContractDaysLeft"] == 364
     tomorrow = row(date(2026, 1, 1), date(2026, 10, 17))

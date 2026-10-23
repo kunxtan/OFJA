@@ -1619,6 +1619,185 @@ function StaffPasswordModal({ staff, onClose, onSubmit }) {
   );
 }
 
+// --- เวลาร้าน: เลือกชั่วโมง/นาที ได้เฉพาะในช่วงเวลาศูนย์อาหาร ---
+const hhmmToMin = (t) => { const [h, m] = String(t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const minToHhmm = (n) => `${pad2(Math.floor(n / 60))}:${pad2(n % 60)}`;
+
+function StoreTimeSelect({ value, onChange, disabled, min, max, presets = [], label }) {
+  const [h, m] = (value || '00:00').split(':');
+  const hours = [];
+  for (let x = Math.floor(min / 60); x <= Math.floor(max / 60); x += 1) hours.push(pad2(x));
+  const minutes = Array.from({ length: 12 }, (_, i) => pad2(i * 5));
+  const minuteOptions = minutes.includes(m) ? minutes : [...minutes, m].sort();
+  return (
+    <div className="ss-time">
+      <div className="ss-time-row">
+        <select aria-label={`${label} ชั่วโมง`} value={h} disabled={disabled} onChange={e => onChange(`${e.target.value}:${m}`)}>
+          {(hours.includes(h) ? hours : [...hours, h].sort()).map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <span className="colon">:</span>
+        <select aria-label={`${label} นาที`} value={m} disabled={disabled} onChange={e => onChange(`${h}:${e.target.value}`)}>
+          {minuteOptions.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+        <span className="unit">น.</span>
+      </div>
+      {presets.length > 0 && (
+        <div className="ss-presets">
+          {presets.map(t => (
+            <button key={t} type="button" disabled={disabled} className={value === t ? 'active' : ''} onClick={() => onChange(t)}>{t}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- ตั้งเวลาเปิด-ปิดร้านอัตโนมัติ (อยู่ในเวลาทำการศูนย์อาหารที่ผู้บริหารตั้ง) ---
+function StoreScheduleModal({ fcOpen, fcClose, hasOwnHours, openTime, closeTime, onClose, onSubmit }) {
+  const [useOwn, setUseOwn] = useState(Boolean(hasOwnHours));
+  const [open, setOpen] = useState(openTime || fcOpen);
+  const [close, setClose] = useState(closeTime || fcClose);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEscapeToClose(onClose, saving);
+  const min = hhmmToMin(fcOpen);
+  const max = hhmmToMin(fcClose);
+  const hourly = [];
+  for (let t = Math.ceil(min / 60) * 60; t <= max; t += 60) hourly.push(minToHhmm(t));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (useOwn) {
+      const o = hhmmToMin(open), c = hhmmToMin(close);
+      if (o >= c) { setError('เวลาปิดต้องอยู่หลังเวลาเปิด'); return; }
+      if (o < min || c > max) { setError(`เวลาร้านต้องอยู่ในเวลาทำการของศูนย์อาหาร (${fcOpen}–${fcClose} น.)`); return; }
+    }
+    setSaving(true);
+    try {
+      await onSubmit(useOwn ? { open_time: open, close_time: close } : {});
+    } catch (err) {
+      setError(err.message || 'บันทึกเวลาไม่สำเร็จ');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="berry-modal-overlay mf-overlay" onClick={() => { if (!saving) onClose(); }}>
+      <div className="mf-modal ss-modal" role="dialog" aria-modal="true" aria-labelledby="ss-title" onClick={e => e.stopPropagation()}>
+        <div className="mf-head">
+          <span className="mf-head-icon"><Icon name="clock" size={20} /></span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 id="ss-title">ตั้งเวลาเปิด-ปิดร้าน</h3>
+            <p>ร้านเปิดและปิดรับออเดอร์เองตามเวลานี้ทุกวัน</p>
+          </div>
+          <button type="button" className="mf-close" onClick={onClose} disabled={saving} aria-label="ปิด">
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+        <form onSubmit={submit} noValidate>
+          <div className="mf-body">
+            <div className="ss-choice" role="radiogroup" aria-label="แหล่งเวลาเปิด-ปิดร้าน">
+              <button type="button" role="radio" aria-checked={!useOwn} className={!useOwn ? 'active' : ''} disabled={saving} onClick={() => { setUseOwn(false); setError(''); }}>
+                <strong>ตามเวลาศูนย์อาหาร</strong>
+                <span>{fcOpen}–{fcClose} น. (ผู้บริหารกำหนด)</span>
+              </button>
+              <button type="button" role="radio" aria-checked={useOwn} className={useOwn ? 'active' : ''} disabled={saving} onClick={() => { setUseOwn(true); setError(''); }}>
+                <strong>กำหนดเวลาร้านเอง</strong>
+                <span>ภายในเวลาศูนย์อาหาร</span>
+              </button>
+            </div>
+            {useOwn && (
+              <>
+                <div className="mf-field">
+                  <label>เวลาเปิดอัตโนมัติ <span className="req">*</span></label>
+                  <StoreTimeSelect label="เวลาเปิด" value={open} onChange={v => { setOpen(v); setError(''); }} disabled={saving} min={min} max={max} presets={hourly.slice(0, 5)} />
+                  <div className="mf-hint">ร้านเริ่มรับออเดอร์ใหม่ตั้งแต่เวลานี้</div>
+                </div>
+                <div className="mf-field">
+                  <label>เวลาปิดอัตโนมัติ <span className="req">*</span></label>
+                  <StoreTimeSelect label="เวลาปิด" value={close} onChange={v => { setClose(v); setError(''); }} disabled={saving} min={min} max={max} presets={hourly.slice(-5)} />
+                  <div className="mf-hint">ถึงเวลานี้ ร้านหยุดรับออเดอร์ใหม่</div>
+                </div>
+              </>
+            )}
+            <div className="ss-note">ปิดตามเวลาจะหยุดรับออเดอร์ใหม่เท่านั้น ออเดอร์ที่รับไว้แล้วทำต่อได้ตามปกติ ; ถ้าศูนย์อาหารปิด ร้านจะปิดตามด้วยเสมอ</div>
+            {error && <div className="mf-form-error">{error}</div>}
+          </div>
+          <div className="mf-footer">
+            <button type="button" className="mf-btn ghost" onClick={onClose} disabled={saving}>ยกเลิก</button>
+            <button type="submit" className="mf-btn primary" disabled={saving}>
+              {saving ? <span className="berry-spinner" /> : <Icon name="check" size={17} />}
+              {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// --- การ์ดควบคุมร้าน (แบบเดียวกับการควบคุมศูนย์อาหารของผู้บริหาร) ---
+// state: OPEN / PAUSED / CLOSED ; mode: AUTO = ตามเวลา, OPEN/CLOSED = กดเองถึง overrideUntil
+const STORE_STATE_META = {
+  OPEN: { tone: 'green', label: 'ร้านเปิดรับออเดอร์' },
+  PAUSED: { tone: 'amber', label: 'หยุดรับออเดอร์ชั่วคราว' },
+  CLOSED: { tone: 'red', label: 'ร้านปิดอยู่' },
+};
+
+function StoreControlCard({ state, blockedReason, mode, openTime, closeTime, hasOwnHours, overrideUntil, pausedUntil, busy, onOpen, onClose, onPause, onResume, onAuto, onSettings }) {
+  const meta = STORE_STATE_META[state] || STORE_STATE_META.CLOSED;
+  const clock = (value) => (value ? String(value).slice(11, 16) : '');
+  const hours = openTime && closeTime ? `${openTime}–${closeTime} น.` : '';
+  let detail;
+  if (blockedReason) detail = blockedReason;
+  else if (state === 'PAUSED') detail = `หยุดรับถึง ${clock(pausedUntil)} น. หรือจนกว่าจะกดเปิดรับต่อ`;
+  else if (mode === 'CLOSED') detail = overrideUntil ? `ปิดเองถึง ${clock(overrideUntil)} น. แล้วกลับไปเปิด-ปิดตามเวลา` : 'ปิดไว้จนกว่าจะกดเปิดร้าน';
+  else if (mode === 'OPEN') detail = `เปิดเองถึง ${clock(overrideUntil)} น. แล้วกลับไปเปิด-ปิดตามเวลา`;
+  else detail = `เวลาร้าน ${hours} · ${hasOwnHours ? 'เปิด-ปิดอัตโนมัติ' : 'ตามเวลาศูนย์อาหาร'}`;
+
+  return (
+    <section id="owner-store-control" className={`od-control tone-${meta.tone}`} aria-label="การควบคุมร้าน">
+      <div className="od-control-head">
+        <span className="od-control-icon"><Icon name="power" size={19} /></span>
+        <div className="od-control-text">
+          <div className="status"><span className="dot" />{meta.label}</div>
+          <div className="detail" title={state === 'PAUSED' ? `${detail} · ออเดอร์ที่รับแล้วทำต่อได้ตามปกติ` : detail}>{detail}</div>
+        </div>
+        <button type="button" className="od-control-gear" onClick={onSettings} title={`ตั้งเวลาเปิด-ปิดร้าน${hours ? ` (ตอนนี้ ${hours})` : ''}`} aria-label="ตั้งเวลาเปิด-ปิดร้าน">
+          <Icon name="settings" size={17} />
+        </button>
+      </div>
+      <div className="od-control-actions">
+        {state === 'CLOSED' && (
+          <button type="button" className="od-cbtn primary" onClick={onOpen} disabled={busy || Boolean(blockedReason)}>
+            <Icon name="power" size={15} /> เปิดร้าน
+          </button>
+        )}
+        {state === 'PAUSED' && (
+          <button type="button" className="od-cbtn primary" onClick={onResume} disabled={busy}>
+            <Icon name="check" size={15} /> เปิดรับออเดอร์ต่อ
+          </button>
+        )}
+        {state === 'OPEN' && (
+          <button type="button" className="od-cbtn amber" onClick={onPause} disabled={busy}>
+            <Icon name="clock" size={15} /> หยุดรับชั่วคราว
+          </button>
+        )}
+        {state !== 'CLOSED' && (
+          <button type="button" className="od-cbtn danger" onClick={onClose} disabled={busy}>
+            <Icon name="power" size={15} /> ปิดร้าน
+          </button>
+        )}
+        {mode !== 'AUTO' && (
+          <button type="button" className="od-cbtn ghost" onClick={onAuto} disabled={busy} title="ยกเลิกที่กดเอง กลับไปเปิด-ปิดตามเวลา">
+            ตามเวลา
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // --- ลบถาวร: ลบข้อมูลส่วนตัวทิ้ง (เก็บแถวไว้ให้ประวัติออเดอร์อ้างถึง) ต้องพิมพ์ชื่อผู้ใช้ยืนยัน ---
 function StaffEraseModal({ staff, onClose, onSubmit }) {
   const [typed, setTyped] = useState('');
@@ -2849,22 +3028,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       ready: count('Ready'),
       outOfStock: (products || []).filter(p => p.IsOutOfStock).length,
       todayOrders: todayOrders.length,
-      // เงินสดที่ควรอยู่ในลิ้นชักวันนี้ = เงินสดที่รับวันนี้ (ค่าอาหารสุทธิหลังทอน รวมออเดอร์ที่ถูกยกเลิก)
-      // − เงินสดที่จ่ายคืนลูกค้าวันนี้ ; คืนแบบโอนไม่ผ่านลิ้นชัก จึงไม่หัก
-      cashToday: todayOrders
-        .flatMap(o => o.Payments || [])
-        .filter(p => p.MethodCode === 'CASH' && p.PaymentStatus === 'VERIFIED')
-        .reduce((acc, p) => acc + Number(p.Amount || 0), 0)
-        - refunds
-          .filter(r => r.RefundStatus === 'DONE' && r.PaidMethod !== 'TRANSFER' && r.RefundedAt
-            && toISODate(parseOrderDate(r.RefundedAt)) === today)
-          .reduce((acc, r) => acc + Number(r.Amount || 0), 0),
-      // ลูกค้าที่รอรับเงินสดคืนที่ร้าน (ต้องเตรียมเงินไว้ในลิ้นชัก)
-      cashRefundOwed: refunds
-        .filter(r => r.RefundStatus === 'PENDING' && r.PayoutMethod !== 'TRANSFER')
-        .reduce((acc, r) => acc + Number(r.Amount || 0), 0),
     };
-  }, [history, products, refunds]);
+  }, [history, products]);
 
   // ยกเลิกใหม่ที่ยังไม่ได้ดู : เทียบด้วยเลขออเดอร์ (เดิมเทียบจำนวนรายการ ซึ่งตันที่ 500 ตาม limit แล้วไม่เตือนอีกเลย)
   const seenCancelIdsRef = useRef(null);
@@ -2963,27 +3128,50 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     window.__avxToastTimer = setTimeout(() => setToast({ show: false, msg: '' }), 2600);
   };
 
-  const toggleStore = async () => {
+  // การ์ดควบคุมร้าน : ทุกปุ่มส่งสถานะเป้าหมาย (กดซ้ำจากหน้าจอเก่าไม่กลับด้าน)
+  const [storeBusy, setStoreBusy] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const storeAction = async (path, fallbackMsg, okMsg) => {
+    setStoreBusy(true);
     try {
-      const res = await fetch(`${apiBase}/api/stores/${storeId}/toggle?open=${!dash.IsOpen}`, { method: 'PUT' });
+      const res = await fetch(`${apiBase}/api/stores/${storeId}/${path}`, { method: 'PUT' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(data.detail || data.message || 'ไม่สามารถเปลี่ยนสถานะร้านได้');
+        showToast(data.detail || data.message || fallbackMsg);
         return;
       }
-      showToast(data.is_open ? 'เปิดรับออเดอร์แล้ว!' : 'ปิดร้านชั่วคราวแล้ว');
+      showToast(okMsg(data));
     } catch (err) {
       console.error(err);
-      showToast('เกิดข้อผิดพลาดในการเปลี่ยนสถานะร้าน');
+      showToast(fallbackMsg);
     } finally {
+      setStoreBusy(false);
       fetchData();
     }
   };
+  const toggleStore = (open) => storeAction(`toggle?open=${open}`, 'ไม่สามารถเปลี่ยนสถานะร้านได้',
+    (d) => (d.is_open ? 'เปิดร้านแล้ว' : 'ปิดร้านแล้ว'));
+  const pauseStore = (paused) => storeAction(`pause?paused=${paused}`, 'ไม่สามารถเปลี่ยนสถานะร้านได้',
+    (d) => d.message || (paused ? 'หยุดรับออเดอร์ชั่วคราวแล้ว' : 'เปิดรับออเดอร์ต่อแล้ว'));
+  const storeToAuto = () => storeAction('auto', 'ไม่สามารถกลับไปเปิด-ปิดตามเวลาได้', (d) => d.message || 'กลับไปเปิด-ปิดตามเวลาแล้ว');
+  const saveStoreSchedule = async (body) => {
+    const res = await fetch(`${apiBase}/api/stores/${storeId}/schedule`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'บันทึกเวลาไม่สำเร็จ');
+    setScheduleOpen(false);
+    showToast(data.message || 'บันทึกเวลาเปิด-ปิดร้านเรียบร้อยแล้ว');
+    fetchData();
+  };
+  // ป้ายสถานะบน topbar : พาไปที่การ์ดควบคุมร้านในหน้าภาพรวม
+  const goToStoreControl = () => {
+    setPage('dashboard');
+    setTimeout(() => document.getElementById('owner-store-control')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+  };
 
-  // สวิตช์บน topbar: เปิดร้านได้ทันที แต่ถามยืนยันก่อนปิด (กันกดโดนโดยไม่ตั้งใจ)
-  const requestToggleStore = async () => {
-    if (toggleDisabled) return;
-    if (!storeOpen) { toggleStore(); return; }
+  // ปิดร้าน : ถามยืนยันก่อน (กันกดโดนโดยไม่ตั้งใจ)
+  const requestCloseStore = async () => {
     // กฎ PO 1: ยังมีออเดอร์ที่ยังไม่จบ = ปิดร้านไม่ได้ (backend ตรวจซ้ำอีกชั้น)
     try {
       const res = await fetch(`${apiBase}/api/stores/${storeId}/open-orders`);
@@ -2997,7 +3185,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           title: 'ยังปิดร้านไม่ได้',
           prefix: 'ร้าน',
           suffix: `ยังมีออเดอร์ที่ยังไม่จบ ${pending.length} ออเดอร์`,
-          warn: `${queues}${pending.length > 10 ? ` และอีก ${pending.length - 10} คิว` : ''} — กรุณาทำและส่งมอบให้ครบก่อนปิดร้าน ถ้าไม่อยากรับออเดอร์เพิ่ม ให้กด "ของหมด" ที่เมนูแทน`,
+          warn: `${queues}${pending.length > 10 ? ` และอีก ${pending.length - 10} คิว` : ''} — กรุณาทำและส่งมอบให้ครบก่อนปิดร้าน ถ้าไม่อยากรับออเดอร์เพิ่ม ให้กด "หยุดรับชั่วคราว" แทน`,
           icon: 'power',
           tone: 'danger',
         });
@@ -3009,13 +3197,13 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     setConfirmDelete({
       type: 'closeStore',
       name: dash.StoreName || 'ร้านของคุณ',
-      title: 'ปิดรับออเดอร์ชั่วคราว?',
+      title: 'ปิดร้าน?',
       prefix: 'ลูกค้าจะสั่งอาหารจากร้าน',
-      suffix: 'ไม่ได้จนกว่าจะเปิดอีกครั้ง',
-      warn: 'ออเดอร์ที่รับไว้แล้วยังทำต่อได้ตามปกติ',
+      suffix: 'ไม่ได้จนถึงเวลาเปิดร้านรอบถัดไป หรือจนกว่าจะกดเปิดร้าน',
+      warn: 'ถ้าแค่ต้องการพักรับออเดอร์สักครู่ ให้กด "หยุดรับชั่วคราว" แทน',
       icon: 'power',
       tone: 'danger',
-      confirmText: 'ปิดรับออเดอร์',
+      confirmText: 'ปิดร้าน',
       busyText: 'กำลังปิดร้าน...',
     });
   };
@@ -3123,7 +3311,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     const { type, id, name } = confirmDelete;
     if (type === 'closeStore') {
       setDeleting(true);
-      await toggleStore();
+      await toggleStore(false);
       setDeleting(false);
       setConfirmDelete(null);
       return;
@@ -3273,8 +3461,14 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const isSuspended = Boolean(storeDetail?.IsSuspended);
   // ร้านจะถือว่า "เปิด" ได้ก็ต่อเมื่อศูนย์อาหารเปิดด้วย ถ้าศูนย์อาหารปิด ร้านถูกบังคับปิดเสมอ
-  const storeOpen = Boolean(dash.IsOpen) && foodCourtOpen && !isSuspended;
-  const toggleDisabled = !foodCourtOpen || isSuspended;
+  // สถานะร้านจาก backend : คำนวณจากเวลาร้าน + เวลาศูนย์อาหาร + ที่กดเอง + หยุดรับชั่วคราว (utils.store_open_state)
+  const openState = !foodCourtOpen || isSuspended ? 'CLOSED' : (dash.OpenState || storeDetail?.OpenState || (dash.IsOpen ? 'OPEN' : 'CLOSED'));
+  const contractActive = !storeDetail || storeDetail.ContractState === 'ACTIVE';
+  // เหตุที่กดเปิดร้านไม่ได้ (แสดงบนการ์ดควบคุมร้าน)
+  const openBlockedReason = !foodCourtOpen ? 'ศูนย์อาหารปิดให้บริการ ร้านเปิดไม่ได้จนกว่าศูนย์อาหารจะเปิด'
+    : isSuspended ? 'ร้านถูกระงับสิทธิ์ ติดต่อผู้บริหาร'
+    : !contractActive ? (storeDetail?.ContractState === 'UPCOMING' ? 'สัญญาร้านยังไม่เริ่มมีผล' : 'สัญญาร้านไม่มีผล ติดต่อผู้บริหาร')
+    : null;
   const unreadSuspendedAlert = isSuspended ? 1 : 0;
   const totalBadgeUnread = unreadCancels + unreadNotifs + unreadSuspendedAlert;
   
@@ -3335,22 +3529,11 @@ export default function OwnerView({ user, apiBase, onLogout }) {
               <span className="short">{foodCourtOpen ? 'เปิด' : 'ปิด'}</span>
             </div>
 
-            {/* สวิตช์เปิด/ปิดรับออเดอร์ของร้าน กดได้จากทุกหน้า */}
-            <button
-              type="button"
-              role="switch"
-              aria-checked={storeOpen}
-              className={`store-switch ${storeOpen ? 'on' : 'off'}`}
-              onClick={requestToggleStore}
-              disabled={toggleDisabled}
-              title={
-                !foodCourtOpen ? 'ศูนย์อาหารปิดอยู่ ร้านเปิดรับออเดอร์ไม่ได้'
-                  : isSuspended ? 'ร้านถูกระงับสิทธิ์'
-                  : storeOpen ? 'กดเพื่อปิดรับออเดอร์ชั่วคราว' : 'กดเพื่อเปิดรับออเดอร์'
-              }
-            >
-              <span className="track"><span className="thumb" /></span>
-              <span className="label">{storeOpen ? 'ร้านเปิดรับออเดอร์' : 'ร้านปิดรับออเดอร์'}</span>
+            {/* สถานะร้าน : กดแล้วไปที่การ์ดควบคุมร้าน (เปิด/ปิด/หยุดรับชั่วคราว/ตั้งเวลา) */}
+            <button type="button" className={`store-pill tone-${STORE_STATE_META[openState].tone}`} onClick={goToStoreControl}
+              title={`${STORE_STATE_META[openState].label} · กดเพื่อจัดการร้าน`}>
+              <span className="dot" />
+              <span className="label">{STORE_STATE_META[openState].label}</span>
             </button>
           </div>
         </div>
@@ -3507,22 +3690,15 @@ export default function OwnerView({ user, apiBase, onLogout }) {
         </div>
       </header>
 
-      {/* มือถือ: แถบสถานะศูนย์อาหาร + สวิตช์ร้าน (บน topbar ไม่พอที่) */}
+      {/* มือถือ: แถบสถานะศูนย์อาหาร + สถานะร้าน (บน topbar ไม่พอที่) */}
       <div className="op-mobile-status">
         <span className={`op-ms-court ${foodCourtOpen ? 'open' : 'closed'}`}>
           <span className="dot" />
           {foodCourtOpen ? 'ศูนย์อาหารเปิด' : 'ศูนย์อาหารปิด'}
         </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={storeOpen}
-          className={`store-switch mobile ${storeOpen ? 'on' : 'off'}`}
-          onClick={requestToggleStore}
-          disabled={toggleDisabled}
-        >
-          <span className="label">{storeOpen ? 'ร้านเปิดรับออเดอร์' : 'ร้านปิดรับออเดอร์'}</span>
-          <span className="track"><span className="thumb" /></span>
+        <button type="button" className={`store-pill mobile tone-${STORE_STATE_META[openState].tone}`} onClick={goToStoreControl}>
+          <span className="dot" />
+          <span className="label">{STORE_STATE_META[openState].label}</span>
         </button>
       </div>
 
@@ -3607,18 +3783,30 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 </span>
               </PageHeader>
 
-              {/* ===== ตอนนี้ในร้าน (ไม่ขึ้นกับช่วงวันที่) ===== */}
+              {/* ===== การควบคุมร้าน + ตอนนี้ในร้าน (ไม่ขึ้นกับช่วงวันที่) ===== */}
+              <div className="od-now-row">
+              <StoreControlCard
+                state={openState}
+                blockedReason={openState === 'CLOSED' ? openBlockedReason : null}
+                mode={storeDetail?.OpenMode || 'AUTO'}
+                openTime={storeDetail?.OpenTime}
+                closeTime={storeDetail?.CloseTime}
+                hasOwnHours={Boolean(storeDetail?.HasOwnHours)}
+                overrideUntil={storeDetail?.OverrideUntil}
+                pausedUntil={storeDetail?.PausedUntil}
+                busy={storeBusy}
+                onOpen={() => toggleStore(true)}
+                onClose={requestCloseStore}
+                onPause={() => pauseStore(true)}
+                onResume={() => pauseStore(false)}
+                onAuto={storeToAuto}
+                onSettings={() => setScheduleOpen(true)}
+              />
               <section className="od-live">
                 <div className="od-live-head">
                   <span className="pulse" />
                   <strong>ตอนนี้ในร้าน</strong>
-                  <span className={`od-store-pill ${storeOpen ? 'open' : 'closed'}`}
-                    title={!foodCourtOpen ? 'ศูนย์อาหารปิดทำการ ร้านถูกปิดรับออเดอร์อัตโนมัติ'
-                      : isSuspended ? 'ร้านถูกระงับสิทธิ์ ไม่สามารถเปิดรับออเดอร์ได้'
-                      : 'เปิด/ปิดรับออเดอร์ได้จากสวิตช์ที่แถบด้านบน'}>
-                    {storeOpen ? 'เปิดรับออเดอร์' : !foodCourtOpen ? 'ปิด · ศูนย์อาหารปิด' : isSuspended ? 'ปิด · ถูกระงับสิทธิ์' : 'ปิดรับออเดอร์'}
-                  </span>
-                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์ · เงินสดที่ควรมีในลิ้นชัก <b>฿{fmtMoney(liveStats.cashToday)}</b>{liveStats.cashRefundOwed > 0 && <> · รอคืนเงินสดลูกค้าอีก <b>฿{fmtMoney(liveStats.cashRefundOwed)}</b></>}</span>
+                  <span className="muted">อัปเดตอัตโนมัติ · วันนี้ {fmtMoney(liveStats.todayOrders)} ออเดอร์</span>
                 </div>
                 <div className="od-live-grid">
                   {live.map(item => (
@@ -3636,6 +3824,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   ))}
                 </div>
               </section>
+              </div>
 
               {/* ===== แถบช่วงเวลา (ติดด้านบนเวลาเลื่อน) ===== */}
               <div className="od-period-bar">
@@ -4970,6 +5159,17 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
       {/* ===== ยืนยันการลบ / ลบสำเร็จ ===== */}
       <ConfirmDeleteDialog state={confirmDelete} busy={deleting} onCancel={cancelDelete} onConfirm={confirmDeleteAction} />
+      {scheduleOpen && (
+        <StoreScheduleModal
+          fcOpen={foodCourtHours?.open || '00:00'}
+          fcClose={foodCourtHours?.close || '23:59'}
+          hasOwnHours={Boolean(storeDetail?.HasOwnHours)}
+          openTime={storeDetail?.OpenTime}
+          closeTime={storeDetail?.CloseTime}
+          onClose={() => setScheduleOpen(false)}
+          onSubmit={saveStoreSchedule}
+        />
+      )}
       <SuccessOverlay state={successState} />
 
       {/* ===== Toast ===== */}
@@ -5763,17 +5963,13 @@ body, html {
 @keyframes opShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
 /* ===== สวิตช์เปิด/ปิดร้านบน topbar ===== */
-.store-switch { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: border-color 0.2s ease, background 0.2s ease; white-space: nowrap; }
-.store-switch .track { position: relative; width: 38px; height: 22px; border-radius: 999px; background: #CDD0DC; transition: background 0.25s ease; flex-shrink: 0; }
-.store-switch .thumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #FFFFFF; box-shadow: 0 1px 3px rgba(0,0,0,0.25); transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.store-switch.on { border-color: rgba(23,166,115,0.35); background: var(--berry-green-light); color: var(--berry-green); }
-.store-switch.on .track { background: var(--berry-green); }
-.store-switch.on .thumb { transform: translateX(16px); }
-.store-switch.off { color: var(--berry-text-muted); }
-.store-switch:hover:not(:disabled) { border-color: var(--berry-purple); }
-.store-switch:disabled { opacity: 0.55; cursor: not-allowed; }
-.store-switch:focus-visible { outline: 2px solid var(--berry-purple); outline-offset: 2px; }
-@media (max-width: 1100px) { .store-switch .label { display: none; } .store-switch { padding: 5px; } }
+.store-pill { --pill: var(--berry-green); --pill-soft: var(--berry-green-light); display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 1px solid transparent; border-radius: 999px; background: var(--pill-soft); color: var(--pill); font-family: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap; cursor: pointer; transition: border-color 0.2s ease; }
+.store-pill.tone-amber { --pill: var(--berry-amber); --pill-soft: var(--berry-amber-light); }
+.store-pill.tone-red { --pill: var(--berry-red); --pill-soft: var(--berry-red-light); }
+.store-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.store-pill:hover { border-color: currentColor; }
+.store-pill:focus-visible { outline: 2px solid var(--berry-purple); outline-offset: 2px; }
+@media (max-width: 1100px) { .berry-topbar .store-pill .label { display: none; } .berry-topbar .store-pill { padding: 8px; } }
 
 /* ===== ตอนนี้ในร้าน ===== */
 .od-live { background: var(--berry-paper); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 16px 20px; }
@@ -5904,9 +6100,48 @@ body, html {
 .od-head-total small { font-size: 13px; font-weight: 500; color: var(--berry-text-muted); }
 .od-chip { padding: 4px 10px; border-radius: 999px; background: var(--berry-purple-light); color: var(--berry-purple); font-size: 12px; font-weight: 600; white-space: nowrap; }
 
-.od-store-pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; cursor: default; }
-.od-store-pill.open { background: var(--berry-green-light); color: var(--berry-green); }
-.od-store-pill.closed { background: var(--berry-red-light); color: var(--berry-red); }
+/* การควบคุมร้าน (ซ้าย) + ตอนนี้ในร้าน (ขวา) */
+.od-now-row { display: grid; grid-template-columns: minmax(330px, 0.85fr) minmax(0, 2.15fr); gap: 16px; align-items: stretch; }
+.od-control { --c: var(--berry-green); --c-soft: var(--berry-green-light); display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; border-radius: var(--radius-lg); background: var(--berry-paper); box-shadow: var(--shadow-sm); scroll-margin-top: 90px; }
+.od-control.tone-amber { --c: var(--berry-amber); --c-soft: var(--berry-amber-light); }
+.od-control.tone-red { --c: var(--berry-red); --c-soft: var(--berry-red-light); }
+.od-control-head { display: flex; align-items: center; gap: 12px; }
+.od-control-icon { width: 40px; height: 40px; min-width: 40px; display: grid; place-items: center; border-radius: var(--radius-md); background: var(--c-soft); color: var(--c); }
+.od-control-text { flex: 1; min-width: 0; }
+.od-control-text .status { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 700; color: var(--c); }
+.od-control-text .detail { margin-top: 1px; font-size: 12px; color: var(--berry-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.od-control-text .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.od-control-gear { width: 36px; height: 36px; min-width: 36px; display: grid; place-items: center; border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper); color: var(--berry-text-muted); cursor: pointer; transition: all 0.2s ease; }
+.od-control-gear:hover { border-color: var(--berry-purple); color: var(--berry-purple); }
+.od-control-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.od-cbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-md); font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; }
+.od-cbtn:disabled { opacity: 0.55; cursor: not-allowed; }
+.od-cbtn.primary { background: var(--berry-green); color: #FFFFFF; }
+.od-cbtn.primary:hover:not(:disabled) { filter: brightness(0.95); }
+.od-cbtn.amber { background: var(--berry-amber-light); color: #9A6400; border-color: rgba(245,166,35,0.45); }
+.od-cbtn.amber:hover:not(:disabled) { border-color: var(--berry-amber); }
+.od-cbtn.danger { background: var(--berry-paper); color: var(--berry-red); border-color: rgba(226,69,47,0.35); }
+.od-cbtn.danger:hover:not(:disabled) { background: var(--berry-red-light); }
+.od-cbtn.ghost { background: var(--berry-paper); color: var(--berry-text-muted); border-color: var(--berry-border); }
+.od-cbtn.ghost:hover:not(:disabled) { color: var(--berry-text-dark); border-color: var(--berry-text-muted); }
+@media (max-width: 1280px) { .od-now-row { grid-template-columns: minmax(0, 1fr); } }
+
+/* หน้าต่างตั้งเวลาเปิด-ปิดร้าน */
+.ss-modal { max-width: 460px; }
+.ss-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.ss-choice button { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 11px 12px; border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper); font-family: inherit; text-align: left; cursor: pointer; transition: all 0.2s ease; }
+.ss-choice button strong { font-size: 13.5px; color: var(--berry-text-dark); }
+.ss-choice button span { font-size: 12px; color: var(--berry-text-muted); }
+.ss-choice button.active { border-color: var(--berry-purple); background: var(--berry-purple-light); box-shadow: 0 0 0 1px var(--berry-purple) inset; }
+.ss-time-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.ss-time-row select { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper); font-family: inherit; font-size: 15px; color: var(--berry-text-dark); cursor: pointer; }
+.ss-time-row select:focus { outline: none; border-color: var(--berry-purple); box-shadow: 0 0 0 3px var(--berry-purple-light); }
+.ss-time-row .colon { font-size: 18px; font-weight: 700; color: var(--berry-text-dark); }
+.ss-time-row .unit { font-size: 13px; color: var(--berry-text-muted); }
+.ss-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ss-presets button { padding: 6px 12px; border: 1px solid var(--berry-border); border-radius: 999px; background: var(--berry-paper); font-family: inherit; font-size: 12.5px; color: var(--berry-text-dark); cursor: pointer; }
+.ss-presets button.active { border-color: var(--berry-purple); background: var(--berry-purple); color: #FFFFFF; }
+.ss-note { margin: 4px 0 14px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--berry-amber-light); color: #8A5A00; font-size: 12.5px; line-height: 1.6; }
 
 .od-empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #C2C5D3; font-size: 13px; }
 .od-empty span { color: var(--berry-text-muted); }
@@ -6014,6 +6249,10 @@ body, html {
   .od-fit .od-stats > .od-summary { padding: 12px 18px; }
   .od-fit .od-kpi { padding: 10px 14px; }
   .od-fit .od-main-row { min-height: 220px; }
+  .od-fit .od-control { padding: 8px 12px; gap: 6px; }
+  .od-fit .od-control-icon { width: 32px; height: 32px; min-width: 32px; }
+  .od-fit .od-control-gear { width: 30px; height: 30px; min-width: 30px; }
+  .od-fit .od-cbtn { padding: 5px 10px; }
   .od-fit .od-fill-card { padding: 12px 16px; }
 }
 
@@ -6910,7 +7149,7 @@ body, html {
   /* topbar: เหลือ เมนู / โลโก้ / กระดิ่ง / รูปโปรไฟล์ */
   .berry-topbar-left { gap: 10px; min-width: 0; }
   .berry-topbar-right { gap: 8px; }
-  .berry-brand .brand-status, .berry-topbar .store-switch { display: none; }
+  .berry-brand .brand-status, .berry-topbar .store-pill { display: none; }
   .brand-logo { font-size: 21px; }
   .berry-icon-btn { width: 38px; height: 38px; }
 
@@ -6920,8 +7159,7 @@ body, html {
   .op-ms-court .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
   .op-ms-court.open { background: var(--berry-green-light); color: var(--berry-green); }
   .op-ms-court.closed { background: var(--berry-red-light); color: var(--berry-red); }
-  .store-switch.mobile { display: inline-flex; padding: 4px 6px 4px 12px; font-size: 12px; }
-  .store-switch.mobile .label { display: inline !important; }
+  .store-pill.mobile { display: inline-flex; padding: 5px 12px; font-size: 12px; }
 
   /* หัวหน้าเพจ */
   .op-page-head { gap: 12px; margin-bottom: 14px; }

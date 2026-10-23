@@ -212,6 +212,8 @@ SELECT s.StoreId,
 FROM onlyfoods_db.Store s
 LEFT JOIN StoreCategory sc ON sc.CategoryName = TRIM(s.Category)
 WHERE s.StoreId = (SELECT MIN(x.StoreId) FROM onlyfoods_db.Store x WHERE x.StoreName = s.StoreName);
+-- ร้านที่ปิดอยู่ในระบบเดิม : ปิดไว้จนกว่าเจ้าของร้านจะกดเปิด (ไม่เปิดเองตามเวลา ; ดู migration 013)
+UPDATE Store SET ManualOverride = FALSE WHERE IsOpen = FALSE;
 
 INSERT INTO _mig_rejects (SourceName, SourceKey, Reason)
 SELECT 'Store', CAST(s.StoreId AS CHAR), CONCAT('duplicate StoreName: ', s.StoreName)

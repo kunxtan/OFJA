@@ -8,7 +8,8 @@ from auth import STORE_SCOPED, require_role
 from db import get_db
 from errors import DomainError
 from shapes import ORDER_SELECT, redact_order_contacts, shape_order
-from utils import CONTRACT_ACTIVE, contract_state
+from services import get_foodcourt
+from utils import CONTRACT_ACTIVE, STORE_CLOSED, STORE_OPEN, bangkok_now, contract_state, store_open_state
 
 router = APIRouter(prefix="/api", tags=["reports"])
 
@@ -33,7 +34,8 @@ def get_dashboard(store_id: Optional[int] = None, user=Depends(require_role(*_RE
     (ใช้ยอดรับจริง ไม่ใช่ TotalAmount เพราะหลังเปลี่ยนเมนูถูกลง TotalAmount ลดก่อนคืนเงินจริง ทำให้ net > gross)"""
     sid = _scope_store(user, store_id)
     sql = """
-        SELECT s.StoreId, s.StoreName, s.IsOpen, s.IsSuspended ,  c.StartDate, c.EndDate ,
+        SELECT s.StoreId, s.StoreName, s.IsSuspended, s.OpenTime, s.CloseTime, s.ManualOverride, s.OverrideUntil,
+               s.PausedUntil, c.StartDate, c.EndDate,
                COUNT(o.OrderId) AS total_orders,
                COALESCE(SUM(COALESCE(n.PaidAmount, o.TotalAmount)), 0) AS gross_sales,
                COALESCE(SUM(COALESCE(n.NetAmount, o.TotalAmount)), 0) AS net_sales
@@ -47,15 +49,21 @@ def get_dashboard(store_id: Optional[int] = None, user=Depends(require_role(*_RE
     if sid:
         sql += " WHERE s.StoreId = %s"
         params.append(sid)
-    sql += " GROUP BY s.StoreId, s.StoreName, s.IsOpen, s.IsSuspended, c.StartDate, c.EndDate ORDER BY s.StoreId"
+    sql += (" GROUP BY s.StoreId, s.StoreName, s.IsSuspended, s.OpenTime, s.CloseTime, s.ManualOverride,"
+            " s.OverrideUntil, s.PausedUntil, c.StartDate, c.EndDate ORDER BY s.StoreId")
     with db.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
+        fc, now = get_foodcourt(cur), bangkok_now()
     for r in rows:
-        # เปิดจริงก็ต่อเมื่อร้านกดเปิดไว้ และสัญญามีผลอยู่ (เหมือน shape_store ใน /api/stores)
-        state = contract_state(r.pop("StartDate"), r.pop("EndDate"))
+        # รับออเดอร์ได้จริง = ตามเวลา/กดเอง ไม่หยุดรับชั่วคราว และสัญญามีผลอยู่ (เหมือน shape_store ใน /api/stores)
+        state = contract_state(r.pop("StartDate"), r.pop("EndDate"), now.date())
+        open_state = store_open_state(r, fc, now) if state == CONTRACT_ACTIVE else STORE_CLOSED
+        for k in ("OpenTime", "CloseTime", "ManualOverride", "OverrideUntil", "PausedUntil"):
+            r.pop(k)
         r["ContractState"] = state
-        r["IsOpen"] = int(bool(r["IsOpen"]) and state == CONTRACT_ACTIVE)
+        r["OpenState"] = open_state
+        r["IsOpen"] = int(open_state == STORE_OPEN)
     return rows
 
 
