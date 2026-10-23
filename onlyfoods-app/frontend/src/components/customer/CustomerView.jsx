@@ -119,6 +119,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const [reviewImageFile, setReviewImageFile] = useState(null);
   const [reviewImagePreview, setReviewImagePreview] = useState(null);
   const [isReadOnlyReview, setIsReadOnlyReview] = useState(false);
+  const [isEditingReview, setIsEditingReview] = useState(false);
   const [reviewedOrderIds, setReviewedOrderIds] = useState({});
 
   // STORE REVIEWS MODAL STATE
@@ -241,7 +242,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       }
       setPayoutOrder(null);
       await fetchMyRefunds();
-      customAlert("บันทึกแล้ว", "เจ้าของร้านจะโอนเงินคืนเข้าบัญชีของคุณ คุณจะได้รับแจ้งเตือนเมื่อโอนแล้ว", "success");
+      customAlert("บันทึกแล้ว", body.method === "TRANSFER" ? "เจ้าของร้านจะโอนเงินคืนเข้าบัญชีของคุณ คุณจะได้รับแจ้งเตือนเมื่อโอนแล้ว" : `รับเงินสดที่ร้านโดยแจ้งเลขคิว ${payoutOrder.QueueNo}`, "success");
     } catch (error) {
       setPayoutError(error.message || "บันทึกไม่สำเร็จ");
     } finally {
@@ -253,20 +254,19 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     const sum = summarizeRefunds(refundsByOrder[order.OrderID]);
     if (!sum.pending && !sum.done) return null;
     const pending = sum.pending > 0;
-    const hasPayoutAccount = (refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER");
     return (
       <div role="status" style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "12px", fontSize: "13px", lineHeight: 1.5,
         background: pending ? "#FEF3C7" : "#D1FAE5", color: pending ? "#92400E" : "#065F46", fontWeight: "700" }}>
         {pending ? (
-          <>รอรับเงินคืน {sum.pending.toFixed(2)} ฿ จากร้าน {order.StoreName}
+          <>รอรับเงินคืน {sum.pending.toFixed(2)} ฿ ที่ร้าน {order.StoreName}
             <div style={{ fontWeight: "500", fontSize: "12px" }}>
-              {hasPayoutAccount
-                ? "ระบุบัญชีแล้ว รอเจ้าของร้านโอนคืน"
-                : "ร้านจะโอนเงินคืนเข้าบัญชีของคุณ กรุณาระบุบัญชีรับเงินคืน"}
+              {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER")
+                ? "เลือกให้เจ้าของร้านโอนคืนแล้ว รอร้านดำเนินการ"
+                : `แจ้งเลขคิว #${order.QueueNo} กับพนักงานหน้าร้านเพื่อรับเงินคืน หรือเลือกให้ร้านโอนให้`}
             </div>
             <button type="button" onClick={() => { setPayoutError(""); setPayoutOrder(order); }}
               style={{ marginTop: "8px", padding: "8px 14px", borderRadius: "10px", border: "none", background: "#92400E", color: "#fff", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-              {hasPayoutAccount ? "แก้ไขบัญชีรับเงินคืน" : "ระบุบัญชีรับเงินคืน"}
+              เลือกวิธีรับเงินคืน
             </button></>
         ) : (
           <>รับเงินคืนแล้ว {sum.done.toFixed(2)} ฿{sum.doneAt ? ` · ${new Date(String(sum.doneAt).replace(" ", "T")).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}` : ""}</>
@@ -595,7 +595,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         body: JSON.stringify({ user_id: userId, reason: customReason }),
       });
       if (res.ok) {
-        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `ร้าน ${outOfStockOrder.StoreName || ""} จะโอนเงินคืนให้ กรุณาระบุบัญชีรับเงินคืนที่ออเดอร์คิว ${outOfStockOrder.QueueNo}`, "success");
+        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `กรุณารับเงินคืนที่ร้าน ${outOfStockOrder.StoreName || ""} โดยแจ้งเลขคิว ${outOfStockOrder.QueueNo}`, "success");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
@@ -704,7 +704,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `ร้าน ${topUpOrder.StoreName || ""} จะโอนเงินคืนให้ กรุณาระบุบัญชีรับเงินคืนที่ออเดอร์คิว ${topUpOrder.QueueNo}`, "success");
+        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `กรุณารับเงินคืนที่ร้าน ${topUpOrder.StoreName || ""} โดยแจ้งเลขคิว ${topUpOrder.QueueNo}`, "success");
         setTopUpSlip(null);
         await fetchMyOrders();
       } else {
@@ -1097,7 +1097,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const getOrderPickupRange = (order) => {
     const status = orderStatusKey(order);
     if (status === "ready") return "พร้อมรับแล้ว";
-    if (!canEstimateOrder(order)) return "-";
+    if (!canEstimateOrder(order)) return "รับอาหารสำเร็จ";
 
     // ออเดอร์ที่นัดเวลารับไว้ ใช้เวลานัดตามที่ลูกค้าเลือก
     if (!isImmediatePickup(order.PickupTime, order.OrderTime)) {
@@ -1207,7 +1207,16 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     fetchStoreReviews(store.StoreId);
   };
 
+  const handleStartEditReview = () => {
+    setIsReadOnlyReview(false);
+    setIsEditingReview(true);
+    setHoverRating(0);
+    setReviewImageFile(null);
+    setReviewComment((prev) => (prev === "ไม่มีข้อความรีวิว" ? "" : prev));
+  };
+
   const handleOpenReviewModal = (order) => {
+    setIsEditingReview(false);
     setReviewOrder(order);
     const localReview = reviewedOrderIds[order.OrderID];
     if (localReview || order.IsReviewed || order.review) {
@@ -1268,8 +1277,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (!reviewOrder) return;
 
     try {
-      const res = await fetch(`${apiBase}/api/reviews`, {
-        method: "POST",
+      const res = await fetch(isEditingReview ? `${apiBase}/api/reviews/${reviewOrder.OrderID}` : `${apiBase}/api/reviews`, {
+        method: isEditingReview ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           order_id: reviewOrder.OrderID,
@@ -1280,8 +1289,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return customAlert(data.detail || "ไม่สามารถส่งรีวิวได้", "", "error");
-      customAlert("ส่งรีวิวเรียบร้อยแล้ว ");
+      if (!res.ok) return customAlert(data.detail || (isEditingReview ? "ไม่สามารถแก้ไขรีวิวได้" : "ไม่สามารถส่งรีวิวได้"), "", "error");
+      customAlert(isEditingReview ? "แก้ไขรีวิวเรียบร้อยแล้ว" : "ส่งรีวิวเรียบร้อยแล้ว ");
+      setIsEditingReview(false);
       setReviewedOrderIds((prev) => ({
         ...prev,
         [reviewOrder.OrderID]: {
@@ -1812,6 +1822,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
           <div style={{ display: "grid", gap: "15px" }}>
             {myOrders.map((order) => {
               const hasReview = order.IsReviewed || order.review || reviewedOrderIds[order.OrderID];
+              const reportedIssue = Array.isArray(myIssueReports)
+                ? myIssueReports.find((rep) => Number(rep.order_id || rep.OrderID) === Number(order.OrderID))
+                : null;
+              const hasReportedIssue = !!reportedIssue || Boolean(order.IsReported);
+              const handleReportClick = () => {
+                if (hasReportedIssue) {
+                  fetchMyIssueReports();
+                  setIsViewReportsModalOpen(true);
+                } else {
+                  handleOpenReportModal(order);
+                }
+              };
               return (
                 <div key={order.OrderID} style={{ ...cardStyle, padding: "18px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
@@ -1870,6 +1892,18 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                         }}
                       >
                         {hasReview ? "ดูรีวิวของฉัน" : "ให้คะแนนรีวิว"}
+                      </button>
+                    )}
+                    {order.Status === "Cancelled" && (
+                      <button
+                        type="button"
+                        onClick={handleReportClick}
+                        style={{padding: "7px 14px", border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`, borderRadius: "10px",
+                          background: hasReportedIssue ? COLORS.navy : "#FFF0ED", color: hasReportedIssue ? COLORS.white : COLORS.red,
+                          fontSize: "12px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit"
+                        }}
+                      >
+                        {hasReportedIssue ? "ดูปัญหาของฉัน" : "แจ้งปัญหา"}
                       </button>
                     )}
                   </div>
@@ -2102,7 +2136,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                       type="button"
                       onClick={handleReportClick}
                       style={{width: "100%", marginTop: "10px", padding: "12px", minHeight: "44px", border: hasReportedIssue ? `1px solid ${COLORS.navy}` : `1px solid ${COLORS.red}`,
-                        borderRadius: "12px", background: hasReportedIssue ? "#F1F5F9" : "#FFF0ED", color: hasReportedIssue ? COLORS.white : COLORS.red,
+                        borderRadius: "12px", background: hasReportedIssue ? COLORS.navy : "#FFF0ED", color: hasReportedIssue ? COLORS.white : COLORS.red,
                         fontSize: "13px", fontWeight: "800", cursor: "pointer", fontFamily: "inherit",
                       }}
                     >
@@ -2673,6 +2707,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         reviewImagePreview={reviewImagePreview}
         handleReviewImageChange={handleReviewImageChange}
         submitReview={() => once("review", submitReview)}
+        isEditingReview={isEditingReview}
+        onStartEditReview={handleStartEditReview}
       />
       <OutOfStockModal
         outOfStockOrder={outOfStockOrder}
@@ -2681,7 +2717,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         isChangeMenuMode={isChangeMenuMode}
         setIsChangeMenuMode={setIsChangeMenuMode}
         handleCancelOutOfStockOrder={(reason) => customAlert(
-          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ ร้านจะโอนเงินคืนเข้าบัญชีที่คุณระบุ", "warning",
+          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ คุณจะได้รับเงินคืนที่ร้าน (หรือเลือกให้ร้านโอนคืนได้)", "warning",
           () => once("cancel-oos", () => handleCancelOutOfStockOrder(reason)))}
         setNewSelectedProduct={setNewSelectedProduct}
         newSelectedProduct={newSelectedProduct}

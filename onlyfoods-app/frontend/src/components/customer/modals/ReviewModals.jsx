@@ -16,13 +16,15 @@ export function ReviewModal({
   reviewImagePreview,
   handleReviewImageChange,
   submitReview,
+  isEditingReview = false,
+  onStartEditReview,
 }) {
   if (!reviewOrder) return null;
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box" }} onClick={() => setReviewOrder(null)}>
       <div onClick={e => e.stopPropagation()} style={{ background: COLORS.white, width: "min(420px, 100%)", borderRadius: "22px", padding: "25px", boxSizing: "border-box" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ margin: 0, fontSize: "20px" }}>{isReadOnlyReview ? "รีวิวของคุณ" : "ให้คะแนนร้าน"}</h3>
+          <h3 style={{ margin: 0, fontSize: "20px" }}>{isReadOnlyReview ? "รีวิวของคุณ" : isEditingReview ? "แก้ไขรีวิว" : "ให้คะแนนร้าน"}</h3>
           <button onClick={() => setReviewOrder(null)} style={{ border: "none", background: COLORS.lightGray, width: "35px", height: "35px", borderRadius: "50%", cursor: "pointer", fontSize: "18px" }}>×</button>
         </div>
         <p style={{ color: COLORS.gray, fontSize: "13px" }}>คิว #{reviewOrder.QueueNo} • {reviewOrder.StoreName}</p>
@@ -104,7 +106,12 @@ export function ReviewModal({
 
         {!isReadOnlyReview && (
           <button onClick={submitReview} style={{ width: "100%", marginTop: "22px", padding: "13px", border: "none", borderRadius: "13px", background: COLORS.orange, color: COLORS.white, fontWeight: "900", fontSize: "14px", cursor: "pointer", fontFamily: "inherit" }}>
-            ส่งรีวิว 
+            {isEditingReview ? "บันทึกการแก้ไข" : "ส่งรีวิว"}
+          </button>
+        )}
+        {isReadOnlyReview && onStartEditReview && (
+          <button onClick={onStartEditReview} style={{ width: "100%", marginTop: "22px", padding: "13px", border: `1px solid ${COLORS.orange}`, borderRadius: "13px", background: COLORS.white, color: COLORS.orange, fontWeight: "900", fontFamily: "inherit", cursor: "pointer" }}>
+            แก้ไขรีวิว
           </button>
         )}
       </div>

@@ -14,7 +14,7 @@ from errors import DomainError
 from schemas import CreateIssueReportSchema, IssueUpdateSchema, ReviewCreateSchema
 from services import is_duplicate_key, log_audit, send_notif
 from shapes import in_clause
-from utils import bangkok_now, clean_text, day_period, mask_person_name, parse_date, queue_label, save_image
+from utils import bangkok_now, clean_text, mask_person_name, parse_date, queue_label, save_image
 
 router = APIRouter(prefix="/api", tags=["feedback"])
 
@@ -48,6 +48,34 @@ def create_review(data: ReviewCreateSchema, user=Depends(require_role("CUSTOMER"
                 if is_duplicate_key(exc):
                     raise DomainError(400, "ออเดอร์นี้ได้รับการรีวิวแล้ว")
                 raise
+    return {"success": True}
+
+
+@router.put("/reviews/{order_id}")
+def update_review(order_id: int, data: ReviewCreateSchema, user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
+    """ลูกค้าแก้รีวิวของตัวเอง (คะแนน / ข้อความ / รูป)"""
+    image = save_image(data.image_url, "reviews") if data.image_url else None
+    with transaction(db):
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT o.CustomerId, r.ReviewId FROM `Order` o
+                LEFT JOIN Review r ON r.OrderId = o.OrderId
+                WHERE o.OrderId = %s
+                """,
+                (order_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise DomainError(404, "ไม่พบคำสั่งซื้อนี้")
+            if row["CustomerId"] != user["UserId"]:
+                raise DomainError(403, "คุณไม่มีสิทธิ์แก้ไขรีวิวนี้")
+            if not row["ReviewId"]:
+                raise DomainError(404, "ออเดอร์นี้ยังไม่มีรีวิว")
+            cur.execute(
+                "UPDATE Review SET Rating = %s, Comment = %s, ImageUrl = %s WHERE OrderId = %s",
+                (data.rating, clean_text(data.comment), image, order_id),
+            )
     return {"success": True}
 
 
@@ -103,24 +131,6 @@ def _reviewer_key(store_id: int, customer_id) -> str:
     """รหัสนิรนามของลูกค้า (คงที่ภายในร้านเดียว) : รู้ว่ารีวิวหลายอันมาจากคนเดียวกันได้ โดยไม่เห็นตัวตน"""
     raw = f"{config.JWT_SECRET}:{store_id}:{customer_id}".encode()
     return hashlib.sha256(raw).hexdigest()[:8]
-
-
-def _anon_label(key: str) -> str:
-    return f"ลูกค้า #{key[:4].upper()}"
-
-
-def _hide_order_for_store(item: dict, ordered_at, *, keep_created: bool) -> None:
-    """M15 ฝั่งร้าน: ไม่ส่งเลขออเดอร์ เลขคิว ชื่อ ยอด และเวลาเป๊ะ (ร้านเอาไปจับคู่กับประวัติขาย/คนที่มารับได้)
-    เหลือเมนู + วันที่ + ช่วงเวลา (เช้า/เที่ยง/บ่าย/เย็น) ; ผู้บริหารยังเห็นครบ"""
-    item["HasOrder"] = bool(item.pop("OrderId", None) or item.pop("OrderID", None))
-    item.pop("OrderID", None)
-    for k in ("QueueNo", "TotalAmount", "OrderedAt"):
-        item.pop(k, None)
-    item["OrderedDate"] = ordered_at.date().isoformat() if ordered_at else None
-    item["OrderedPeriod"] = day_period(ordered_at)
-    if not keep_created and item.get("CreatedAt"):
-        item["CreatedPeriod"] = day_period(item["CreatedAt"])
-        item["CreatedAt"] = item["CreatedAt"].date().isoformat()
 
 
 @router.get("/stores/{store_id}/reviews/detail")
@@ -199,11 +209,6 @@ def get_store_reviews_detail(store_id: int, user=Depends(require_role("STORE_OWN
         "last30": window_avg(30, 0),
         "prev30": window_avg(60, 30),
     })
-    if user["RoleCode"] in STORE_SCOPED:
-        for rv in reviews:
-            # รีวิวมักเขียนหลังรับอาหารไม่กี่นาที : เวลารีวิวเป๊ะก็จับคู่กับออเดอร์ได้ -> เหลือแค่วัน + ช่วง
-            _hide_order_for_store(rv, rv["OrderedAt"], keep_created=False)
-            rv["ReviewerName"] = _anon_label(rv["ReviewerKey"])
     menu_rows = sorted(
         ({**{k: v for k, v in m.items() if k != "sum"}, "average": round(m["sum"] / m["count"], 2)} for m in menu.values()),
         key=lambda m: (-m["count"], -m["average"]),
@@ -246,11 +251,9 @@ def _shape_issues(rows, mask_reporter: bool = False):
         code = r.pop("QueueCode", "")
         r["QueueNo"] = queue_label(r["QueueNo"], code) if r.get("QueueNo") is not None else None
         r["Status"] = _LEGACY_ISSUE_STATUS.get(r["IssueStatus"], r["IssueStatus"])  # หน้าลูกค้าอ่านฟิลด์นี้
-        if mask_reporter:  # ฝั่งร้าน (M15): ไม่ส่งชื่อ รหัสลูกค้า เลขออเดอร์ เลขคิว
-            r["CustomerName"] = "ลูกค้า"
+        if mask_reporter:  # ฝั่งร้าน: ชื่อผู้แจ้งแบบย่อ ไม่ส่งรหัสลูกค้า
+            r["CustomerName"] = mask_person_name(r["CustomerName"])
             r.pop("UserId", None)
-            r["HasOrder"] = bool(r.pop("OrderID", None))
-            r.pop("QueueNo", None)
     return rows
 
 
@@ -291,7 +294,7 @@ def create_issue_report(data: CreateIssueReportSchema, user=Depends(require_role
                 (data.store_id,),
             )
             for owner in cur.fetchall():
-                send_notif(db, owner["UserId"], "ISSUE", "มีรายงานปัญหาใหม่", "ลูกค้าส่งรายงานปัญหาเกี่ยวกับร้านของคุณ", None)
+                send_notif(db, owner["UserId"], "ISSUE", "มีรายงานปัญหาใหม่", "ลูกค้าส่งรายงานปัญหาเกี่ยวกับร้านของคุณ", data.order_id)
         log_audit(db, user["UserId"], "CREATE_ISSUE", "IssueReport", report_id, None, {"store_id": data.store_id})
     return {"success": True, "report_id": report_id, "message": "ส่งรายงานปัญหาเรียบร้อยแล้ว"}
 
@@ -417,11 +420,6 @@ def get_store_issues_detail(store_id: int, user=Depends(require_role("STORE_OWNE
         "avg_resolve_hours": round(sum(hours) / len(hours), 1) if hours else None,
         "by_type": sorted(by_type.values(), key=lambda t: -t["count"]),
     }
-    if user["RoleCode"] in STORE_SCOPED:
-        for i in issues:
-            # เวลาแจ้งปัญหาเก็บไว้ (ร้านต้องรู้ว่าเรื่องค้างนานแค่ไหน) ; ส่วนออเดอร์เหลือแค่วัน + ช่วง
-            _hide_order_for_store(i, i["OrderedAt"], keep_created=True)
-            i["ReporterName"] = i["CustomerName"] = _anon_label(i["ReporterKey"])
     return {"issues": issues, "summary": summary}
 
 
