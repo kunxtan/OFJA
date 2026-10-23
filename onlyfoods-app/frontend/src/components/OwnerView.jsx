@@ -405,27 +405,45 @@ function KpiSmall({ tone, icon, value, unit, label, children }) {
 
 const MENU_COLORS = ['#FF724C', '#FDBF50', '#2A2C41', '#17A673', '#FF9E84', '#585B78', '#E8552D', '#B9BCCD'];
 
-// แผนภาพวงกลม: สัดส่วนยอดขายแยกตามเมนู (7 อันดับแรก + เมนูอื่น ๆ)
-function MenuDonutChart({ rows }) {
+// เมนูขายดี + สัดส่วนยอดขาย ในการ์ดเดียว: 5 อันดับแรก (เรียงตามจำนวนจาน) + เมนูอื่น ๆ
+// สีของแต่ละเมนูในวงกลมตรงกับแถบในรายการ ชี้ฝั่งไหนก็ไฮไลต์อีกฝั่ง
+const MENU_TOP_COUNT = 5;
+const MENU_OTHER_COLOR = '#B9BCCD';
+
+function MenuBreakdown({ rows, products }) {
   const [hovered, setHovered] = useState(null);
-  const raw = (rows || []).filter(r => r.amount > 0).sort((a, b) => b.amount - a.amount);
-  if (!raw.length) {
+  const all = rows || [];
+  if (!all.length) {
     return (
       <div className="od-empty">
-        <Icon name="pie" size={30} />
-        <span>ช่วงเวลานี้ยังไม่มียอดขาย</span>
+        <Icon name="award" size={30} />
+        <span>ช่วงเวลานี้ยังไม่มีเมนูที่ขายได้</span>
       </div>
     );
   }
-  const top = raw.slice(0, 7);
-  const rest = raw.slice(7).reduce((acc, r) => acc + r.amount, 0);
-  const list = rest > 0 ? [...top, { id: 'other', name: 'เมนูอื่น ๆ', amount: rest, qty: raw.slice(7).reduce((a, r) => a + r.qty, 0) }] : top;
-  const total = list.reduce((acc, r) => acc + r.amount, 0) || 1;
+  const top = all.slice(0, MENU_TOP_COUNT);
+  const others = all.slice(MENU_TOP_COUNT);
+  const other = others.length ? {
+    id: 'other',
+    name: `เมนูอื่น ๆ (${others.length} เมนู)`,
+    qty: others.reduce((acc, r) => acc + r.qty, 0),
+    amount: others.reduce((acc, r) => acc + r.amount, 0),
+    share: others.reduce((acc, r) => acc + r.share, 0),
+  } : null;
+  const list = (other ? [...top, other] : top).map((r, i) => ({ ...r, color: r.id === 'other' ? MENU_OTHER_COLOR : MENU_COLORS[i] }));
+  const slices = list.filter(r => r.amount > 0);
+  const total = slices.reduce((acc, r) => acc + r.amount, 0);
+  const maxQty = Math.max(...top.map(r => r.qty), 1);
+  const productById = Object.fromEntries((products || []).map(p => [String(p.ProductId), p]));
+  const active = hovered && list.find(r => r.id === hovered);
+
   let cumulative = 0;
-  const stops = list.map((r, i) => {
+  const stops = slices.map(r => {
     const from = cumulative;
-    cumulative += (r.amount / total) * 100;
-    return `${MENU_COLORS[i % MENU_COLORS.length]} ${from}% ${cumulative}%`;
+    cumulative += (r.amount / (total || 1)) * 100;
+    // ชี้อยู่ที่เมนูหนึ่ง: ส่วนอื่นจางลง
+    const color = active && active.id !== r.id ? `${r.color}40` : r.color;
+    return `${color} ${from}% ${cumulative}%`;
   }).join(', ');
 
   const hoverDonut = (e) => {
@@ -433,24 +451,25 @@ function MenuDonutChart({ rows }) {
     const dx = e.clientX - (rect.left + rect.width / 2);
     const dy = e.clientY - (rect.top + rect.height / 2);
     const dist = Math.hypot(dx, dy);
-    if (dist < rect.width * 0.33 || dist > rect.width / 2) { setHovered(null); return; }
+    if (!total || dist < rect.width * 0.33 || dist > rect.width / 2) { setHovered(null); return; }
     const pct = ((Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360) / 3.6;
     let acc = 0;
-    setHovered(list.find(r => { acc += (r.amount / total) * 100; return pct <= acc; }) || list[list.length - 1]);
+    setHovered((slices.find(r => { acc += (r.amount / total) * 100; return pct <= acc; }) || slices[slices.length - 1]).id);
   };
 
   return (
-    <div className="od-donut-wrap">
+    <div className="od-menu-wrap">
       <div className="od-donut-box">
-        <div className="od-donut" style={{ background: `conic-gradient(${stops})` }} onMouseMove={hoverDonut} onMouseLeave={() => setHovered(null)}>
+        <div className="od-donut" style={{ background: total ? `conic-gradient(${stops})` : 'var(--berry-blue-light)' }}
+          onMouseMove={hoverDonut} onMouseLeave={() => setHovered(null)}>
           <div className="od-donut-hole" />
         </div>
         <div className="od-donut-center">
-          {hovered ? (
+          {active ? (
             <>
-              <div className="name">{hovered.name}</div>
-              <strong>{fmtMoney(hovered.amount)}</strong>
-              <span>บาท · {((hovered.amount / total) * 100).toFixed(1)}%</span>
+              <div className="name">{active.name}</div>
+              <strong>{fmtMoney(active.amount)}</strong>
+              <span>บาท · {(total ? (active.amount / total) * 100 : 0).toFixed(1)}%</span>
             </>
           ) : (
             <>
@@ -461,64 +480,48 @@ function MenuDonutChart({ rows }) {
           )}
         </div>
       </div>
-      <div className="od-legend">
-        {list.map((r, i) => {
-          const active = hovered && hovered.id === r.id;
+
+      <div className="od-top-list">
+        {top.map((r, i) => {
+          const product = productById[r.id];
+          const avgPrice = r.qty ? r.amount / r.qty : 0;
+          const color = list[i].color;
           return (
-            <div key={r.id} className={`od-legend-row ${active ? 'active' : ''}`} onMouseEnter={() => setHovered(r)} onMouseLeave={() => setHovered(null)}>
-              <span className="swatch" style={{ background: MENU_COLORS[i % MENU_COLORS.length] }} />
-              <span className="name" title={r.name}>{r.name}</span>
-              <span className="amount">{fmtMoney(r.amount)} ฿</span>
-              <span className="pct">{((r.amount / total) * 100).toFixed(1)}%</span>
+            <div key={r.id} className={`od-top-row ${hovered === r.id ? 'active' : ''}`}
+              onMouseEnter={() => setHovered(r.id)} onMouseLeave={() => setHovered(null)}>
+              <div className={`od-rank rank-${i + 1}`}>{i + 1}</div>
+              <div className="od-top-thumb">
+                {product?.img ? <img src={product.img} alt="" /> : <Icon name="photo" size={20} />}
+              </div>
+              <div className="od-top-info">
+                <div className="od-top-head">
+                  <div className="od-top-name" title={r.name}>
+                    <span className="swatch" style={{ background: color }} />{r.name}
+                  </div>
+                  <div className="od-top-qty"><strong>{fmtMoney(r.qty)}</strong> จาน</div>
+                </div>
+                <div className="od-top-bar"><div style={{ width: `${Math.max((r.qty / maxQty) * 100, 4)}%`, background: color }} /></div>
+                <div className="od-top-meta">
+                  <span>ยอดขาย <b>{fmtMoney(r.amount)} บาท</b></span>
+                  <span>สัดส่วน <b>{r.share.toFixed(1)}%</b></span>
+                  <span>{fmtMoney(r.orderCount)} ออเดอร์</span>
+                  <span>เฉลี่ย {fmtMoney(avgPrice)} บาท/จาน</span>
+                  {product?.IsOutOfStock ? <span className="out">สินค้าหมดอยู่</span> : null}
+                </div>
+              </div>
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-// เมนูขายดี 5 อันดับแรก พร้อมรายละเอียด
-function TopMenuList({ rows, products }) {
-  const top = (rows || []).slice(0, 5);
-  if (!top.length) {
-    return (
-      <div className="od-empty">
-        <Icon name="award" size={30} />
-        <span>ช่วงเวลานี้ยังไม่มีเมนูที่ขายได้</span>
-      </div>
-    );
-  }
-  const maxQty = Math.max(...top.map(r => r.qty), 1);
-  const productById = Object.fromEntries((products || []).map(p => [String(p.ProductId), p]));
-  return (
-    <div className="od-top-list">
-      {top.map((r, i) => {
-        const product = productById[r.id];
-        const avgPrice = r.qty ? r.amount / r.qty : 0;
-        return (
-          <div key={r.id} className="od-top-row">
-            <div className={`od-rank rank-${i + 1}`}>{i + 1}</div>
-            <div className="od-top-thumb">
-              {product?.img ? <img src={product.img} alt="" /> : <Icon name="photo" size={20} />}
-            </div>
-            <div className="od-top-info">
-              <div className="od-top-head">
-                <div className="od-top-name" title={r.name}>{r.name}</div>
-                <div className="od-top-qty"><strong>{fmtMoney(r.qty)}</strong> จาน</div>
-              </div>
-              <div className="od-top-bar"><div style={{ width: `${Math.max((r.qty / maxQty) * 100, 4)}%` }} /></div>
-              <div className="od-top-meta">
-                <span>ยอดขาย <b>{fmtMoney(r.amount)} บาท</b></span>
-                <span>สัดส่วน <b>{r.share.toFixed(1)}%</b></span>
-                <span>{fmtMoney(r.orderCount)} ออเดอร์</span>
-                <span>เฉลี่ย {fmtMoney(avgPrice)} บาท/จาน</span>
-                {product?.IsOutOfStock ? <span className="out">สินค้าหมดอยู่</span> : null}
-              </div>
-            </div>
+        {other && (
+          <div className={`od-top-row od-top-other ${hovered === 'other' ? 'active' : ''}`}
+            onMouseEnter={() => setHovered('other')} onMouseLeave={() => setHovered(null)}>
+            <span className="swatch" style={{ background: MENU_OTHER_COLOR }} />
+            <span className="name">{other.name}</span>
+            <span className="meta">{fmtMoney(other.qty)} จาน · {fmtMoney(other.amount)} บาท</span>
+            <b>{other.share.toFixed(1)}%</b>
           </div>
-        );
-      })}
+        )}
+      </div>
     </div>
   );
 }
@@ -3793,37 +3796,23 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 </div>
               </div>
 
-              {/* ===== ยอดขายแยกเมนู + เมนูขายดี ===== */}
-              <div className="od-row one-one">
-                <div className="berry-card">
-                  <div className="od-card-head">
-                    <div>
-                      <h3>สัดส่วนยอดขายแยกตามเมนู</h3>
-                      <p>{periodLabel} · ชี้ที่วงกลมหรือชื่อเมนูเพื่อดูยอดขาย</p>
-                    </div>
+              {/* ===== เมนูขายดี + สัดส่วนยอดขาย ===== */}
+              <div className="berry-card">
+                <div className="od-card-head">
+                  <div>
+                    <h3>เมนูขายดีและสัดส่วนยอดขาย</h3>
+                    <p>{periodLabel} · เรียงตามจำนวนจาน · ชี้ที่วงกลมหรือรายการเพื่อดูยอดขาย</p>
                   </div>
-                  {ready ? <MenuDonutChart rows={storeReport?.menus || []} /> : (
-                    <div className="od-donut-wrap">
-                      <Skeleton height={220} width={220} radius={999} style={{ margin: '0 auto' }} />
-                      <div style={{ flex: '1 1 220px', display: 'grid', gap: 10 }}>{[0, 1, 2, 3].map(i => <Skeleton key={i} height={16} />)}</div>
-                    </div>
+                  {ready && (storeReport?.menus || []).length > 0 && (
+                    <span className="od-chip">{fmtMoney((storeReport?.menus || []).length)} เมนูที่ขายได้</span>
                   )}
                 </div>
-
-                <div className="berry-card">
-                  <div className="od-card-head">
-                    <div>
-                      <h3>เมนูขายดี 5 อันดับแรก</h3>
-                      <p>เรียงตามจำนวนจานที่ขายได้ในช่วงที่เลือก</p>
-                    </div>
-                    {ready && (storeReport?.menus || []).length > 0 && (
-                      <span className="od-chip">{fmtMoney((storeReport?.menus || []).length)} เมนูที่ขายได้</span>
-                    )}
-                  </div>
-                  {ready ? <TopMenuList rows={storeReport?.menus || []} products={products} /> : (
+                {ready ? <MenuBreakdown rows={storeReport?.menus || []} products={products} /> : (
+                  <div className="od-menu-wrap">
+                    <Skeleton height={220} width={220} radius={999} style={{ margin: '0 auto' }} />
                     <div className="od-top-list">{[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={66} radius={12} />)}</div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
             );
@@ -5989,7 +5978,7 @@ body, html {
 .od-empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #C2C5D3; font-size: 13px; }
 .od-empty span { color: var(--berry-text-muted); }
 
-.od-donut-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 22px; margin-top: 14px; }
+.od-menu-wrap { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: center; gap: 28px; margin-top: 14px; }
 .od-donut-box { position: relative; flex: 0 0 220px; width: 220px; height: 220px; margin: 0 auto; }
 .od-donut { position: absolute; inset: 0; border-radius: 50%; cursor: pointer; }
 .od-donut-hole { position: absolute; inset: 17%; border-radius: 50%; background: var(--berry-paper); pointer-events: none; }
@@ -5998,17 +5987,16 @@ body, html {
 .od-donut-center .name.muted { font-weight: 500; color: var(--berry-text-muted); }
 .od-donut-center strong { margin-top: 3px; font-size: 22px; color: var(--berry-text-dark); }
 .od-donut-center span { font-size: 11.5px; color: var(--berry-text-muted); }
-.od-legend { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.od-legend-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto 52px; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 8px; cursor: pointer; transition: background 0.15s ease; }
-.od-legend-row.active, .od-legend-row:hover { background: var(--berry-purple-light); }
-.od-legend-row .swatch { width: 11px; height: 11px; border-radius: 3px; }
-.od-legend-row .name { font-size: 13px; color: var(--berry-text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.od-legend-row .amount { font-size: 12px; color: var(--berry-text-muted); white-space: nowrap; }
-.od-legend-row .pct { font-size: 13px; font-weight: 700; color: var(--berry-text-dark); text-align: right; }
 
 .od-top-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .od-top-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--berry-border); border-radius: 12px; transition: border-color 0.2s ease, background 0.2s ease; }
-.od-top-row:hover { border-color: var(--berry-purple-light); background: #FFFBF9; }
+.od-top-row:hover, .od-top-row.active { border-color: var(--berry-purple-light); background: #FFFBF9; }
+.od-top-row .swatch { display: inline-block; width: 10px; height: 10px; min-width: 10px; border-radius: 3px; margin-right: 8px; vertical-align: middle; }
+.od-top-other { padding: 8px 12px; font-size: 12.5px; color: var(--berry-text-muted); }
+.od-top-other .swatch { margin-right: 0; }
+.od-top-other .name { flex: 1; min-width: 0; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.od-top-other .meta { white-space: nowrap; }
+.od-top-other b { min-width: 46px; text-align: right; color: var(--berry-text-dark); }
 .od-rank { width: 30px; height: 30px; min-width: 30px; display: grid; place-items: center; border-radius: 50%; font-size: 13px; font-weight: 700; background: var(--berry-blue-light); color: var(--berry-text-muted); }
 .od-rank.rank-1 { background: linear-gradient(135deg, #FDBF50, #E2A430); color: #FFFFFF; box-shadow: 0 4px 10px rgba(226,164,48,0.35); }
 .od-rank.rank-2 { background: linear-gradient(135deg, #C9CCD8, #9EA2B5); color: #FFFFFF; }
@@ -6028,6 +6016,9 @@ body, html {
 
 @media (max-width: 1280px) {
   .od-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .od-menu-wrap { grid-template-columns: minmax(0, 1fr); gap: 18px; }
 }
 @media (max-width: 1100px) {
   .od-row.two-one, .od-row.one-one { grid-template-columns: minmax(0, 1fr); }
@@ -7033,7 +7024,7 @@ body, html {
   .od-card-head { flex-direction: column; gap: 4px; }
   .od-head-total { font-size: 18px; }
   .od-donut-box { flex-basis: 180px; width: 180px; height: 180px; }
-  .od-legend { flex-basis: 100%; }
+  .od-top-other .meta { display: none; }
   .od-top-row { padding: 10px; gap: 10px; }
   .od-top-thumb { display: none; }
   .od-top-meta span:nth-child(n+3) { display: none; }
