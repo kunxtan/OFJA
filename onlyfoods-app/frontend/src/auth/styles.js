@@ -3,8 +3,6 @@ import { PALETTE } from './theme';
 
 // CSS ของหน้า login + พื้นฐานทั้งแอป (สีจาก PALETTE)
 export const APP_STYLES = `
-@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700;800&display=swap');
-
 * { box-sizing: border-box; }
 body { font-family: 'Prompt', 'Noto Sans Thai', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 html, body, #root {

@@ -117,15 +117,17 @@ jobs:
       - name: Health check
         run: |
           # ยิงเข้าพอร์ต 80 ของเครื่องตัวเองแบบเดียวกับที่ Cloudflare ส่งมา
+          # ต้องผ่านทั้ง API (backend + db) และหน้าเว็บ (คอนเทนเนอร์ frontend : nginx.conf ของ frontend ผิด = เว็บขาวทั้งเว็บ)
           for i in $(seq 1 30); do
-            if curl -fsS --max-time 5 -H "Host: $DOMAIN" "http://127.0.0.1/api/food-court/status" > /dev/null; then
+            if curl -fsS --max-time 5 -H "Host: $DOMAIN" "http://127.0.0.1/api/food-court/status" > /dev/null \
+               && curl -fsS --max-time 5 -H "Host: $DOMAIN" "http://127.0.0.1/" | grep -q '<div id="root">'; then
               echo "OK: เว็บพร้อมใช้งานที่ https://$DOMAIN"
               exit 0
             fi
-            echo "รอ backend/db สตาร์ท... ($i/30)"
+            echo "รอ backend/db/frontend สตาร์ท... ($i/30)"
             sleep 5
           done
           echo "เว็บไม่ตอบหลัง 150 วินาที - log ล่าสุด:"
           cd "$APP_DIR/onlyfoods-app"
-          sudo docker compose -f "$COMPOSE_FILE_NAME" logs --tail=50 proxy backend
+          sudo docker compose -f "$COMPOSE_FILE_NAME" logs --tail=50 proxy backend frontend
           exit 1

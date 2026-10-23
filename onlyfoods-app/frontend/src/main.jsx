@@ -2,9 +2,19 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import './authFetch.js'
 import App from './App.jsx'
+import ErrorBoundary from './shared/ui/ErrorBoundary'
+import { reloadOnceForNewVersion } from './lib/chunkReload'
+
+// Vite แจ้งเมื่อโหลดไฟล์ของหน้า (import แบบ lazy) ไม่ได้ เช่นแท็บที่เปิดค้างไว้ก่อน deploy
+// รีโหลดเองได้ = กันไม่ให้ error หลุดไปถึงหน้าจอ ; รีโหลดไม่ได้ (เพิ่งรีโหลดไป) = ปล่อยให้ ErrorBoundary แสดงข้อความ
+window.addEventListener('vite:preloadError', (event) => {
+  if (reloadOnceForNewVersion()) event.preventDefault()
+})
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 )

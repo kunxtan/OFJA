@@ -6,14 +6,25 @@ import { PALETTE } from './auth/theme';
 import { APP_STYLES } from './auth/styles';
 import { GOOGLE_CLIENT_ID, decodeJwtPayload } from './auth/google';
 import LoginScreen from './auth/LoginScreen';
+import PageLoading from './shared/ui/PageLoading';
 
 // หน้าของแต่ละบทบาทแยกเป็นไฟล์ JS ของตัวเอง : โหลดเฉพาะบทบาทที่ login (ลูกค้าบนมือถือไม่ต้องโหลดหน้าผู้บริหาร)
-const AccountantView = lazy(() => import('./features/accountant/AccountantView'));
-const CounterView = lazy(() => import('./features/counter/CounterView'));
-const CustomerView = lazy(() => import('./features/customer/CustomerView'));
-const ExecutiveView = lazy(() => import('./features/executive/ExecutiveView'));
-const KitchenView = lazy(() => import('./features/kitchen/KitchenView'));
-const OwnerView = lazy(() => import('./features/owner/OwnerView'));
+const VIEW_LOADERS = {
+  Accountant: () => import('./features/accountant/AccountantView'),
+  Front: () => import('./features/counter/CounterView'),
+  Customer: () => import('./features/customer/CustomerView'),
+  Executive: () => import('./features/executive/ExecutiveView'),
+  Kitchen: () => import('./features/kitchen/KitchenView'),
+  Owner: () => import('./features/owner/OwnerView'),
+};
+const AccountantView = lazy(VIEW_LOADERS.Accountant);
+const CounterView = lazy(VIEW_LOADERS.Front);
+const CustomerView = lazy(VIEW_LOADERS.Customer);
+const ExecutiveView = lazy(VIEW_LOADERS.Executive);
+const KitchenView = lazy(VIEW_LOADERS.Kitchen);
+const OwnerView = lazy(VIEW_LOADERS.Owner);
+// บทบาทล่าสุดที่ใช้เครื่องนี้ : เปิดหน้า login ครั้งถัดไปโหลดไฟล์ของบทบาทนั้นไว้ก่อน (กด login แล้วไม่ต้องรอ)
+const LAST_ROLE_KEY = 'onlyfoods.lastRole';
 
 export default function App() {
   // refresh แล้วไม่หลุด : กู้ผู้ใช้จาก sessionStorage (มี token อยู่เท่านั้น ; token ใช้ไม่ได้แล้ว backend ตอบ 401 -> กลับหน้า login)
@@ -37,6 +48,27 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);   // กันกดซ้ำ + บอกว่ากำลังรอเซิร์ฟเวอร์ (ตอนระบบช้า/ล่มอาจรอนาน)
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser?.role) return;
+    try { localStorage.setItem(LAST_ROLE_KEY, currentUser.role); } catch { /* storage ถูกบล็อก */ }
+  }, [currentUser?.role]);
+
+  // อยู่หน้า login : เครื่องว่างเมื่อไหร่ โหลดไฟล์ของบทบาทล่าสุดไว้ (ไม่เคย login เครื่องนี้ = ไม่โหลดอะไรเพิ่ม)
+  useEffect(() => {
+    if (currentUser) return undefined;
+    let role = null;
+    try { role = localStorage.getItem(LAST_ROLE_KEY); } catch { /* storage ถูกบล็อก */ }
+    const load = VIEW_LOADERS[role];
+    if (!load) return undefined;
+    const run = () => { load().catch(() => { /* โหลดไม่ได้ตอนนี้ : ตอน login จะลองใหม่ (และรีโหลดเองถ้ามี deploy ใหม่) */ }); };
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(run, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(run, 1500);
+    return () => clearTimeout(t);
+  }, [currentUser]);
 
   const API_BASE = import.meta.env.VITE_API_URL || window.location.origin;
 
@@ -325,8 +357,8 @@ export default function App() {
         }} />
       ) : (
         <div style={{ width: '100%', minHeight: '100vh', background: '#F8FAFC', padding: 0, margin: 0 }}>
-          {/* ระหว่างโหลดไฟล์ของบทบาทนั้น (ครั้งแรกเท่านั้น) : พื้นหลังว่างสีเดียวกับแอป */}
-          <Suspense fallback={null}>
+          {/* ระหว่างโหลดไฟล์ของบทบาทนั้น (ครั้งแรกเท่านั้น) : เกิน 0.25 วิ แสดงวงหมุน */}
+          <Suspense fallback={<PageLoading />}>
           {currentUser.role === 'Customer' && <CustomerView user={currentUser} apiBase={API_BASE} stores={stores} products={products} foodCourtOpen={foodCourtOpen} onLogout={logout} />}
           {currentUser.role === 'Kitchen' && <KitchenView user={currentUser} apiBase={API_BASE} onLogout={logout} />}
           {currentUser.role === 'Front' && <CounterView user={currentUser} apiBase={API_BASE} stores={stores} onLogout={logout} />}

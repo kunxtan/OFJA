@@ -2431,7 +2431,6 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     <div className="customer-view" style={pageStyle}>
       <style>
         {`
-          @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
           .customer-view, .customer-view * {font-family: 'Sarabun', sans-serif !important;}
           .customer-view button { -webkit-appearance: none; appearance: none; box-sizing: border-box; font-family: inherit; }
           /* จอสัมผัส: ปุ่มกดต้องมีพื้นที่ขั้นต่ำ 44px */

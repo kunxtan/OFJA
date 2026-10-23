@@ -42,16 +42,6 @@ export default function KitchenView({ user, apiBase, onLogout }) {
     loadUserProfile();
   }, [userId, apiBase]);
 
-  useEffect(() => {
-    if (!document.getElementById('kitchen-font-link')) {
-      const link = document.createElement('link');
-      link.id = 'kitchen-font-link';
-      link.rel = 'stylesheet';
-      link.href = 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&family=Sarabun:wght@400;500;600;700;800&display=swap';
-      document.head.appendChild(link);
-    }
-  }, []);
-
   const displayName = fullName || user?.FullName || user?.Username || 'ผู้ใช้งานระบบ';
   const displayRole = getRoleLabel(user?.Role);
 

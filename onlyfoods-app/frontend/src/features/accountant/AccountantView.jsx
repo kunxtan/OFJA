@@ -20,16 +20,6 @@ import ReportPage from './pages/ReportPage';
    MAIN COMPONENT
    ============================================================ */
 export default function AccountantView({ apiBase, user, onLogout }) {
-  useEffect(() => {
-    if (!document.getElementById('avx-font-link')) {
-      const link = document.createElement('link');
-      link.id = 'avx-font-link';
-      link.rel = 'stylesheet';
-      link.href = 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Sarabun:wght@400;500;600;700&display=swap';
-      document.head.appendChild(link);
-    }
-  }, []);
-
   const [stores, setStores] = useState([]);
   const [orders, setOrders] = useState([]);
   const [logs, setLogs] = useState([]);

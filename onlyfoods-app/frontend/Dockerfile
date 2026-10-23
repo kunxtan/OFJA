@@ -9,6 +9,8 @@ ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 RUN npm run build
 
 FROM nginx:alpine
+# cache : index.html ถามทุกครั้ง ส่วน /assets/ (ชื่อมีรหัส build) เก็บได้ยาว (ดู nginx.conf)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

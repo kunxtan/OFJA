@@ -568,7 +568,6 @@ const returnFoodCourtToAuto = async () => {
     };
     return (<>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Sarabun:wght@400;500;600;700&display=swap');
         html, body, #root {
           width: 100% !important;
           max-width: 100% !important;

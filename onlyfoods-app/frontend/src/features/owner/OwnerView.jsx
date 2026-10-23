@@ -33,16 +33,6 @@ import IssuesPage from './pages/issues/IssuesPage';
    ============================================================ */
 
 export default function OwnerView({ user, apiBase, onLogout }) {
-  useEffect(() => {
-    if (!document.getElementById('berry-font-link')) {
-      const link = document.createElement('link');
-      link.id = 'berry-font-link';
-      link.rel = 'stylesheet';
-      link.href = 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Sarabun:wght@400;500;600;700&display=swap';
-      document.head.appendChild(link);
-    }
-  }, []);
-
   const storeId = user?.storeId || 1;
   const uid = user?.id || user?.UserId;
   const [dash, setDash] = useState({});
@@ -195,64 +185,79 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ดึงทุก endpoint พร้อมกัน แล้วอัปเดต state ทีเดียว (React รวมเป็น render รอบเดียว)
-  //  - เดิม set แยกตามคำตอบแต่ละตัว = หน้าทั้งหน้า render ได้ ~11 รอบต่อการดึง 1 ครั้ง (ทุก 10 วิ)
+  // ดึงข้อมูลร้านทุก endpoint (ทุก 10 วิ + หลังกดปุ่มต่าง ๆ)
+  //  - progressive (เปิดหน้าครั้งแรก) : endpoint ไหนตอบก่อน แสดงส่วนนั้นก่อน ไม่ต้องรอตัวที่ช้าที่สุด
+  //  - ดึงซ้ำ : รอครบแล้วอัปเดตทีเดียว (React รวมเป็น render รอบเดียว ; เดิม set แยกตัว = render ได้ ~11 รอบต่อครั้ง)
   //  - ข้อมูลเหมือนเดิมทุกตัวอักษร = คืนค่าเดิม (React ไม่ render ซ้ำ)
   //  - คืน Promise : startPolling ไม่ยิงรอบใหม่ทับรอบที่ยังไม่เสร็จ
   //  - เงื่อนไขของแต่ละ endpoint เหมือนเดิม : ตัวที่เช็ค r.ok ตอบ error = คงข้อมูลเดิม ไม่ให้ KPI กลายเป็น 0
-  const fetchData = async () => {
+  const fetchData = async (progressive = false) => {
     const get = (path, okOnly) => fetch(`${apiBase}${path}`)
       .then(r => (okOnly && !r.ok ? null : r.json()))
       .catch(err => { console.error(err); return undefined; }); // undefined = เน็ต/JSON พัง : ไม่แตะ state
-    const [dashD, storesD, courtD, refundsD, reviewsD, issuesD, cancelsD, productsD, historyD, staffD, notifsD] = await Promise.all([
-      get(`/api/reports/dashboard?store_id=${storeId}`),
-      get('/api/stores'),
-      get('/api/food-court/status'),
-      get('/api/refunds?limit=2000', true),
-      get(`/api/stores/${storeId}/reviews/detail`),
-      get(`/api/stores/${storeId}/issues/detail`), // รายงานปัญหาแบบละเอียด (ชื่อผู้แจ้งแบบย่อ ไม่มีข้อมูลติดต่อ)
-      get(`/api/reports/cancellations?store_id=${storeId}`, true),
-      get(`/api/products?store_id=${storeId}`, true),
-      get(`/api/orders?store_id=${storeId}`, true),
-      get(`/api/stores/${storeId}/staff?include_inactive=true`, true),
-      uid ? get(`/api/notifications/${uid}`) : Promise.resolve(undefined),
-    ]);
     const keep = (next) => (prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
-
-    if (dashD !== undefined) { setDash(keep((dashD && dashD[0]) || {})); markLoaded('dash'); }
-    if (storesD !== undefined) {
-      const allStores = Array.isArray(storesD) ? storesD : [];
-      setStoreDetail(keep(allStores.find(st => String(st.StoreId) === String(storeId)) || null));
+    // [path, เช็ค r.ok, นำผลไปใส่ state]
+    const jobs = [
+      [`/api/reports/dashboard?store_id=${storeId}`, false, (d) => {
+        if (d !== undefined) { setDash(keep((d && d[0]) || {})); markLoaded('dash'); }
+      }],
+      ['/api/stores', false, (d) => {
+        if (d === undefined) return;
+        const allStores = Array.isArray(d) ? d : [];
+        setStoreDetail(keep(allStores.find(st => String(st.StoreId) === String(storeId)) || null));
+      }],
+      ['/api/food-court/status', false, (d) => {
+        if (!d) return;
+        setFoodCourtOpen(d.is_open ?? true);
+        if (d.open_time && d.close_time) {
+          setFoodCourtHours(prev => (prev && prev.open === d.open_time && prev.close === d.close_time) ? prev : { open: d.open_time, close: d.close_time });
+        }
+      }],
+      ['/api/refunds?limit=2000', true, (d) => {
+        if (Array.isArray(d)) { setRefunds(keep(d)); markLoaded('refunds'); }
+      }],
+      [`/api/stores/${storeId}/reviews/detail`, false, (d) => {
+        if (d && Array.isArray(d.reviews)) { setReviewsData(keep(d)); markLoaded('reviews'); }
+      }],
+      // รายงานปัญหาแบบละเอียด (ชื่อผู้แจ้งแบบย่อ ไม่มีข้อมูลติดต่อ)
+      [`/api/stores/${storeId}/issues/detail`, false, (d) => {
+        if (d && Array.isArray(d.issues)) { setIssues(keep(d.issues)); setIssuesSummary(keep(d.summary)); markLoaded('issues'); }
+      }],
+      [`/api/reports/cancellations?store_id=${storeId}`, true, (d) => {
+        if (!Array.isArray(d)) return;
+        setCancels(keep(d));
+        markLoaded('cancels'); // อัปเดตใน render เดียวกับ cancels (ดู effect ป้ายยกเลิกใหม่)
+        if (isFirstFetch.current) {
+          setKnownCancelsCount(d.length);
+          isFirstFetch.current = false;
+        }
+      }],
+      [`/api/products?store_id=${storeId}`, true, (d) => {
+        if (Array.isArray(d)) { setProducts(keep(d)); markLoaded('products'); }
+      }],
+      [`/api/orders?store_id=${storeId}`, true, (d) => {
+        if (Array.isArray(d)) { setHistory(keep(d)); markLoaded('history'); }
+      }],
+      [`/api/stores/${storeId}/staff?include_inactive=true`, true, (d) => {
+        if (Array.isArray(d)) { setStaffList(keep(d)); markLoaded('staff'); }
+      }],
+      ...(uid ? [[`/api/notifications/${uid}`, false, (d) => {
+        if (d === undefined) return;
+        const arr = Array.isArray(d) ? d : [];
+        setNotifications(keep(arr));
+        setUnreadNotifs(arr.filter(n => !n.IsRead).length);
+      }]] : []),
+    ];
+    if (progressive) {
+      await Promise.all(jobs.map(([path, okOnly, apply]) => get(path, okOnly).then(apply)));
+      return;
     }
-    if (courtD) {
-      setFoodCourtOpen(courtD.is_open ?? true);
-      if (courtD.open_time && courtD.close_time) {
-        setFoodCourtHours(prev => (prev && prev.open === courtD.open_time && prev.close === courtD.close_time) ? prev : { open: courtD.open_time, close: courtD.close_time });
-      }
-    }
-    if (Array.isArray(refundsD)) { setRefunds(keep(refundsD)); markLoaded('refunds'); }
-    if (reviewsD && Array.isArray(reviewsD.reviews)) { setReviewsData(keep(reviewsD)); markLoaded('reviews'); }
-    if (issuesD && Array.isArray(issuesD.issues)) { setIssues(keep(issuesD.issues)); setIssuesSummary(keep(issuesD.summary)); markLoaded('issues'); }
-    if (Array.isArray(cancelsD)) {
-      setCancels(keep(cancelsD));
-      markLoaded('cancels'); // อัปเดตใน render เดียวกับ cancels (ดู effect ป้ายยกเลิกใหม่)
-      if (isFirstFetch.current) {
-        setKnownCancelsCount(cancelsD.length);
-        isFirstFetch.current = false;
-      }
-    }
-    if (Array.isArray(productsD)) { setProducts(keep(productsD)); markLoaded('products'); }
-    if (Array.isArray(historyD)) { setHistory(keep(historyD)); markLoaded('history'); }
-    if (Array.isArray(staffD)) { setStaffList(keep(staffD)); markLoaded('staff'); }
-    if (notifsD !== undefined) {
-      const arr = Array.isArray(notifsD) ? notifsD : [];
-      setNotifications(keep(arr));
-      setUnreadNotifs(arr.filter(n => !n.IsRead).length);
-    }
+    const results = await Promise.all(jobs.map(([path, okOnly]) => get(path, okOnly)));
+    results.forEach((d, k) => jobs[k][2](d));
   };
 
   useEffect(() => {
-    fetchData();
+    fetchData(true); // เปิดหน้า : แสดงทีละส่วนตามที่ได้ข้อมูล
     // เดิม 4 วิ (ยิง 11 endpoint ต่อรอบ) ; หยุดเมื่อแท็บซ่อน
     return startPolling(fetchData, 10000);
   }, [storeId, apiBase, uid]);
