@@ -252,6 +252,12 @@ class FoodCourtScheduleSchema(BaseModel):
     close_time: str
 
 
+class StoreScheduleSchema(BaseModel):
+    # ไม่ส่งทั้งคู่ = ใช้เวลาของศูนย์อาหาร ; ส่ง = ต้องอยู่ในเวลาศูนย์อาหาร (ตรวจใน endpoint)
+    open_time: Optional[str] = None
+    close_time: Optional[str] = None
+
+
 class LatePickupSchema(BaseModel):
     minutes: int  # ต้องเป็นค่าใน config.LATE_PICKUP_CHOICES (ตรวจใน endpoint)
 

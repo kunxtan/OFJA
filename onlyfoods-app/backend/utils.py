@@ -289,6 +289,8 @@ def parse_pickup_time(value: Optional[str], now: Optional[datetime] = None) -> O
 
 # ------------------------------------------------------------------ food court
 def time_to_minutes(value) -> int:
+    if isinstance(value, int):  # เป็นนาทีของวันอยู่แล้ว
+        return value
     if isinstance(value, timedelta):
         return int(value.total_seconds() // 60)
     if hasattr(value, "hour") and hasattr(value, "minute"):
@@ -336,6 +338,63 @@ def foodcourt_is_open(row: dict, now: Optional[datetime] = None) -> bool:
         return False
     cur = now.hour * 60 + now.minute
     return time_to_minutes(row["OpenTime"]) <= cur < time_to_minutes(row["CloseTime"])
+
+
+# ------------------------------------------------------------- store open state
+#  ร้าน "รับออเดอร์ได้ไหม" คำนวณจากเวลาเสมอ (แบบเดียวกับศูนย์อาหาร ไม่มีงานเบื้องหลังสั่งเปิด/ปิด):
+#   1. ศูนย์อาหารปิด = ร้านปิด
+#   2. ร้านกดเปิด/ปิดเอง (ManualOverride) มีผลถึง OverrideUntil = เวลาเปลี่ยนสถานะอัตโนมัติครั้งถัดไป
+#      (NULL = จนกว่าจะกดเอง ใช้ตอนผู้บริหารระงับร้าน/เริ่มสัญญารอบใหม่ ให้เจ้าของร้านกดเปิดเอง)
+#   3. ไม่ได้กดเอง = เปิดตามเวลาของร้าน (ตั้งเองได้ภายในเวลาศูนย์อาหาร ; ไม่ตั้ง = เวลาศูนย์อาหาร)
+#   4. เปิดอยู่แต่กด "หยุดรับออเดอร์ชั่วคราว" (PausedUntil ยังไม่ถึง) = PAUSED : ออเดอร์ที่ค้างทำต่อได้
+#  สัญญา/การระงับสิทธิ์ ตรวจแยก (shape_store, orders) เหมือนเดิม
+STORE_OPEN = "OPEN"
+STORE_PAUSED = "PAUSED"
+STORE_CLOSED = "CLOSED"
+
+
+def store_hours(store: dict, fc: dict) -> tuple:
+    """(เปิด, ปิด) เป็นนาทีของวัน ; เวลาร้านถูกตัดให้อยู่ในเวลาศูนย์อาหาร (ผู้บริหารย่นเวลาทีหลังก็ตามไปเอง)
+    เปิด >= ปิด = วันนี้ไม่มีช่วงที่ร้านเปิดตามเวลา"""
+    fc_open, fc_close = time_to_minutes(fc["OpenTime"]), time_to_minutes(fc["CloseTime"])
+    own_open = store.get("OpenTime")
+    own_close = store.get("CloseTime")
+    o = max(time_to_minutes(own_open), fc_open) if own_open is not None else fc_open
+    c = min(time_to_minutes(own_close), fc_close) if own_close is not None else fc_close
+    return o, c
+
+
+def store_scheduled_open(store: dict, fc: dict, now: Optional[datetime] = None) -> bool:
+    """ตามเวลาของร้านอย่างเดียว ตอนนี้ควรเปิดไหม (ไม่สนการกดเอง)"""
+    now = now or bangkok_now()
+    o, c = store_hours(store, fc)
+    return o <= now.hour * 60 + now.minute < c
+
+
+def store_next_transition(store: dict, fc: dict, now: Optional[datetime] = None) -> datetime:
+    """เวลาที่สถานะร้านจะเปลี่ยนเองครั้งถัดไป (เวลาร้าน หรือเวลาศูนย์อาหาร แล้วแต่อันไหนถึงก่อน)
+    ใช้เป็นเวลาหมดอายุของการกดเปิด/ปิดเอง และของการหยุดรับออเดอร์ชั่วคราว"""
+    now = now or bangkok_now()
+    fc_next = next_transition(fc["OpenTime"], fc["CloseTime"], now)
+    o, c = store_hours(store, fc)
+    if o >= c:
+        return fc_next
+    return min(next_transition(o, c, now), fc_next)
+
+
+def store_open_state(store: dict, fc: dict, now: Optional[datetime] = None) -> str:
+    """OPEN / PAUSED / CLOSED (ดูกติกาด้านบน)"""
+    now = now or bangkok_now()
+    if not foodcourt_is_open(fc, now):
+        return STORE_CLOSED
+    mode = foodcourt_mode(store, now)  # คอลัมน์ ManualOverride/OverrideUntil ชื่อเดียวกับของศูนย์อาหาร
+    is_open = store_scheduled_open(store, fc, now) if mode == "AUTO" else mode == "OPEN"
+    if not is_open:
+        return STORE_CLOSED
+    paused_until = store.get("PausedUntil")
+    if paused_until is not None and now < paused_until:
+        return STORE_PAUSED
+    return STORE_OPEN
 
 
 # -------------------------------------------------------------------- contract

@@ -20,10 +20,13 @@ from services import (add_top_up, assert_slip_not_reused, is_duplicate_key, redu
                       lock_order, log_audit, log_first_status, notify_menu_out_of_stock, pending_top_up,
                       refund_price_diff, send_notif, status_id)
 from shapes import ORDER_SELECT, attach_items, order_people, redact_order_contacts, shape_order
-from utils import (bangkok_now, clean_text, contract_active, foodcourt_is_open, parse_pickup_time,
-                   queue_label, save_image)
+from utils import (STORE_OPEN, STORE_PAUSED, bangkok_now, clean_text, contract_active, foodcourt_is_open,
+                   parse_pickup_time, queue_label, save_image, store_open_state)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+# คอลัมน์ที่ utils.store_open_state ใช้ (ร้านเปิด/หยุดรับชั่วคราว/ปิด ตามเวลา)
+_STORE_STATE_COLS = "OpenTime, CloseTime, ManualOverride, OverrideUntil, PausedUntil"
 
 # ชื่อวิธีชำระเงินที่ frontend ส่งมา -> MethodCode ในตาราง PaymentMethod
 _METHOD_ALIASES = {
@@ -82,12 +85,14 @@ def quote_order(data: QuoteOrderSchema, user=Depends(require_role("CUSTOMER", "F
                 db=Depends(get_db)):
     """M5: ยอดจริงตอนนี้ (ก่อนแสดง QR ให้โอน) ราคาเมนูเปลี่ยนหลังลูกค้าใส่ตะกร้า = หน้าจออัปเดตยอดก่อนโอน"""
     with db.cursor() as cur:
-        cur.execute("SELECT IsOpen, IsSuspended, IsDeleted FROM Store WHERE StoreId = %s", (data.store_id,))
+        cur.execute("SELECT IsSuspended, IsDeleted, " + _STORE_STATE_COLS + " FROM Store WHERE StoreId = %s",
+                    (data.store_id,))
         store = cur.fetchone()
         if not store or store["IsDeleted"]:
             raise DomainError(404, "ไม่พบร้านค้านี้")
         total, _, lines = _price_items(cur, data.store_id, data.items)
-    return {"total": float(total), "items": lines, "store_open": bool(store["IsOpen"]) and not store["IsSuspended"]}
+        store_open = store_open_state(store, get_foodcourt(cur)) == STORE_OPEN
+    return {"total": float(total), "items": lines, "store_open": store_open and not store["IsSuspended"]}
 
 
 def _request_fingerprint(data: CreateOrderSchema) -> str:
@@ -164,12 +169,14 @@ def _create_order(data: CreateOrderSchema, user: dict, db, key: Optional[str], f
 
     with transaction(db):
         with db.cursor() as cur:
-            if not foodcourt_is_open(get_foodcourt(cur, share_lock=True), now):
+            fc = get_foodcourt(cur, share_lock=True)
+            if not foodcourt_is_open(fc, now):
                 raise DomainError(400, "ศูนย์อาหารปิดให้บริการชั่วคราว ไม่สามารถสั่งอาหารได้")
 
             cur.execute(
                 """
-                SELECT s.StoreName, s.QueueCode, s.IsOpen, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate
+                SELECT s.StoreName, s.QueueCode, s.IsSuspended, s.IsDeleted, c.StartDate, c.EndDate,
+                       s.OpenTime, s.CloseTime, s.ManualOverride, s.OverrideUntil, s.PausedUntil
                 FROM Store s LEFT JOIN StoreContract c ON c.StoreId = s.StoreId WHERE s.StoreId = %s
                 FOR UPDATE OF s
                 """,
@@ -184,7 +191,10 @@ def _create_order(data: CreateOrderSchema, user: dict, db, key: Optional[str], f
                 raise DomainError(400, f"ร้าน '{store['StoreName']}' ถูกระงับสิทธิ์การจำหน่ายชั่วคราว")
             if not contract_active(store["StartDate"], store["EndDate"], now.date()):
                 raise DomainError(400, f"สัญญาร้าน '{store['StoreName']}' หมดอายุหรือยังไม่มีผล ไม่สามารถรับออเดอร์ใหม่ได้")
-            if not store["IsOpen"]:
+            open_state = store_open_state(store, fc, now)
+            if open_state == STORE_PAUSED:
+                raise DomainError(400, f"ร้าน '{store['StoreName']}' หยุดรับออเดอร์ชั่วคราว กรุณาลองใหม่ภายหลัง")
+            if open_state != STORE_OPEN:
                 raise DomainError(400, f"ร้าน '{store['StoreName']}' ปิดทำการอยู่ขณะนี้")
 
             total, rows, lines = _price_items(cur, data.store_id, data.items)
