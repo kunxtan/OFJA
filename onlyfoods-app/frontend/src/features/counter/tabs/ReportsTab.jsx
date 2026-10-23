@@ -1,0 +1,41 @@
+import { fmtMoney } from '../lib';
+
+// แท็บสรุปยอดของร้าน
+// ข้อมูลและ state อยู่ที่ CounterView ส่งมาเป็น props (แท็บไม่ดึงข้อมูลเอง)
+export default function ReportsTab({
+  fetchReports, reportData, reportCancellations, products
+}) {
+  return (
+    <div className="cv-stack">
+                  <div className="cv-card">
+                    <div className="cv-card-head">
+                      <div>
+                        <h3>📊 รายงานหน้าร้าน</h3>
+                        <div className="caption">สรุปข้อมูลจากระบบของร้านนี้</div>
+                      </div>
+                      <button onClick={fetchReports} className="cv-btn btn-ghost">↻ รีเฟรช</button>
+                    </div>
+                    <div className="report-grid">
+                      <div className="report-card"><span>ยอดขายสุทธิ</span><b>฿{fmtMoney(reportData?.net_sales)}</b><small>Completed + No-Show ตาม API รายงาน</small></div>
+                      <div className="report-card"><span>จำนวนออเดอร์</span><b>{reportData?.total_orders ?? 0}</b><small>ออเดอร์ที่ถูกนับในรายงาน</small></div>
+                      <div className="report-card"><span>ยกเลิก</span><b>{reportCancellations.length}</b><small>รายการสถานะ Cancelled</small></div>
+                      <div className="report-card"><span>เมนูหมดตอนนี้</span><b>{products.filter(p => p.IsOutOfStock).length}</b><small>สถานะจาก Menu & Stock</small></div>
+                    </div>
+                  </div>
+
+                  <div className="cv-card">
+                    <div className="cv-card-head"><div><h3>ประวัติการยกเลิก</h3><div className="caption">ใช้ตรวจสอบปัญหาออเดอร์และเหตุผลที่ยกเลิก</div></div></div>
+                    <div className="cv-table-wrapper">
+                      <table className="cv-table">
+                        <thead><tr><th>คิว</th><th>ยอดเงิน</th><th>เหตุผล</th><th>Order ID</th></tr></thead>
+                        <tbody>
+                          {reportCancellations.length === 0 ? <tr><td colSpan="4" className="empty-state">ยังไม่มีประวัติการยกเลิก</td></tr> : reportCancellations.slice(0, 20).map(o => (
+                            <tr key={o.OrderID}><td><span className="queue-pill">{o.QueueNo}</span></td><td>฿{fmtMoney(o.TotalAmount)}</td><td>{o.CancelReason || '-'}</td><td>#{o.OrderID}</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+  );
+}

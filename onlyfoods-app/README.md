@@ -14,7 +14,7 @@ onlyfoods-app/
 │   ├─ migrations/      อัปเดต schema ของฐานที่มีข้อมูลแล้ว (deploy รันให้อัตโนมัติ)
 │   └─ optional/        02_seed_demo.sql (ข้อมูลทดลอง) · 03_migrate_from_old_db.sql (ย้ายข้อมูลจาก onlyfoods_db เดิม)
 ├─ backend/             FastAPI: main, config, db, auth, state, services, shapes, schemas, routers/, tools/, tests/
-└─ frontend/            React (แก้เฉพาะที่จำเป็น ดูหัวข้อ "สิ่งที่แก้ใน frontend")
+└─ frontend/            React + Vite แยกโฟลเดอร์ตามบทบาท (ดูหัวข้อ "โครงสร้าง frontend")
 ```
 > ไม่มีพอร์ต 3306 ถูก publish จาก compose — ฐานข้อมูลคุยได้เฉพาะ backend ในเครือข่าย docker
 > (พอร์ต 3306/3000/8080 ที่ cloud เปิดไว้ไม่มี service ฟังอยู่ ขอให้ผู้ดูแลปิดได้เลย)
@@ -75,10 +75,29 @@ sudo docker compose exec backend python -m tools.set_password --all-empty
 - **ชื่อฟิลด์เก่ายังอยู่** (`OrderID`, `Status`='Pending'/'Ready'…, `Role`='Shop Owner'…, `QueueNo`='A007', `img`, `LogID`…) เพื่อให้ frontend เดิมอ่านได้ พร้อมฟิลด์ใหม่ (`StatusCode`, `RoleCode`)
 - **สถานะ legacy**: frontend เดิมส่ง `Ready` ครั้งเดียวจากครัว → backend เดิน `COOKING→COOKED→READY` และ log ทุกขั้น; `Cancelled` จากหน้าร้านขณะ PENDING/COOKING → `PENDING_CANCELLATION→CANCELLED` (ชื่อสถานะแบบใหม่ เช่น `COOKED` ใช้ตาม state machine เป๊ะ)
 
-## สิ่งที่แก้ใน frontend (เฉพาะที่จำเป็น)
+## โครงสร้าง frontend
+```
+frontend/src/
+├─ main.jsx, authFetch.js   แนบ JWT ให้ทุก request ไป /api
+├─ App.jsx                  เช็ค login แล้วเลือกหน้าตามบทบาท (React.lazy : โหลดเฉพาะไฟล์ของบทบาทนั้น)
+├─ auth/                    หน้า login (LoginScreen) + Google + รูปอาหารตกแต่ง + CSS พื้นฐานทั้งแอป
+├─ lib/                     ฟังก์ชันไม่มี UI ใช้ร่วมทุกบทบาท (dates, polling, historyNav, requestKey, receiptPrint, auditText, xlsxWriter)
+├─ shared/                  ส่วนหน้าจอที่ใช้ตั้งแต่ 2 บทบาท : ui/AuthImage (รูปที่ต้องแนบสิทธิ์), hooks/useNow, refunds/ (หน้าคืนเงิน)
+└─ features/<บทบาท>/        owner · executive · accountant · counter · kitchen · customer
+    ├─ <Role>View.jsx       โครงหน้า: แถบบน เมนูข้าง ดึงข้อมูล เลือกหน้า
+    ├─ pages/ หรือ tabs/    หน้าละไฟล์ (state/ข้อมูลอยู่ที่ View ส่งมาเป็น props)
+    ├─ components/          ชิ้นส่วนของบทบาทนั้น
+    ├─ lib/                 สูตรคำนวณ/จัดรูปแบบของบทบาทนั้น
+    └─ *.css / styles.js    CSS ของบทบาทนั้น (แทรกเป็น <style> ตอนเปิดหน้า ปิดแล้วหาย ไม่ทับบทบาทอื่น)
+```
+- **ของที่ชื่อเหมือนกันแต่โค้ดต่างกัน** (เช่น `fmtMoney`, `parseOrderDate`, `Icon`, `SalesLineChart` ของ owner/executive/accountant) ยังแยกอยู่ในโฟลเดอร์ของแต่ละบทบาท ย้ายเข้า `lib/` หรือ `shared/` เฉพาะตัวที่เหมือนกันทุกตัวอักษร
+- **ตัวนับเวลา**: component ที่ต้องเดินทุกวินาที (นาฬิกา นับถอยหลัง) เรียก `useNow()` เอง ไม่เก็บ state เวลาไว้ที่หน้าหลัก (ไม่งั้นทั้งหน้า render ทุกวินาที)
+- **ตรวจโค้ด**: `npm run lint` (ESLint จับตัวแปร/คอมโพเนนต์ที่ไม่ได้ import และการใช้ hook ผิด) · `npm test` (Vitest ทดสอบสูตรยอดขาย/วันที่ ใน `*.test.js`)
+
+## สิ่งที่แก้ใน frontend ช่วงย้ายมา backend ใหม่
 1. `src/authFetch.js` (ใหม่) + import ใน `main.jsx` — แนบ `Authorization: Bearer` ให้ทุก request ไป `/api` โดยไม่ต้องแก้ fetch ทีละจุด
 2. `App.jsx`: `API_BASE` จากค่าตายตัว `http://only-foods.cskmitl.com` → `VITE_API_URL || window.location.origin`
-3. `App.jsx`: ส่ง `id_token` ของ Google ไปให้ server ตรวจ; `GOOGLE_CLIENT_ID` อ่านจาก `VITE_GOOGLE_CLIENT_ID`
+3. `App.jsx`: ส่ง `id_token` ของ Google ไปให้ server ตรวจ; `GOOGLE_CLIENT_ID` อ่านจาก `VITE_GOOGLE_CLIENT_ID` (`auth/google.js`)
 4. `frontend/.env`: ล้างค่า `onrender.com` เดิม และไม่เก็บใน git แล้ว (ใช้ `frontend/.env.example` เป็นตัวอย่าง ใส่ได้เฉพาะ `VITE_*`)
 
 ที่ยังไม่ได้แก้ (ตั้งใจ): token อยู่ในหน่วยความจำ — refresh หน้าแล้วต้อง login ใหม่ (เหมือนเดิม), ปุ่ม Undo ของครัว (Ready→Pending) ถูก state machine ปฏิเสธ, ตัวเลือก "บัตรเครดิต" ในหน้าสั่งอาหารจะได้ข้อความปฏิเสธจาก backend, ปุ่ม "ลืมรหัสผ่าน" แสดงข้อความให้ติดต่อเจ้าหน้าที่ศูนย์อาหาร (ไม่มีฟอร์มรีเซ็ตเอง), polling ทุก 2–5 วินาทีเหมือนเดิม
@@ -86,5 +105,6 @@ sudo docker compose exec backend python -m tools.set_password --all-empty
 ## ทดสอบ
 ```bash
 cd backend && pip install -r requirements-dev.txt && pytest
+cd frontend && npm install && npm run lint && npm test
 ```
 เทสต์ครอบ state machine ทุกคู่สถานะ, สิทธิ์ตามบทบาท, เลขคิว/retry, การตรวจรูป, เวลาเปิด-ปิดศูนย์อาหาร, สัญญา (ไม่ต้องใช้ MySQL)
