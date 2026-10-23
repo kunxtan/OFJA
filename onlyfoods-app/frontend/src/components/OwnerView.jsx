@@ -277,8 +277,9 @@ function Badge({ tone, children }) {
   return <span className={`berry-badge tone-${tone}`}>{children}</span>;
 }
 
-function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom, startDate, setStartDate, endDate, setEndDate }) {
-  const choosePreset = (value) => { setCustom(false); setDays(value); };
+function StorePeriodPicker({ setAnchor, days, setDays, custom, setCustom, startDate, setStartDate, endDate, setEndDate }) {
+  // ปุ่มสำเร็จรูป = ย้อนหลังจากวันนี้เสมอ ; อยากเลือกวันเองให้กด "กำหนดเอง"
+  const choosePreset = (value) => { setCustom(false); setDays(value); setAnchor(todayISO()); };
   return (
     <div className="berry-period-picker">
       <div className="berry-period-group">
@@ -296,7 +297,7 @@ function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom
           กำหนดเอง
         </button>
       </div>
-      {custom ? (
+      {custom && (
         <div className="berry-date-range">
           <label>
             ตั้งแต่วันที่
@@ -319,11 +320,6 @@ function StorePeriodPicker({ anchor, setAnchor, days, setDays, custom, setCustom
               aria-label="ถึงวันที่"
             />
           </label>
-        </div>
-      ) : (
-        <div className="berry-date-wrap">
-          <Icon name="calendar" size={16} />
-          <input type="date" value={anchor} max={todayISO()} onChange={e => setAnchor(e.target.value || todayISO())} aria-label="เลือกวันที่สิ้นสุด" />
         </div>
       )}
     </div>
@@ -3648,7 +3644,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                   <span><strong>{periodLabel}</strong> · {compareLabel}</span>
                 </div>
                 <StorePeriodPicker
-                  anchor={storeAnchor} setAnchor={setStoreAnchor}
+                  setAnchor={setStoreAnchor}
                   days={storeDays} setDays={setStoreDays}
                   custom={customRange} setCustom={setCustomRange}
                   startDate={customStart} setStartDate={setCustomStart}
@@ -5340,8 +5336,6 @@ body, html {
 .berry-period-group { display: flex; gap: 4px; flex-wrap: wrap; background: var(--berry-purple-light); padding: 4px; border-radius: var(--radius-md); }
 .berry-period-group .berry-period-btn { font-weight: 600; }
 .berry-period-group .berry-period-btn.active { color: var(--berry-purple); }
-.berry-date-wrap { display: flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper); color: var(--berry-text-muted); }
-.berry-date-wrap input { min-width: 0; border: none; outline: none; background: transparent; color: var(--berry-text-dark); font-size: 13px; font-family: inherit; }
 .berry-date-range { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--berry-border); border-radius: var(--radius-md); background: var(--berry-paper); }
 .berry-date-range label { display: flex; align-items: center; gap: 8px; color: var(--berry-text-dark); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .berry-date-range input { width: 136px; box-sizing: border-box; padding: 8px 9px; border: 1px solid var(--berry-border); border-radius: 7px; background: #FFFFFF; color: var(--berry-text-dark); font-size: 12.5px; font-family: inherit; }
@@ -6960,7 +6954,6 @@ body, html {
   .berry-period-group { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .berry-period-group::-webkit-scrollbar { display: none; }
   .berry-period-group .berry-period-btn { flex: 1 0 auto; white-space: nowrap; text-align: center; }
-  .berry-date-wrap { justify-content: center; }
   .berry-date-range { flex-direction: column; align-items: stretch; }
   .berry-date-range label { justify-content: space-between; }
 
