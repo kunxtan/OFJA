@@ -601,7 +601,7 @@ def request_cancel(order_id: int, payload: CancelRequestSchema,
             q = queue_label(order["QueueNo"], order["QueueCode"])
             send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} มีปัญหา",
                        f"คิว {q} มีปัญหา: {reason} กรุณาเปลี่ยนเมนูหรือยกเลิกภายใน {config.OUT_OF_STOCK_RESPONSE_MINUTES} นาที "
-                       f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติและคืนเงินที่ร้าน", order_id)
+                       f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติและโอนเงินคืนให้", order_id)
         log_audit(db, user["UserId"], "CANCEL_REQUEST", "Order", order_id, None,
                   {"reason": reason, "store_id": order["StoreId"], "items": payload.item_ids or []})
         for pid, name in closed:
@@ -724,7 +724,7 @@ def customer_change_order_item(order_id: int, payload: CustomerChangeItemSchema,
             if netted:
                 msg += f" หักลบกับส่วนต่างที่ต้องโอนแล้ว {netted:.2f} บาท"
             if diff_refunded:
-                msg += f" รับเงินส่วนต่างคืน {diff_refunded:.2f} บาท ที่ร้านโดยแจ้งเลขคิว {q}"
+                msg += f" ร้านจะโอนเงินส่วนต่างคืน {diff_refunded:.2f} บาท กรุณาระบุบัญชีรับเงินคืนที่รายการคืนเงิน"
             send_notif(db, user["UserId"], "ORDER_STATUS", f"คิว {q} เปลี่ยนเมนู", msg, order_id)
         log_audit(db, user["UserId"], "CUSTOMER_CHANGE_ITEM", "Order", order_id,
                   {"product": old["ProductName"], "price": old_price},

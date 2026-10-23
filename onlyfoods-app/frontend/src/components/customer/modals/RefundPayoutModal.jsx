@@ -1,4 +1,4 @@
-// เลือกวิธีรับเงินคืน: เงินสดที่ร้าน หรือให้เจ้าของร้านโอนให้ (พร้อมเพย์ / บัญชีธนาคาร)
+// ระบุบัญชีรับเงินคืน: เจ้าของร้านโอนคืนให้ (พร้อมเพย์ / บัญชีธนาคาร) ; ออเดอร์ออนไลน์ไม่มีรับเงินสดที่ร้าน
 import { useState } from "react";
 import { COLORS, MAX_FILE_SIZE } from "../constants";
 
@@ -17,7 +17,6 @@ const readFile = (file) => new Promise((resolve, reject) => {
 export default function RefundPayoutModal({ order, refunds, onClose, onSave, saving, error }) {
   const first = refunds[0] || {};
   const total = refunds.reduce((a, r) => a + Number(r.Amount || 0), 0);
-  const [method, setMethod] = useState(first.PayoutMethod === "TRANSFER" ? "TRANSFER" : "CASH");
   const [kind, setKind] = useState(first.PayoutKind || "PROMPTPAY");
   const [bank, setBank] = useState(first.PayoutBank || "");
   const [accountNo, setAccountNo] = useState(first.PayoutAccountNo || "");
@@ -39,17 +38,15 @@ export default function RefundPayoutModal({ order, refunds, onClose, onSave, sav
 
   const submit = () => {
     setLocalError("");
-    if (method === "TRANSFER") {
-      const digits = accountNo.replace(/[\s-]/g, "");
-      if (kind === "PROMPTPAY" && !/^(0\d{9}|\d{13})$/.test(digits)) { setLocalError("พร้อมเพย์ต้องเป็นเบอร์โทร 10 หลัก หรือเลขบัตรประชาชน 13 หลัก"); return; }
-      if (kind === "BANK") {
-        if (!bank) { setLocalError("กรุณาเลือกธนาคาร"); return; }
-        if (!/^\d{10,15}$/.test(digits)) { setLocalError("เลขบัญชีต้องเป็นตัวเลข 10–15 หลัก"); return; }
-        if (!accountName.trim()) { setLocalError("กรุณากรอกชื่อบัญชี"); return; }
-      }
+    const digits = accountNo.replace(/[\s-]/g, "");
+    if (kind === "PROMPTPAY" && !/^(0\d{9}|\d{13})$/.test(digits)) { setLocalError("พร้อมเพย์ต้องเป็นเบอร์โทร 10 หลัก หรือเลขบัตรประชาชน 13 หลัก"); return; }
+    if (kind === "BANK") {
+      if (!bank) { setLocalError("กรุณาเลือกธนาคาร"); return; }
+      if (!/^\d{10,15}$/.test(digits)) { setLocalError("เลขบัญชีต้องเป็นตัวเลข 10–15 หลัก"); return; }
+      if (!accountName.trim()) { setLocalError("กรุณากรอกชื่อบัญชี"); return; }
     }
     // ไม่ได้เลือกรูปใหม่ = backend ใช้ QR เดิมต่อ (ไม่หายตอนแก้ชื่อบัญชี)
-    onSave({ method, kind, bank: kind === "BANK" ? bank : null, account_no: accountNo, account_name: accountName,
+    onSave({ method: "TRANSFER", kind, bank: kind === "BANK" ? bank : null, account_no: accountNo, account_name: accountName,
       qr_image: qr, remove_qr: !qr && removeQr });
   };
 
@@ -58,21 +55,16 @@ export default function RefundPayoutModal({ order, refunds, onClose, onSave, sav
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(42,44,65,0.6)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", boxSizing: "border-box", overflowY: "auto" }}
       onClick={() => !saving && onClose()}>
-      <div role="dialog" aria-modal="true" aria-label="เลือกวิธีรับเงินคืน" onClick={(e) => e.stopPropagation()}
+      <div role="dialog" aria-modal="true" aria-label="ระบุบัญชีรับเงินคืน" onClick={(e) => e.stopPropagation()}
         style={{ background: COLORS.white, width: "min(480px, 100%)", maxHeight: "90vh", overflowY: "auto", borderRadius: "24px", padding: "24px", boxSizing: "border-box" }}>
         <h3 style={{ margin: 0, color: COLORS.navy }}>💸 รับเงินคืน {total.toFixed(2)} ฿</h3>
         <div style={{ color: COLORS.gray, fontSize: "13px", marginTop: "4px" }}>คิว #{order.QueueNo} · {order.StoreName}</div>
 
-        {[["CASH", "รับเงินสดที่ร้าน", `แจ้งเลขคิว #${order.QueueNo} กับพนักงานหน้าร้าน`],
-          ["TRANSFER", "ให้เจ้าของร้านโอนให้", "ไม่ต้องเดินมาที่ร้าน"]].map(([k, title, sub]) => (
-          <label key={k} style={{ display: "flex", gap: "10px", alignItems: "flex-start", marginTop: "12px", padding: "12px 14px", borderRadius: "14px", cursor: "pointer",
-            border: `2px solid ${method === k ? COLORS.orange : COLORS.border}`, background: method === k ? "#FFF0EB" : COLORS.white }}>
-            <input type="radio" name="refund-method" checked={method === k} onChange={() => setMethod(k)} style={{ marginTop: "4px" }} />
-            <span><b>{title}</b><br /><span style={{ fontSize: "12px", color: COLORS.gray }}>{sub}</span></span>
-          </label>
-        ))}
+        <div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#FFF0EB", color: COLORS.navy, fontSize: "13px", lineHeight: 1.5 }}>
+          คุณจ่ายด้วยการโอน ร้านจึง<b>โอนเงินคืนเข้าบัญชีของคุณ</b> (ไม่มีรับเงินสดที่ร้าน) กรุณาระบุบัญชีที่ต้องการรับเงิน
+        </div>
 
-        {method === "TRANSFER" && (
+        {(
           <div style={{ marginTop: "6px" }}>
             <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
               {[["PROMPTPAY", "พร้อมเพย์"], ["BANK", "บัญชีธนาคาร"]].map(([k, t]) => (
@@ -119,7 +111,7 @@ export default function RefundPayoutModal({ order, refunds, onClose, onSave, sav
         <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
           <button type="button" onClick={onClose} disabled={saving} style={{ flex: 1, padding: "13px", borderRadius: "14px", border: `1.5px solid ${COLORS.border}`, background: COLORS.white, fontWeight: "700", cursor: "pointer" }}>ปิด</button>
           <button type="button" onClick={submit} disabled={saving || locked} style={{ flex: 2, padding: "13px", borderRadius: "14px", border: "none", background: COLORS.orange, color: COLORS.white, fontWeight: "800", cursor: "pointer" }}>
-            {saving ? "กำลังบันทึก…" : "บันทึกวิธีรับเงินคืน"}
+            {saving ? "กำลังบันทึก…" : "บันทึกบัญชีรับเงินคืน"}
           </button>
         </div>
       </div>

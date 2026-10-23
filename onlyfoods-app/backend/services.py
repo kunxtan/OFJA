@@ -497,7 +497,8 @@ def apply_status_effects(db, cur, order: dict, final_code: str, actor_id: Option
         if final_code == state.CANCELLED:
             text = f"ออเดอร์คิว {q} ถูกยกเลิก" + (f": {reason}" if reason else "")
             if refunded > 0:
-                text += f" — กรุณารับเงินคืน {refunded:.2f} บาท ที่ร้าน {order.get('StoreName') or ''} โดยแจ้งเลขคิว {q}"
+                text += (f" — ร้านจะโอนเงินคืน {refunded:.2f} บาท เข้าบัญชีของคุณ "
+                         f"กรุณาระบุบัญชีรับเงินคืนที่รายการคืนเงินของคิว {q}")
             if unverified > 0:
                 text += (f" — สลิปยอด {unverified:.2f} บาท ร้านยังไม่ได้ตรวจ ร้านจะตรวจสลิปก่อนแล้วจึงคืนเงิน "
                          f"(ดูสถานะได้ที่รายการคืนเงิน)")

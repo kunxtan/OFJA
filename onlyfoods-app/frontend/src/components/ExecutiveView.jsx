@@ -1400,7 +1400,7 @@ const returnFoodCourtToAuto = async () => {
         },
         'refund-log': {
             title: 'ประวัติการคืนเงิน',
-            subtitle: 'เงินคืนที่รอลูกค้ามารับที่ร้าน และที่ร้านคืนแล้ว (ไม่นับเป็นรายได้)',
+            subtitle: 'เงินคืนที่รอคืน (โอนคืนลูกค้าออนไลน์ / เงินสด walk-in) และที่ร้านคืนแล้ว (ไม่นับเป็นรายได้)',
             searchPlaceholder: ''
         },
         'audit-history': {
@@ -3204,7 +3204,7 @@ function CancelledOrdersCard({ api, cancelled = [], periodLabel, showStore = tru
 // ชื่อลูกค้าของออเดอร์ (walk-in ไม่มีบัญชีลูกค้า)
 const cancelCustomerName = (o) => o.CustomerName || o.UserName || (Number(o.IsWalkIn) === 1 ? 'ลูกค้าหน้าร้าน (Walk-in)' : 'ไม่ระบุ');
 const PAYMENT_STATUS_TH = { VERIFIED: 'ชำระแล้ว', PENDING: 'รอตรวจสอบการชำระ', REJECTED: 'สลิปไม่ผ่าน (ไม่ได้รับเงิน)' };
-const REFUND_STATUS_TH = { PENDING: 'รอลูกค้ามารับเงินคืน', DONE: 'คืนเงินแล้ว', FAILED: 'คืนเงินไม่สำเร็จ' };
+const REFUND_STATUS_TH = { PENDING: 'รอคืนเงิน', DONE: 'คืนเงินแล้ว', FAILED: 'คืนเงินไม่สำเร็จ' };
 const ITEM_STATUS_TH = { OUT_OF_STOCK: 'สินค้าหมด', CANCELLED: 'ยกเลิกรายการ' };
 
 // รายละเอียดออเดอร์ที่ยกเลิก: ดึง /api/orders/{id}/detail (ใครกดยกเลิก + เวลา จาก OrderStatusLog, การชำระ, การคืนเงิน)

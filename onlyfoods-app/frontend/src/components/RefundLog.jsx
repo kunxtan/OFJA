@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 // 💸 รายการคืนเงิน (ใช้ร่วมกันหลายหน้า)
-//  ลูกค้ามารับเงินคืนที่หน้าร้าน : ยกเลิกออเดอร์ / เปลี่ยนเป็นเมนูที่ถูกกว่า -> "รอคืน" (ไม่นับเป็นรายได้แล้ว)
-//  canConfirm  : หน้าร้าน/เจ้าของร้าน กด "คืนเงินแล้ว" ได้ (backend ตรวจสิทธิ์และร้านซ้ำอีกชั้น)
-//  isOwner     : เจ้าของร้านเท่านั้นที่โอนคืนได้ (เห็นข้อมูลบัญชีลูกค้า + แนบสลิปโอนบังคับ) ; หน้าร้านจ่ายเงินสดได้อย่างเดียว
+//  ยกเลิกออเดอร์ / เปลี่ยนเป็นเมนูที่ถูกกว่า -> "รอคืน" (ไม่นับเป็นรายได้แล้ว)
+//  ลูกค้าออนไลน์ (จ่ายโอนพร้อมสลิป) = โอนคืนเท่านั้น หลังลูกค้าระบุบัญชี ; walk-in = คืนเงินสดที่หน้าร้าน
+//  canConfirm  : หน้าร้าน/เจ้าของร้าน กดคืนเงินได้ (backend ตรวจสิทธิ์และร้านซ้ำอีกชั้น)
+//  isOwner     : เจ้าของร้านเท่านั้นที่โอนคืนได้ (เห็นข้อมูลบัญชีลูกค้า + แนบสลิปโอนบังคับ) ; หน้าร้านคืนเงินสด walk-in ได้อย่างเดียว
 //  showStore   : บัญชี/ผู้บริหาร เห็นทุกร้าน -> แสดงคอลัมน์ร้าน + ตัวกรองร้าน + ส่งออก CSV
 import { startPolling } from '../utils/polling';
 import AuthImage, { openFile } from './AuthImage';
@@ -25,7 +26,10 @@ const C = {
 };
 
 export const TYPE_TH = { FULL_CANCEL: 'ยกเลิกออเดอร์', PRICE_DIFF: 'ส่วนต่างราคาเมนู', ITEM_CANCEL: 'ยกเลิกบางรายการ' };
-export const STATUS_TH = { PENDING: 'รอลูกค้ามารับ', DONE: 'คืนเงินแล้ว', FAILED: 'ไม่สำเร็จ' };
+export const STATUS_TH = { PENDING: 'รอคืนเงิน', DONE: 'คืนเงินแล้ว', FAILED: 'ไม่สำเร็จ' };
+
+// ลูกค้าออนไลน์ที่ยังไม่ได้ระบุบัญชีรับเงินคืน (ร้านยังโอนไม่ได้)
+export const awaitingAccount = (r) => r.RefundStatus === 'PENDING' && !r.IsWalkIn && r.PayoutMethod !== 'TRANSFER';
 const PAYOUT_KIND_TH = { PROMPTPAY: 'พร้อมเพย์', BANK: 'ธนาคาร' };
 const ROLE_TH = { FRONT_STAFF: 'หน้าร้าน', STORE_OWNER: 'เจ้าของร้าน', ACCOUNTANT: 'ฝ่ายบัญชี', EXECUTIVE: 'ผู้บริหาร' };
 
@@ -52,7 +56,8 @@ const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
 // วิธีรับเงินของรายการ : ที่ลูกค้าเลือก (ยังรอคืน) หรือที่ร้านจ่ายจริง (คืนแล้ว)
 export function payoutLabel(r) {
   if (r.RefundStatus === 'DONE') return r.PaidMethod === 'TRANSFER' ? 'โอนแล้ว' : 'เงินสด';
-  if (r.PayoutMethod !== 'TRANSFER') return 'เงินสดที่ร้าน';
+  if (r.IsWalkIn) return 'เงินสดที่ร้าน';
+  if (r.PayoutMethod !== 'TRANSFER') return 'รอลูกค้าระบุบัญชี';
   const kind = PAYOUT_KIND_TH[r.PayoutKind] || 'โอน';
   return `โอน · ${kind}${r.PayoutAccountNo ? ` ${r.PayoutAccountNo}` : ''}`;
 }
@@ -154,7 +159,9 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
           <h3>💸 คืนเงินลูกค้า</h3>
           <p>
             {canConfirm
-              ? 'ลูกค้ามารับเงินคืนที่หน้าร้าน: ตรวจเลขคิวและชื่อให้ตรงก่อน จ่ายเงินแล้วกด "คืนเงินแล้ว"'
+              ? (isOwner
+                ? 'ลูกค้าออนไลน์รับเงินคืนทางโอนเท่านั้น (แนบสลิปโอนทุกครั้ง) · walk-in คืนเงินสดที่หน้าร้าน'
+                : 'คืนเงินสดให้ลูกค้า walk-in: ตรวจเลขคิวให้ตรงก่อน จ่ายเงินแล้วกด "คืนเงินสดแล้ว" · ลูกค้าออนไลน์เจ้าของร้านโอนคืนให้')
               : 'บันทึกการคืนเงินทุกรายการ (ดูอย่างเดียว) — แก้ไขย้อนหลังไม่ได้'}
             {' '}ยอดที่ "รอคืน" ไม่ถูกนับเป็นรายได้
           </p>
@@ -167,7 +174,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
 
       <div className="rf-summary">
         <div className="rf-stat pending">
-          <span>รอลูกค้ามารับ</span>
+          <span>รอคืนเงิน</span>
           <b>฿{money(totals.pending.amount)}</b>
           <small>{totals.pending.count} รายการ</small>
         </div>
@@ -221,7 +228,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
               <tr><td colSpan={colCount} className="rf-empty">กำลังโหลดรายการคืนเงิน…</td></tr>
             ) : visible.length === 0 ? (
               <tr><td colSpan={colCount} className="rf-empty">
-                {filter === 'PENDING' ? 'ไม่มีรายการที่รอลูกค้ามารับเงินคืน' : 'ไม่พบรายการคืนเงิน'}
+                {filter === 'PENDING' ? 'ไม่มีรายการที่รอคืนเงิน' : 'ไม่พบรายการคืนเงิน'}
               </td></tr>
             ) : visible.map(r => (
               <tr key={r.RefundId}>
@@ -261,11 +268,13 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
                     {r.RefundStatus === 'PENDING' && (
                       r.SlipUnverified
                         ? <button type="button" className="rf-btn rf-btn-ghost" onClick={() => setChecking(r)}>ตรวจสลิปก่อน</button>
-                        : !isOwner && r.PayoutMethod === 'TRANSFER'
-                        ? <span className="rf-sub">ลูกค้าขอโอน<br />รอเจ้าของร้านดำเนินการ</span>
+                        : awaitingAccount(r)
+                        ? <span className="rf-sub">รอลูกค้า<br />ระบุบัญชีรับเงินคืน</span>
+                        : !r.IsWalkIn && !isOwner
+                        ? <span className="rf-sub">รอเจ้าของร้าน<br />โอนคืน</span>
                         : (
                           <button type="button" className="rf-btn rf-btn-primary" onClick={() => setConfirming(r)}>
-                            {isOwner && r.PayoutMethod === 'TRANSFER' ? 'โอนคืน' : 'คืนเงินแล้ว'}
+                            {r.IsWalkIn ? 'คืนเงินสดแล้ว' : 'โอนคืน'}
                           </button>
                         )
                     )}
@@ -377,10 +386,10 @@ function SlipCheckModal({ apiBase, row: checking, onClose, onDone }) {
 }
 
 function ConfirmRefundModal({ apiBase, isOwner, row: confirming, onClose, onDone }) {
-  const transferRequested = isOwner && confirming.PayoutMethod === 'TRANSFER';
+  const transferRequested = isOwner && !confirming.IsWalkIn && confirming.PayoutMethod === 'TRANSFER';
   const [busy, setBusy] = useState(false);
   const [confirmError, setConfirmError] = useState('');
-  const [payMethod, setPayMethod] = useState(transferRequested ? 'TRANSFER' : 'CASH'); // วิธีที่ร้านจ่ายจริง
+  const payMethod = confirming.IsWalkIn ? 'CASH' : 'TRANSFER'; // ออนไลน์โอนคืนเท่านั้น ; walk-in เงินสดเท่านั้น
   const [slip, setSlip] = useState(null);               // { name, dataUrl }
   const [payInfo, setPayInfo] = useState(null);         // ข้อมูลบัญชีเต็มของลูกค้า (เจ้าของเปิดดู -> audit)
   const [payInfoError, setPayInfoError] = useState('');
@@ -446,9 +455,9 @@ function ConfirmRefundModal({ apiBase, isOwner, row: confirming, onClose, onDone
           <dt>ลูกค้า</dt><dd>{confirming.IsWalkIn ? 'Walk-in' : (confirming.CustomerName || '-')}{confirming.CustomerPhone ? ` · ${fmtPhone(confirming.CustomerPhone)}` : ''}</dd>
           <dt>เหตุผล</dt><dd>{confirming.Reason || TYPE_TH[confirming.RefundType]}</dd>
         </dl>
-        {confirming.PayoutMethod === 'TRANSFER' && (
+        {payMethod === 'TRANSFER' && (
           <div className="rf-pay-box">
-            <b>ลูกค้าขอรับเงินคืนแบบโอน</b>
+            <b>โอนเงินคืนเข้าบัญชีลูกค้า</b>
             {payInfoError && <div className="rf-error" role="alert">{payInfoError}</div>}
             {!payInfo && !payInfoError && <div className="rf-sub">กำลังโหลดข้อมูลบัญชี…</div>}
             {payInfo && (
@@ -462,29 +471,23 @@ function ConfirmRefundModal({ apiBase, isOwner, row: confirming, onClose, onDone
                 {payInfo.qr_image && (<><dt>QR</dt><dd><AuthImage apiBase={apiBase} className="rf-qr" src={payInfo.qr_image} alt="QR รับเงินของลูกค้า" /></dd></>)}
               </dl>
             )}
-            <div className="rf-method-pick" role="radiogroup" aria-label="วิธีคืนเงิน">
-              <label><input type="radio" name="rf-paymethod" checked={payMethod === 'TRANSFER'} onChange={() => setPayMethod('TRANSFER')} /> โอนเข้าบัญชีลูกค้า</label>
-              <label><input type="radio" name="rf-paymethod" checked={payMethod === 'CASH'} onChange={() => setPayMethod('CASH')} /> ลูกค้ามารับเงินสดแทน</label>
-            </div>
-            {payMethod === 'TRANSFER' && (
-              <label className="rf-slip">
-                <span>แนบสลิปโอน <b>(บังคับ)</b></span>
-                <input type="file" accept="image/*" onChange={pickSlip} disabled={busy} />
-                {slip && <img className="rf-slip-preview" src={slip.dataUrl} alt="สลิปโอนที่เลือก" />}
-              </label>
-            )}
+            <label className="rf-slip">
+              <span>แนบสลิปโอน <b>(บังคับ)</b></span>
+              <input type="file" accept="image/*" onChange={pickSlip} disabled={busy} />
+              {slip && <img className="rf-slip-preview" src={slip.dataUrl} alt="สลิปโอนที่เลือก" />}
+            </label>
           </div>
         )}
         <p className="rf-modal-note">
           {payMethod === 'TRANSFER'
             ? 'ข้อมูลบัญชีลูกค้าจะถูกลบออกจากระบบเมื่อยืนยัน และเก็บเฉพาะสลิปโอนไว้เป็นหลักฐาน'
-            : 'ตรวจเลขคิวกับลูกค้าให้ตรงก่อนจ่ายเงิน เมื่อกดยืนยันแล้วจะแก้ไขไม่ได้'}
+            : 'ลูกค้า walk-in : ตรวจเลขคิวให้ตรงก่อนจ่ายเงินสด เมื่อกดยืนยันแล้วจะแก้ไขไม่ได้'}
         </p>
         {confirmError && <div className="rf-error" role="alert">{confirmError}</div>}
         <div className="rf-modal-actions">
           <button type="button" className="rf-btn rf-btn-ghost" onClick={onClose} disabled={busy}>ยกเลิก</button>
           <button type="button" className="rf-btn rf-btn-primary" onClick={confirmRefund} disabled={busy || (payMethod === 'TRANSFER' && (!slip || !payInfo))}>
-            {busy ? 'กำลังบันทึก…' : (payMethod === 'TRANSFER' ? 'โอนแล้ว ยืนยัน' : 'จ่ายเงินแล้ว ยืนยัน')}
+            {busy ? 'กำลังบันทึก…' : (payMethod === 'TRANSFER' ? 'โอนแล้ว ยืนยัน' : 'จ่ายเงินสดแล้ว ยืนยัน')}
           </button>
         </div>
       </div>
@@ -502,7 +505,6 @@ const RF_STYLES = `
 .rf-pay-box { background: #F8FAFC; border: 1px solid ${C.border}; border-radius: 12px; padding: 12px 14px; margin: 12px 0; display: grid; gap: 8px; }
 .rf-acct { font-weight: 800; letter-spacing: .5px; font-variant-numeric: tabular-nums; }
 .rf-qr { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid ${C.border}; }
-.rf-method-pick { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
 .rf-slip { display: grid; gap: 6px; font-size: 13px; }
 .rf-slip-preview { max-width: 180px; max-height: 220px; border-radius: 8px; border: 1px solid ${C.border}; }
 .rf-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }

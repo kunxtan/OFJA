@@ -2,8 +2,8 @@
 import pytest
 
 from errors import DomainError
-from routers.payments import mark_refund_done
-from schemas import RefundDoneSchema
+from routers.payments import assert_refund_method, mark_refund_done, set_refund_payout
+from schemas import RefundDoneSchema, RefundPayoutSchema
 from utils import mask_account, validate_payout
 
 
@@ -40,6 +40,30 @@ def test_only_owner_can_transfer_and_slip_is_required():
     with pytest.raises(DomainError) as e:
         mark_refund_done(1, RefundDoneSchema(method="TRANSFER"), user=owner, db=None)
     assert e.value.status_code == 400 and "สลิป" in e.value.detail
+
+
+def test_online_refunds_are_transfer_only_and_walk_in_cash_only():
+    online_ready = {"IsWalkIn": 0, "PayoutMethod": "TRANSFER"}
+    online_no_account = {"IsWalkIn": 0, "PayoutMethod": "CASH"}  # ค่าเริ่มต้น = ลูกค้ายังไม่ได้ระบุบัญชี
+    walk_in = {"IsWalkIn": 1, "PayoutMethod": "CASH"}
+    assert_refund_method(online_ready, "TRANSFER", "STORE_OWNER")
+    assert_refund_method(walk_in, "CASH", "FRONT_STAFF")
+    assert_refund_method(walk_in, "CASH", "STORE_OWNER")
+    for rf, method, role, status in ((online_ready, "CASH", "STORE_OWNER", 400),      # ออนไลน์คืนเงินสดไม่ได้
+                                     (online_ready, "CASH", "FRONT_STAFF", 400),
+                                     (online_ready, "TRANSFER", "FRONT_STAFF", 403),  # โอนได้เฉพาะเจ้าของร้าน
+                                     (online_no_account, "TRANSFER", "STORE_OWNER", 400),
+                                     (walk_in, "TRANSFER", "STORE_OWNER", 400)):
+        with pytest.raises(DomainError) as e:
+            assert_refund_method(rf, method, role)
+        assert e.value.status_code == status
+
+
+def test_customer_cannot_choose_cash_payout():
+    customer = {"RoleCode": "CUSTOMER", "UserId": 9}
+    with pytest.raises(DomainError) as e:
+        set_refund_payout(1, RefundPayoutSchema(method="CASH"), user=customer, db=None)
+    assert e.value.status_code == 400 and "โอน" in e.value.detail
 
 
 def test_price_diff_is_split_across_payments(monkeypatch):

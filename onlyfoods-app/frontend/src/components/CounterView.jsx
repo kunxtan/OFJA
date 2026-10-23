@@ -253,11 +253,11 @@ export default function CounterView({ user, apiBase, onLogout }) {
     fetchPendingRefunds();
   };
 
-  // จำนวนรายการที่รอลูกค้ามารับเงินคืน (ป้ายตัวเลขบนเมนู "คืนเงินลูกค้า")
+  // จำนวนเงินคืนที่หน้าร้านต้องจ่าย (เงินสด walk-in) ; ลูกค้าออนไลน์เจ้าของร้านโอนคืน จึงไม่นับ
   const fetchPendingRefunds = () => {
     fetch(`${apiBase}/api/refunds?status=PENDING&limit=500`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (Array.isArray(d)) setPendingRefunds(d.length); })
+      .then(d => { if (Array.isArray(d)) setPendingRefunds(d.filter(r => r.IsWalkIn && !r.SlipUnverified).length); })
       .catch(err => console.error("Error refunds:", err));
   };
 
@@ -916,7 +916,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
     { id: 'orders', label: 'Queue & Slips', caption: 'จัดการคิว & ตรวจสลิป', icon: 'orders', badge: verifyingOrders.length || null },
     { id: 'history', label: 'ประวัติออเดอร์', caption: 'ประวัติรายวัน / ดูลูกค้า / พิมพ์ใบเสร็จ', icon: 'stale' },
     { id: 'walkin', label: 'Walk-in POS', caption: 'แคชเชียร์สั่งอาหารหน้าร้าน', icon: 'walkin' },
-    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: 'ลูกค้ามารับเงินคืนที่หน้าร้าน', icon: 'coin', badge: pendingRefunds || null },
+    { id: 'refunds', label: 'คืนเงินลูกค้า', caption: 'คืนเงินสดลูกค้า walk-in', icon: 'coin', badge: pendingRefunds || null },
     { id: 'menu', label: 'Menu & Stock', caption: 'เปิด-ปิดสต็อกวัตถุดิบ', icon: 'menu' },
     { id: 'reports', label: 'Reports', caption: 'รายงานการขายและปัญหา', icon: 'orders' },
     { id: 'display', label: 'จอเรียกคิว (จำลอง)', caption: 'ของจริงเปิดค้างบนทีวีหน้าร้าน', icon: 'tv' },
@@ -1752,7 +1752,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
                 <div className="stock-queue-list">
                   {stockModal.notifiable.map(o => <span key={o.OrderID} className="stock-queue">{o.QueueNo}</span>)}
                 </div>
-                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 15 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ (ลูกค้ามารับเงินคืนที่ร้าน)</small>
+                <small>ถ้าแจ้งลูกค้า: ออเดอร์จะเปลี่ยนเป็น "รอลูกค้าเปลี่ยนเมนู" ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิกรับเงินคืนภายใน 15 นาที เลยเวลาแล้วระบบยกเลิกให้อัตโนมัติ (เจ้าของร้านโอนเงินคืนให้ลูกค้า)</small>
               </div>
             ) : (
               <p className="stock-none">ไม่มีออเดอร์ลูกค้าออนไลน์ที่ต้องแจ้ง</p>

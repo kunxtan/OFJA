@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { startPolling } from '../utils/polling';
 import { useHistoryNav } from '../utils/historyNav';
 import { createPortal } from 'react-dom';
-import { RefundActionModals, STATUS_TH as REFUND_STATUS_TH, payoutLabel } from './RefundLog';
+import { RefundActionModals, STATUS_TH as REFUND_STATUS_TH, awaitingAccount, payoutLabel } from './RefundLog';
 import AuthImage, { openFile } from './AuthImage';
 
 /* ============================================================
@@ -2153,7 +2153,7 @@ const PAYMENT_STATUS_META = {
 };
 const REFUND_TYPE_TH = { FULL_CANCEL: 'คืนเงินทั้งออเดอร์', PRICE_DIFF: 'คืนส่วนต่างราคา', ITEM_CANCEL: 'คืนเงินบางรายการ' };
 const REFUND_STATUS_META = {
-  PENDING: { label: 'รอลูกค้ามารับ', tone: 'warning' },
+  PENDING: { label: 'รอคืนเงิน', tone: 'warning' },
   DONE: { label: 'คืนเงินแล้ว', tone: 'success' },
   FAILED: { label: 'ไม่สำเร็จ', tone: 'danger' },
 };
@@ -4700,17 +4700,21 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             // ---- สถานะ ----
             const isPending = (r) => r.RefundStatus === 'PENDING';
             const needSlipCheck = (r) => isPending(r) && r.SlipUnverified;
-            const needTransfer = (r) => isPending(r) && !r.SlipUnverified && r.PayoutMethod === 'TRANSFER';
+            // ออนไลน์ : ลูกค้าระบุบัญชีแล้ว = พร้อมโอน ; ยังไม่ระบุ = รอลูกค้า (walk-in คืนเงินสดที่หน้าร้าน)
+            const needTransfer = (r) => isPending(r) && !r.SlipUnverified && !r.IsWalkIn && r.PayoutMethod === 'TRANSFER';
+            const needAccount = (r) => !r.SlipUnverified && awaitingAccount(r);
             const pendingList = inRange.filter(isPending);
             const doneList = inRange.filter(r => r.RefundStatus === 'DONE');
             const failedList = inRange.filter(r => r.RefundStatus === 'FAILED');
             const slipCount = inRange.filter(needSlipCheck).length;
             const transferCount = inRange.filter(needTransfer).length;
+            const accountCount = inRange.filter(needAccount).length;
             const sumOf = (list) => list.reduce((s, r) => s + Number(r.Amount || 0), 0);
             const statusTabs = [
               { id: 'pending', label: 'รอคืน', count: pendingList.length, tone: 'amber' },
               { id: 'slip', label: 'ต้องตรวจสลิป', count: slipCount, tone: 'red' },
-              { id: 'transfer', label: 'ลูกค้าขอโอน', count: transferCount },
+              { id: 'transfer', label: 'พร้อมโอนคืน', count: transferCount },
+              { id: 'account', label: 'รอลูกค้าระบุบัญชี', count: accountCount },
               { id: 'done', label: 'คืนแล้ว', count: doneList.length, tone: 'green' },
               ...(failedList.length ? [{ id: 'failed', label: 'ไม่ต้องคืน', count: failedList.length }] : []),
               { id: 'all', label: 'ทั้งหมด', count: inRange.length },
@@ -4720,6 +4724,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
               pending: isPending,
               slip: needSlipCheck,
               transfer: needTransfer,
+              account: needAccount,
               done: (r) => r.RefundStatus === 'DONE',
               failed: (r) => r.RefundStatus === 'FAILED',
             }[refundStatus] || (() => true);
@@ -4743,7 +4748,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             const typeCounts = inRange.reduce((acc, r) => { acc[r.RefundType] = (acc[r.RefundType] || 0) + 1; return acc; }, {});
             const kpis = [
               { tone: 'amber', icon: 'clock', value: `฿${fmtBaht(sumOf(pendingList))}`, label: 'รอคืนเงิน (ยังไม่นับเป็นรายได้)',
-                sub: pendingList.length ? `${fmtMoney(pendingList.length)} รายการ${transferCount ? ` · ขอโอน ${transferCount}` : ''}` : 'ไม่มีรายการค้าง' },
+                sub: pendingList.length ? [`${fmtMoney(pendingList.length)} รายการ`, transferCount ? `พร้อมโอน ${transferCount}` : null,
+                  accountCount ? `รอบัญชี ${accountCount}` : null].filter(Boolean).join(' · ') : 'ไม่มีรายการค้าง' },
               { tone: 'green', icon: 'check', value: `฿${fmtBaht(sumOf(doneList))}`, label: 'คืนเงินแล้ว',
                 sub: doneList.length ? `${fmtMoney(doneList.length)} รายการ · โอน ฿${fmtBaht(doneTransfer)} · เงินสด ฿${fmtBaht(sumOf(doneList) - doneTransfer)}` : null },
               { tone: 'red', icon: 'alert', value: fmtMoney(slipCount), label: 'ต้องตรวจสลิปก่อนคืน',
@@ -4780,7 +4786,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             const emptyText = {
               pending: ['ไม่มีรายการที่รอคืนเงิน', 'เมื่อมีการยกเลิกหลังจ่ายเงิน หรือเปลี่ยนเมนูที่ถูกกว่า รายการจะมาแสดงที่นี่'],
               slip: ['ไม่มีสลิปที่ต้องตรวจ', 'รายการที่ออเดอร์ถูกยกเลิกก่อนร้านตรวจสลิปจะแสดงที่นี่'],
-              transfer: ['ไม่มีรายการที่ลูกค้าขอรับแบบโอน', 'ลูกค้าที่ขอรับเงินคืนเข้าบัญชีจะแสดงที่นี่'],
+              transfer: ['ไม่มีรายการที่พร้อมโอนคืน', 'ลูกค้าออนไลน์ที่ระบุบัญชีรับเงินคืนแล้วจะแสดงที่นี่'],
+              account: ['ไม่มีรายการที่รอลูกค้าระบุบัญชี', 'ระบบแจ้งลูกค้าให้ระบุบัญชีรับเงินคืนแล้ว เมื่อระบุแล้วรายการจะย้ายไปที่ "พร้อมโอนคืน"'],
             }[refundStatus] || ['ไม่พบรายการคืนเงินในช่วงนี้', 'ลองเลือกช่วงวันที่ที่กว้างขึ้น หรือเปลี่ยนตัวกรองสถานะ'];
 
             return (
@@ -4793,7 +4800,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
                 <div className="rv-privacy rr-note">
                   <Icon name="lock" size={15} />
-                  ยอดที่รอคืนไม่ถูกนับเป็นรายได้ · ลูกค้าที่ขอรับแบบโอน ต้องแนบสลิปโอนทุกครั้ง และข้อมูลบัญชีลูกค้าจะถูกลบหลังยืนยัน
+                  ยอดที่รอคืนไม่ถูกนับเป็นรายได้ · ลูกค้าออนไลน์รับเงินคืนทางโอนเท่านั้น ต้องแนบสลิปโอนทุกครั้ง และข้อมูลบัญชีลูกค้าจะถูกลบหลังยืนยัน · walk-in คืนเงินสดที่หน้าร้าน
                 </div>
 
                 <div className="sh-filter-bar">
@@ -4883,7 +4890,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                             const statusClass = needSlipCheck(r) ? 'cancelled' : pending ? 'active' : r.RefundStatus === 'DONE' ? 'done' : 'noshow';
                             const badgeTone = needSlipCheck(r) ? 'danger' : pending ? 'warning' : r.RefundStatus === 'DONE' ? 'success' : 'neutral';
                             const badgeLabel = needSlipCheck(r) ? 'สลิปยังไม่ได้ตรวจ'
-                              : pending && r.PayoutMethod === 'TRANSFER' ? 'รอร้านโอนคืน'
+                              : needAccount(r) ? 'รอลูกค้าระบุบัญชี'
+                              : needTransfer(r) ? 'รอร้านโอนคืน'
                               : (REFUND_STATUS_TH[r.RefundStatus] || r.RefundStatus);
                             // คืนคนละวันกับวันที่ขอ (กลุ่มวันเป็นวันที่ขอ) : ใส่วันที่ด้วย
                             const refundedDay = r.RefundedAt && dayKey({ RequestedAt: r.RefundedAt }) !== day.key
@@ -4925,9 +4933,11 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                                 <span className="rr-action">
                                   {pending && needSlipCheck(r) ? (
                                     <button type="button" className="rr-btn danger" onClick={stop(() => setRefundChecking(r))}>ตรวจสลิป</button>
+                                  ) : pending && needAccount(r) ? (
+                                    <span className="rr-wait">รอลูกค้า<br />ระบุบัญชี</span>
                                   ) : pending ? (
                                     <button type="button" className="rr-btn primary" onClick={stop(() => setRefundConfirming(r))}>
-                                      {r.PayoutMethod === 'TRANSFER' ? 'โอนคืน' : 'คืนเงินแล้ว'}
+                                      {r.IsWalkIn ? 'คืนเงินสดแล้ว' : 'โอนคืน'}
                                     </button>
                                   ) : r.TransferSlipUrl ? (
                                     <button type="button" className="rr-btn ghost" onClick={stop(() => openFile(apiBase, r.TransferSlipUrl))}>
@@ -6657,6 +6667,7 @@ body, html {
 .rr-payout small { font-size: 11.5px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rr-payout.transfer { color: var(--berry-blue); }
 .rr-action { justify-self: end; display: flex; align-items: center; }
+.rr-wait { font-size: 11.5px; line-height: 1.35; color: var(--berry-text-muted); text-align: center; }
 .rr-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 7px 14px; border: 1px solid transparent; border-radius: 10px; font-family: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; text-decoration: none; cursor: pointer; transition: all 0.15s ease; }
 .rr-btn.primary { background: var(--berry-purple); color: #FFFFFF; box-shadow: 0 4px 10px rgba(255,114,76,0.25); }
 .rr-btn.primary:hover { background: var(--berry-purple-dark); }

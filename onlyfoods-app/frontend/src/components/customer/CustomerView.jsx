@@ -241,7 +241,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       }
       setPayoutOrder(null);
       await fetchMyRefunds();
-      customAlert("บันทึกแล้ว", body.method === "TRANSFER" ? "เจ้าของร้านจะโอนเงินคืนเข้าบัญชีของคุณ คุณจะได้รับแจ้งเตือนเมื่อโอนแล้ว" : `รับเงินสดที่ร้านโดยแจ้งเลขคิว ${payoutOrder.QueueNo}`, "success");
+      customAlert("บันทึกแล้ว", "เจ้าของร้านจะโอนเงินคืนเข้าบัญชีของคุณ คุณจะได้รับแจ้งเตือนเมื่อโอนแล้ว", "success");
     } catch (error) {
       setPayoutError(error.message || "บันทึกไม่สำเร็จ");
     } finally {
@@ -253,19 +253,20 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     const sum = summarizeRefunds(refundsByOrder[order.OrderID]);
     if (!sum.pending && !sum.done) return null;
     const pending = sum.pending > 0;
+    const hasPayoutAccount = (refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER");
     return (
       <div role="status" style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "12px", fontSize: "13px", lineHeight: 1.5,
         background: pending ? "#FEF3C7" : "#D1FAE5", color: pending ? "#92400E" : "#065F46", fontWeight: "700" }}>
         {pending ? (
-          <>รอรับเงินคืน {sum.pending.toFixed(2)} ฿ ที่ร้าน {order.StoreName}
+          <>รอรับเงินคืน {sum.pending.toFixed(2)} ฿ จากร้าน {order.StoreName}
             <div style={{ fontWeight: "500", fontSize: "12px" }}>
-              {(refundsByOrder[order.OrderID] || []).some((r) => r.RefundStatus === "PENDING" && r.PayoutMethod === "TRANSFER")
-                ? "เลือกให้เจ้าของร้านโอนคืนแล้ว รอร้านดำเนินการ"
-                : `แจ้งเลขคิว #${order.QueueNo} กับพนักงานหน้าร้านเพื่อรับเงินคืน หรือเลือกให้ร้านโอนให้`}
+              {hasPayoutAccount
+                ? "ระบุบัญชีแล้ว รอเจ้าของร้านโอนคืน"
+                : "ร้านจะโอนเงินคืนเข้าบัญชีของคุณ กรุณาระบุบัญชีรับเงินคืน"}
             </div>
             <button type="button" onClick={() => { setPayoutError(""); setPayoutOrder(order); }}
               style={{ marginTop: "8px", padding: "8px 14px", borderRadius: "10px", border: "none", background: "#92400E", color: "#fff", fontWeight: "800", fontSize: "12px", cursor: "pointer" }}>
-              เลือกวิธีรับเงินคืน
+              {hasPayoutAccount ? "แก้ไขบัญชีรับเงินคืน" : "ระบุบัญชีรับเงินคืน"}
             </button></>
         ) : (
           <>รับเงินคืนแล้ว {sum.done.toFixed(2)} ฿{sum.doneAt ? ` · ${new Date(String(sum.doneAt).replace(" ", "T")).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}` : ""}</>
@@ -594,7 +595,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         body: JSON.stringify({ user_id: userId, reason: customReason }),
       });
       if (res.ok) {
-        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `กรุณารับเงินคืนที่ร้าน ${outOfStockOrder.StoreName || ""} โดยแจ้งเลขคิว ${outOfStockOrder.QueueNo}`, "success");
+        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `ร้าน ${outOfStockOrder.StoreName || ""} จะโอนเงินคืนให้ กรุณาระบุบัญชีรับเงินคืนที่ออเดอร์คิว ${outOfStockOrder.QueueNo}`, "success");
         setOutOfStockOrder(null);
         setIsChangeMenuMode(false);
         setNewSelectedProduct(null);
@@ -703,7 +704,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `กรุณารับเงินคืนที่ร้าน ${topUpOrder.StoreName || ""} โดยแจ้งเลขคิว ${topUpOrder.QueueNo}`, "success");
+        customAlert("ยกเลิกคำสั่งซื้อแล้ว", `ร้าน ${topUpOrder.StoreName || ""} จะโอนเงินคืนให้ กรุณาระบุบัญชีรับเงินคืนที่ออเดอร์คิว ${topUpOrder.QueueNo}`, "success");
         setTopUpSlip(null);
         await fetchMyOrders();
       } else {
@@ -2680,7 +2681,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         isChangeMenuMode={isChangeMenuMode}
         setIsChangeMenuMode={setIsChangeMenuMode}
         handleCancelOutOfStockOrder={(reason) => customAlert(
-          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ คุณจะได้รับเงินคืนที่ร้าน (หรือเลือกให้ร้านโอนคืนได้)", "warning",
+          "ยืนยันยกเลิกออเดอร์?", "ยกเลิกแล้วย้อนกลับไม่ได้ ร้านจะโอนเงินคืนเข้าบัญชีที่คุณระบุ", "warning",
           () => once("cancel-oos", () => handleCancelOutOfStockOrder(reason)))}
         setNewSelectedProduct={setNewSelectedProduct}
         newSelectedProduct={newSelectedProduct}

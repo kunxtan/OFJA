@@ -113,9 +113,10 @@ def _verify_top_up_slip(db, cur, order, approved: bool, reason: str, user: dict,
 
 # ---------------------------------------------------------------- refunds
 # ยกเลิก/เปลี่ยนเป็นเมนูที่ถูกกว่า -> Refund PENDING ("รอคืน") ; ไม่นับเป็นรายได้ตั้งแต่ตอนนี้ (v_order_net)
-# ลูกค้าเลือกวิธีรับเงินคืน (PUT /refunds/{id}/payout) :
-#   CASH     (ค่าเริ่มต้น) มารับเงินสดที่หน้าร้านโดยแจ้งเลขคิว -> พนักงานหน้าร้านหรือเจ้าของร้านกด "คืนเงินแล้ว"
-#   TRANSFER ให้โอนคืน (พร้อมเพย์ หรือ ธนาคาร+เลขบัญชี+ชื่อบัญชี) -> เฉพาะเจ้าของร้านโอนและแนบสลิป (บังคับ)
+# วิธีคืนเงินขึ้นกับว่าลูกค้าจ่ายมาอย่างไร :
+#   ลูกค้าออนไลน์ (โอนพร้อมแนบสลิป) -> โอนคืนเท่านั้น : ลูกค้าระบุบัญชี (PUT /refunds/{id}/payout)
+#       แล้วเจ้าของร้านโอนและแนบสลิป (บังคับ) ; ไม่มีรับเงินสดที่ร้าน (PayoutMethod 'CASH' = ยังไม่ได้ระบุบัญชี)
+#   walk-in (จ่ายต่อหน้าพนักงาน ไม่มีบัญชีในระบบ) -> คืนเงินสดที่หน้าร้าน (พนักงานหน้าร้านหรือเจ้าของร้าน)
 # ข้อมูลบัญชีลูกค้าเห็นเต็มเฉพาะเจ้าของ (GET /refunds/{id}/payout-info บันทึก audit) แล้วล้างทิ้งเมื่อคืนเงินเสร็จ
 # ฝ่ายบัญชี/ผู้บริหารดูได้ทุกร้าน (ดูอย่างเดียว เลขบัญชีปิดบางส่วน) ; ลูกค้าเห็นเฉพาะของตัวเอง
 REFUND_CONFIRM_ROLES = ("FRONT_STAFF", "STORE_OWNER")
@@ -185,7 +186,7 @@ def list_refunds(status: Optional[str] = Query(None, pattern="^(PENDING|DONE|FAI
 _REFUND_ROW_SQL = """
     SELECT rf.RefundId, rf.RefundStatus, rf.Amount, rf.RefundType, rf.PaymentId, rf.PayoutMethod, rf.PayoutKind,
            rf.PayoutBank, rf.PayoutAccountNo, rf.PayoutAccountName, rf.PayoutQrUrl, rf.PayoutLockedAt,
-           o.OrderId, o.StoreId, o.CustomerId, o.QueueNo, s.QueueCode, p.PaymentStatus
+           o.OrderId, o.StoreId, o.CustomerId, o.QueueNo, o.IsWalkIn, s.QueueCode, p.PaymentStatus
     FROM Refund rf
     JOIN Payment p ON p.PaymentId = rf.PaymentId
     JOIN `Order` o ON o.OrderId = p.OrderId
@@ -216,11 +217,11 @@ def _qr_still_used(cur, path: str) -> bool:
 @router.put("/refunds/{refund_id}/payout")
 def set_refund_payout(refund_id: int, payload: RefundPayoutSchema,
                       user=Depends(require_role("CUSTOMER")), db=Depends(get_db)):
-    """ลูกค้าเลือกรับเงินสดที่ร้าน หรือให้เจ้าของร้านโอนให้ ; ใช้กับเงินคืนที่ยังรอคืนทุกรายการของออเดอร์เดียวกัน
-    แก้ได้จนกว่าเจ้าของร้านจะเปิดดูข้อมูลบัญชีเพื่อโอน (กันเปลี่ยนบัญชี/เปลี่ยนเป็นเงินสดระหว่างร้านกำลังโอน)"""
-    info = None
-    if payload.method == "TRANSFER":
-        info = validate_payout(payload.kind, payload.bank, payload.account_no, payload.account_name)
+    """ลูกค้าระบุบัญชีรับเงินคืน (โอนคืนเท่านั้น) ; ใช้กับเงินคืนที่ยังรอคืนทุกรายการของออเดอร์เดียวกัน
+    แก้ได้จนกว่าเจ้าของร้านจะเปิดดูข้อมูลบัญชีเพื่อโอน (กันเปลี่ยนบัญชีระหว่างร้านกำลังโอน)"""
+    if payload.method != "TRANSFER":
+        raise DomainError(400, "เงินคืนของออเดอร์ออนไลน์คืนด้วยการโอนเท่านั้น กรุณาระบุบัญชีรับเงินคืน")
+    info = validate_payout(payload.kind, payload.bank, payload.account_no, payload.account_name)
     new_qr = None
     stale_files = set()
     try:
@@ -238,39 +239,29 @@ def set_refund_payout(refund_id: int, payload: RefundPayoutSchema,
                 old_qrs = {r["PayoutQrUrl"] for r in rows if r["PayoutQrUrl"]}
                 ids = [r["RefundId"] for r in rows]
                 marks = ", ".join(["%s"] * len(ids))
-                if payload.method == "CASH":
+                if payload.qr_image:
+                    new_qr = save_image(payload.qr_image, "refunds", new_only=True)
+                    if not new_qr:
+                        raise DomainError(400, "ไฟล์รูป QR ไม่ถูกต้อง")
+                    keep_qr = new_qr
+                elif payload.remove_qr:
                     keep_qr = None
-                    cur.execute(
-                        f"""UPDATE Refund SET PayoutMethod = 'CASH', PayoutKind = NULL, PayoutBank = NULL,
-                            PayoutAccountNo = NULL, PayoutAccountName = NULL, PayoutQrUrl = NULL
-                            WHERE RefundId IN ({marks})""",
-                        ids,
-                    )
-                else:
-                    if payload.qr_image:
-                        new_qr = save_image(payload.qr_image, "refunds", new_only=True)
-                        if not new_qr:
-                            raise DomainError(400, "ไฟล์รูป QR ไม่ถูกต้อง")
-                        keep_qr = new_qr
-                    elif payload.remove_qr:
-                        keep_qr = None
-                    else:  # ไม่ได้เลือกรูปใหม่ = ใช้ QR เดิม
-                        keep_qr = next(iter(old_qrs), None)
-                    cur.execute(
-                        f"""UPDATE Refund SET PayoutMethod = 'TRANSFER', PayoutKind = %s, PayoutBank = %s,
-                            PayoutAccountNo = %s, PayoutAccountName = %s, PayoutQrUrl = %s
-                            WHERE RefundId IN ({marks})""",
-                        [info["kind"], info["bank"], info["account_no"], info["account_name"], keep_qr, *ids],
-                    )
+                else:  # ไม่ได้เลือกรูปใหม่ = ใช้ QR เดิม
+                    keep_qr = next(iter(old_qrs), None)
+                cur.execute(
+                    f"""UPDATE Refund SET PayoutMethod = 'TRANSFER', PayoutKind = %s, PayoutBank = %s,
+                        PayoutAccountNo = %s, PayoutAccountName = %s, PayoutQrUrl = %s
+                        WHERE RefundId IN ({marks})""",
+                    [info["kind"], info["bank"], info["account_no"], info["account_name"], keep_qr, *ids],
+                )
                 stale_files = {path for path in old_qrs if path != keep_qr}
             q = queue_label(rf["QueueNo"], rf["QueueCode"])
             total = sum(Decimal(r["Amount"]) for r in rows)
-            if payload.method == "TRANSFER":
-                notify_store_owners(db, rf["StoreId"], "PAYMENT", f"ลูกค้าขอรับเงินคืนแบบโอน คิว {q}",
-                                    f"คิว {q} ขอรับเงินคืน {total:.2f} บาท โดยโอนเข้าบัญชี "
-                                    f"(เปิดดูข้อมูลได้ที่เมนูคืนเงินลูกค้า)", rf["OrderId"])
+            notify_store_owners(db, rf["StoreId"], "PAYMENT", f"ลูกค้าระบุบัญชีรับเงินคืนแล้ว คิว {q}",
+                                f"คิว {q} รอรับเงินคืน {total:.2f} บาท โดยโอนเข้าบัญชี "
+                                f"(เปิดดูข้อมูลได้ที่เมนูคืนเงินลูกค้า)", rf["OrderId"])
             log_audit(db, user["UserId"], "REFUND_PAYOUT_SET", "Refund", refund_id, None,
-                      {"method": payload.method, "kind": info["kind"] if info else None, "refund_ids": ids,
+                      {"method": payload.method, "kind": info["kind"], "refund_ids": ids,
                        "order_id": rf["OrderId"], "store_id": rf["StoreId"]})
     except Exception:
         delete_upload(new_qr)  # บันทึกไม่สำเร็จ ไม่ต้องเก็บไฟล์ใหม่
@@ -322,7 +313,7 @@ def check_refund_slip(refund_id: int, payload: RefundSlipCheckSchema,
                 cur.execute("UPDATE Payment SET PaymentStatus = 'VERIFIED', VerifiedBy = %s, PaidAt = %s WHERE PaymentId = %s",
                             (user["UserId"], now, rf["PaymentId"]))
                 text = (f"ร้านตรวจสลิปคิว {q} แล้ว คุณจะได้รับเงินคืน {Decimal(rf['Amount']):.2f} บาท "
-                        f"กรุณารับที่ร้านโดยแจ้งเลขคิว หรือเลือกให้ร้านโอนคืนที่รายการคืนเงิน")
+                        f"ทางการโอน กรุณาระบุบัญชีรับเงินคืนที่รายการคืนเงิน")
             else:
                 cur.execute("UPDATE Payment SET PaymentStatus = 'REJECTED', RejectReason = %s, VerifiedBy = %s "
                             "WHERE PaymentId = %s", (reason[:255], user["UserId"], rf["PaymentId"]))
@@ -336,12 +327,27 @@ def check_refund_slip(refund_id: int, payload: RefundSlipCheckSchema,
     return {"success": True, "approved": payload.approved}
 
 
+def assert_refund_method(rf: dict, method: str, role: str) -> None:
+    """วิธีคืนเงินที่ใช้ได้ : walk-in = เงินสดที่หน้าร้าน ; ออนไลน์ (จ่ายโอนพร้อมสลิป) = เจ้าของร้านโอนคืน
+    หลังลูกค้าระบุบัญชีแล้วเท่านั้น (ไม่มีคืนเป็นเงินสด)"""
+    if rf["IsWalkIn"]:
+        if method != "CASH":
+            raise DomainError(400, "ออเดอร์ walk-in คืนเป็นเงินสดที่หน้าร้านเท่านั้น")
+        return
+    if method != "TRANSFER":
+        raise DomainError(400, "เงินคืนของออเดอร์ออนไลน์คืนด้วยการโอนเท่านั้น ไม่รับคืนเป็นเงินสด")
+    if role != "STORE_OWNER":
+        raise DomainError(403, "การโอนเงินคืนทำได้เฉพาะเจ้าของร้าน")
+    if rf["PayoutMethod"] != "TRANSFER":
+        raise DomainError(400, "ลูกค้ายังไม่ได้ระบุบัญชีรับเงินคืน กรุณารอลูกค้าระบุบัญชีก่อนโอน")
+
+
 @router.put("/refunds/{refund_id}/done")
 def mark_refund_done(refund_id: int, payload: Optional[RefundDoneSchema] = None,
                      user=Depends(require_role(*REFUND_CONFIRM_ROLES)), db=Depends(get_db)):
     """ร้านจ่ายเงินคืนแล้ว -> บันทึกว่าคืนแล้ว (ใคร/เมื่อไหร่/วิธีไหน) แล้วแจ้งลูกค้าและเจ้าของร้าน
-    CASH = จ่ายเงินสดที่หน้าร้าน (พนักงานหรือเจ้าของ) ; TRANSFER = เจ้าของร้านเท่านั้น
-    เฉพาะลูกค้าที่ขอรับแบบโอน และต้องแนบสลิปโอน"""
+    ออนไลน์ = TRANSFER เท่านั้น : เจ้าของร้าน หลังลูกค้าระบุบัญชีแล้ว และต้องแนบสลิปโอน
+    walk-in = CASH เท่านั้น : จ่ายเงินสดที่หน้าร้าน (พนักงานหรือเจ้าของ)"""
     payload = payload or RefundDoneSchema()
     if payload.method == "TRANSFER" and user["RoleCode"] != "STORE_OWNER":
         raise DomainError(403, "การโอนเงินคืนทำได้เฉพาะเจ้าของร้าน")
@@ -358,10 +364,7 @@ def mark_refund_done(refund_id: int, payload: Optional[RefundDoneSchema] = None,
                     raise DomainError(400, "รายการนี้คืนเงินไปแล้ว")
                 if rf["PaymentStatus"] != "VERIFIED":
                     raise DomainError(400, "สลิปของรายการนี้ยังไม่ได้ตรวจ กรุณาตรวจสลิปและเช็คยอดเข้าบัญชีก่อนคืนเงิน")
-                if rf["PayoutMethod"] == "TRANSFER" and payload.method == "CASH" and user["RoleCode"] != "STORE_OWNER":
-                    raise DomainError(403, "ลูกค้าขอรับเงินคืนแบบโอน ให้เจ้าของร้านดำเนินการ")
-                if payload.method == "TRANSFER" and rf["PayoutMethod"] != "TRANSFER":
-                    raise DomainError(400, "ลูกค้าเลือกรับเงินสดที่ร้าน ยังไม่ได้ให้ข้อมูลบัญชีสำหรับโอน")
+                assert_refund_method(rf, payload.method, user["RoleCode"])
                 if payload.method == "TRANSFER":  # ตรวจสิทธิ์/สถานะผ่านแล้วค่อยเขียนไฟล์
                     slip = save_image(payload.slip_image, "refunds", new_only=True)
                     if not slip:

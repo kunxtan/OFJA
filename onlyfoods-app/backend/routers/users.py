@@ -199,7 +199,7 @@ def _staff_image(value: Optional[str]) -> Optional[str]:
 
 
 def _assert_not_last_owner_with_transfers(cur, user_id: int) -> None:
-    """เจ้าของร้านคนสุดท้ายของร้าน ปิดบัญชีไม่ได้ ถ้ายังมีลูกค้ารอรับเงินคืนแบบโอน (โอนคืนได้เฉพาะเจ้าของร้าน)"""
+    """เจ้าของร้านคนสุดท้ายของร้าน ปิดบัญชีไม่ได้ ถ้ายังมีเงินคืนลูกค้าออนไลน์ค้าง (โอนคืนได้เฉพาะเจ้าของร้าน)"""
     cur.execute(
         """
         SELECT u.StoreId FROM `User` u JOIN Role r ON r.RoleId = u.RoleId
@@ -223,7 +223,7 @@ def _assert_not_last_owner_with_transfers(cur, user_id: int) -> None:
         """
         SELECT COUNT(*) AS n FROM Refund rf JOIN Payment p ON p.PaymentId = rf.PaymentId
         JOIN `Order` o ON o.OrderId = p.OrderId
-        WHERE o.StoreId = %s AND rf.RefundStatus = 'PENDING' AND rf.PayoutMethod = 'TRANSFER'
+        WHERE o.StoreId = %s AND rf.RefundStatus = 'PENDING' AND o.IsWalkIn = FALSE
         """,
         (row["StoreId"],),
     )

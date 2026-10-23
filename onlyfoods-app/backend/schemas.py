@@ -263,8 +263,8 @@ class LatePickupSchema(BaseModel):
 
 
 class RefundPayoutSchema(BaseModel):
-    """ลูกค้าเลือกวิธีรับเงินคืน : CASH = มารับที่ร้าน, TRANSFER = ให้เจ้าของร้านโอนให้"""
-    method: str = Field(pattern="^(CASH|TRANSFER)$")
+    """ลูกค้าระบุบัญชีรับเงินคืน : โอนคืนเท่านั้น (CASH รับไว้เพื่อตอบข้อความที่อ่านเข้าใจ แทน 422)"""
+    method: str = Field(default="TRANSFER", pattern="^(CASH|TRANSFER)$")
     kind: Optional[str] = Field(default=None, max_length=10)
     bank: Optional[str] = Field(default=None, max_length=60)
     account_no: Optional[str] = Field(default=None, max_length=30)
@@ -280,6 +280,6 @@ class RefundSlipCheckSchema(BaseModel):
 
 
 class RefundDoneSchema(BaseModel):
-    """ร้านจ่ายเงินคืนแล้ว : CASH หรือ TRANSFER (ต้องแนบสลิปโอน)"""
+    """ร้านจ่ายเงินคืนแล้ว : CASH (walk-in) หรือ TRANSFER (ออนไลน์ ต้องแนบสลิปโอน)"""
     method: str = Field(default="CASH", pattern="^(CASH|TRANSFER)$")
     slip_image: Optional[str] = None
