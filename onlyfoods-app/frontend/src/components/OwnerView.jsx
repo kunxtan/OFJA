@@ -405,10 +405,14 @@ function KpiSmall({ tone, icon, value, unit, label, children }) {
 
 const MENU_COLORS = ['#FF724C', '#FDBF50', '#2A2C41', '#17A673', '#FF9E84', '#585B78', '#E8552D', '#B9BCCD'];
 
-// เมนูขายดี + สัดส่วนยอดขาย ในการ์ดเดียว: 5 อันดับแรก (เรียงตามจำนวนจาน) + เมนูอื่น ๆ
-// สีของแต่ละเมนูในวงกลมตรงกับแถบในรายการ ชี้ฝั่งไหนก็ไฮไลต์อีกฝั่ง
+// เมนูขายดี + สัดส่วนยอดขาย ในการ์ดเดียว: วงกลมเป็นหลัก รายการข้าง ๆ เป็นคำอธิบายสี
+// 5 อันดับแรก (เรียงตามจำนวนจาน) + เมนูอื่น ๆ ; ชี้ที่วงกลมหรือรายการ ไฮไลต์อีกฝั่ง
 const MENU_TOP_COUNT = 5;
 const MENU_OTHER_COLOR = '#B9BCCD';
+// สีอ่อน: ตัวเลข % บนวงกลมใช้สีเข้มแทนสีขาว
+const MENU_LIGHT_COLORS = new Set(['#FDBF50', '#FF9E84', MENU_OTHER_COLOR]);
+// ชิ้นที่เล็กกว่านี้ (%) ไม่แสดงตัวเลขบนวงกลม (ไม่พอที่วาง)
+const MENU_LABEL_MIN_PCT = 6;
 
 function MenuBreakdown({ rows, products }) {
   const [hovered, setHovered] = useState(null);
@@ -416,7 +420,7 @@ function MenuBreakdown({ rows, products }) {
   if (!all.length) {
     return (
       <div className="od-empty">
-        <Icon name="award" size={30} />
+        <Icon name="pie" size={30} />
         <span>ช่วงเวลานี้ยังไม่มีเมนูที่ขายได้</span>
       </div>
     );
@@ -429,32 +433,33 @@ function MenuBreakdown({ rows, products }) {
     qty: others.reduce((acc, r) => acc + r.qty, 0),
     amount: others.reduce((acc, r) => acc + r.amount, 0),
     share: others.reduce((acc, r) => acc + r.share, 0),
+    orderCount: null,
   } : null;
   const list = (other ? [...top, other] : top).map((r, i) => ({ ...r, color: r.id === 'other' ? MENU_OTHER_COLOR : MENU_COLORS[i] }));
   const slices = list.filter(r => r.amount > 0);
   const total = slices.reduce((acc, r) => acc + r.amount, 0);
-  const maxQty = Math.max(...top.map(r => r.qty), 1);
+  const totalQty = all.reduce((acc, r) => acc + r.qty, 0);
   const productById = Object.fromEntries((products || []).map(p => [String(p.ProductId), p]));
   const active = hovered && list.find(r => r.id === hovered);
 
   let cumulative = 0;
-  const stops = slices.map(r => {
-    const from = cumulative;
-    cumulative += (r.amount / (total || 1)) * 100;
-    // ชี้อยู่ที่เมนูหนึ่ง: ส่วนอื่นจางลง
-    const color = active && active.id !== r.id ? `${r.color}40` : r.color;
-    return `${color} ${from}% ${cumulative}%`;
-  }).join(', ');
+  const arcs = slices.map(r => {
+    const pct = (r.amount / (total || 1)) * 100;
+    const arc = { ...r, pct, from: cumulative, to: cumulative + pct };
+    cumulative += pct;
+    return arc;
+  });
+  // ชี้อยู่ที่เมนูหนึ่ง: ส่วนอื่นจางลง
+  const stops = arcs.map(a => `${active && active.id !== a.id ? `${a.color}40` : a.color} ${a.from}% ${a.to}%`).join(', ');
 
   const hoverDonut = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const dx = e.clientX - (rect.left + rect.width / 2);
     const dy = e.clientY - (rect.top + rect.height / 2);
     const dist = Math.hypot(dx, dy);
-    if (!total || dist < rect.width * 0.33 || dist > rect.width / 2) { setHovered(null); return; }
+    if (!total || dist < rect.width * 0.31 || dist > rect.width / 2) { setHovered(null); return; }
     const pct = ((Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360) / 3.6;
-    let acc = 0;
-    setHovered((slices.find(r => { acc += (r.amount / total) * 100; return pct <= acc; }) || slices[slices.length - 1]).id);
+    setHovered((arcs.find(a => pct <= a.to) || arcs[arcs.length - 1]).id);
   };
 
   return (
@@ -464,63 +469,59 @@ function MenuBreakdown({ rows, products }) {
           onMouseMove={hoverDonut} onMouseLeave={() => setHovered(null)}>
           <div className="od-donut-hole" />
         </div>
+        {arcs.filter(a => a.pct >= MENU_LABEL_MIN_PCT).map(a => {
+          // วางตัวเลขกลางความหนาของวง (รัศมี 40.5% ของกล่อง) ตรงกลางมุมของชิ้นนั้น
+          const angle = ((a.from + a.to) / 2) * 3.6 * Math.PI / 180;
+          return (
+            <span key={a.id} className={`od-donut-label ${active && active.id !== a.id ? 'dim' : ''}`}
+              style={{
+                left: `${50 + Math.sin(angle) * 40.5}%`, top: `${50 - Math.cos(angle) * 40.5}%`,
+                color: MENU_LIGHT_COLORS.has(a.color) ? 'var(--berry-text-dark)' : '#FFFFFF',
+              }}>
+              {a.pct.toFixed(0)}%
+            </span>
+          );
+        })}
         <div className="od-donut-center">
           {active ? (
             <>
               <div className="name">{active.name}</div>
               <strong>{fmtMoney(active.amount)}</strong>
-              <span>บาท · {(total ? (active.amount / total) * 100 : 0).toFixed(1)}%</span>
+              <span>บาท · {fmtMoney(active.qty)} จาน · {(total ? (active.amount / total) * 100 : 0).toFixed(1)}%</span>
             </>
           ) : (
             <>
               <div className="name muted">ยอดขายรวม</div>
               <strong>{fmtMoney(total)}</strong>
-              <span>บาท</span>
+              <span>บาท · {fmtMoney(totalQty)} จาน</span>
             </>
           )}
         </div>
       </div>
 
-      <div className="od-top-list">
-        {top.map((r, i) => {
+      <div className="od-menu-legend">
+        {list.map((r, i) => {
           const product = productById[r.id];
           const avgPrice = r.qty ? r.amount / r.qty : 0;
-          const color = list[i].color;
           return (
-            <div key={r.id} className={`od-top-row ${hovered === r.id ? 'active' : ''}`}
+            <div key={r.id} className={`od-menu-item ${hovered === r.id ? 'active' : ''} ${r.id === 'other' ? 'other' : ''}`}
               onMouseEnter={() => setHovered(r.id)} onMouseLeave={() => setHovered(null)}>
-              <div className={`od-rank rank-${i + 1}`}>{i + 1}</div>
-              <div className="od-top-thumb">
-                {product?.img ? <img src={product.img} alt="" /> : <Icon name="photo" size={20} />}
-              </div>
-              <div className="od-top-info">
-                <div className="od-top-head">
-                  <div className="od-top-name" title={r.name}>
-                    <span className="swatch" style={{ background: color }} />{r.name}
-                  </div>
-                  <div className="od-top-qty"><strong>{fmtMoney(r.qty)}</strong> จาน</div>
+              <span className="swatch" style={{ background: r.color }} />
+              <div className="info">
+                <div className="head">
+                  {r.id !== 'other' && <span className="rank">{i + 1}</span>}
+                  <span className="name" title={r.name}>{r.name}</span>
+                  {product?.IsOutOfStock ? <span className="out">หมด</span> : null}
                 </div>
-                <div className="od-top-bar"><div style={{ width: `${Math.max((r.qty / maxQty) * 100, 4)}%`, background: color }} /></div>
-                <div className="od-top-meta">
-                  <span>ยอดขาย <b>{fmtMoney(r.amount)} บาท</b></span>
-                  <span>สัดส่วน <b>{r.share.toFixed(1)}%</b></span>
-                  <span>{fmtMoney(r.orderCount)} ออเดอร์</span>
-                  <span>เฉลี่ย {fmtMoney(avgPrice)} บาท/จาน</span>
-                  {product?.IsOutOfStock ? <span className="out">สินค้าหมดอยู่</span> : null}
+                <div className="meta">
+                  {fmtMoney(r.qty)} จาน · {fmtMoney(r.amount)} บาท
+                  {r.orderCount != null && <> · {fmtMoney(r.orderCount)} ออเดอร์ · เฉลี่ย {fmtMoney(avgPrice)} บาท/จาน</>}
                 </div>
               </div>
+              <b className="pct">{r.share.toFixed(1)}%</b>
             </div>
           );
         })}
-        {other && (
-          <div className={`od-top-row od-top-other ${hovered === 'other' ? 'active' : ''}`}
-            onMouseEnter={() => setHovered('other')} onMouseLeave={() => setHovered(null)}>
-            <span className="swatch" style={{ background: MENU_OTHER_COLOR }} />
-            <span className="name">{other.name}</span>
-            <span className="meta">{fmtMoney(other.qty)} จาน · {fmtMoney(other.amount)} บาท</span>
-            <b>{other.share.toFixed(1)}%</b>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -3809,8 +3810,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                 </div>
                 {ready ? <MenuBreakdown rows={storeReport?.menus || []} products={products} /> : (
                   <div className="od-menu-wrap">
-                    <Skeleton height={220} width={220} radius={999} style={{ margin: '0 auto' }} />
-                    <div className="od-top-list">{[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={66} radius={12} />)}</div>
+                    <Skeleton height={300} width={300} radius={999} style={{ margin: '0 auto' }} />
+                    <div className="od-menu-legend">{[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={44} radius={10} />)}</div>
                   </div>
                 )}
               </div>
@@ -5978,47 +5979,37 @@ body, html {
 .od-empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #C2C5D3; font-size: 13px; }
 .od-empty span { color: var(--berry-text-muted); }
 
-.od-menu-wrap { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: center; gap: 28px; margin-top: 14px; }
-.od-donut-box { position: relative; flex: 0 0 220px; width: 220px; height: 220px; margin: 0 auto; }
+.od-menu-wrap { display: grid; grid-template-columns: minmax(300px, 1.15fr) minmax(0, 1fr); align-items: center; gap: 32px; margin-top: 18px; }
+.od-donut-box { position: relative; width: 100%; max-width: 340px; aspect-ratio: 1; margin: 0 auto; }
 .od-donut { position: absolute; inset: 0; border-radius: 50%; cursor: pointer; }
-.od-donut-hole { position: absolute; inset: 17%; border-radius: 50%; background: var(--berry-paper); pointer-events: none; }
-.od-donut-center { position: absolute; inset: 22%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; }
-.od-donut-center .name { font-size: 12px; font-weight: 700; color: var(--berry-text-dark); line-height: 1.3; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.od-donut-hole { position: absolute; inset: 19%; border-radius: 50%; background: var(--berry-paper); pointer-events: none; }
+.od-donut-label { position: absolute; transform: translate(-50%, -50%); font-size: 13px; font-weight: 700; pointer-events: none; transition: opacity 0.15s ease; }
+.od-donut-label.dim { opacity: 0.3; }
+.od-donut-center { position: absolute; inset: 24%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; }
+.od-donut-center .name { font-size: 14px; font-weight: 700; color: var(--berry-text-dark); line-height: 1.3; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .od-donut-center .name.muted { font-weight: 500; color: var(--berry-text-muted); }
-.od-donut-center strong { margin-top: 3px; font-size: 22px; color: var(--berry-text-dark); }
-.od-donut-center span { font-size: 11.5px; color: var(--berry-text-muted); }
+.od-donut-center strong { margin-top: 4px; font-size: 32px; line-height: 1.1; color: var(--berry-text-dark); }
+.od-donut-center span { margin-top: 2px; font-size: 12.5px; color: var(--berry-text-muted); }
 
-.od-top-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
-.od-top-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--berry-border); border-radius: 12px; transition: border-color 0.2s ease, background 0.2s ease; }
-.od-top-row:hover, .od-top-row.active { border-color: var(--berry-purple-light); background: #FFFBF9; }
-.od-top-row .swatch { display: inline-block; width: 10px; height: 10px; min-width: 10px; border-radius: 3px; margin-right: 8px; vertical-align: middle; }
-.od-top-other { padding: 8px 12px; font-size: 12.5px; color: var(--berry-text-muted); }
-.od-top-other .swatch { margin-right: 0; }
-.od-top-other .name { flex: 1; min-width: 0; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.od-top-other .meta { white-space: nowrap; }
-.od-top-other b { min-width: 46px; text-align: right; color: var(--berry-text-dark); }
-.od-rank { width: 30px; height: 30px; min-width: 30px; display: grid; place-items: center; border-radius: 50%; font-size: 13px; font-weight: 700; background: var(--berry-blue-light); color: var(--berry-text-muted); }
-.od-rank.rank-1 { background: linear-gradient(135deg, #FDBF50, #E2A430); color: #FFFFFF; box-shadow: 0 4px 10px rgba(226,164,48,0.35); }
-.od-rank.rank-2 { background: linear-gradient(135deg, #C9CCD8, #9EA2B5); color: #FFFFFF; }
-.od-rank.rank-3 { background: linear-gradient(135deg, #F0A27A, #C97A4E); color: #FFFFFF; }
-.od-top-thumb { width: 48px; height: 48px; min-width: 48px; display: grid; place-items: center; overflow: hidden; border-radius: 10px; background: #F1F2F7; color: #B9BCCD; }
-.od-top-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.od-top-info { flex: 1; min-width: 0; }
-.od-top-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.od-top-name { font-size: 14px; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.od-top-qty { font-size: 12px; color: var(--berry-text-muted); white-space: nowrap; }
-.od-top-qty strong { font-size: 16px; color: var(--berry-purple); margin-right: 2px; }
-.od-top-bar { height: 6px; margin-top: 6px; border-radius: 999px; background: var(--berry-blue-light); overflow: hidden; }
-.od-top-bar > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #FF9E84, #FF724C); }
-.od-top-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 11.5px; color: var(--berry-text-muted); }
-.od-top-meta b { color: var(--berry-text-dark); font-weight: 600; }
-.od-top-meta .out { color: var(--berry-red); font-weight: 600; }
+.od-menu-legend { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.od-menu-item { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 9px 12px; border-radius: 10px; cursor: pointer; transition: background 0.15s ease; }
+.od-menu-item.active, .od-menu-item:hover { background: var(--berry-purple-light); }
+.od-menu-item .swatch { width: 12px; height: 12px; border-radius: 4px; }
+.od-menu-item .info { min-width: 0; }
+.od-menu-item .head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.od-menu-item .rank { font-size: 12px; font-weight: 700; color: var(--berry-text-muted); }
+.od-menu-item .name { font-size: 14px; font-weight: 600; color: var(--berry-text-dark); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.od-menu-item .out { flex-shrink: 0; padding: 1px 7px; border-radius: 999px; background: var(--berry-red-light); color: var(--berry-red); font-size: 11px; font-weight: 600; }
+.od-menu-item .meta { margin-top: 2px; font-size: 11.5px; color: var(--berry-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.od-menu-item .pct { font-size: 15px; color: var(--berry-text-dark); }
+.od-menu-item.other .name { font-weight: 500; color: var(--berry-text-muted); }
 
 @media (max-width: 1280px) {
   .od-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .od-menu-wrap { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .od-menu-wrap { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .od-donut-box { max-width: 290px; }
 }
 @media (max-width: 1100px) {
   .od-row.two-one, .od-row.one-one { grid-template-columns: minmax(0, 1fr); }
@@ -7023,11 +7014,10 @@ body, html {
   .od-row { gap: 14px; }
   .od-card-head { flex-direction: column; gap: 4px; }
   .od-head-total { font-size: 18px; }
-  .od-donut-box { flex-basis: 180px; width: 180px; height: 180px; }
-  .od-top-other .meta { display: none; }
-  .od-top-row { padding: 10px; gap: 10px; }
-  .od-top-thumb { display: none; }
-  .od-top-meta span:nth-child(n+3) { display: none; }
+  .od-donut-box { max-width: 250px; }
+  .od-donut-center strong { font-size: 24px; }
+  .od-donut-label { font-size: 11.5px; }
+  .od-menu-item { padding: 8px 10px; }
 
   /* ตาราง -> การ์ด (พนักงาน / ประวัติการขาย / ยกเลิก) */
   .berry-table thead { display: none; }
