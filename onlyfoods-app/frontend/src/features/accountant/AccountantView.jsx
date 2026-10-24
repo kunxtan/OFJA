@@ -55,7 +55,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
-  const [notificationsRead, setNotificationsRead] = useState(false);   // กระดิ่ง: หายเมื่อกดที่กระดิ่ง
+  const [readAlertIds, setReadAlertIds] = useState([]);                  // กระดิ่ง: ร้านที่กดดูการแจ้งเตือนแล้ว (หายทีละอัน)
   const [menuBadgeRead, setMenuBadgeRead] = useState(false);             // badge เมนู Cancellation: หายเมื่อกดที่เมนูเท่านั้น
   const [dropdown, setDropdown] = useState('');
 
@@ -253,8 +253,15 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   );
   // มีร้านใหม่เกินเกณฑ์ -> ให้ตัวเลขบนกระดิ่งขึ้นอีกครั้ง
   const alertKey = alertStores.map(x => x.storeId).join(',');
-  useEffect(() => { setNotificationsRead(false); setMenuBadgeRead(false); }, [alertKey]);
-  const bellCount = notificationsRead ? 0 : alertStores.length;
+  useEffect(() => {
+    setMenuBadgeRead(false);
+    // ร้านที่หลุดจากรายการแจ้งเตือนแล้ว ให้ล้างสถานะอ่าน (ถ้ากลับมาเกินเกณฑ์อีกจะขึ้นเป็นอันใหม่)
+    setReadAlertIds(prev => {
+      const next = prev.filter(id => alertStores.some(s => s.storeId === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [alertKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const bellCount = alertStores.filter(s => !readAlertIds.includes(s.storeId)).length;
   const menuBadgeCount = menuBadgeRead ? 0 : alertStores.length;
 
   // ช่วงเวลาของหน้า Cancellation (ทั้งหมด = ไม่จำกัดวันที่)
@@ -620,7 +627,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
         <div className="oft-right">
           <div style={{ position: 'relative' }}>
             <BellButton count={bellCount} active={dropdown === 'notif'} aria-haspopup="true"
-              onClick={() => { setNotificationsRead(true); toggleDropdown('notif'); }} />
+              onClick={() => toggleDropdown('notif')} />
             {dropdown === 'notif' && (
               <div className="berry-profile-dropdown" style={{ right: 0, width: '300px' }}>
                 <div className="dropdown-header">
@@ -631,7 +638,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 {alertStores.length === 0 ? (
                   <div style={{ padding: '16px', textAlign: 'center', color: 'var(--berry-text-muted)' }}>ไม่มีการแจ้งเตือน</div>
                 ) : alertStores.map(s => (
-                  <div key={s.storeId} className="dropdown-item" onClick={() => openStoreCancel(s.storeId)}>
+                  <div key={s.storeId} className="dropdown-item" style={readAlertIds.includes(s.storeId) ? { opacity: 0.55 } : undefined}
+                    onClick={() => { setReadAlertIds(prev => (prev.includes(s.storeId) ? prev : [...prev, s.storeId])); openStoreCancel(s.storeId); }}>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontWeight: 600 }}>{s.storeName}</span>
                       <span style={{ fontSize: '12px', color: 'var(--berry-text-muted)' }}>อัตรายกเลิก {s.rate}% ({s.cancelledOrders}/{s.totalOrders} ออเดอร์)</span>
