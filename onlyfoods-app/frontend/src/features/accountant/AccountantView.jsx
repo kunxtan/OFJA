@@ -262,7 +262,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     });
   }, [alertKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const bellCount = alertStores.filter(s => !readAlertIds.includes(s.storeId)).length;
-  const menuBadgeCount = menuBadgeRead ? 0 : alertStores.length;
+  // badge เมนู: ลดลงทีละอันตามที่กดดูในกระดิ่ง และหายทั้งหมดเมื่อกดที่เมนู Cancellation
+  const menuBadgeCount = menuBadgeRead ? 0 : bellCount;
 
   // ช่วงเวลาของหน้า Cancellation (ทั้งหมด = ไม่จำกัดวันที่)
   const cancelBounds = useMemo(() => {
