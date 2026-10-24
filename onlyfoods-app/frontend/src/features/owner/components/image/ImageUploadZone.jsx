@@ -3,7 +3,8 @@ import { Icon } from '../ui';
 import { MAX_IMAGE_MB, MAX_IMAGE_BYTES, ALLOWED_IMAGE_TYPES, formatBytes, readImageFile } from './imageFile';
 import { ImageCropper } from './ImageCropper';
 
-export function ImageUploadZone({ image, originalImage = '', onChange, disabled }) {
+// subject = ใช้ในข้อความ (เมนู / ร้าน) ; ratios = สัดส่วนที่ให้เลือกตอนครอป ; invalid = ช่องนี้ยังไม่ผ่าน (กรอบแดง)
+export function ImageUploadZone({ image, originalImage = '', onChange, disabled, subject = 'เมนู', ratios, invalid = false }) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState(null);
@@ -50,10 +51,10 @@ export function ImageUploadZone({ image, originalImage = '', onChange, disabled 
 
       {image ? (
         <div className="mf-image-preview">
-          <img src={image} alt="ตัวอย่างรูปเมนู" />
+          <img src={image} alt={`ตัวอย่างรูป${subject}`} />
           <div className="mf-image-meta">
             <div className="mf-image-name">
-              {isNewImage ? 'รูปใหม่ (ครอปแล้ว)' : 'รูปปัจจุบันของเมนู'}
+              {isNewImage ? 'รูปใหม่ (ครอปแล้ว)' : `รูปปัจจุบันของ${subject}`}
             </div>
             <div className="mf-image-sub">
               {isNewImage && info ? `${formatBytes(info.size)} · ${info.width}×${info.height}px` : 'อัปโหลดไว้แล้ว'}
@@ -75,7 +76,7 @@ export function ImageUploadZone({ image, originalImage = '', onChange, disabled 
         </div>
       ) : (
         <div
-          className={`mf-dropzone ${isDragging ? 'dragging' : ''} ${error ? 'has-error' : ''}`}
+          className={`mf-dropzone ${isDragging ? 'dragging' : ''} ${error || invalid ? 'has-error' : ''}`}
           role="button"
           tabIndex={0}
           onClick={openPicker}
@@ -95,7 +96,8 @@ export function ImageUploadZone({ image, originalImage = '', onChange, disabled 
       {error && <div className="mf-field-error">{error}</div>}
 
       {cropSrc && (
-        <ImageCropper src={cropSrc} onCancel={() => setCropSrc(null)} onConfirm={handleCropped} />
+        <ImageCropper src={cropSrc} onCancel={() => setCropSrc(null)} onConfirm={handleCropped} title={`ครอปรูป${subject}`}
+          {...(ratios ? { ratios } : {})} />
       )}
     </div>
   );

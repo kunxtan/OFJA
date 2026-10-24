@@ -26,6 +26,7 @@ import SalesHistoryPage from './pages/history/SalesHistoryPage';
 import ReviewsPage from './pages/reviews/ReviewsPage';
 import RefundsPage from './pages/refunds/RefundsPage';
 import IssuesPage from './pages/issues/IssuesPage';
+import StoreProfilePage from './pages/profile/StoreProfilePage';
 
 
 /* ============================================================
@@ -87,7 +88,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [page, setPage] = useState('dashboard');
   useHistoryNav(page, (hash) => {
     const p = hash ?? 'dashboard';
-    if (!['dashboard', 'menu', 'history', 'staff', 'refunds', 'reviews', 'issues'].includes(p)) return false;
+    if (!['dashboard', 'profile', 'menu', 'history', 'staff', 'refunds', 'reviews', 'issues'].includes(p)) return false;
     setPage(p);
     return true;
   });
@@ -560,6 +561,23 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     fetchData();
   };
 
+  // โปรไฟล์ร้าน : รูปร้าน รายละเอียด ข้อมูลติดต่อ (ชื่อร้าน/หมวดหมู่แก้ไม่ได้ ต้องเป็นที่ลงทะเบียนกับผู้บริหาร)
+  // โยน error กลับไปให้ฟอร์มแสดง ; สำเร็จ = ติ๊กถูก + โหลดข้อมูลร้านใหม่
+  const saveStoreProfile = async (payload) => {
+    const res = await fetch(`${apiBase}/api/stores/${storeId}/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = Array.isArray(data.detail) ? data.detail.map(d => d.msg).join(', ') : data.detail;
+      throw new Error(detail || 'บันทึกโปรไฟล์ร้านไม่สำเร็จ');
+    }
+    showSuccess(data.changed?.length ? 'บันทึกโปรไฟล์ร้านแล้ว' : 'ไม่มีข้อมูลที่เปลี่ยนแปลง', storeDetail?.StoreName || '');
+    fetchData();
+  };
+
   // แสดงติ๊กถูกกลางจอ ~1.4 วินาที แล้วค่อย ๆ จางหาย
   const showSuccess = (title, detail) => {
     successTimers.current.forEach(clearTimeout);
@@ -723,6 +741,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const navItemsAll = [
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมร้านค้า', icon: 'dashboard' },
+    { id: 'profile', label: 'Store Profile', caption: 'รูปและรายละเอียดร้าน', icon: 'photo' },
     { id: 'menu', label: 'Manage Menu', caption: 'จัดการเมนู/สต็อก', icon: 'menu' },
     { id: 'staff', label: 'Manage Staff', caption: 'จัดการพนักงาน', icon: 'users' },
     // ออเดอร์ที่ยกเลิกรวมอยู่ในประวัติการขายแล้ว (แท็บ "ยกเลิก") : badge ยกเลิกใหม่จึงย้ายมาอยู่ที่นี่
@@ -734,7 +753,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const navById = Object.fromEntries(navItemsAll.map(n => [n.id, n]));
   const navGroups = [
     { label: 'ภาพรวม', items: ['dashboard'] },
-    { label: 'จัดการร้าน', items: ['menu', 'staff'] },
+    { label: 'จัดการร้าน', items: ['profile', 'menu', 'staff'] },
     { label: 'ประวัติและความคิดเห็น', items: ['history', 'refunds', 'reviews', 'issues'] },
   ].map(g => ({ ...g, items: g.items.map(id => navById[id]) }));
 
@@ -1026,6 +1045,8 @@ export default function OwnerView({ user, apiBase, onLogout }) {
             setScheduleOpen, setMenuFilter, setPage, openSalesHistory, setStoreAnchor, setStoreDays, setCustomRange,
             setCustomStart, setCustomEnd, products
           }} />}
+
+          {page === 'profile' && <StoreProfilePage storeDetail={storeDetail} onSave={saveStoreProfile} />}
 
           {page === 'menu' && <MenuPage {...{
             products, menuSearch, menuFilter, todaySold, menuSort, selectedIds, selectMode, toggleSelected, toggleStock,

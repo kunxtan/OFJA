@@ -16,16 +16,17 @@ from fastapi import APIRouter, Depends, Query
 from auth import STORE_SCOPED, assert_store_access, get_optional_user, hash_password, require_role
 from db import get_db, transaction
 from errors import DomainError
-from schemas import (ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema,
+from schemas import (ContractEndUpdateSchema, ContractRestartSchema, StoreFullSchema, StoreNameSchema, StoreProfileSchema,
                      StoreScheduleSchema)
 from services import (force_cancel_open_orders, get_foodcourt, is_duplicate_key, log_audit, notify_owners_closed_by_executive,
                       notify_store_owners, open_order_count, open_orders, queue_summary)
 from shapes import STORE_SELECT, shape_store
 from utils import (CONTRACT_ACTIVE, CONTRACT_EXPIRED, CONTRACT_NONE, CONTRACT_UPCOMING, STORE_CLOSED, STORE_PAUSED,
-                   add_years_minus_one_day, bangkok_now, clean_reason, clean_text, contract_state, foodcourt_is_open,
+                   add_years_minus_one_day, bangkok_now, clean_reason, clean_text, contract_state, delete_upload,
+                   foodcourt_is_open,
                    foodcourt_mode, next_free_queue_code, parse_date, save_image, store_next_transition,
                    store_open_state, store_scheduled_open, time_to_hhmm, time_to_minutes, validate_password,
-                   validate_phone, validate_queue_code, validate_username)
+                   validate_email, validate_phone, validate_queue_code, validate_username)
 
 router = APIRouter(prefix="/api/stores", tags=["stores"])
 
@@ -264,6 +265,61 @@ def update_store_full(store_id: int, data: StoreFullSchema, user=Depends(require
         log_audit(db, user["UserId"], "UPDATE_STORE", "Store", store_id,
                   {"name": old["StoreName"], "queue_code": old["QueueCode"]}, {"name": name, "queue_code": code})
     return {"success": True, "message": "บันทึกข้อมูลร้านค้าเรียบร้อยแล้ว"}
+
+
+# ฟิลด์ที่เจ้าของร้านแก้ได้ : (คอลัมน์ใน DB, ชื่อใน AuditLog)
+_PROFILE_FIELDS = (("Description", "description"), ("ContactName", "contact_name"), ("ContactPhone", "contact_phone"),
+                   ("ContactLine", "contact_line"), ("ContactEmail", "contact_email"), ("ImageUrl", "image"))
+
+
+@router.put("/{store_id}/profile")
+def update_store_profile(store_id: int, data: StoreProfileSchema, user=Depends(require_role("STORE_OWNER")),
+                         db=Depends(get_db)):
+    """เจ้าของร้านแก้โปรไฟล์ร้านของตัวเอง : รูปร้าน รายละเอียด และข้อมูลติดต่อ
+    ชื่อร้าน / หมวดหมู่ / รหัสคิว ไม่อยู่ใน body เลย = เปลี่ยนผ่านทางนี้ไม่ได้ (ต้องเป็นชื่อที่ลงทะเบียนกับผู้บริหาร)"""
+    assert_store_access(user, store_id)
+    # รูปใหม่ต้องเป็นไฟล์ที่อัปโหลดจากเครื่อง (data URL) เท่านั้น ; ส่ง path /uploads/ มา = ต้องเป็นรูปปัจจุบันของร้านนี้ (ตรวจด้านล่าง)
+    keep_image = bool(data.image_url) and data.image_url.startswith("/uploads/")
+    new_image = None
+    if data.image_url and not keep_image:
+        new_image = save_image(data.image_url, "stores", new_only=True)
+        if not new_image:
+            raise DomainError(400, "ไฟล์รูปร้านไม่ถูกต้อง")
+    values = {
+        "Description": clean_text(data.description),
+        "ContactName": clean_text(data.contact_name),
+        "ContactPhone": validate_phone(data.contact_phone),
+        "ContactLine": clean_text(data.contact_line),
+        "ContactEmail": validate_email(data.contact_email),
+    }
+    with transaction(db):
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT StoreName, Description, ContactName, ContactPhone, ContactLine, ContactEmail, ImageUrl "
+                "FROM Store WHERE StoreId = %s AND IsDeleted = FALSE FOR UPDATE",
+                (store_id,),
+            )
+            old = cur.fetchone()
+            if not old:
+                raise DomainError(404, "ไม่พบร้านค้า")
+            if keep_image and data.image_url != old["ImageUrl"]:
+                raise DomainError(400, "รูปภาพไม่ถูกต้อง")  # กันเอา path รูป/สลิปของที่อื่นมาผูกกับร้าน
+            values["ImageUrl"] = new_image or old["ImageUrl"]
+            changed = [label for col, label in _PROFILE_FIELDS if (old[col] or None) != (values[col] or None)]
+            if not changed:
+                return {"success": True, "changed": [], "message": "ไม่มีข้อมูลที่เปลี่ยนแปลง"}
+            cur.execute(
+                "UPDATE Store SET Description = %s, ContactName = %s, ContactPhone = %s, ContactLine = %s, "
+                "ContactEmail = %s, ImageUrl = %s WHERE StoreId = %s",
+                (values["Description"], values["ContactName"], values["ContactPhone"], values["ContactLine"],
+                 values["ContactEmail"], values["ImageUrl"], store_id),
+            )
+        log_audit(db, user["UserId"], "UPDATE_STORE_PROFILE", "Store", store_id, None,
+                  {"name": old["StoreName"], "changed": changed})
+    # เปลี่ยนรูปแล้ว : ลบไฟล์รูปเดิมหลัง commit (transaction ล้มจะไม่เสียรูปเดิมไปฟรี ๆ)
+    if new_image and old["ImageUrl"] and old["ImageUrl"] != new_image:
+        delete_upload(old["ImageUrl"])
+    return {"success": True, "changed": changed, "message": "บันทึกโปรไฟล์ร้านเรียบร้อยแล้ว"}
 
 
 @router.delete("/{store_id}")

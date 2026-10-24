@@ -33,6 +33,7 @@ export const AUDIT_VERBS = {
     // ร้านค้า / สัญญา
     CREATE_STORE: 'เพิ่มร้านค้า',
     UPDATE_STORE: 'แก้ไขข้อมูลร้าน',
+    UPDATE_STORE_PROFILE: 'เจ้าของร้านแก้โปรไฟล์ร้าน',
     DELETE_STORE: 'ลบร้านค้า',
     AUTO_DELETE_STORE: 'ระบบลบร้านค้าอัตโนมัติ',
     OPEN_STORE: 'เปิดร้าน',
@@ -99,6 +100,7 @@ const AUDIT_ORDER_STATUS_TH = {
 };
 const AUDIT_ROLE_TH = { STORE_OWNER: 'เจ้าของร้าน', FRONT_STAFF: 'พนักงานหน้าร้าน', KITCHEN_STAFF: 'พนักงานครัว' };
 const AUDIT_FIELD_TH = { password: 'รหัสผ่าน', full_name: 'ชื่อ', role: 'ตำแหน่ง', store_id: 'ร้าน', phone: 'เบอร์โทร', email: 'อีเมล' };
+const PROFILE_FIELD_TH = { image: 'รูปร้าน', description: 'รายละเอียดร้าน', contact_name: 'ชื่อผู้ติดต่อ', contact_phone: 'เบอร์โทร', contact_line: 'LINE', contact_email: 'อีเมล' };
 export function auditPayload(raw) {
     const i = raw.indexOf('{');
     if (i < 0) return {};
@@ -141,6 +143,7 @@ const AUDIT_DETAIL = {
     REFUND_DONE: (p) => [baht(p.amount)],
     CREATE_STORE: (p) => [p.queue_code ? `รหัสคิว ${p.queue_code}` : '', p.start && p.end ? `สัญญา ${thaiDate(p.start)} ถึง ${thaiDate(p.end)}` : ''],
     UPDATE_STORE: (p) => [p.name ? `ชื่อร้าน ${auditQuote(p.name)}` : '', p.queue_code ? `รหัสคิว ${p.queue_code}` : ''],
+    UPDATE_STORE_PROFILE: (p) => [auditQuote(p.name), Array.isArray(p.changed) && p.changed.length ? `แก้${p.changed.map((f) => PROFILE_FIELD_TH[f] || f).join(', ')}` : ''],
     AUTO_DELETE_STORE: (p) => [why(p.reason)],
     RENEW_CONTRACT: (p) => [p.end ? `ถึง ${thaiDate(p.end)}` : ''],
     CONTRACT_EXTEND: (p) => [p.end ? `เป็น ${thaiDate(p.end)}` : '', why(p.reason)],

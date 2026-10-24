@@ -154,6 +154,17 @@ class ContractRestartSchema(BaseModel):
     reason: str = Field(min_length=1, max_length=255)
 
 
+class StoreProfileSchema(BaseModel):
+    """เจ้าของร้านแก้โปรไฟล์ร้าน : ไม่มีชื่อร้าน/หมวดหมู่/รหัสคิว (เป็นข้อมูลที่ลงทะเบียนกับผู้บริหาร แก้ได้เฉพาะผู้บริหาร)
+    image_url : None หรือ path /uploads/stores/ เดิม = ไม่เปลี่ยนรูป ; data URL = รูปใหม่"""
+    description: Optional[str] = Field(default=None, max_length=500)
+    contact_name: Optional[str] = Field(default=None, max_length=100)
+    contact_phone: Optional[str] = Field(default=None, max_length=20)
+    contact_line: Optional[str] = Field(default=None, max_length=50)
+    contact_email: Optional[str] = Field(default=None, max_length=100)
+    image_url: Optional[str] = None
+
+
 class ProductCreateSchema(BaseModel):
     StoreId: int
     ProductName: str = Field(min_length=1, max_length=100)

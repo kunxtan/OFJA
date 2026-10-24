@@ -59,7 +59,12 @@ def add_product(data: ProductCreateSchema, user=Depends(require_role("STORE_OWNE
     name = data.ProductName.strip()
     if not name:
         raise DomainError(400, "กรุณากรอกชื่อเมนู")
-    img = save_image(data.img, "products") if data.img else None
+    # เมนูใหม่ต้องมีรูปอาหารเสมอ (ลูกค้าเลือกจากรูป) ; เมนูเดิมที่ยังไม่มีรูปแก้ไขได้ตามปกติ
+    if not data.img:
+        raise DomainError(400, "กรุณาเพิ่มรูปอาหารของเมนูนี้")
+    img = save_image(data.img, "products")
+    if not img:
+        raise DomainError(400, "ไฟล์รูปอาหารไม่ถูกต้อง กรุณาเลือกรูปใหม่")
     price = Decimal(str(data.UnitPrice))
     description = clean_text(data.Description)
     with transaction(db):
