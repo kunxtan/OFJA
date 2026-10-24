@@ -8,8 +8,6 @@ export const DESCRIPTION_MAX = 500;
 export function MenuFormModal({ mode, product, onClose, onSubmit }) {
   const isEdit = mode === 'edit';
   const originalImage = isEdit ? (product?.img || '') : '';
-  // เมนูใหม่ต้องมีรูปอาหาร (ลูกค้าเลือกจากรูป) ; แก้เมนูเดิมที่ยังไม่มีรูป ไม่บังคับ
-  const imageRequired = !isEdit;
   const [name, setName] = useState(isEdit ? product?.ProductName || '' : '');
   const [price, setPrice] = useState(isEdit ? String(product?.UnitPrice ?? '') : '');
   const [description, setDescription] = useState(isEdit ? product?.Description || '' : '');
@@ -34,7 +32,8 @@ export function MenuFormModal({ mode, product, onClose, onSubmit }) {
     else if (priceNum < 0) next.price = 'ราคาต้องไม่ติดลบ';
     else if (priceNum > 99999999) next.price = 'ราคาสูงเกินไป';
     if (description.trim().length > DESCRIPTION_MAX) next.description = `รายละเอียดต้องไม่เกิน ${DESCRIPTION_MAX} ตัวอักษร`;
-    if (imageRequired && !image) next.image = 'กรุณาเพิ่มรูปอาหารของเมนูนี้';
+    // เมนูต้องมีรูปอาหารเสมอ ทั้งตอนเพิ่มและตอนแก้ไข (ลูกค้าเลือกจากรูป) ; backend ตรวจซ้ำอีกชั้น
+    if (!image) next.image = 'กรุณาเพิ่มรูปอาหารของเมนูนี้';
     setErrors(next);
     if (Object.keys(next).length) return;
 
@@ -119,10 +118,12 @@ export function MenuFormModal({ mode, product, onClose, onSubmit }) {
             </div>
 
             <div className="mf-field">
-              <label>รูปภาพเมนู {imageRequired ? <span className="req">*</span> : <span className="optional">ไม่บังคับ</span>}</label>
+              <label>รูปภาพเมนู <span className="req">*</span></label>
               <ImageUploadZone image={image} originalImage={originalImage} disabled={saving} invalid={Boolean(errors.image)}
                 onChange={(next) => { setImage(next); if (next) setErrors(prev => ({ ...prev, image: undefined })); }} />
-              {imageRequired && !errors.image && <div className="mf-hint">ต้องมีรูปอาหาร ลูกค้าจะเห็นรูปนี้ตอนเลือกเมนู</div>}
+              {!errors.image && (
+                <div className="mf-hint">{isEdit && !originalImage ? 'เมนูนี้ยังไม่มีรูป กรุณาเพิ่มรูปอาหารก่อนบันทึก' : 'ต้องมีรูปอาหาร ลูกค้าจะเห็นรูปนี้ตอนเลือกเมนู'}</div>
+              )}
               {errors.image && <div className="mf-field-error">{errors.image}</div>}
             </div>
 

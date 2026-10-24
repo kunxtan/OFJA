@@ -44,7 +44,8 @@ def get_products(store_id: Optional[int] = None, db=Depends(get_db)):
 
 def _product_for_update(cur, product_id: int) -> dict:
     cur.execute(
-        "SELECT ProductId, StoreId, ProductName, UnitPrice, IsOutOfStock, IsDeleted FROM Product WHERE ProductId = %s FOR UPDATE",
+        "SELECT ProductId, StoreId, ProductName, UnitPrice, IsOutOfStock, IsDeleted, ImageUrl FROM Product "
+        "WHERE ProductId = %s FOR UPDATE",
         (product_id,),
     )
     row = cur.fetchone()
@@ -59,7 +60,7 @@ def add_product(data: ProductCreateSchema, user=Depends(require_role("STORE_OWNE
     name = data.ProductName.strip()
     if not name:
         raise DomainError(400, "กรุณากรอกชื่อเมนู")
-    # เมนูใหม่ต้องมีรูปอาหารเสมอ (ลูกค้าเลือกจากรูป) ; เมนูเดิมที่ยังไม่มีรูปแก้ไขได้ตามปกติ
+    # เมนูต้องมีรูปอาหารเสมอ (ลูกค้าเลือกจากรูป) : ทั้งตอนเพิ่มและตอนแก้ไข (ดู edit_product)
     if not data.img:
         raise DomainError(400, "กรุณาเพิ่มรูปอาหารของเมนูนี้")
     img = save_image(data.img, "products")
@@ -103,11 +104,19 @@ def edit_product(product_id: int, data: ProductUpdateSchema,
     if not name:
         raise DomainError(400, "กรุณากรอกชื่อเมนู")
     price = Decimal(str(data.UnitPrice))
-    img = save_image(data.img, "products") if data.img else None
     with transaction(db):
         with db.cursor() as cur:
             prod = _product_for_update(cur, product_id)
             assert_store_access(user, prod["StoreId"])
+            # ไม่ส่งรูปมา หรือส่งรูปเดิมของเมนูนี้กลับมา = ไม่เปลี่ยนรูป (ไม่ตรวจซ้ำ : รูปเก่าบางรายการอาจเป็นรูปแบบอื่น)
+            # ส่งรูปใหม่มาแต่ใช้ไม่ได้ = แจ้ง (เดิมเงียบแล้วใช้รูปเดิม) ; เมนูที่ยังไม่มีรูป ต้องใส่รูปก่อนจึงจะบันทึกได้
+            img = None
+            if data.img and data.img != prod["ImageUrl"]:
+                img = save_image(data.img, "products")
+                if not img:
+                    raise DomainError(400, "ไฟล์รูปอาหารไม่ถูกต้อง กรุณาเลือกรูปใหม่")
+            if not img and not prod["ImageUrl"]:
+                raise DomainError(400, "กรุณาเพิ่มรูปอาหารของเมนูนี้ก่อนบันทึก")
             cur.execute("SELECT 1 FROM Product WHERE StoreId = %s AND ProductName = %s AND ProductId <> %s",
                         (prod["StoreId"], name, product_id))
             if cur.fetchone():
