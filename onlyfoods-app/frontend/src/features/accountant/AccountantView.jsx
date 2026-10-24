@@ -253,6 +253,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   // มีร้านใหม่เกินเกณฑ์ -> ให้ตัวเลขบนกระดิ่งขึ้นอีกครั้ง
   const alertKey = alertStores.map(x => x.storeId).join(',');
   useEffect(() => { setNotificationsRead(false); }, [alertKey]);
+  // จำนวนที่ยังไม่ได้อ่าน: ใช้ร่วมกันทั้งกระดิ่งและ badge ที่เมนู Cancellation (เปิดดูแล้วตัวเลขหายทั้งสองที่)
+  const unreadAlertCount = notificationsRead ? 0 : alertStores.length;
 
   // ช่วงเวลาของหน้า Cancellation (ทั้งหมด = ไม่จำกัดวันที่)
   const cancelBounds = useMemo(() => {
@@ -570,7 +572,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมบัญชี', icon: 'dashboard' },
     { id: 'sales', label: 'Sales Summary', caption: 'สรุปยอดขาย', icon: 'sales' },
-    { id: 'cancel', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก', icon: 'cancel', badge: alertStores.length || null },
+    { id: 'cancel', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก', icon: 'cancel', badge: unreadAlertCount || null },
     { id: 'refunds', label: 'Refund Log', caption: 'ประวัติการคืนเงิน', icon: 'refund' },
     { id: 'audit', label: 'Audit Log', caption: 'ประวัติการเปลี่ยนแปลง', icon: 'audit' },
     { id: 'report', label: 'Financial Report', caption: 'ออกรายงานการเงิน', icon: 'report' },
@@ -616,7 +618,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
         <div className="oft-right">
           <div style={{ position: 'relative' }}>
-            <BellButton count={notificationsRead ? 0 : alertStores.length} active={dropdown === 'notif'} aria-haspopup="true"
+            <BellButton count={unreadAlertCount} active={dropdown === 'notif'} aria-haspopup="true"
               onClick={() => { setNotificationsRead(true); toggleDropdown('notif'); }} />
             {dropdown === 'notif' && (
               <div className="berry-profile-dropdown" style={{ right: 0, width: '300px' }}>
