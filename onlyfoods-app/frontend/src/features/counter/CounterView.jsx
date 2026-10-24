@@ -599,8 +599,8 @@ export default function CounterView({ user, apiBase, onLogout }) {
         !['Completed', 'Cancelled', 'NoShow'].includes(o.Status) &&
         o.items?.some(i => i.ProductId === product.ProductId && (!i.ItemStatus || i.ItemStatus === 'NORMAL'))
       );
-      // backend แจ้งเฉพาะออเดอร์ลูกค้าออนไลน์ที่ยังรอ/กำลังปรุง ; ที่เหลือแสดงให้พนักงานรู้เฉยๆ
-      const notifiable = affected.filter(o => ['Pending', 'Cooking'].includes(o.Status) && !isWalkInOrder(o));
+      // backend แจ้งเฉพาะออเดอร์ลูกค้าออนไลน์ที่ยังรอ/กำลังปรุง/รอลูกค้าเปลี่ยนเมนูอยู่แล้ว ; ที่เหลือแสดงให้พนักงานรู้เฉยๆ
+      const notifiable = affected.filter(o => ['Pending', 'Cooking', 'Pending_Cancellation'].includes(o.Status) && !isWalkInOrder(o));
       const silent = affected.filter(o => !notifiable.includes(o));
       setStockModal({ product, notifiable, silent });
       return;

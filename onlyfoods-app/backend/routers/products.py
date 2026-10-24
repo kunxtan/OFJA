@@ -194,9 +194,12 @@ def toggle_stock(product_id: int, out_of_stock: Optional[bool] = None,
 @router.post("/{product_id}/notify-out-of-stock")
 def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema,
                         user=Depends(require_role("FRONT_STAFF", "STORE_OWNER")), db=Depends(get_db)):
-    """เมนูหมด: ออเดอร์ที่ยังไม่เริ่มส่งมอบ (PENDING/COOKING) -> PENDING_CANCELLATION ให้ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิก"""
+    """เมนูหมด: ออเดอร์ที่ยังไม่เริ่มส่งมอบ (PENDING/COOKING) -> PENDING_CANCELLATION ให้ลูกค้าเลือกเปลี่ยนเมนูหรือยกเลิก
+    ออเดอร์ที่รอลูกค้าตอบอยู่แล้ว (เมนูอื่นในออเดอร์หมดไปก่อน เช่นเจ้าของร้านปิดหลายเมนูพร้อมกัน) : เพิ่มจานนี้เป็น
+    จานที่ต้องเปลี่ยนด้วย ไม่ต่อเวลา (ไม่งั้นลูกค้าเปลี่ยนจานแรกแล้วออเดอร์กลับเข้าครัวพร้อมจานที่หมด)"""
     now = bangkok_now()
     deadline = now + timedelta(minutes=config.OUT_OF_STOCK_RESPONSE_MINUTES)
+    notified = 0
     with transaction(db):
         with db.cursor() as cur:
             prod = _product_for_update(cur, product_id)
@@ -208,7 +211,7 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema,
                 JOIN OrderStatus os ON os.StatusId = o.StatusId
                 JOIN OrderItem oi ON oi.OrderId = o.OrderId
                 WHERE oi.ProductId = %s AND oi.ItemStatus = 'NORMAL' AND o.StoreId = %s
-                  AND os.StatusCode IN ('PENDING', 'COOKING')
+                  AND os.StatusCode IN ('PENDING', 'COOKING', 'PENDING_CANCELLATION')
                   AND o.CustomerId IS NOT NULL  -- walk-in: พนักงานคุยกับลูกค้าหน้าร้านแล้วกดยกเลิกเอง
                 ORDER BY o.OrderId
                 """,
@@ -218,18 +221,31 @@ def notify_out_of_stock(product_id: int, payload: NotifyOutStockSchema,
             reason = f"วัตถุดิบหมด: {prod['ProductName']}"
             for oid in ids:
                 order = lock_order(cur, oid)
-                if order["StatusCode"] not in (state.PENDING, state.COOKING):
+                if order["StatusCode"] not in (state.PENDING, state.COOKING, state.PENDING_CANCELLATION):
                     continue  # สถานะเปลี่ยนไประหว่างรอล็อก
                 cur.execute(
                     "UPDATE OrderItem SET ItemStatus = 'OUT_OF_STOCK' WHERE OrderId = %s AND ProductId = %s AND ItemStatus = 'NORMAL'",
                     (oid, product_id),
                 )
-                do_transition(cur, order, state.PENDING_CANCELLATION, actor_id=user["UserId"], reason=reason,
-                              cancel_reason=reason, cancel_deadline=deadline, now=now)
-                send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {queue_label(order['QueueNo'], order['QueueCode'])} เมนูหมด",
-                           f"⚠️ คิว {queue_label(order['QueueNo'], order['QueueCode'])} สินค้า {prod['ProductName']} หมด! "
-                           f"กรุณาเปลี่ยนเมนูหรือกดยกเลิกรับเงินคืนภายใน {config.OUT_OF_STOCK_RESPONSE_MINUTES} นาที "
-                           f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติ", oid)
+                if not cur.rowcount:
+                    continue  # ลูกค้าเปลี่ยนจานนี้ไปแล้วระหว่างรอล็อก
+                q = queue_label(order["QueueNo"], order["QueueCode"])
+                if order["StatusCode"] == state.PENDING_CANCELLATION:
+                    old = order["CancelReason"] or ""
+                    merged = f"{old}, {prod['ProductName']}" if old.startswith("วัตถุดิบหมด:") else (f"{old} ; {reason}" if old else reason)
+                    cur.execute("UPDATE `Order` SET CancelReason = %s WHERE OrderId = %s", (merged[:255], oid))
+                    send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} เมนูหมดเพิ่ม",
+                               f"⚠️ คิว {q} สินค้า {prod['ProductName']} หมดเพิ่มอีกรายการ! "
+                               f"กรุณาเปลี่ยนเมนูนี้ด้วยหรือกดยกเลิกรับเงินคืน ภายในเวลาเดิม "
+                               f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติ", oid)
+                else:
+                    do_transition(cur, order, state.PENDING_CANCELLATION, actor_id=user["UserId"], reason=reason,
+                                  cancel_reason=reason, cancel_deadline=deadline, now=now)
+                    send_notif(db, order["CustomerId"], "ORDER_STATUS", f"คิว {q} เมนูหมด",
+                               f"⚠️ คิว {q} สินค้า {prod['ProductName']} หมด! "
+                               f"กรุณาเปลี่ยนเมนูหรือกดยกเลิกรับเงินคืนภายใน {config.OUT_OF_STOCK_RESPONSE_MINUTES} นาที "
+                               f"หากเลยเวลา ระบบจะยกเลิกให้อัตโนมัติ", oid)
+                notified += 1
         log_audit(db, user["UserId"], "OUT_OF_STOCK_NOTIFY", "Product", product_id, None,
-                  {"orders": len(ids), "name": prod["ProductName"]})
-    return {"success": True, "notified_count": len(ids)}
+                  {"orders": notified, "name": prod["ProductName"]})
+    return {"success": True, "notified_count": notified}

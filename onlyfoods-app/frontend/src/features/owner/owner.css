@@ -1865,6 +1865,13 @@ body, html {
 .berry-confirm-btn.cancel:hover:not(:disabled) { border-color: var(--berry-text-muted); }
 .berry-confirm-btn.danger { background: var(--berry-red); color: #FFFFFF; border: 1px solid var(--berry-red); box-shadow: 0 6px 16px rgba(226,69,47,0.3); }
 .berry-confirm-btn.danger:hover:not(:disabled) { background: #C93A26; }
+/* ปรับเป็นของหมดตอนมีออเดอร์ค้าง : ปุ่มแจ้งลูกค้าเต็มแถวบนสุด ใต้ลงมาเป็น ยกเลิก | ปิดเมนูอย่างเดียว */
+.berry-stock-dialog { max-width: 440px; }
+.berry-stock-affected { margin-top: 14px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--berry-red-light); text-align: left; font-size: 13px; color: var(--berry-text-dark); }
+.berry-stock-affected small { display: block; margin-top: 8px; line-height: 1.5; color: var(--berry-text-muted); }
+.berry-stock-queues { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.berry-stock-queue { padding: 3px 10px; border-radius: 999px; background: var(--berry-paper); border: 1px solid var(--berry-border); font-weight: 700; font-size: 12px; }
+.berry-confirm-actions.with-notify .danger { grid-column: 1 / -1; order: -1; }
 .berry-spinner { width: 15px; height: 15px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.45); border-top-color: #FFFFFF; animation: berrySpin 0.7s linear infinite; }
 
 /* ติ๊กถูกกลางจอเมื่อสำเร็จ */

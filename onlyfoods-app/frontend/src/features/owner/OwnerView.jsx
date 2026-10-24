@@ -7,7 +7,7 @@ import { parseOrderDate, resolvePeriod } from './lib/dates';
 import { toISODate, todayISO } from '../../lib/dates';
 import { orderIs, hoursFromSchedule, buildStoreReport } from './lib/sales';
 import { Icon } from './components/ui';
-import { ConfirmDeleteDialog, SuccessOverlay } from './components/dialogs';
+import { ConfirmDeleteDialog, StockOutDialog, SuccessOverlay } from './components/dialogs';
 import { MenuFormModal } from './pages/menu/MenuFormModal';
 import { StaffFormModal } from './pages/staff/StaffFormModal';
 import { StaffPasswordModal } from './pages/staff/StaffPasswordModal';
@@ -43,6 +43,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [stockPending, setStockPending] = useState([]); // เมนูที่กำลังส่งการปรับสต็อกไป server
   const productsVersion = useRef(0);
   const stockSending = useRef(new Map()); // ProductId -> สถานะที่กดไว้ (true = หมด) ระหว่างรอ server
+  const stockChecking = useRef(new Set()); // ProductId ที่กำลังเช็คออเดอร์ค้างก่อนปรับเป็นของหมด
+  const [stockOut, setStockOut] = useState(null); // หน้าต่างถามแจ้งลูกค้าตอนปรับเป็นของหมด (ดู StockOutDialog)
+  const [stockOutBusy, setStockOutBusy] = useState(false);
   const [history, setHistory] = useState([]); 
   const [staffList, setStaffList] = useState([]); 
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
@@ -501,6 +504,73 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     });
   };
 
+  // ปรับเป็นของหมด : ออเดอร์ที่ยังไม่จบซึ่งสั่งเมนูเหล่านี้อยู่ (เกณฑ์เดียวกับหน้าร้าน)
+  //  notifiable = ลูกค้าออนไลน์ที่ยังไม่ปรุงเสร็จ (backend แจ้งให้เปลี่ยนเมนู/ยกเลิก) ; silent = ที่เหลือ ร้านคุยกับลูกค้าเอง
+  //  ดึงไม่สำเร็จ = { unknown: true } ยังเปิดหน้าต่างถาม (backend หาออเดอร์ที่ต้องแจ้งเองอยู่แล้ว)
+  const findStockAffected = async (ids) => {
+    try {
+      const res = await fetch(`${apiBase}/api/orders?store_id=${storeId}&scope=live`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const orders = await res.json();
+      const hasItem = (o, pid) => o.items?.some(i => i.ProductId === pid && (!i.ItemStatus || i.ItemStatus === 'NORMAL'));
+      const affected = (Array.isArray(orders) ? orders : []).filter(o =>
+        !['Completed', 'Cancelled', 'NoShow'].includes(o.Status) && ids.some(pid => hasItem(o, pid)));
+      const notifiable = affected.filter(o =>
+        ['Pending', 'Cooking', 'Pending_Cancellation'].includes(o.Status) && !Number(o.IsWalkIn) && o.UserId);
+      return {
+        notifiable,
+        silent: affected.filter(o => !notifiable.includes(o)),
+        notifyIds: ids.filter(pid => notifiable.some(o => hasItem(o, pid))),
+      };
+    } catch (err) {
+      console.error(err);
+      return { notifiable: [], silent: [], notifyIds: ids, unknown: true };
+    }
+  };
+  const needsStockOutDialog = (a) => a.unknown || a.notifiable.length > 0 || a.silent.length > 0;
+  const closeStockOut = () => { if (!stockOutBusy) setStockOut(null); };
+
+  const confirmStockOut = async (notify) => {
+    if (!stockOut || stockOutBusy) return;
+    const { products: targets, notifyIds, bulk } = stockOut;
+    setStockOutBusy(true);
+    const results = await Promise.allSettled(targets.map(p =>
+      fetch(`${apiBase}/api/products/${p.ProductId}/toggle-stock?out_of_stock=true`, { method: 'PUT' })
+        .then(res => { if (!res.ok) throw new Error(p.ProductName); return p; })));
+    const closed = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+    let notified = 0;
+    let notifyFailed = 0;
+    if (notify) {
+      // ทีละเมนู : ออเดอร์ที่มีหลายเมนูที่หมด รอบหลังเพิ่มจานที่หมดต่อจากรอบแรก (ยิงพร้อมกันจะแย่งล็อกออเดอร์เดียวกัน)
+      for (const p of closed.filter(c => notifyIds.includes(c.ProductId))) {
+        try {
+          const res = await fetch(`${apiBase}/api/products/${p.ProductId}/notify-out-of-stock`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+          notified += data.notified_count || 0;
+        } catch (err) {
+          console.error(err);
+          notifyFailed += 1;
+        }
+      }
+    }
+    setStockOutBusy(false);
+    setStockOut(null);
+    productsVersion.current += 1;
+    refresh('products');
+    if (bulk) { setSelectedIds([]); setSelectMode(false); }
+    const failed = targets.length - closed.length;
+    const what = closed.length === 1 ? `"${closed[0].ProductName}"` : `${closed.length} เมนู`;
+    showToast([
+      closed.length ? `ปรับ ${what} เป็นสินค้าหมดแล้ว` : '',
+      notified ? `แจ้งลูกค้า ${notified} ออเดอร์ให้เปลี่ยนเมนูหรือยกเลิก` : '',
+      notifyFailed ? '⚠️ แจ้งลูกค้าไม่สำเร็จบางเมนู กรุณาให้หน้าร้านแจ้งลูกค้า' : '',
+      failed ? `⚠️ ปรับไม่สำเร็จ ${failed} เมนู กรุณาลองใหม่` : '',
+    ].filter(Boolean).join(' · '));
+  };
+
   // ปรับสต็อกหลายเมนูพร้อมกัน (เรียก toggle เฉพาะเมนูที่สถานะยังไม่ตรง)
   const bulkSetStock = async (makeOut) => {
     const targets = products.filter(p => selectedIds.includes(p.ProductId) && Boolean(p.IsOutOfStock) !== makeOut);
@@ -509,6 +579,14 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       return;
     }
     setBulkBusy(true);
+    if (makeOut) {
+      const affected = await findStockAffected(targets.map(p => p.ProductId));
+      if (needsStockOutDialog(affected)) {
+        setBulkBusy(false);
+        setStockOut({ ...affected, products: targets.map(({ ProductId, ProductName }) => ({ ProductId, ProductName })), bulk: true });
+        return;
+      }
+    }
     const results = await Promise.allSettled(
       targets.map(p => fetch(`${apiBase}/api/products/${p.ProductId}/toggle-stock?out_of_stock=${makeOut}`, { method: 'PUT' })
         .then(res => { if (!res.ok) throw new Error(p.ProductName); return p; }))
@@ -537,8 +615,20 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     setProducts(prev => prev.map(p => (p.ProductId === id ? { ...p, IsOutOfStock: out ? 1 : 0 } : p)));
   };
   const toggleStock = async (id, pName, isOutOfStock) => {
-    if (stockSending.current.has(id)) return;
+    if (stockSending.current.has(id) || stockChecking.current.has(id)) return;
     const makeOut = !isOutOfStock;
+    if (makeOut) {
+      // มีออเดอร์ค้างที่สั่งเมนูนี้ = ถามก่อนว่าจะแจ้งลูกค้าไหม (แบบหน้าร้าน) ; ไม่มี = ปรับทันทีเหมือนเดิม
+      stockChecking.current.add(id);
+      setStockPending(prev => [...prev, id]);
+      const affected = await findStockAffected([id]);
+      stockChecking.current.delete(id);
+      setStockPending(prev => prev.filter(x => x !== id));
+      if (needsStockOutDialog(affected)) {
+        setStockOut({ ...affected, products: [{ ProductId: id, ProductName: pName }], bulk: false });
+        return;
+      }
+    }
     stockSending.current.set(id, makeOut);
     setStockPending(prev => [...prev, id]);
     setStockOnScreen(id, makeOut);
@@ -1176,6 +1266,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
       {/* ===== ยืนยันการลบ / ลบสำเร็จ ===== */}
       <ConfirmDeleteDialog state={confirmDelete} busy={deleting} onCancel={cancelDelete} onConfirm={confirmDeleteAction} />
+      <StockOutDialog state={stockOut} busy={stockOutBusy} onCancel={closeStockOut} onConfirm={confirmStockOut} />
       {scheduleOpen && (
         <StoreScheduleModal
           fcOpen={foodCourtHours?.open || '00:00'}
