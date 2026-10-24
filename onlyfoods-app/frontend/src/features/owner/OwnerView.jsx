@@ -948,10 +948,6 @@ export default function OwnerView({ user, apiBase, onLogout }) {
                         </button>
                       ))}
                     </div>
-
-                    <button type="button" className="op-notif-foot" onClick={() => { openSalesHistory({ status: 'cancelled', range: 'all' }); setNotifOpen(false); }}>
-                      ดูออเดอร์ที่ยกเลิกทั้งหมดในประวัติการขาย <Icon name="arrowRight" size={15} />
-                    </button>
                   </div>
                 </>
               );
