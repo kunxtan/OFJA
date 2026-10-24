@@ -3,6 +3,42 @@
 อิงจาก `database/init.sql` (ตารางจริงในระบบ) ; แสดงเฉพาะ attribute หลัก ไม่ใส่ timestamp/ฟิลด์ช่วยทางเทคนิค
 User ทุกบทบาทอยู่ตารางเดียว (`User.RoleId`) แสดงเป็น generalization เพื่อให้เห็นว่าแต่ละบทบาททำอะไรได้
 
+## 0) ภาพรวม (ระดับกลุ่มคลาส)
+
+แต่ละกล่องคือกลุ่มคลาสที่แยกรายละเอียดไว้ในหัวข้อ 1–4 ; ลูกศรบอกว่ากลุ่มไหนอ้างอิงกลุ่มไหน
+
+```mermaid
+classDiagram
+direction LR
+
+class Users["1) ผู้ใช้และสิทธิ์"] {
+  User, Role
+  Customer, FrontStaff, KitchenStaff
+  StoreOwner, Accountant, Executive
+}
+class StoreMenu["2) ศูนย์อาหาร ร้าน เมนู"] {
+  FoodCourt, Store, StoreCategory
+  StoreContract
+  ProductCategory, Product
+}
+class Orders["3) คำสั่งซื้อและการเงิน"] {
+  Order, OrderItem, OrderStatusLog
+  Payment, Refund, PrintJob, Review
+}
+class Support["4) สนับสนุนและตรวจสอบ"] {
+  IssueReport, Notification
+  AuditLog, MonthlyStoreSummary
+  LoginThrottle
+}
+
+Users --> StoreMenu : พนักงาน/เจ้าของสังกัดร้าน
+Orders --> StoreMenu : สั่งจากร้าน ระบุเมนู
+Orders --> Users : ลูกค้า / ผู้ตรวจสลิป / ผู้คืนเงิน
+Support --> Users : ผู้แจ้ง ผู้จัดการ ผู้กระทำ
+Support --> StoreMenu : ปัญหาและสรุปยอดรายร้าน
+Support --> Orders : ข้อร้องเรียนและแจ้งเตือนของออเดอร์
+```
+
 ## 1) ผู้ใช้และสิทธิ์
 
 ```mermaid
