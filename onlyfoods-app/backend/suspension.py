@@ -70,7 +70,7 @@ def blocked_message(row: dict, action: str) -> str:
 
 def notice_suspended(reason: str, end_at: Optional[datetime], days: Optional[int]) -> str:
     span = f"{days} วัน ({until_text(end_at)})" if days else until_text(end_at)
-    return (f"ระงับการสั่งอาหารและการรีวิว {span} เหตุผล: {reason} "
+    return (f"ระงับการสั่งอาหารการรีวิว และการแจ้งปัญหา {span} เหตุผล: {reason} "
             f"ออเดอร์ที่สั่งไว้แล้วยังดำเนินการตามปกติ หากไม่เห็นด้วยยื่นอุทธรณ์ได้ที่หน้าโปรไฟล์")
 
 
@@ -105,15 +105,15 @@ def lift(db, cur, row: dict, lift_type: str, now: datetime, by: Optional[int] = 
     if cur.rowcount != 1:
         raise DomainError(409, "การระงับนี้ถูกปลดไปแล้ว")
     if lift_type == "AUTO":
-        title, msg, action = ("ครบกำหนดระงับบัญชีแล้ว", "บัญชีของคุณกลับมาสั่งอาหารและรีวิวได้ตามปกติแล้ว",
+        title, msg, action = ("ครบกำหนดระงับบัญชีแล้ว", "บัญชีของคุณกลับมาสั่งอาหาร รีวิว และแจ้งปัญหาได้ตามปกติแล้ว",
                               "AUTO_UNBAN_USER")
     elif lift_type == "APPEAL":
         title = "อุทธรณ์ได้รับการอนุมัติ บัญชีถูกปลดระงับแล้ว"
-        msg = "บัญชีของคุณกลับมาสั่งอาหารและรีวิวได้ตามปกติแล้ว" + (f" ข้อความจากผู้บริหาร: {note}" if note else "")
+        msg = "บัญชีของคุณกลับมาสั่งอาหาร รีวิว และแจ้งปัญหาได้ตามปกติแล้ว" + (f" ข้อความจากผู้บริหาร: {note}" if note else "")
         action = "USER_APPEAL_APPROVE"
     else:
         title = "บัญชีของคุณถูกปลดระงับแล้ว"
-        msg = "บัญชีของคุณกลับมาสั่งอาหารและรีวิวได้ตามปกติแล้ว" + (f" หมายเหตุ: {note}" if note else "")
+        msg = "บัญชีของคุณกลับมาสั่งอาหาร รีวิว และแจ้งปัญหาได้ตามปกติแล้ว" + (f" หมายเหตุ: {note}" if note else "")
         action = "UNBAN_USER"
     send_notif(db, row["UserId"], "SYSTEM", title, msg)
     log_audit(db, by, action, "User", row["UserId"], {"suspended": True},

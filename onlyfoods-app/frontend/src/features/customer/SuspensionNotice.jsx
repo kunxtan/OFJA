@@ -75,7 +75,7 @@ export default function SuspensionNotice({ active, apiBase, onChanged }) {
             {until}{left ? ` (${left})` : ""} · เหตุผล: <strong>{active.Reason}</strong>
           </div>
           <div style={{ marginTop: "2px", fontSize: "12.5px", color: COLORS.gray, lineHeight: 1.6 }}>
-            ระหว่างนี้สั่งอาหารใหม่และรีวิวไม่ได้ ออเดอร์ที่สั่งไว้แล้วยังดำเนินการตามปกติ รับอาหารได้ตามเดิม
+            ระหว่างนี้สั่งอาหารใหม่ รีวิว และแจ้งปัญหาไม่ได้ ออเดอร์ที่สั่งไว้แล้วยังดำเนินการตามปกติ รับอาหารได้ตามเดิม
           </div>
           {appeal === "PENDING" && (
             <div style={{ marginTop: "8px", fontSize: "13px", fontWeight: 700, color: "#A66B00" }}>ส่งคำอุทธรณ์แล้ว รอผู้บริหารพิจารณา</div>

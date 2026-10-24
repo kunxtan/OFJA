@@ -1348,6 +1348,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
         return;
       }
     }
+        // ถูกระงับ : ดูปัญหาที่เคยแจ้งไว้ได้ (ด้านบน) แต่แจ้งปัญหาใหม่ไม่ได้
+    if (suspension) return customAlert("บัญชีของคุณถูกระงับการแจ้งปัญหา", "แจ้งปัญหาได้อีกครั้งหลังปลดระงับ", "warning");
 
     setSelectedOrderForReport(order);
     setIssueType(order?.Status === "Cancelled" ? "ออเดอร์ถูกยกเลิก / ขอตรวจสอบเหตุผล" : "อาหารไม่ตรงตามออเดอร์");
@@ -1356,6 +1358,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   };
 
   const handleSubmitReport = async () => {
+    if (suspension) {
+      setIsReportModalOpen(false);
+      return customAlert("บัญชีของคุณถูกระงับการแจ้งปัญหา", "แจ้งปัญหาได้อีกครั้งหลังปลดระงับ", "warning");
+    }
     if (!issueDescription.trim()) return customAlert("", "กรุณากรอกรายละเอียดปัญหาที่พบ", "warning");
 
     if (selectedOrderForReport) {

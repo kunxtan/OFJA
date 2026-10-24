@@ -61,7 +61,7 @@ export function SuspendModal({ state, setState, onSubmit }) {
       {open && (<>
         <div style={noteBoxStyle}>
           <Icon name="info" size={17} color={T.muted} style={{ flexShrink: 0, marginTop: '1px' }}/>
-          <span>ระหว่างถูกระงับ ลูกค้ายังเข้าสู่ระบบ ดูออเดอร์ และยื่นอุทธรณ์ได้ แต่<strong>สั่งอาหารใหม่และรีวิวไม่ได้</strong> ·
+          <span>ระหว่างถูกระงับ ลูกค้ายังเข้าสู่ระบบ ดูออเดอร์ และยื่นอุทธรณ์ได้ แต่<strong>สั่งอาหารใหม่ รีวิว และแจ้งปัญหาไม่ได้</strong> ·
             ออเดอร์ที่ค้างอยู่<strong>ไม่ถูกยกเลิก</strong> ร้านทำต่อตามขั้นตอนปกติ · ลูกค้าได้รับแจ้งเตือนทันที และบันทึกลง Audit Log</span>
         </div>
 

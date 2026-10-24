@@ -267,6 +267,7 @@ def create_issue_report(data: CreateIssueReportSchema, user=Depends(require_role
     description = clean_text(data.description) or ""
     with transaction(db):
         with db.cursor() as cur:
+            assert_not_suspended(cur, user, "การแจ้งปัญหา")  # ลูกค้าที่ถูกผู้บริหารระงับ แจ้งปัญหาใหม่ไม่ได้
             cur.execute("SELECT 1 FROM Store WHERE StoreId = %s AND IsDeleted = FALSE", (data.store_id,))
             if not cur.fetchone():
                 raise DomainError(404, "ไม่พบร้านค้านี้")
