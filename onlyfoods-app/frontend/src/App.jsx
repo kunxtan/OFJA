@@ -26,6 +26,8 @@ const KitchenView = lazy(VIEW_LOADERS.Kitchen);
 const OwnerView = lazy(VIEW_LOADERS.Owner);
 // บทบาทล่าสุดที่ใช้เครื่องนี้ : เปิดหน้า login ครั้งถัดไปโหลดไฟล์ของบทบาทนั้นไว้ก่อน (กด login แล้วไม่ต้องรอ)
 const LAST_ROLE_KEY = 'onlyfoods.lastRole';
+// ชื่อบทบาทภาษาไทย (หน้าต่างแจ้ง "มีการเปลี่ยนบัญชีในแท็บอื่น")
+const ROLE_TH = { Executive: 'ผู้บริหาร', Accountant: 'ฝ่ายบัญชี', Owner: 'เจ้าของร้าน', Front: 'พนักงานหน้าร้าน', Kitchen: 'พนักงานครัว', Customer: 'ลูกค้า' };
 
 // หน้าโหลดรูปอาหาร : แสดงอย่างน้อยเท่านี้ (ให้อาหารเด้งครบก่อน) ; เฟดออกใช้เวลา SPLASH_FADE_MS
 const SPLASH_MIN_MS = 1200;
@@ -138,6 +140,36 @@ export default function App() {
     setSplash(null);
     setCurrentUser(null);
   };
+
+  // แท็บอื่นในเบราว์เซอร์เดียวกัน (lib/tabSync.js) : ทุกแท็บใช้บัญชีเดียวกัน
+  //  remote-login  : แท็บนี้อยู่หน้า login แล้วแท็บอื่นล็อกอิน -> เข้าระบบตาม
+  //  remote-logout : แท็บอื่นกดออกจากระบบ -> กลับหน้า login (authFetch ทิ้ง token ให้แล้ว)
+  //  remote-switch : แท็บอื่นล็อกอินเป็นบัญชีอื่น -> แท็บนี้หยุดใช้บัญชีเดิม แล้วขึ้นแจ้งให้รีโหลดเป็นบัญชีใหม่
+  const [accountSwitch, setAccountSwitch] = useState(null);
+  useEffect(() => {
+    const onRemoteLogin = (e) => {
+      setAuthError('');
+      setGoogleLink(null);
+      startSplash();
+      setCurrentUser(e.detail);
+    };
+    const onRemoteLogout = () => {
+      clearHistoryNav();
+      splashRun.current += 1;
+      setSplash(null);
+      setCurrentUser(null);
+      setAuthTab('login');
+    };
+    const onRemoteSwitch = (e) => setAccountSwitch(e.detail);
+    window.addEventListener('auth:remote-login', onRemoteLogin);
+    window.addEventListener('auth:remote-logout', onRemoteLogout);
+    window.addEventListener('auth:remote-switch', onRemoteSwitch);
+    return () => {
+      window.removeEventListener('auth:remote-login', onRemoteLogin);
+      window.removeEventListener('auth:remote-logout', onRemoteLogout);
+      window.removeEventListener('auth:remote-switch', onRemoteSwitch);
+    };
+  }, []);
 
   // token ใช้ไม่ได้แล้ว (สัญญาร้านหมด / บัญชีถูกระงับ / หมดอายุ) -> กลับหน้า login พร้อมข้อความจาก backend (ดู authFetch.js)
   useEffect(() => {
@@ -434,6 +466,31 @@ export default function App() {
       )}
 
       {/* Google: อีเมลนี้มีบัญชีที่ใช้รหัสผ่านอยู่แล้ว -> ใส่รหัสเดิมเพื่อเชื่อม หรือสร้างบัญชีแยก */}
+      {accountSwitch && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(8px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10060, padding: '20px'
+        }}>
+          <div className="modal-pop" role="alertdialog" aria-modal="true" aria-labelledby="account-switch-title" style={{
+            backgroundColor: PALETTE.white, padding: '32px 28px', borderRadius: '24px',
+            width: '100%', maxWidth: '380px', boxShadow: '0 20px 40px rgba(0,0,0,0.12)',
+            color: PALETTE.slateText, boxSizing: 'border-box', textAlign: 'center',
+            border: `1.5px solid ${PALETTE.borderOrange}`
+          }}>
+            <h3 id="account-switch-title" style={{ margin: '0 0 8px 0', fontSize: '19px', fontWeight: 800 }}>มีการเปลี่ยนบัญชีในแท็บอื่น</h3>
+            <p style={{ fontSize: '13px', color: PALETTE.subText, margin: '0 0 18px', lineHeight: 1.6 }}>
+              เบราว์เซอร์นี้เข้าสู่ระบบเป็น <b style={{ color: PALETTE.slateText }}>{accountSwitch.name || accountSwitch.FullName || accountSwitch.username}</b>
+              {ROLE_TH[accountSwitch.role] ? ` (${ROLE_TH[accountSwitch.role]})` : ''} จากแท็บอื่นแล้ว
+              ทุกแท็บในเบราว์เซอร์เดียวกันใช้บัญชีเดียวกัน แท็บนี้จึงหยุดใช้บัญชีเดิม
+            </p>
+            <button type="button" className="btn-primary" autoFocus onClick={() => window.location.reload()}>
+              ไปที่บัญชีนี้
+            </button>
+          </div>
+        </div>
+      )}
+
       {googleLink && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,

@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import './authFetch.js'
+import { bootstrapTabSession } from './lib/tabSync'
 import App from './App.jsx'
 import ErrorBoundary from './shared/ui/ErrorBoundary'
 import { reloadOnceForNewVersion } from './lib/chunkReload'
@@ -11,10 +12,13 @@ window.addEventListener('vite:preloadError', (event) => {
   if (reloadOnceForNewVersion()) event.preventDefault()
 })
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </React.StrictMode>,
-)
+// แท็บใหม่ขณะมีแท็บอื่นล็อกอินอยู่ : รับเซสชันก่อนแสดงหน้าแรก (เข้าระบบเลย ไม่เห็นหน้า login แวบ) ; อย่างอื่นแสดงทันที
+bootstrapTabSession().then(() => {
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </React.StrictMode>,
+  )
+})

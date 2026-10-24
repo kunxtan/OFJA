@@ -5,6 +5,7 @@
 //  - แนบ header  Authorization: Bearer <token>  เฉพาะ request ที่ไปหา origin ของ API
 //  - ได้ 401 (หมดอายุ/ถูกระงับ/สัญญาร้านหมด) = ทิ้ง token แล้วส่ง event 'auth:expired' ให้ App.jsx เด้งไปหน้า login
 //  - App.jsx ส่ง 'auth:logout' ตอนกดออกจากระบบ = ทิ้ง token
+//  - ทุกแท็บในเบราว์เซอร์เดียวกันใช้บัญชีเดียวกัน : lib/tabSync.js (ส่ง 'auth:session' ให้ทุกครั้งที่บันทึกผู้ใช้)
 //  - เซิร์ฟเวอร์ล่ม/เน็ตหลุด : ไม่ส่งข้อความดิบ ("Failed to fetch", หน้า HTML 502 ของ nginx, "Internal Server Error")
 //    ไปถึงหน้าจอ แต่แปลงเป็นคำตอบ JSON ที่มี detail ภาษาไทย ทุกหน้าที่อ่าน data.detail จึงแสดงข้อความที่ผู้ใช้เข้าใจ
 const originalFetch = window.fetch.bind(window);
@@ -26,13 +27,25 @@ const setToken = (value) => {
   else { store.remove(TOKEN_KEY); store.remove(USER_KEY); }
 };
 export const hasToken = () => Boolean(token);
+export const currentToken = () => token;
 export const savedUser = () => {
   if (!token) return null;
   try { return JSON.parse(store.get(USER_KEY) || 'null'); } catch { return null; }
 };
 export const saveUser = (user) => {
-  if (user && token) store.set(USER_KEY, JSON.stringify(user));
-  else store.remove(USER_KEY);
+  if (user && token) {
+    store.set(USER_KEY, JSON.stringify(user));
+    window.dispatchEvent(new CustomEvent('auth:session', { detail: { token, user } }));
+  } else {
+    store.remove(USER_KEY);
+  }
+};
+// รับเซสชันจากแท็บอื่น (lib/tabSync.js) : ไม่ส่ง 'auth:session' ต่อ (กันส่งวนกันไปมา)
+//  useNow = false : เก็บไว้ให้หลังรีโหลดเท่านั้น แท็บนี้ยังไม่ใช้ (หน้าจอยังเป็นของบัญชีเดิม จะยิงด้วย token ใหม่ไม่ได้)
+export const adoptSession = (newToken, user, useNow = true) => {
+  store.set(TOKEN_KEY, newToken);
+  store.set(USER_KEY, JSON.stringify(user));
+  token = useNow ? newToken : null;
 };
 window.addEventListener('auth:logout', () => setToken(null));
 
