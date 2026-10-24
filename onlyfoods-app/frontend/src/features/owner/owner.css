@@ -698,6 +698,7 @@ body, html {
 .mm-stock-btn.to-out:hover:not(:disabled) { background: #C93A26; }
 .mm-stock-btn.to-in { background: var(--berry-green); box-shadow: 0 4px 12px rgba(23,166,115,0.25); }
 .mm-stock-btn.to-in:hover:not(:disabled) { background: #12895F; }
+.mm-stock-btn.pending { cursor: progress; opacity: 0.85; }
 .mm-stock-btn:active { transform: translateY(1px); }
 .mm-stock-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 .mm-stock-btn.compact { width: auto; padding: 7px 12px; font-size: 12.5px; box-shadow: none; }

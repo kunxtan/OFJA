@@ -6,7 +6,7 @@ import { fmtMoney } from '../../lib/format';
 export default function MenuPage({
   products, menuSearch, menuFilter, todaySold, menuSort, selectedIds, selectMode, toggleSelected, toggleStock,
   openEditModal, handleDeleteMenu, loaded, openAddModal, setMenuFilter, setMenuSearch, setMenuSort, menuView,
-  setMenuView, exitSelectMode, setSelectMode, setSelectedIds, bulkBusy, bulkSetStock
+  setMenuView, exitSelectMode, setSelectMode, setSelectedIds, bulkBusy, bulkSetStock, stockPending = []
 }) {
   const inStockCount = products.filter(p => !p.IsOutOfStock).length;
   const outOfStockCount = products.length - inStockCount;
@@ -43,17 +43,23 @@ export default function MenuPage({
       onKeyDown: (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleSelected(p.ProductId); } },
     } : {};
   };
-  const stockButton = (p, compact = false) => (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); toggleStock(p.ProductId, p.ProductName, p.IsOutOfStock); }}
-      className={`mm-stock-btn ${p.IsOutOfStock ? 'to-in' : 'to-out'} ${compact ? 'compact' : ''}`}
-      title={p.IsOutOfStock ? 'กดเพื่อเปิดขายเมนูนี้' : 'กดเมื่อเมนูนี้หมด'}
-    >
-      <Icon name={p.IsOutOfStock ? 'check' : 'soldout'} size={15} />
-      {p.IsOutOfStock ? 'ปรับเป็นพร้อมขาย' : 'ปรับเป็นสินค้าหมด'}
-    </button>
-  );
+  // สถานะบนการ์ดเปลี่ยนทันทีที่กด ; ปุ่มขึ้นวงหมุน (กดซ้ำไม่ได้) จนกว่า server จะยืนยัน
+  const stockButton = (p, compact = false) => {
+    const pending = stockPending.includes(p.ProductId);
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); toggleStock(p.ProductId, p.ProductName, p.IsOutOfStock); }}
+        className={`mm-stock-btn ${p.IsOutOfStock ? 'to-in' : 'to-out'} ${compact ? 'compact' : ''} ${pending ? 'pending' : ''}`}
+        title={p.IsOutOfStock ? 'กดเพื่อเปิดขายเมนูนี้' : 'กดเมื่อเมนูนี้หมด'}
+        disabled={pending}
+        aria-busy={pending}
+      >
+        {pending ? <span className="berry-spinner" aria-hidden="true" /> : <Icon name={p.IsOutOfStock ? 'check' : 'soldout'} size={15} />}
+        {pending ? 'กำลังบันทึก...' : p.IsOutOfStock ? 'ปรับเป็นพร้อมขาย' : 'ปรับเป็นสินค้าหมด'}
+      </button>
+    );
+  };
   const actionButtons = (p) => (
     <>
       <button type="button" className="mm-icon-btn" title="แก้ไขเมนู" aria-label={`แก้ไข ${p.ProductName}`} onClick={(e) => { e.stopPropagation(); openEditModal(p); }}>

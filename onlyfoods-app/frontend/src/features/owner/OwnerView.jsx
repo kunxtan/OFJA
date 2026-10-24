@@ -40,6 +40,9 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   const [storeDetail, setStoreDetail] = useState(null);
   const [cancels, setCancels] = useState([]);
   const [products, setProducts] = useState([]);
+  const [stockPending, setStockPending] = useState([]); // เมนูที่กำลังส่งการปรับสต็อกไป server
+  const productsVersion = useRef(0);
+  const stockSending = useRef(new Map()); // ProductId -> สถานะที่กดไว้ (true = หมด) ระหว่างรอ server
   const [history, setHistory] = useState([]); 
   const [staffList, setStaffList] = useState([]); 
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
@@ -186,45 +189,47 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ดึงข้อมูลร้านทุก endpoint (ทุก 10 วิ + หลังกดปุ่มต่าง ๆ)
+  // ดึงข้อมูลร้าน (ทุก endpoint ทุก 10 วิ) ; หลังกดปุ่มใช้ refresh('ชื่อ') ดึงเฉพาะส่วนที่เปลี่ยน
+  //   (เดิมทุกปุ่มดึงใหม่หมด 11 endpoint รวมประวัติออเดอร์ทั้งร้านที่ใหญ่ที่สุด หน้าจอจึงเปลี่ยนช้า)
   //  - progressive (เปิดหน้าครั้งแรก) : endpoint ไหนตอบก่อน แสดงส่วนนั้นก่อน ไม่ต้องรอตัวที่ช้าที่สุด
   //  - ดึงซ้ำ : รอครบแล้วอัปเดตทีเดียว (React รวมเป็น render รอบเดียว ; เดิม set แยกตัว = render ได้ ~11 รอบต่อครั้ง)
   //  - ข้อมูลเหมือนเดิมทุกตัวอักษร = คืนค่าเดิม (React ไม่ render ซ้ำ)
   //  - คืน Promise : startPolling ไม่ยิงรอบใหม่ทับรอบที่ยังไม่เสร็จ
   //  - เงื่อนไขของแต่ละ endpoint เหมือนเดิม : ตัวที่เช็ค r.ok ตอบ error = คงข้อมูลเดิม ไม่ให้ KPI กลายเป็น 0
-  const fetchData = async (progressive = false) => {
+  const fetchData = async (progressive = false, only = null) => {
+    const productsAt = productsVersion.current; // มีการแก้สต็อกในเครื่องระหว่างรอ = ผลรอบนี้เก่าแล้ว ไม่ใช้
     const get = (path, okOnly) => fetch(`${apiBase}${path}`)
       .then(r => (okOnly && !r.ok ? null : r.json()))
       .catch(err => { console.error(err); return undefined; }); // undefined = เน็ต/JSON พัง : ไม่แตะ state
     const keep = (next) => (prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
-    // [path, เช็ค r.ok, นำผลไปใส่ state]
-    const jobs = [
-      [`/api/reports/dashboard?store_id=${storeId}`, false, (d) => {
+    // [ชื่อ, path, เช็ค r.ok, นำผลไปใส่ state]
+    const allJobs = [
+      ['dash', `/api/reports/dashboard?store_id=${storeId}`, false, (d) => {
         if (d !== undefined) { setDash(keep((d && d[0]) || {})); markLoaded('dash'); }
       }],
-      ['/api/stores', false, (d) => {
+      ['store', '/api/stores', false, (d) => {
         if (d === undefined) return;
         const allStores = Array.isArray(d) ? d : [];
         setStoreDetail(keep(allStores.find(st => String(st.StoreId) === String(storeId)) || null));
       }],
-      ['/api/food-court/status', false, (d) => {
+      ['foodcourt', '/api/food-court/status', false, (d) => {
         if (!d) return;
         setFoodCourtOpen(d.is_open ?? true);
         if (d.open_time && d.close_time) {
           setFoodCourtHours(prev => (prev && prev.open === d.open_time && prev.close === d.close_time) ? prev : { open: d.open_time, close: d.close_time });
         }
       }],
-      ['/api/refunds?limit=2000', true, (d) => {
+      ['refunds', '/api/refunds?limit=2000', true, (d) => {
         if (Array.isArray(d)) { setRefunds(keep(d)); markLoaded('refunds'); }
       }],
-      [`/api/stores/${storeId}/reviews/detail`, false, (d) => {
+      ['reviews', `/api/stores/${storeId}/reviews/detail`, false, (d) => {
         if (d && Array.isArray(d.reviews)) { setReviewsData(keep(d)); markLoaded('reviews'); }
       }],
       // รายงานปัญหาแบบละเอียด (ชื่อผู้แจ้งแบบย่อ ไม่มีข้อมูลติดต่อ)
-      [`/api/stores/${storeId}/issues/detail`, false, (d) => {
+      ['issues', `/api/stores/${storeId}/issues/detail`, false, (d) => {
         if (d && Array.isArray(d.issues)) { setIssues(keep(d.issues)); setIssuesSummary(keep(d.summary)); markLoaded('issues'); }
       }],
-      [`/api/reports/cancellations?store_id=${storeId}`, true, (d) => {
+      ['cancels', `/api/reports/cancellations?store_id=${storeId}`, true, (d) => {
         if (!Array.isArray(d)) return;
         setCancels(keep(d));
         markLoaded('cancels'); // อัปเดตใน render เดียวกับ cancels (ดู effect ป้ายยกเลิกใหม่)
@@ -233,29 +238,37 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           isFirstFetch.current = false;
         }
       }],
-      [`/api/products?store_id=${storeId}`, true, (d) => {
-        if (Array.isArray(d)) { setProducts(keep(d)); markLoaded('products'); }
+      ['products', `/api/products?store_id=${storeId}`, true, (d) => {
+        if (!Array.isArray(d) || productsAt !== productsVersion.current) return;
+        // เมนูที่กดปรับสต็อกแล้วยังรอ server : แสดงตามที่กดไว้ ไม่ใช่ค่าเดิมใน server (การ์ดไม่กระพริบกลับ)
+        const sending = stockSending.current;
+        const list = sending.size ? d.map(p => (sending.has(p.ProductId) ? { ...p, IsOutOfStock: sending.get(p.ProductId) ? 1 : 0 } : p)) : d;
+        setProducts(keep(list));
+        markLoaded('products');
       }],
-      [`/api/orders?store_id=${storeId}`, true, (d) => {
+      ['history', `/api/orders?store_id=${storeId}`, true, (d) => {
         if (Array.isArray(d)) { setHistory(keep(d)); markLoaded('history'); }
       }],
-      [`/api/stores/${storeId}/staff?include_inactive=true`, true, (d) => {
+      ['staff', `/api/stores/${storeId}/staff?include_inactive=true`, true, (d) => {
         if (Array.isArray(d)) { setStaffList(keep(d)); markLoaded('staff'); }
       }],
-      ...(uid ? [[`/api/notifications/${uid}`, false, (d) => {
+      ...(uid ? [['notifs', `/api/notifications/${uid}`, false, (d) => {
         if (d === undefined) return;
         const arr = Array.isArray(d) ? d : [];
         setNotifications(keep(arr));
         setUnreadNotifs(arr.filter(n => !n.IsRead).length);
       }]] : []),
     ];
+    const jobs = only ? allJobs.filter(([key]) => only.includes(key)) : allJobs;
     if (progressive) {
-      await Promise.all(jobs.map(([path, okOnly, apply]) => get(path, okOnly).then(apply)));
+      await Promise.all(jobs.map(([, path, okOnly, apply]) => get(path, okOnly).then(apply)));
       return;
     }
-    const results = await Promise.all(jobs.map(([path, okOnly]) => get(path, okOnly)));
-    results.forEach((d, k) => jobs[k][2](d));
+    const results = await Promise.all(jobs.map(([, path, okOnly]) => get(path, okOnly)));
+    results.forEach((d, k) => jobs[k][3](d));
   };
+  // หลังกดปุ่ม : ดึงใหม่เฉพาะข้อมูลที่ปุ่มนั้นเปลี่ยน เช่น refresh('products') / refresh('staff') / refresh('store', 'dash')
+  const refresh = (...keys) => fetchData(false, keys);
 
   useEffect(() => {
     fetchData(true); // เปิดหน้า : แสดงทีละส่วนตามที่ได้ข้อมูล
@@ -354,7 +367,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       setNotifications(prev => prev.map(n => ({ ...n, IsRead: true })));
       setUnreadNotifs(0);
       try { await fetch(`${apiBase}/api/notifications/${uid}/read-all`, { method: 'PUT' }); } catch (err) { console.error(err); }
-      fetchData();
+      refresh('notifs');
     }
   };
 
@@ -366,7 +379,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
   }, [notifOpen]);
 
   const markNotifRead = (notifId) => {
-    fetch(`${apiBase}/api/notifications/${notifId}/read`, { method: 'PUT' }).then(() => fetchData());
+    fetch(`${apiBase}/api/notifications/${notifId}/read`, { method: 'PUT' }).then(() => refresh('notifs'));
   };
 
   // กดรายการแจ้งเตือน -> ปิดกล่อง เปิดหน้ารายละเอียด และนับว่าอ่านแล้ว
@@ -426,7 +439,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       showToast(fallbackMsg);
     } finally {
       setStoreBusy(false);
-      fetchData();
+      refresh('store', 'dash');
     }
   };
   const toggleStore = (open) => storeAction(`toggle?open=${open}`, 'ไม่สามารถเปลี่ยนสถานะร้านได้',
@@ -442,7 +455,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     if (!res.ok) throw new Error(data.detail || data.message || 'บันทึกเวลาไม่สำเร็จ');
     setScheduleOpen(false);
     showToast(data.message || 'บันทึกเวลาเปิด-ปิดร้านเรียบร้อยแล้ว');
-    fetchData();
+    refresh('store', 'dash');
   };
   // ป้ายสถานะบน topbar : พาไปที่การ์ดควบคุมร้านในหน้าภาพรวม
   const goToStoreControl = () => {
@@ -503,7 +516,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     setBulkBusy(false);
     const done = results.filter(r => r.status === 'fulfilled').length;
     const failed = results.length - done;
-    fetchData();
+    refresh('products');
     setSelectedIds([]);
     setSelectMode(false);
     if (done) showSuccess('อัปเดตสต็อกสำเร็จ', `ปรับ ${done} เมนูเป็น${makeOut ? 'สินค้าหมด' : 'พร้อมขาย'}แล้ว`);
@@ -516,18 +529,34 @@ export default function OwnerView({ user, apiBase, onLogout }) {
 
   const exitSelectMode = () => { setSelectMode(false); setSelectedIds([]); };
 
+  // กดปรับสต็อก : เปลี่ยนการ์ดบนจอทันที แล้วค่อยส่งไป server (ปุ่มขึ้นวงหมุนระหว่างรอ) ; ไม่สำเร็จ = เปลี่ยนกลับ + แจ้ง
+  //  productsVersion : ผลการดึงเมนูที่เริ่มก่อนสถานะบนจอเปลี่ยน ถือว่าเก่า ไม่นำมาทับ
+  //  stockSending (ref ไม่ใช่ state) : กันกดซ้ำในจังหวะเดียวกันก่อนจอ render ปุ่มเป็น disabled
+  const setStockOnScreen = (id, out) => {
+    productsVersion.current += 1;
+    setProducts(prev => prev.map(p => (p.ProductId === id ? { ...p, IsOutOfStock: out ? 1 : 0 } : p)));
+  };
   const toggleStock = async (id, pName, isOutOfStock) => {
+    if (stockSending.current.has(id)) return;
+    const makeOut = !isOutOfStock;
+    stockSending.current.set(id, makeOut);
+    setStockPending(prev => [...prev, id]);
+    setStockOnScreen(id, makeOut);
     try {
-      const res = await fetch(`${apiBase}/api/products/${id}/toggle-stock?out_of_stock=${!isOutOfStock}`, { method: 'PUT' });
+      const res = await fetch(`${apiBase}/api/products/${id}/toggle-stock?out_of_stock=${makeOut}`, { method: 'PUT' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(typeof data.detail === 'string' ? data.detail : 'อัปเดตสถานะไม่สำเร็จ');
       }
-      showToast(`อัปเดตสถานะ "${pName}" เป็น ${isOutOfStock ? 'มีสินค้า' : 'สินค้าหมด'} แล้ว`);
+      productsVersion.current += 1;
+      showToast(`อัปเดตสถานะ "${pName}" เป็น ${makeOut ? 'สินค้าหมด' : 'มีสินค้า'} แล้ว`);
     } catch (err) {
+      setStockOnScreen(id, !makeOut);
       showToast(`⚠️ ${err.message || 'อัปเดตสถานะไม่สำเร็จ'} ("${pName}")`);
     } finally {
-      fetchData();
+      stockSending.current.delete(id);
+      setStockPending(prev => prev.filter(x => x !== id));
+      refresh('products');
     }
   };
 
@@ -558,7 +587,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       isEdit ? 'บันทึกสำเร็จ' : 'เพิ่มเมนูสำเร็จ',
       isEdit ? `แก้ไขเมนู "${name}" เรียบร้อยแล้ว` : `เพิ่มเมนู "${name}" เรียบร้อยแล้ว`
     );
-    fetchData();
+    refresh('products');
   };
 
   // โปรไฟล์ร้าน : รูปร้าน รายละเอียด ข้อมูลติดต่อ (ชื่อร้าน/หมวดหมู่แก้ไม่ได้ ต้องเป็นที่ลงทะเบียนกับผู้บริหาร)
@@ -575,7 +604,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       throw new Error(detail || 'บันทึกโปรไฟล์ร้านไม่สำเร็จ');
     }
     showSuccess(data.changed?.length ? 'บันทึกโปรไฟล์ร้านแล้ว' : 'ไม่มีข้อมูลที่เปลี่ยนแปลง', storeDetail?.StoreName || '');
-    fetchData();
+    refresh('store');
   };
 
   // แสดงติ๊กถูกกลางจอ ~1.4 วินาที แล้วค่อย ๆ จางหาย
@@ -637,7 +666,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       }
       setConfirmDelete(null);
       showSuccess('ลบสำเร็จ', `ลบเมนู "${name}" เรียบร้อยแล้ว`);
-      fetchData();
+      refresh('products');
     } catch (err) {
       console.error(err);
       setConfirmDelete(null);
@@ -663,7 +692,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     if (!res.ok) throw await apiError(res, isEdit ? 'บันทึกข้อมูลพนักงานไม่สำเร็จ' : 'เพิ่มพนักงานไม่สำเร็จ');
     setStaffModal(null);
     showSuccess(isEdit ? 'บันทึกเรียบร้อย' : 'เพิ่มพนักงานแล้ว', payload.fullName);
-    fetchData();
+    refresh('staff');
   };
 
   const resetStaffPassword = async (newPassword) => {
@@ -674,7 +703,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     if (!res.ok) throw await apiError(res, 'ตั้งรหัสผ่านใหม่ไม่สำเร็จ');
     setPasswordStaff(null);
     showSuccess('ตั้งรหัสผ่านใหม่แล้ว', `แจ้งรหัสผ่านใหม่ให้ ${target.FullName}`);
-    fetchData();
+    refresh('staff');
   };
 
   const setStaffActive = async (target, isActive) => {
@@ -685,7 +714,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       });
       if (!res.ok) throw await apiError(res, isActive ? 'เปิดใช้งานไม่สำเร็จ' : 'ปิดใช้งานไม่สำเร็จ');
       showSuccess(isActive ? 'เปิดใช้งานแล้ว' : 'ปิดใช้งานแล้ว', target.FullName);
-      fetchData();
+      refresh('staff');
     } catch (err) {
       showToast(err.message);
     } finally {
@@ -701,7 +730,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
     if (!res.ok) throw await apiError(res, 'ลบพนักงานไม่สำเร็จ');
     setEraseStaff(null);
     showSuccess('ลบถาวรแล้ว', target.FullName);
-    fetchData();
+    refresh('staff');
   };
 
   // เปลี่ยนสถานะรายงานปัญหา (+ ข้อความตอบกลับ) ; fromModal = ให้ error กลับไปแสดงในหน้าต่าง
@@ -713,7 +742,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
       });
       if (!res.ok) throw await apiError(res, 'อัปเดตรายงานปัญหาไม่สำเร็จ');
       showSuccess(`${ISSUE_STATUS_UI[status].label}`, 'แจ้งลูกค้าเรียบร้อยแล้ว');
-      fetchData();
+      refresh('issues');
     } catch (err) {
       if (fromModal) throw err;
       showToast(err.message);
@@ -1047,7 +1076,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           {page === 'menu' && <MenuPage {...{
             products, menuSearch, menuFilter, todaySold, menuSort, selectedIds, selectMode, toggleSelected, toggleStock,
             openEditModal, handleDeleteMenu, loaded, openAddModal, setMenuFilter, setMenuSearch, setMenuSort, menuView,
-            setMenuView, exitSelectMode, setSelectMode, setSelectedIds, bulkBusy, bulkSetStock
+            setMenuView, exitSelectMode, setSelectMode, setSelectedIds, bulkBusy, bulkSetStock, stockPending
           }} />}
 
           {page === 'staff' && <StaffPage {...{
@@ -1108,7 +1137,7 @@ export default function OwnerView({ user, apiBase, onLogout }) {
           setRefundConfirming(null);
           setRefundChecking(null);
           showSuccess(info?.kind === 'slip-check' ? (info.approved ? 'สลิปถูกต้อง' : 'บันทึกผลตรวจสลิปแล้ว') : 'คืนเงินเรียบร้อย', message);
-          fetchData();
+          refresh('refunds', 'dash');
         }}
       />
       {salesDetailId && (
