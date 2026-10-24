@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PageHeader, Icon, Skeleton } from '../../components/ui';
 import { ImageUploadZone } from '../../components/image/ImageUploadZone';
 
@@ -40,6 +40,28 @@ export default function StoreProfilePage({ storeDetail, onSave }) {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  // ยังมีช่องให้กรอกด้านล่างที่ยังไม่เห็น : แสดงลูกศรเหนือแถบปุ่ม (กดแล้วเลื่อนลง)
+  const [moreBelow, setMoreBelow] = useState(false);
+  const barRef = useRef(null);
+  const ready = Boolean(storeDetail && form);
+
+  useEffect(() => {
+    if (!ready) return undefined;
+    const scroller = barRef.current?.closest('.berry-content');
+    if (!scroller) return undefined;
+    const update = () => setMoreBelow(scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 24);
+    update();
+    scroller.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    ro?.observe(scroller.firstElementChild || scroller); // ความสูงเปลี่ยน เช่นใส่รูป / ข้อความเตือน
+    return () => { scroller.removeEventListener('scroll', update); window.removeEventListener('resize', update); ro?.disconnect(); };
+  }, [ready]);
+
+  const scrollDown = () => {
+    const scroller = barRef.current?.closest('.berry-content');
+    scroller?.scrollBy({ top: Math.round(scroller.clientHeight * 0.6), behavior: 'smooth' });
+  };
 
   useEffect(() => {
     if (storeDetail && !form) {
@@ -178,12 +200,24 @@ export default function StoreProfilePage({ storeDetail, onSave }) {
           </section>
 
           {formError && <div className="mf-form-error">{formError}</div>}
-          <div className="sp-actions">
-            <button type="button" className="mf-btn ghost" onClick={reset} disabled={saving || !dirty}>ยกเลิกการแก้ไข</button>
-            <button type="submit" className="mf-btn primary" disabled={saving || !dirty}>
-              {saving ? <span className="berry-spinner" /> : <Icon name="check" size={17} />}
-              {saving ? 'กำลังบันทึก...' : 'บันทึกโปรไฟล์ร้าน'}
-            </button>
+          {/* แถบปุ่มลอยติดขอบล่างของจอ : เห็นตลอดไม่ต้องเลื่อนลงไปหา */}
+          <div className={`sp-actionbar ${dirty ? 'dirty' : ''}`} ref={barRef}>
+            {moreBelow && (
+              <button type="button" className="sp-more" onClick={scrollDown} aria-label="ยังมีช่องให้กรอกด้านล่าง เลื่อนลง" title="ยังมีช่องให้กรอกด้านล่าง">
+                <Icon name="arrowDown" size={16} />
+              </button>
+            )}
+            <div className="sp-actionbar-status" aria-live="polite">
+              <span className="dot" />
+              {saving ? 'กำลังบันทึก...' : dirty ? 'มีการแก้ไขที่ยังไม่บันทึก' : 'ข้อมูลเป็นปัจจุบันแล้ว'}
+            </div>
+            <div className="sp-actions">
+              <button type="button" className="mf-btn ghost" onClick={reset} disabled={saving || !dirty}>ยกเลิกการแก้ไข</button>
+              <button type="submit" className="mf-btn primary" disabled={saving || !dirty}>
+                {saving ? <span className="berry-spinner" /> : <Icon name="check" size={17} />}
+                {saving ? 'กำลังบันทึก...' : 'บันทึกโปรไฟล์ร้าน'}
+              </button>
+            </div>
           </div>
         </div>
 
