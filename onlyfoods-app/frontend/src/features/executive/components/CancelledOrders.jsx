@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { T, FONT_STACK, tableStyle, thStyle, thRightStyle, trStyle, tdStyle, tdRightStyle, cancelStatRowStyle, cancelStatBoxStyle, cancelStatLabelStyle, cancelStatValueStyle, cancelChipRowStyle, cancelChipStyle } from '../theme';
 import { money, thaiDateTime, money2 } from '../lib/format';
 import { parseOrderDate } from '../lib/dates';
-import { sumAmount, CANCEL_REASON_FALLBACK, summarizeCancelReasons } from '../lib/sales';
+import { sumMoney, isPaymentRejected, CANCEL_REASON_FALLBACK, summarizeCancelReasons } from '../lib/sales';
 import { Card, Badge, Button, EmptyState, AlertBanner, Modal } from './ui';
 import { callApi } from '../lib/api';
 
@@ -22,7 +22,9 @@ export function CancelledOrdersCard({ api, cancelled = [], periodLabel, showStor
             return (bt ? bt.getTime() : 0) - (at ? at.getTime() : 0);
         });
     }, [cancelled, reasonFilter]);
-    const lostAmount = sumAmount(cancelled);
+    // มูลค่าที่เสียไป = ยอดออเดอร์ยกเลิก ยกเว้นสลิปถูกปฏิเสธ (ร้านไม่เคยได้รับเงิน) — เหมือนหน้าบัญชี
+    const lostAmount = sumMoney(cancelled);
+    const rejectedCount = cancelled.filter(isPaymentRejected).length;
     const topReason = reasons[0] || null;
     const visibleRows = showAll ? rows : rows.slice(0, 8);
     const openOrder = cancelled.find((o) => o.OrderID === openId) || null;
@@ -41,8 +43,11 @@ export function CancelledOrdersCard({ api, cancelled = [], periodLabel, showStor
             <div style={cancelStatBoxStyle}>
               <span style={cancelStatLabelStyle}>มูลค่าที่เสียไป</span>
               <strong style={{ ...cancelStatValueStyle, color: T.down }}>
-                {money(lostAmount)} บาท
+              {money(lostAmount)} บาท
               </strong>
+              {rejectedCount > 0 && (<span style={{ fontSize: '12px', color: T.muted }}>
+                  ไม่รวมสลิปถูกปฏิเสธ {money(rejectedCount)} ออเดอร์ (ร้านไม่ได้รับเงิน)
+                </span>)}
             </div>
             <div style={cancelStatBoxStyle}>
               <span style={cancelStatLabelStyle}>เหตุผลที่พบบ่อยที่สุด</span>

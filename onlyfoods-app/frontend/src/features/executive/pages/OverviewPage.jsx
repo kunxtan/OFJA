@@ -3,7 +3,7 @@ import { T, FONT_STACK, h3Style, bodyStyle, captionStyle, chartGridStyle, toolba
 import { money, thaiDate, thaiDateTime, nowStamp, monthLabelOf } from '../lib/format';
 import { pad2, toISODate, todayISO, rangeDayCount } from '../../../lib/dates';
 import { parseOrderDate, periodBounds, previousBounds, customPeriodBounds, previousBoundsForRange, inRange } from '../lib/dates';
-import { sumAmount, changePct, summarize, buildBuckets, buildBucketsForRange, CANCEL_ALERT_RATE, isCancelAlert, isContractSoon, contractLeftLabel } from '../lib/sales';
+import { changePct, summarize, buildBuckets, buildBucketsForRange, CANCEL_ALERT_RATE, isCancelAlert, isContractSoon, contractLeftLabel } from '../lib/sales';
 import { exportCsv, exportXlsx } from '../lib/api';
 import { issuesQuery } from '../lib/queries';
 import { useCachedApi } from '../../../lib/apiCache';
@@ -609,7 +609,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
            <Card title="ออเดอร์ที่ถูกยกเลิก" subtitle={`${periodLabel} · ดูอัตรายกเลิกรายร้าน สาเหตุ และรายการออเดอร์ได้ในหน้าวิเคราะห์การยกเลิก`} style={{ marginTop: '16px' }} right={<Button variant="ghost" icon="ban" onClick={() => goCancellation()}>ดูวิเคราะห์การยกเลิก →</Button>}>
         <div style={{ display: 'flex', gap: '28px', flexWrap: 'wrap', marginTop: '6px' }}>
           <div><div style={captionStyle}>ออเดอร์ที่ยกเลิก</div><strong style={{ fontSize: '20px', color: T.ink }}>{money(report.now.cancelledCount)} ออเดอร์</strong></div>
-          <div><div style={captionStyle}>มูลค่าออเดอร์ที่ถูกยกเลิก</div><strong style={{ fontSize: '20px', color: T.ink }}>{money(sumAmount(report.now.cancelled))} บาท</strong></div>
+          <div><div style={captionStyle}>มูลค่าออเดอร์ที่ถูกยกเลิก</div><strong style={{ fontSize: '20px', color: T.ink }}>{money(report.now.cancelledValue)} บาท</strong>{report.now.rejectedCancelledCount > 0 && <div style={{ ...captionStyle, fontSize: '12px', marginTop: '2px' }}>ไม่รวมสลิปถูกปฏิเสธ {money(report.now.rejectedCancelledCount)} ออเดอร์ (ร้านไม่ได้รับเงิน)</div>}</div>
           <div><div style={captionStyle}>ร้านที่อัตรายกเลิกเกิน {CANCEL_ALERT_RATE}%</div><strong style={{ fontSize: '20px', color: cancelAlertStores.length ? T.down : T.ink }}>{money(cancelAlertStores.length)} ร้าน</strong></div>
         </div>
       </Card>

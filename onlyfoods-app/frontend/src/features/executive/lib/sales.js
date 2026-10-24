@@ -6,6 +6,11 @@ export const statusIs = (order, status) => String(order?.Status || '').toLowerCa
 
 export const sumAmount = (orders) => orders.reduce((s, o) => s + Number(o.TotalAmount || 0), 0);
 
+// กติกาเดียวกับหน้าบัญชี (accountant/lib/orders.js):
+//  สลิปถูกปฏิเสธ (PaymentStatus === 'REJECTED') = ร้านไม่เคยได้รับเงิน → นับเป็น "จำนวนออเดอร์" ได้ แต่ไม่นับเป็น "ยอดเงิน"
+export const isPaymentRejected = (o) => Boolean(o) && o.PaymentStatus === 'REJECTED';
+export const moneyOf = (o) => (!o || isPaymentRejected(o) ? 0 : Number(o.TotalAmount || 0));
+export const sumMoney = (orders) => orders.reduce((s, o) => s + moneyOf(o), 0);
 export function changePct(current, previous) {
     const c = Number(current) || 0;
     const p = Number(previous) || 0;
@@ -19,8 +24,10 @@ export function summarize(orders) {
     const settled = [...completed, ...noShow];
     const cancelled = orders.filter((o) => statusIs(o, 'Cancelled'));
     const sales = sumAmount(settled);
-    const countedCancelled = cancelled.filter((o) => o.PaymentStatus !== 'REJECTED');
+    const countedCancelled = cancelled.filter((o) => !isPaymentRejected(o));
     const grossSales = sumAmount([...settled, ...countedCancelled]);
+    const cancelledValue = sumMoney(cancelled);
+    const rejectedCancelledCount = cancelled.length - countedCancelled.length;
     const totalRecorded = settled.length + cancelled.length;
 
     return {
@@ -28,6 +35,8 @@ export function summarize(orders) {
         grossSales,
         completedCount: settled.length,
         cancelledCount: cancelled.length,
+        cancelledValue,
+        rejectedCancelledCount,
         cancelRate: totalRecorded > 0
             ? (cancelled.length / totalRecorded) * 100
             : null,
@@ -181,7 +190,7 @@ export function summarizeCancelReasons(cancelledOrders) {
         if (!map[reason])
             map[reason] = { reason, count: 0, amount: 0 };
         map[reason].count += 1;
-        map[reason].amount += Number(o.TotalAmount || 0);
+        map[reason].amount += moneyOf(o);
     });
     const rows = Object.values(map);
     const total = rows.reduce((s, r) => s + r.count, 0);
