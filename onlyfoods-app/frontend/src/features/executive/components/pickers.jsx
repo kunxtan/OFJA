@@ -24,7 +24,7 @@ export const pickerStatusOf = (s) => Boolean(s?.IsDeleted) ? { label: 'ลบแ
     : s?.ContractState === 'EXPIRED' ? { label: 'หมดสัญญา', tone: 'danger' }
     : null;
 
-export function SearchableStorePicker({ stores, value, onChange }) {
+export function SearchableStorePicker({ stores, value, onChange, loading = false }) {
     const selected = stores.find((s) => String(s.StoreId) === String(value));
     const [query, setQuery] = useState(selected?.StoreName || '');
     const [open, setOpen] = useState(false);
@@ -50,7 +50,7 @@ export function SearchableStorePicker({ stores, value, onChange }) {
     return (<div style={{ position: 'relative', marginTop: '8px' }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
         {statusOptions.map(([key, label, count]) => (<button key={key} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setStatusFilter(key); setOpen(true); }} style={cancelChipStyle(statusFilter === key)}>
-            {label} ({count})
+            {label} ({loading ? '–' : count})
           </button>))}
       </div>
       <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', gap: '8px', padding: '0 10px' }}>

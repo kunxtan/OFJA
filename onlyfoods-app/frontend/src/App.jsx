@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { startPolling } from './lib/polling';
 import { savedUser, saveUser, waitForApiIdle } from './authFetch.js';
+import { setAppReady } from './lib/appReady';
 import { clearHistoryNav } from './lib/historyNav';
 import { PALETTE } from './auth/theme';
 import { APP_STYLES } from './auth/styles';
@@ -111,6 +112,8 @@ export default function App() {
     splashRun.current += 1;
     setSplash('loading');
   };
+  // ระหว่างหน้าโหลดยังแสดง : พักการโหลดล่วงหน้าของหน้าต่าง ๆ (lib/apiCache) ไว้ก่อน
+  useEffect(() => { setAppReady(!splash); }, [splash]);
   useEffect(() => {
     if (splash !== 'leaving') return undefined;
     const t = setTimeout(() => setSplash(s => (s === 'leaving' ? null : s)), SPLASH_FADE_MS);

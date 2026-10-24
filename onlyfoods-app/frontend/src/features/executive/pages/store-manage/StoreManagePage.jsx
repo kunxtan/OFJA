@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { T, FONT_STACK, captionStyle, tableStyle, thStyle, trStyle, tdStyle, storeThumbStyle, smallBtn } from '../../theme';
 import { money } from '../../lib/format';
 import { forceCloseMessage, callApi } from '../../lib/api';
+import { storeAccountsQuery } from '../../lib/queries';
+import { useCachedApi } from '../../../../lib/apiCache';
 import { Card, Badge, Button } from '../../components/ui';
 import { isContractSoon, contractLeftLabel } from '../../lib/sales';
 import { EMPTY_STORE_FORM, validateStoreForm } from './storeForm';
@@ -25,38 +27,19 @@ export const storeManageStatusKey = (s) => s.ContractState === 'EXPIRED' ? 'expi
 // ===== จัดการร้านค้า: เพิ่ม แก้ไข เปิด/ปิด ระงับ และลบร้าน =====
 export function StoreManagePage({ ctx }) {
     const { API, user, stores, search, pushToast, ask, askForceClose, reloadStores, focusStoreId, clearFocusStore, navigateTo } = ctx;
-    const [details, setDetails] = useState([]);
     const [modalOpen, setModalOpen] = useState(false);
     const [mode, setMode] = useState('create');
     const [viewStoreId, setViewStoreId] = useState(null);
-    const [storeAccounts, setStoreAccounts] = useState([]);
     const [form, setForm] = useState(EMPTY_STORE_FORM);
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
-    const loadDetails = useCallback(async () => {
-        try {
-            const data = await callApi(`${API}/api/stores`);
-            setDetails(Array.isArray(data) ? data : []);
-        }
-        catch (err) {
-            console.debug('โหลดรายละเอียดร้านไม่สำเร็จ:', err.message);
-        }
-    }, [API]);
-    const loadStoreAccounts = useCallback(async () => {
-        try {
-            const data = await callApi(`${API}/api/store-accounts`);
-            setStoreAccounts(Array.isArray(data) ? data : []);
-        }
-        catch (err) {
-            console.debug('โหลดบัญชีเจ้าของร้านไม่สำเร็จ:', err.message);
-        }
-    }, [API]);
-
-    useEffect(() => {
-        loadDetails();
-        loadStoreAccounts();
-    }, [loadDetails, loadStoreAccounts]);
-    const detailOf = (storeId) => details.find((d) => String(d.StoreId) === String(storeId)) || {};
+    // รายละเอียดร้าน = รายชื่อร้านของหน้าหลัก (มาจาก /api/stores ชุดเดียวกัน รีเฟรชให้ทุก 15 วิ) : ไม่ต้องโหลดซ้ำ
+    // บัญชีเจ้าของร้าน = cache ชุดเดียวกับหน้าบัญชีร้านค้า : กลับเข้าหน้านี้เห็นทันที
+    const [accountsKey, accountsFetcher] = storeAccountsQuery(API);
+    const accountsState = useCachedApi(accountsKey, accountsFetcher, { pollMs: 30000 });
+    const storeAccounts = accountsState.data || [];
+    const loadStoreAccounts = accountsState.reload;
+    const detailOf = (storeId) => stores.find((d) => String(d.StoreId) === String(storeId)) || {};
     const openView = (store) => {setViewStoreId(store.StoreId);};
         const [statusFilter, setStatusFilter] = useState('all');
     useEffect(() => { setStatusFilter('all'); }, [focusStoreId]);
@@ -131,7 +114,6 @@ export function StoreManagePage({ ctx }) {
             }
             setModalOpen(false);
             await reloadStores();
-            await loadDetails();
             await loadStoreAccounts();
         }
         catch (err) {
@@ -171,7 +153,6 @@ export function StoreManagePage({ ctx }) {
             });
             pushToast(`บันทึกข้อมูลร้าน ${store.StoreName} แล้ว`);
             await reloadStores();
-            await loadDetails();
             return true;
         }
         catch (err) {
@@ -197,8 +178,7 @@ export function StoreManagePage({ ctx }) {
                 body: JSON.stringify(payload)
             });
             pushToast('บันทึกบัญชีเจ้าของร้านแล้ว');
-            const data = await callApi(`${API}/api/store-accounts`);
-            setStoreAccounts(Array.isArray(data) ? data : []);
+            await loadStoreAccounts();
             return true;
         }
         catch (err) {
@@ -281,7 +261,6 @@ export function StoreManagePage({ ctx }) {
             await callApi(`${API}/api/stores/${store.StoreId}`, { method: 'DELETE' });
             pushToast(`ลบร้าน ${store.StoreName} แล้ว`);
             await reloadStores();
-            await loadDetails();
         }
         catch (err) {
             pushToast(err.message, 'error');

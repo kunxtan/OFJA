@@ -4,7 +4,10 @@ import { money, thaiDate, thaiDateTime, nowStamp, monthLabelOf } from '../lib/fo
 import { pad2, toISODate, todayISO, rangeDayCount } from '../../../lib/dates';
 import { parseOrderDate, periodBounds, previousBounds, customPeriodBounds, previousBoundsForRange, inRange } from '../lib/dates';
 import { sumAmount, changePct, summarize, buildBuckets, buildBucketsForRange, CANCEL_ALERT_RATE, isCancelAlert, isContractSoon, contractLeftLabel } from '../lib/sales';
-import { callApi, exportCsv, exportXlsx } from '../lib/api';
+import { exportCsv, exportXlsx } from '../lib/api';
+import { issuesQuery } from '../lib/queries';
+import { useCachedApi } from '../../../lib/apiCache';
+import { SkeletonRows } from '../../../shared/ui/Skeleton';
 import { Icon, Card, AlertBanner, KpiCard, Badge, Button, Modal, EmptyState } from '../components/ui';
 import { SalesLineChart, StoreDonutChart } from '../components/charts';
 import { StorePeriodPicker } from '../components/pickers';
@@ -18,27 +21,14 @@ export function OverviewPage({ ctx, foodCourtOpen,foodCourtOpenTime,foodCourtClo
     const [customStart, setCustomStart] = useState(todayISO());
     const [customEnd, setCustomEnd] = useState(todayISO());
     const [exportPreview, setExportPreview] = useState(null);
-    const [issueReports, setIssueReports] = useState([]);
-    const [issueLoading, setIssueLoading] = useState(true);
+    // รายงานปัญหาทั้งศูนย์ : ใช้ cache ชุดเดียวกับกระดิ่งของหน้าหลัก (หน้าหลักรีเฟรชให้ทุก 30 วิ)
+    // จึงขึ้นทันทีตอนกลับเข้าหน้านี้ และไม่ยิงซ้ำถ้าข้อมูลยังใหม่ ; ยังไม่มีร้าน = ไม่ต้องโหลด
+    const hasStores = Array.isArray(stores) && stores.length > 0;
+    const [issuesKey, issuesFetcher] = issuesQuery(API, '');
+    const issuesState = useCachedApi(hasStores ? issuesKey : null, issuesFetcher, { staleMs: 30000 });
+    const issueReports = Array.isArray(issuesState.data?.issues) ? issuesState.data.issues : [];
+    const issueLoading = issuesState.loading;
     const [showAllIssueStores, setShowAllIssueStores] = useState(false);
-
-    useEffect(() => {
-        if (!Array.isArray(stores) || stores.length === 0) {
-            setIssueReports([]);
-            setIssueLoading(false);
-            return undefined;
-        }
-        let cancelled = false;
-               // ดึงรายงานทั้งศูนย์ในคำขอเดียว (เดิมยิงทีละร้าน)
-        callApi(`${API}/api/executive/issues`).then((data) => {
-            if (!cancelled) setIssueReports(Array.isArray(data?.issues) ? data.issues : []);
-        }).catch((err) => {
-            console.debug('โหลดรายงานปัญหาไม่สำเร็จ:', err.message);
-        }).finally(() => {
-            if (!cancelled) setIssueLoading(false);
-        });
-        return () => { cancelled = true; };
-    }, [API, stores]);
 
     useEffect(() => { setShowAllIssueStores(false); }, [days, anchor , customRange, customStart, customEnd]);
     const report = useMemo(() => {
@@ -625,7 +615,7 @@ const compareLabel = customRange ? `เทียบ ${effectiveDays} วัน�
       </Card>
 
      <Card title="รายงานปัญหาจากลูกค้า" subtitle={effectiveDays === 1 ? `รายงานที่แจ้งใน${periodLabel}` : `จำนวนรายงานแยกตามร้าน · ${periodLabel}`} style={{ marginTop: '16px' }} right={<Badge tone="warning">{money(periodIssueReports.length)} รายการ</Badge>}>
-        {issueLoading ? <EmptyState text="กำลังโหลดรายงานปัญหา..."/> : periodIssueReports.length === 0 ? (
+        {issueLoading ? <SkeletonRows rows={3} columns={[3, 2, 1]} label="กำลังโหลดรายงานปัญหา"/> : periodIssueReports.length === 0 ? (
           <EmptyState text="ไม่มีรายงานปัญหาในช่วงเวลาที่เลือก"/>
         ) :effectiveDays === 1 ? (
           <div style={{ display: 'grid', gap: '10px' }}>

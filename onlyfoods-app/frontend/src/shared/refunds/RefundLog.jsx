@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 // 💸 รายการคืนเงิน (ใช้ร่วมกันหลายหน้า)
 //  ยกเลิกออเดอร์ / เปลี่ยนเป็นเมนูที่ถูกกว่า -> "รอคืน" (ไม่นับเป็นรายได้แล้ว)
@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 //  canConfirm  : หน้าร้าน/เจ้าของร้าน กดคืนเงินได้ (backend ตรวจสิทธิ์และร้านซ้ำอีกชั้น)
 //  isOwner     : เจ้าของร้านเท่านั้นที่โอนคืนได้ (เห็นข้อมูลบัญชีลูกค้า + แนบสลิปโอนบังคับ) ; หน้าร้านคืนเงินสด walk-in ได้อย่างเดียว
 //  showStore   : บัญชี/ผู้บริหาร เห็นทุกร้าน -> แสดงคอลัมน์ร้าน + ตัวกรองร้าน + ส่งออก CSV
-import { startPolling } from '../../lib/polling';
+import { useCachedApi } from '../../lib/apiCache';
+import { SkeletonRows } from '../ui/Skeleton';
+import { refundsQuery } from './queries';
 import { openFile } from '../ui/AuthImage';
-import { TYPE_TH, STATUS_TH, fmtDateTime, payoutLabel, awaitingAccount, ROLE_TH, money, fmtPhone, readError } from './refundText';
+import { TYPE_TH, STATUS_TH, fmtDateTime, payoutLabel, awaitingAccount, ROLE_TH, money, fmtPhone } from './refundText';
 import { RefundActionModals } from './RefundModals';
 import { RF_STYLES } from './styles';
 
@@ -30,35 +32,19 @@ function downloadCsv(rows, showStore) {
 }
 
 export default function RefundLog({ apiBase, canConfirm = false, isOwner = false, showStore = false, pollMs = 0, onChanged }) {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  // จำผลไว้ใน cache (ชุดเดียวกับการโหลดล่วงหน้าของหน้าหลัก) : กลับเข้าหน้านี้เห็นรายการเดิมทันที แล้วโหลดใหม่อยู่ข้างหลัง
+  const [refundsKey, refundsFetcher] = refundsQuery(apiBase);
+  const refundsState = useCachedApi(refundsKey, refundsFetcher, { pollMs });
+  const rows = refundsState.data || [];
+  const loading = refundsState.loading;
+  const error = refundsState.error;
+  const load = refundsState.reload;
   const [filter, setFilter] = useState('PENDING');
   const [search, setSearch] = useState('');
   const [storeFilter, setStoreFilter] = useState('all');
   const [confirming, setConfirming] = useState(null);   // แถวที่เปิดหน้าต่าง "คืนเงินแล้ว / โอนคืน"
   const [checking, setChecking] = useState(null);       // แถวที่เปิดหน้าต่างตรวจสลิป (ออเดอร์ถูกบังคับยกเลิกก่อนร้านตรวจ)
   const [flash, setFlash] = useState('');
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch(`${apiBase}/api/refunds?limit=2000`);
-      if (!res.ok) throw new Error(await readError(res, 'โหลดรายการคืนเงินไม่สำเร็จ'));
-      const data = await res.json();
-      setRows(Array.isArray(data) ? data : []);
-      setError('');
-    } catch (err) {
-      setError(err.message || 'โหลดรายการคืนเงินไม่สำเร็จ');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiBase]);
-
-  useEffect(() => {
-    load();
-    if (!pollMs) return undefined;
-    return startPolling(load, pollMs);
-  }, [load, pollMs]);
 
   useEffect(() => {
     if (!flash) return undefined;
@@ -116,19 +102,19 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
       <div className="rf-summary">
         <div className="rf-stat pending">
           <span>รอคืนเงิน</span>
-          <b>฿{money(totals.pending.amount)}</b>
-          <small>{totals.pending.count} รายการ</small>
+          <b>{loading ? '–' : `฿${money(totals.pending.amount)}`}</b>
+          <small>{loading ? '–' : totals.pending.count} รายการ</small>
         </div>
         <div className="rf-stat done">
           <span>คืนเงินแล้ว</span>
-          <b>฿{money(totals.done.amount)}</b>
-          <small>{totals.done.count} รายการ</small>
+          <b>{loading ? '–' : `฿${money(totals.done.amount)}`}</b>
+          <small>{loading ? '–' : totals.done.count} รายการ</small>
         </div>
       </div>
 
       <div className="rf-toolbar">
         <div className="rf-tabs" role="tablist" aria-label="สถานะการคืนเงิน">
-          {[['PENDING', `รอคืน (${totals.pending.count})`], ['DONE', 'คืนแล้ว'], ['ALL', 'ทั้งหมด']].map(([k, label]) => (
+          {[['PENDING', `รอคืน (${loading ? '–' : totals.pending.count})`], ['DONE', 'คืนแล้ว'], ['ALL', 'ทั้งหมด']].map(([k, label]) => (
             <button key={k} type="button" role="tab" aria-selected={filter === k}
               className={`rf-tab ${filter === k ? 'active' : ''}`} onClick={() => setFilter(k)}>{label}</button>
           ))}
@@ -166,7 +152,7 @@ export default function RefundLog({ apiBase, canConfirm = false, isOwner = false
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={colCount} className="rf-empty">กำลังโหลดรายการคืนเงิน…</td></tr>
+              <tr><td colSpan={colCount} style={{ padding: 0 }}><SkeletonRows rows={5} columns={[1, 2, 2, 1, 2, 2, 1]} label="กำลังโหลดรายการคืนเงิน" /></td></tr>
             ) : visible.length === 0 ? (
               <tr><td colSpan={colCount} className="rf-empty">
                 {filter === 'PENDING' ? 'ไม่มีรายการที่รอคืนเงิน' : 'ไม่พบรายการคืนเงิน'}

@@ -1,8 +1,10 @@
 import { T, searchInputStyle, inputStyle } from '../theme';
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { parseOrderDate } from '../lib/dates';
 import { thaiDateTime } from '../lib/format';
 import { callApi } from '../lib/api';
+import { appealsQuery } from '../lib/queries';
+import { useCachedApi } from '../../../lib/apiCache';
 import { useIsNarrow, Icon, Card, Button, EmptyState } from '../components/ui';
 import { AppealDecisionModal, LiftModal, PendingAppeals, SuspendModal, SuspensionBadge, SuspensionHistory } from '../components/suspension';
 
@@ -23,18 +25,15 @@ export function CustomerInfoPage({ ctx }) {
     const [suspensions, setSuspensions] = useState([]);
     const [suspensionsLoading, setSuspensionsLoading] = useState(false);
     const [suspensionsError, setSuspensionsError] = useState('');
-    const [appeals, setAppeals] = useState([]);
     const [suspendTarget, setSuspendTarget] = useState(null);   // { customer, mode, customDays, reason, busy, error }
     const [liftTarget, setLiftTarget] = useState(null);         // { customer, note, busy, error }
     const [decision, setDecision] = useState(null);             // { appeal, approve, response, busy, error }
 
-    const loadAppeals = useCallback(async () => {
-        try {
-            const data = await callApi(`${API}/api/executive/suspension-appeals`);
-            setAppeals(Array.isArray(data) ? data : []);
-        } catch (err) { console.debug('โหลดอุทธรณ์ไม่สำเร็จ:', err.message); }
-    }, [API]);
-    useEffect(() => { loadAppeals(); }, [loadAppeals]);
+    // อุทธรณ์รอพิจารณา : จำไว้ใน cache (กลับเข้าหน้านี้เห็นทันที) และรีเฟรชเองทุก 30 วิ
+    const [appealsKey, appealsFetcher] = appealsQuery(API);
+    const appealsState = useCachedApi(appealsKey, appealsFetcher, { pollMs: 30000 });
+    const appeals = appealsState.data || [];
+    const loadAppeals = appealsState.reload;
 
     const loadSuspensions = async (userId) => {
         setSuspensionsLoading(true); setSuspensionsError('');

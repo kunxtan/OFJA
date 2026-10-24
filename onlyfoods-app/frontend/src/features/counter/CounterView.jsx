@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { BrandLogo, BurgerButton, StatusPill, TopbarStyles, UserChip } from '../../shared/ui/Topbar';
+import { prefetchWhenIdle, useCachedApi } from '../../lib/apiCache';
+import { refundsQuery } from '../../shared/refunds/queries';
+import { counterReportsQuery } from './queries';
 import { startPolling } from '../../lib/polling';
 import { useHistoryNav } from '../../lib/historyNav';
 import { printReceipt } from '../../lib/receiptPrint';
@@ -41,8 +44,12 @@ export default function CounterView({ user, apiBase, onLogout }) {
   const [rejectSlipModal, setRejectSlipModal] = useState(null);
   const [rejectSlipReason, setRejectSlipReason] = useState('สลิปไม่ถูกต้อง');
   const [foodCourtOpen, setFoodCourtOpen] = useState(true);
-  const [reportData, setReportData] = useState(null);
-  const [reportCancellations, setReportCancellations] = useState([]);
+  // แท็บ Reports : จำผลไว้ใน cache (เปิดแท็บซ้ำเห็นทันที) + โหลดล่วงหน้าตอนเครื่องว่าง ; โหลดเฉพาะตอนเปิดแท็บนี้
+  const [reportsKey, reportsFetcher] = counterReportsQuery(apiBase, activeStoreId);
+  const reportsState = useCachedApi(activeTab === 'reports' ? reportsKey : null, reportsFetcher);
+  const reportData = reportsState.data?.dashboard ?? null;
+  const reportCancellations = reportsState.data?.cancellations || [];
+  const reportsLoading = activeTab === 'reports' && reportsState.data === undefined;
   const [viewingCustomer, setViewingCustomer] = useState(null);
   const [toast, setToast] = useState({ show: false, msg: '' });
   const [liveError, setLiveError] = useState(''); // ดึงคิวไม่สำเร็จ : คงข้อมูลเดิมไว้ แล้วขึ้นแถบเตือน
@@ -100,6 +107,9 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
   // เวลาปัจจุบัน : ฟังก์ชันด้านล่างอ่าน Date.now() ตอนถูกเรียก ; แท็บที่นับถอยหลังเรียก useNow() เองเพื่อเดินทุกวินาที
   // (เดิมเก็บ state เวลาที่นี่ ทำให้ทั้งหน้า render ใหม่ทุกวินาที)
+
+  // โหลดล่วงหน้าตอนเครื่องว่าง : เปิดแท็บคืนเงินลูกค้า / Reports แล้วขึ้นทันที (แท็บใช้ cache ชุดเดียวกัน)
+  useEffect(() => prefetchWhenIdle([refundsQuery(apiBase), counterReportsQuery(apiBase, activeStoreId)]), [apiBase, activeStoreId]);
 
   // ครัวกด "ปรุงเสร็จ" -> backend สร้าง PrintJob PENDING -> เด้ง popup ยืนยันพิมพ์ที่หน้าร้านอัตโนมัติ
   useEffect(() => {
@@ -203,17 +213,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
       .catch(err => console.error("Error refunds:", err));
   };
 
-  const fetchReports = () => {
-    Promise.all([
-      fetch(`${apiBase}/api/reports/dashboard?store_id=${activeStoreId}`).then(r => r.json()),
-      fetch(`${apiBase}/api/reports/cancellations?store_id=${activeStoreId}`).then(r => r.json())
-    ])
-      .then(([dashboard, cancellations]) => {
-        setReportData(Array.isArray(dashboard) ? dashboard[0] || null : null);
-        setReportCancellations(Array.isArray(cancellations) ? cancellations : []);
-      })
-      .catch(err => console.error("Error reports:", err));
-  };
+  const fetchReports = reportsState.reload;
 
   // โหลดข้อมูลร้านค้า และซิงก์สถานะร้านเป็นระยะ
   const fetchStores = async () => {
@@ -265,10 +265,6 @@ export default function CounterView({ user, apiBase, onLogout }) {
     fetchData();
     return startPolling(fetchData, 3500);
   }, [activeStoreId, apiBase]);
-
-  useEffect(() => {
-    if (activeTab === 'reports') fetchReports();
-  }, [activeTab, activeStoreId, apiBase]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -1008,7 +1004,7 @@ export default function CounterView({ user, apiBase, onLogout }) {
 
           {/* TAB 4: REPORTS */}
           {activeTab === 'reports' && <ReportsTab {...{
-            fetchReports, reportData, reportCancellations, products
+            fetchReports, reportData, reportCancellations, reportsLoading, products
           }} />}
 
           {activeTab === 'refunds' && <RefundsTab {...{

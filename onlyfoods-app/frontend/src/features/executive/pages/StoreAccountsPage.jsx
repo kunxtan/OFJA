@@ -1,10 +1,13 @@
 import { STORE_PASSWORD_MIN, STORE_PASSWORD_MAX } from './store-manage/storeForm';
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { T, h3Style, bodyStyle, captionStyle, toolbarStyle, tableStyle, thStyle, trStyle, tdStyle, inputStyle, twoColStyle, smallBtn } from '../theme';
 import { money } from '../lib/format';
 import { callApi } from '../lib/api';
 import { Icon, Card, Badge, Button, Modal, Field } from '../components/ui';
 import { FormSectionTitle, IconInput, PasswordField, PasswordChecklist, OwnerRoleCard } from './store-manage/formParts';
+import { storeAccountsQuery } from '../lib/queries';
+import { useCachedApi } from '../../../lib/apiCache';
+import { SkeletonRows } from '../../../shared/ui/Skeleton';
 
 export const ROLE_LABEL = {
     'Shop Owner': 'เจ้าของร้าน',
@@ -54,27 +57,18 @@ export function validateAccountForm(form, mode) {
 // ===== บัญชีร้านค้า: สร้างและจัดการบัญชีผู้ใช้ของร้าน =====
 export function StoreAccountsPage({ ctx }) {
     const { API, user, stores, search, pushToast, ask } = ctx;
-    const [accounts, setAccounts] = useState([]);
-    const [loadError, setLoadError] = useState('');
+    // บัญชีร้าน : cache ชุดเดียวกับหน้าจัดการร้าน (กลับเข้าหน้านี้เห็นทันที แล้วโหลดใหม่อยู่ข้างหลัง)
+    const [accountsKey, accountsFetcher] = storeAccountsQuery(API);
+    const accountsState = useCachedApi(accountsKey, accountsFetcher, { pollMs: 30000 });
+    const accounts = accountsState.data || [];
+    const loadError = accountsState.error;
+    const loadAccounts = accountsState.reload;
     const [modalOpen, setModalOpen] = useState(false);
     const [mode, setMode] = useState('create');
     const [form, setForm] = useState(EMPTY_ACCOUNT_FORM);
     const [errors, setErrors] = useState({});
     const [saving, setSaving] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
-    const loadAccounts = useCallback(async () => {
-        try {
-            const data = await callApi(`${API}/api/store-accounts`);
-            setAccounts(Array.isArray(data) ? data : []);
-            setLoadError('');
-        }
-        catch (err) {
-            setLoadError(err.message);
-        }
-    }, [API]);
-    useEffect(() => {
-        loadAccounts();
-    }, [loadAccounts]);
     const storeName = (id,account = null) => { if (account?.StoreName) {   return account.StoreName;}
     return stores.find( (s) => String(s.StoreId) === String(id)  )?.StoreName || '—'; };
     const rows = accounts.filter((a) => {
@@ -205,7 +199,7 @@ export function StoreAccountsPage({ ctx }) {
           </div>
         </Card>)}
 
-      <Card title="รายชื่อบัญชีเจ้าของร้าน" subtitle={`${money(rows.length)} บัญชีเจ้าของร้านที่แสดงอยู่`}>
+      <Card title="รายชื่อบัญชีเจ้าของร้าน" subtitle={`${accountsState.loading ? '–' : money(rows.length)} บัญชีเจ้าของร้านที่แสดงอยู่`}>
         <div style={{ overflowX: 'auto' }}>
           <table style={tableStyle}>
             <thead>
@@ -242,7 +236,10 @@ export function StoreAccountsPage({ ctx }) {
                     </div>
                   </td>
                 </tr>))}
-              {rows.length === 0 && (<tr>
+              {accountsState.loading && (<tr>
+                  <td colSpan="5" style={{ padding: 0 }}><SkeletonRows rows={4} columns={[2, 3, 1, 2, 2]} label="กำลังโหลดบัญชีร้าน"/></td>
+                </tr>)}
+              {!accountsState.loading && rows.length === 0 && (<tr>
                   <td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted }}>
                     ยังไม่มีบัญชีเจ้าของร้านในระบบ
                   </td>

@@ -8,6 +8,8 @@ import { AUDIT_PAGE, mergeLogs, buildAuditRows, AUDIT_ACTION_META } from './lib/
 import { buildXlsxBlob, downloadBlob, REPORT_TYPES, REPORT_COLUMNS } from './lib/report';
 import { Icon, useResponsiveEnhancements } from './components/ui';
 import { BellButton, BrandLogo, BurgerButton, StatusPill, TopbarStyles, UserChip } from '../../shared/ui/Topbar';
+import { prefetchWhenIdle } from '../../lib/apiCache';
+import { refundsQuery } from '../../shared/refunds/queries';
 
 // CSS ของหน้าฝ่ายบัญชี : แทรกเป็น <style> ตอนเปิดหน้า (ปิดหน้าแล้วหายไป)
 import STYLES from './accountant.css?inline';
@@ -201,6 +203,13 @@ export default function AccountantView({ apiBase, user, onLogout }) {
     fetchData();
     return startPolling(fetchData, 15000); // fetchData คืน Promise : ไม่ยิงซ้อนรอบที่ยังไม่เสร็จ
   }, [apiBase]);
+
+  // ข้อมูลชุดแรกมาแล้ว : โหลดรายการคืนเงินล่วงหน้าตอนเครื่องว่าง (เปิดหน้า Refund Log แล้วขึ้นทันที)
+  // base ต้องตรงกับที่ pages/RefundsPage ส่งให้ RefundLog
+  useEffect(() => {
+    if (loading) return undefined;
+    return prefetchWhenIdle([refundsQuery(baseRef.current || apiBase || '')]);
+  }, [loading, apiBase]);
 
   useEffect(() => { setMenusOpen(false); }, [detailStoreId]);
 

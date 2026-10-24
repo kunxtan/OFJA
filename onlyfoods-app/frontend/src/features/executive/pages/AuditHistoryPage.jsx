@@ -1,13 +1,16 @@
 import { T, FONT_STACK, SELECT_CHEVRON, h3Style, captionStyle, toolbarStyle, tableStyle, thStyle, trStyle, tdStyle, inputStyle } from '../theme';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AUDIT_VERBS, auditCodesMatching, formatAuditDetails } from '../../../lib/auditText';
+import { AUDIT_VERBS, formatAuditDetails } from '../../../lib/auditText';
 import { thaiDateTime } from '../lib/format';
 import { callApi } from '../lib/api';
+import { AUDIT_PAGE_SIZE, auditFirstPageQuery, auditUrl as buildAuditUrl } from '../lib/queries';
+import { fetchCached, readCache } from '../../../lib/apiCache';
+import { SkeletonRows } from '../../../shared/ui/Skeleton';
 import { Icon, Card, Button } from '../components/ui';
 
 // ===== ประวัติการดำเนินการ: ตรวจสอบกิจกรรมสำคัญในระบบ =====
 // ค้นหา/กรองที่ backend (ค้นได้ทั้งตาราง) แล้วโหลดทีละ AUDIT_PAGE_SIZE รายการ กด "โหลดเพิ่ม" เพื่อดูเก่ากว่า
-export const AUDIT_PAGE_SIZE = 100;
+// หน้าแรกของแต่ละคำค้น/ตัวกรองจำไว้ใน cache : กลับเข้าหน้านี้เห็นทันที แล้วโหลดใหม่อยู่ข้างหลัง
 
 // ชื่อภาษาไทยของการดำเนินการ (ใช้ทั้งแสดงผลและแปลงคำค้นภาษาไทยเป็น ActionCode ส่งให้ backend)
 
@@ -49,47 +52,46 @@ export const auditGroupOf = (action) => {
 
 export function AuditHistoryPage({ ctx }) {
     const { API } = ctx;
-    const [logs, setLogs] = useState([]);
-    const [loadingLogs, setLoadingLogs] = useState(true);
+    const [logs, setLogs] = useState(() => readCache(auditFirstPageQuery(API, {})[0]) || []);
+    const [loadingLogs, setLoadingLogs] = useState(() => readCache(auditFirstPageQuery(API, {})[0]) === undefined);
+    const [refreshing, setRefreshing] = useState(false);
     const [loadError, setLoadError] = useState('');
     const [query, setQuery] = useState('');
     const [filter, setFilter] = useState('all');
     const [actionFilter, setActionFilter] = useState('');  // กรองการกระทำเดียว เช่น CANCEL_ORDER
-    const [hasMore, setHasMore] = useState(false);
+    const [hasMore, setHasMore] = useState(() => (readCache(auditFirstPageQuery(API, {})[0]) || []).length === AUDIT_PAGE_SIZE);
     const [loadingMore, setLoadingMore] = useState(false);
     const requestNo = useRef(0);  // พิมพ์เร็ว ๆ แล้วผลเก่ากลับมาทีหลัง -> ทิ้ง
 
-    const auditUrl = useCallback((offset) => {
-        const params = new URLSearchParams({ limit: String(AUDIT_PAGE_SIZE), offset: String(offset) });
-        const keyword = query.trim().toLowerCase();
-        if (keyword) {
-            params.set('q', keyword);
-            const codes = auditCodesMatching(keyword);
-            if (codes.length) params.set('actions', codes.join(','));
-        }
-                if (filter !== 'all') params.set('group', filter);
-        if (actionFilter) params.set('action', actionFilter);
-        return `${API}/api/audit-logs?${params}`;
-    }, [API, query, filter, actionFilter]);
+    const auditUrl = useCallback((offset) => buildAuditUrl(API, { query, filter, actionFilter }, offset), [API, query, filter, actionFilter]);
 
     const loadLogs = useCallback(async () => {
         const no = ++requestNo.current;
-        setLoadingLogs(true);
+        const [key, fetcher] = auditFirstPageQuery(API, { query, filter, actionFilter });
+        const cached = readCache(key);
+        if (cached) {
+            // เคยค้นแบบนี้แล้ว : แสดงผลที่จำไว้ทันที แล้วโหลดใหม่อยู่ข้างหลัง
+            setLogs(cached);
+            setHasMore(cached.length === AUDIT_PAGE_SIZE);
+            setLoadingLogs(false);
+        } else {
+            setLoadingLogs(true);
+        }
+        setRefreshing(true);
         try {
-            const data = await callApi(auditUrl(0));
+            const rows = await fetchCached(key, fetcher);
             if (no !== requestNo.current) return;
-            const rows = Array.isArray(data) ? data : [];
             setLogs(rows);
             setHasMore(rows.length === AUDIT_PAGE_SIZE);
             setLoadError('');
         }
         catch (err) {
-            if (no === requestNo.current) setLoadError(err.message);
+            if (no === requestNo.current && !cached) setLoadError(err.message);
         }
         finally {
-            if (no === requestNo.current) setLoadingLogs(false);
+            if (no === requestNo.current) { setLoadingLogs(false); setRefreshing(false); }
         }
-    }, [auditUrl]);
+    }, [API, query, filter, actionFilter]);
 
     const loadMore = async () => {
         const no = requestNo.current;
@@ -176,8 +178,8 @@ export function AuditHistoryPage({ ctx }) {
             <h3 style={h3Style}>กิจกรรมล่าสุด</h3>
             <p style={captionStyle}>แสดงประวัติการดำเนินการสำคัญล่าสุดที่ถูกบันทึกไว้ในระบบ</p>
           </div>
-          <Button icon="refresh" tone="secondary" onClick={loadLogs} disabled={loadingLogs}>
-            {loadingLogs ? 'กำลังโหลด...' : 'รีเฟรช'}
+          <Button icon="refresh" tone="secondary" onClick={loadLogs} disabled={refreshing}>
+            {refreshing ? 'กำลังโหลด...' : 'รีเฟรช'}
           </Button>
         </div>
 
@@ -213,7 +215,7 @@ export function AuditHistoryPage({ ctx }) {
       </Card>
 
       <Card>
-        {loadError ? (<div style={{padding: '24px',borderRadius:T.radiusMd,background:T.redSoft,color:T.down,fontSize: '14px'}}>{loadError}</div>) : loadingLogs ? (<div style={{padding: '48px 20px',textAlign: 'center',color:T.muted,fontSize: '14px'}}>กำลังโหลดประวัติการดำเนินการ...</div>) : filtered.length === 0 ? (<div style={{padding: '48px 20px',textAlign: 'center',color:T.muted}}>
+        {loadError ? (<div style={{padding: '24px',borderRadius:T.radiusMd,background:T.redSoft,color:T.down,fontSize: '14px'}}>{loadError}</div>) : loadingLogs ? (<SkeletonRows rows={8} columns={[2, 2, 2, 4, 1]} label="กำลังโหลดประวัติการดำเนินการ"/>) : filtered.length === 0 ? (<div style={{padding: '48px 20px',textAlign: 'center',color:T.muted}}>
           <div style={{width: '48px',height: '48px',margin: '0 auto 12px',borderRadius: '50%',background:T.primarySoft,display: 'grid',placeItems: 'center',color:T.primary}}><Icon name="history" size={23}/></div>
           <div style={{ fontWeight: 600, color: T.text, marginBottom: '4px' }}>ไม่พบประวัติการดำเนินการ</div>
           <div style={{ fontSize: '13px' }}>ลองเปลี่ยนคำค้นหาหรือตัวกรอง</div>

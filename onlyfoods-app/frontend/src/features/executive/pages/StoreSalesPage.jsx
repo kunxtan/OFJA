@@ -11,27 +11,17 @@ import { SearchableStorePicker, StorePeriodPicker } from '../components/pickers'
 import { StoreReviewSection } from '../components/StoreReviewSection';
 import { StoreIssueReportSection } from '../components/StoreIssueReportSection';
 import { CancelledOrdersCard } from '../components/CancelledOrders';
+import { storesHistoryQuery } from '../lib/queries';
+import { useCachedApi } from '../../../lib/apiCache';
 
 // ===== ยอดขายรายร้าน: เลือกร้าน ดูยอดขาย และอันดับเมนู =====
 export function StoreSalesPage({ ctx }) {
     const { orders, stores, pushToast, focusStoreId, navigateTo } = ctx;
     const [storeId, setStoreId] = useState(focusStoreId || '');
-    const [historyStores, setHistoryStores] = useState([]);
-    useEffect(() => {
-    callApi(`${ctx.API}/api/stores/history`)
-        .then((data) => {
-            setHistoryStores(
-                Array.isArray(data) ? data : []
-            );
-        })
-        .catch((err) => {
-            console.error(
-                'โหลดประวัติร้านไม่สำเร็จ:',
-                err
-            );
-            setHistoryStores([]);
-        });
-}, [ctx.API]);
+    // รายชื่อร้านรวมร้านที่ถูกลบ : จำไว้ใน cache (กลับเข้าหน้านี้เห็นทันที แล้วโหลดใหม่อยู่ข้างหลัง)
+    const [historyKey, historyFetcher] = storesHistoryQuery(ctx.API);
+    const historyState = useCachedApi(historyKey, historyFetcher, { pollMs: 60000 });
+    const historyStores = historyState.data || [];
     useEffect(() => {
         if (focusStoreId) setStoreId(String(focusStoreId));
     }, [focusStoreId]);
@@ -312,7 +302,7 @@ export function StoreSalesPage({ ctx }) {
         <div style={toolbarStyle}>
           <div style={{ minWidth: '240px', flex: 1 }}>
             <h3 style={h3Style}>เลือกร้านค้า</h3>
-            <SearchableStorePicker stores={historyStores} value={storeId} onChange={setStoreId}/>
+            <SearchableStorePicker stores={historyStores} loading={historyState.loading} value={storeId} onChange={setStoreId}/>
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
 

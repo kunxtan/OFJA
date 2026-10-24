@@ -3,6 +3,9 @@ import { startPolling } from '../../lib/polling';
 import { useHistoryNav } from '../../lib/historyNav';
 import RefundLog from '../../shared/refunds/RefundLog';
 import { REFRESH_MS, forceCloseMessage, callApi } from './lib/api';
+import { appealsQuery, auditFirstPageQuery, issueParams, issuesQuery, storeAccountsQuery, storesHistoryQuery } from './lib/queries';
+import { fetchCached, prefetchWhenIdle } from '../../lib/apiCache';
+import { refundsQuery } from '../../shared/refunds/queries';
 import { T, FONT_STACK, h2Style, captionStyle, shellStyle, shellBodyStyle, mainScrollStyle, sidebarStyle, sidebarLabelStyle, sidebarItemStyle, backdropStyle, iconButtonStyle, searchWrapStyle, searchInputStyle, dropdownBackdropStyle, notifPanelStyle, notifHeadStyle, notifItemStyle, profilePanelStyle, dropdownItemStyle, contentStyle, courtBannerStyle } from './theme';
 import { BellButton, BrandLogo, BurgerButton, StatusPill, TopbarStyles, UserChip } from '../../shared/ui/Topbar';
 import { parseOrderDate } from './lib/dates';
@@ -38,6 +41,9 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
     const [search, setSearch] = useState('');
     const searchRef = useRef(null);
     const [stores, setStores] = useState([]);
+    // หน้าที่ใช้รายชื่อร้านชุดนี้ (จัดการร้าน / ติดตามสัญญา) แยก "ยังไม่โหลด" ออกจาก "ไม่มีร้าน" ได้
+    const [storesLoaded, setStoresLoaded] = useState(false);
+    const [storesError, setStoresError] = useState('');
     const storesRef = useRef(stores);
     useEffect(() => { storesRef.current = stores; }, [stores]);
     const [orders, setOrders] = useState([]);
@@ -128,8 +134,11 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
           }));
 
             setStores(merged);
+            setStoresLoaded(true);
+            setStoresError('');
         }
         catch (err) {
+            setStoresError(err.message);
             if (!silent)
                 pushToast(err.message, 'error');
         }
@@ -166,8 +175,8 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
         }
 
         try {
-                       // ดึงรายงานทั้งศูนย์ในคำขอเดียว (เดิมยิงทีละร้าน)
-            const data = await callApi(`${API}/api/executive/issues`);
+            // ดึงรายงานทั้งศูนย์ในคำขอเดียว ; เก็บผลใน cache ชุดเดียวกับ Dashboard (หน้านั้นไม่ต้องโหลดเอง)
+            const data = await fetchCached(...issuesQuery(API, ''));
             const merged = (Array.isArray(data?.issues) ? data.issues : [])
                 .slice(0, 20)
                 .map((report) => ({
@@ -233,13 +242,30 @@ export default function ExecutiveView({ apiBase, user, onLogout }) {
             loadContractNotifications(true)
         ]), REFRESH_MS);
     }, [loadStores, loadOrders, loadFoodCourt, loadNotifications, loadContractNotifications]);
+    // ผูกกับ "มีร้านแล้วหรือยัง" ไม่ใช่ตัว array : รายชื่อร้านรีเฟรชทุก 15 วิ (array ใหม่ทุกรอบ)
+    // ถ้าผูกกับ array จะยิงรายงานปัญหาใหม่และเริ่มนับ 30 วิใหม่ทุก 15 วิ
+    const hasStores = stores.length > 0;
     useEffect(() => {
-        if (!stores.length)
+        if (!hasStores)
             return;
 
         loadIssueAlerts();
         return startPolling(loadIssueAlerts, 30000);
-    }, [stores, loadIssueAlerts]);
+    }, [hasStores, loadIssueAlerts]);
+
+    // โหลดล่วงหน้าตอนเครื่องว่าง : ข้อมูลของหน้าที่หน้าหลักไม่มี (ตัวกรองค่าเริ่มต้นของแต่ละหน้า)
+    // เปิดหน้าเหล่านี้ครั้งแรกจึงขึ้นทันทีเหมือนตอนกลับเข้าหน้าเดิม
+    useEffect(() => {
+        if (!storesLoaded) return undefined;
+        return prefetchWhenIdle([
+            storesHistoryQuery(API),
+            storeAccountsQuery(API),
+            issuesQuery(API, issueParams()),
+            auditFirstPageQuery(API, {}),
+            refundsQuery(API),
+            appealsQuery(API),
+        ]);
+    }, [storesLoaded, API]);
 
     useEffect(() => {
         setSidebarOpen(!isNarrow);
@@ -558,6 +584,8 @@ const returnFoodCourtToAuto = async () => {
         API,
         user,
         stores,
+        storesLoaded,
+        storesError,
         orders,
         loading,
         search: search.trim().toLowerCase(),

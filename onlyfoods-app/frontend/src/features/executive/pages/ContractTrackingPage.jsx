@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { SkeletonRows } from '../../../shared/ui/Skeleton';
 import { T, FONT_STACK, h3Style, captionStyle, toolbarStyle, tableStyle, thStyle, trStyle, tdStyle, inputStyle, formDateInputStyle, smallBtn } from '../theme';
 import { money, thaiDateTime } from '../lib/format';
 import { todayISO } from '../../../lib/dates';
@@ -28,10 +29,10 @@ export const CONTRACT_ACTION_LABEL = {
 export const CONTRACT_REASON_MIN = 5;
 
 export function ContractTrackingPage({ ctx }) {
-    const { API, search, pushToast, focusStoreId, clearFocusStore, reloadStores } = ctx;
-    const [stores, setStores] = useState([]);
-    const [loadingContracts, setLoadingContracts] = useState(true);
-    const [loadError, setLoadError] = useState('');
+    // รายชื่อร้าน (ข้อมูลสัญญาอยู่ในนั้น) ใช้ชุดเดียวกับหน้าหลัก : รีเฟรชให้ทุก 15 วิ และขึ้นทันทีตอนกลับเข้าหน้านี้
+    const { API, search, pushToast, focusStoreId, clearFocusStore, reloadStores, stores, storesLoaded, storesError } = ctx;
+    const [refreshing, setRefreshing] = useState(false);
+    const loadError = storesLoaded ? '' : storesError;
     const [statusFilter, setStatusFilter] = useState('all');
     // modal แก้/เปิดสัญญา : { mode: 'edit' | 'restart', store }
     const [dialog, setDialog] = useState(null);
@@ -46,24 +47,11 @@ export function ContractTrackingPage({ ctx }) {
     const [history, setHistory] = useState([]);
     const [historyLoading, setHistoryLoading] = useState(false);
 
-    const loadContracts = useCallback(async () => {
-        setLoadingContracts(true);
-        try {
-            const data = await callApi(`${API}/api/stores`);
-            setStores(Array.isArray(data) ? data : []);
-            setLoadError('');
-        }
-        catch (err) {
-            setLoadError(err.message);
-        }
-        finally {
-            setLoadingContracts(false);
-        }
-    }, [API]);
-
-    useEffect(() => {
-        loadContracts();
-    }, [loadContracts]);
+    const refreshContracts = useCallback(async () => {
+        setRefreshing(true);
+        try { await reloadStores(); }
+        finally { setRefreshing(false); }
+    }, [reloadStores]);
 
     const today = todayISO();
     const fmt = (value) => (value ? String(value).slice(0, 10) : '—');
@@ -188,8 +176,7 @@ export function ContractTrackingPage({ ctx }) {
                 });
             pushToast(data?.message || 'บันทึกสัญญาเรียบร้อยแล้ว');
             setDialog(null);
-            await loadContracts();
-            if (reloadStores) await reloadStores();
+            await reloadStores();
         }
         catch (err) {
             setFormError(err.message);
@@ -274,8 +261,8 @@ export function ContractTrackingPage({ ctx }) {
             <h3 style={h3Style}>สัญญาร้านค้า</h3>
             <p style={captionStyle}>สัญญามีผลถึง 23:59:59 น. ของวันสิ้นสุด · หมดแล้วร้านปิดและพนักงานล็อกอัตโนมัติ เจ้าของดูข้อมูลได้อย่างเดียว 30 วัน · เอกสารสัญญาจัดการนอกระบบ</p>
           </div>
-          <Button icon="refresh" variant="ghost" onClick={loadContracts} disabled={loadingContracts}>
-            {loadingContracts ? 'กำลังโหลด...' : 'รีเฟรช'}
+          <Button icon="refresh" variant="ghost" onClick={refreshContracts} disabled={refreshing}>
+            {refreshing ? 'กำลังโหลด...' : 'รีเฟรช'}
           </Button>
         </div>
         <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '16px' }}>
@@ -293,8 +280,8 @@ export function ContractTrackingPage({ ctx }) {
       <Card>
         {loadError ? (
           <div style={{ padding: '24px', color: T.down, background: T.redSoft, borderRadius: T.radiusMd }}>{loadError}</div>
-        ) : loadingContracts && !stores.length ? (
-          <EmptyState text="กำลังโหลดข้อมูลสัญญา..."/>
+        ) : !storesLoaded ? (
+          <SkeletonRows rows={6} columns={[3, 3, 1, 2, 2]} label="กำลังโหลดข้อมูลสัญญา"/>
         ) : filtered.length === 0 ? (
           <EmptyState text="ไม่พบข้อมูลสัญญาตามเงื่อนไขที่เลือก"/>
         ) : (

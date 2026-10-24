@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { T, FONT_STACK, captionStyle, tableStyle, thStyle, thRightStyle, trStyle, tdStyle, tdRightStyle, inputStyle, formDateInputStyle } from '../theme';
 import { money, thaiDateTime, daysAgoISO, formatHoursTh } from '../lib/format';
 import { todayISO } from '../../../lib/dates';
-import { callApi } from '../lib/api';
+import { ISSUE_DEFAULT_RANGE, issueParams, issuesQuery } from '../lib/queries';
+import { useCachedApi } from '../../../lib/apiCache';
+import { SkeletonRows } from '../../../shared/ui/Skeleton';
 import { Card, EmptyState } from '../components/ui';
 import { IssueStatusBadge, IssueDetailModal, ISSUE_RANGES, ISSUE_STATUS_TABS } from '../components/issues';
 import { IconInput } from './store-manage/formParts';
@@ -11,14 +13,13 @@ export function IssueReportsPage({ ctx }) {
     const { API, stores, focusStoreId, clearFocusStore } = ctx;
     const [storeId, setStoreId] = useState(focusStoreId || '');
     const [query, setQuery] = useState('');
-    const [range, setRange] = useState('30');
+    const [range, setRange] = useState(ISSUE_DEFAULT_RANGE);
     const [customStart, setCustomStart] = useState(() => daysAgoISO(29));
     const [customEnd, setCustomEnd] = useState(todayISO());
     const [typeCode, setTypeCode] = useState('');
     const [status, setStatus] = useState('pending');
     // ยังไม่ได้กดแท็บเอง = เลือกแท็บให้ : มีเรื่องค้าง -> "ต้องจัดการ" ; ไม่มี -> "ทั้งหมด"
     const autoTab = useRef(true);
-    const [state, setState] = useState({ loading: true, error: '', issues: [], summary: null });
     const [openIssueId, setOpenIssueId] = useState(null);
 
     // มาจากปุ่มของหน้าอื่น (กระดิ่ง / Dashboard / ยอดขายรายร้าน) = เลือกร้านนั้นไว้ให้
@@ -29,27 +30,18 @@ export function IssueReportsPage({ ctx }) {
         }
     }, [focusStoreId, clearFocusStore]);
 
+    // ผลของแต่ละชุดตัวกรองจำไว้ใน cache : กลับเข้าหน้านี้ (ตัวกรองเดิม) เห็นทันที แล้วโหลดใหม่อยู่ข้างหลัง
+    const [issuesKey, issuesFetcher] = issuesQuery(API, issueParams({ storeId, typeCode, range, customStart, customEnd }));
+    const issuesState = useCachedApi(issuesKey, issuesFetcher, { pollMs: 30000 });
+    const state = {
+        loading: issuesState.loading,
+        error: issuesState.data ? '' : issuesState.error,  // โหลดรอบใหม่ไม่สำเร็จแต่มีของเดิม = แสดงของเดิมต่อ
+        issues: issuesState.data?.issues || [],
+        summary: issuesState.data?.summary || null,
+    };
     useEffect(() => {
-        const params = new URLSearchParams();
-        if (storeId) params.set('store_id', storeId);
-        if (typeCode) params.set('type_code', typeCode);
-        if (range === 'custom') {
-            if (customStart) params.set('date_from', customStart);
-            if (customEnd) params.set('date_to', customEnd);
-        } else if (range !== 'all') {
-            params.set('date_from', daysAgoISO(Number(range) - 1));
-        }
-        let cancelled = false;
-        setState((prev) => ({ ...prev, loading: true, error: '' }));
-        callApi(`${API}/api/executive/issues?${params}`)
-                        .then((data) => {
-                if (cancelled) return;
-                setState({ loading: false, error: '', issues: data.issues || [], summary: data.summary || null });
-                if (autoTab.current) setStatus(data.summary?.pending ? 'pending' : 'all');
-            })
-            .catch((err) => { if (!cancelled) setState({ loading: false, error: err.message, issues: [], summary: null }); });
-        return () => { cancelled = true; };
-    }, [API, storeId, typeCode, range, customStart, customEnd]);
+        if (autoTab.current && issuesState.data) setStatus(issuesState.data.summary?.pending ? 'pending' : 'all');
+    }, [issuesState.data]);
 
     const sm = state.summary || {};
     const byStatus = sm.by_status || {};
@@ -71,8 +63,8 @@ export function IssueReportsPage({ ctx }) {
     return (<>
       <Card style={{ marginBottom: '16px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', margin: '0 -18px 0 -18px' }}>
-          {stat('ต้องจัดการ', money(sm.pending || 0), byStatus.IN_PROGRESS ? `กำลังดำเนินการ ${money(byStatus.IN_PROGRESS)}` : null, sm.pending ? T.down : T.ink, true)}
-          {stat(`ค้างเกิน ${sm.stale_hours || 24} ชม.`, money(sm.stale || 0), null, sm.stale ? T.down : T.ink)}
+          {stat('ต้องจัดการ', state.loading ? '–' : money(sm.pending || 0), byStatus.IN_PROGRESS ? `กำลังดำเนินการ ${money(byStatus.IN_PROGRESS)}` : null, sm.pending ? T.down : T.ink, true)}
+          {stat(`ค้างเกิน ${sm.stale_hours || 24} ชม.`, state.loading ? '–' : money(sm.stale || 0), null, sm.stale ? T.down : T.ink)}
           {stat('เวลาปิดเรื่องเฉลี่ย', formatHoursTh(sm.avg_resolve_hours))}
           {stat('ปัญหาที่พบบ่อยสุด', sm.top_type?.IssueType || '—', sm.top_type ? `${money(sm.top_type.count)} เรื่อง` : null, null, false, true)}
         </div>
@@ -100,13 +92,13 @@ export function IssueReportsPage({ ctx }) {
 
         <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '12px' }}>
             {ISSUE_STATUS_TABS.map(([id, label]) => (<button key={id} type="button" onClick={() => { autoTab.current = false; setStatus(id); }} style={chip(status === id)}>
-            {label} ({money(countOf(id))})
+            {label} ({state.loading ? '–' : money(countOf(id))})
           </button>))}
         </div>
       </Card>
 
       <Card title="รายการรายงานปัญหา" subtitle={status === 'pending' ? 'เรียงเรื่องที่ค้างนานสุดขึ้นก่อน · กดที่แถวเพื่อดูรายละเอียด' : 'เรียงใหม่สุดขึ้นก่อน · กดที่แถวเพื่อดูรายละเอียด'}>
-        {state.loading ? <EmptyState text="กำลังโหลดรายงานปัญหา..."/>
+        {state.loading ? <SkeletonRows rows={5} columns={[1, 2, 2, 3, 1]} label="กำลังโหลดรายงานปัญหา"/>
           : state.error ? <EmptyState text={state.error}/>
           : shown.length === 0 ? <EmptyState text={q ? `ไม่พบรายงานที่ตรงกับ “${query.trim()}”` : status === 'pending' ? 'ไม่มีเรื่องที่ต้องจัดการในช่วงนี้' : 'ไม่พบรายงานปัญหาตามตัวกรอง'}/>
           : (<div style={{ overflowX: 'auto' }}>
