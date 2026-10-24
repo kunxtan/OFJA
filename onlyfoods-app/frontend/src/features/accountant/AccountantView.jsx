@@ -55,7 +55,8 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
-  const [notificationsRead, setNotificationsRead] = useState(false);
+  const [notificationsRead, setNotificationsRead] = useState(false);   // กระดิ่ง: หายเมื่อกดที่กระดิ่ง
+  const [menuBadgeRead, setMenuBadgeRead] = useState(false);             // badge เมนู Cancellation: หายเมื่อกดที่เมนูเท่านั้น
   const [dropdown, setDropdown] = useState('');
 
   const [trendDays, setTrendDays] = useState(7);   // 'today' | 7 | 14 | 30 | 'month' | 'custom'
@@ -252,9 +253,9 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   );
   // มีร้านใหม่เกินเกณฑ์ -> ให้ตัวเลขบนกระดิ่งขึ้นอีกครั้ง
   const alertKey = alertStores.map(x => x.storeId).join(',');
-  useEffect(() => { setNotificationsRead(false); }, [alertKey]);
-  // จำนวนที่ยังไม่ได้อ่าน: ใช้ร่วมกันทั้งกระดิ่งและ badge ที่เมนู Cancellation (เปิดดูแล้วตัวเลขหายทั้งสองที่)
-  const unreadAlertCount = notificationsRead ? 0 : alertStores.length;
+  useEffect(() => { setNotificationsRead(false); setMenuBadgeRead(false); }, [alertKey]);
+  const bellCount = notificationsRead ? 0 : alertStores.length;
+  const menuBadgeCount = menuBadgeRead ? 0 : alertStores.length;
 
   // ช่วงเวลาของหน้า Cancellation (ทั้งหมด = ไม่จำกัดวันที่)
   const cancelBounds = useMemo(() => {
@@ -572,7 +573,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', caption: 'ภาพรวมบัญชี', icon: 'dashboard' },
     { id: 'sales', label: 'Sales Summary', caption: 'สรุปยอดขาย', icon: 'sales' },
-    { id: 'cancel', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก', icon: 'cancel', badge: unreadAlertCount || null },
+    { id: 'cancel', label: 'Cancellation', caption: 'วิเคราะห์การยกเลิก', icon: 'cancel', badge: menuBadgeCount || null },
     { id: 'refunds', label: 'Refund Log', caption: 'ประวัติการคืนเงิน', icon: 'refund' },
     { id: 'audit', label: 'Audit Log', caption: 'ประวัติการเปลี่ยนแปลง', icon: 'audit' },
     { id: 'report', label: 'Financial Report', caption: 'ออกรายงานการเงิน', icon: 'report' },
@@ -618,7 +619,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
 
         <div className="oft-right">
           <div style={{ position: 'relative' }}>
-            <BellButton count={unreadAlertCount} active={dropdown === 'notif'} aria-haspopup="true"
+            <BellButton count={bellCount} active={dropdown === 'notif'} aria-haspopup="true"
               onClick={() => { setNotificationsRead(true); toggleDropdown('notif'); }} />
             {dropdown === 'notif' && (
               <div className="berry-profile-dropdown" style={{ right: 0, width: '300px' }}>
@@ -675,7 +676,7 @@ export default function AccountantView({ apiBase, user, onLogout }) {
                 <div 
                   key={n.id} 
                   className={`berry-nav-item ${page === n.id ? 'active' : ''}`} 
-                  onClick={() => { setPage(n.id); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
+                  onClick={() => { if (n.id === 'cancel') setMenuBadgeRead(true); setPage(n.id); if (window.innerWidth <= 1024) setSidebarOpen(false); }}
                   title={!sidebarOpen ? n.label : ""}
                 >
                   <div className="berry-nav-icon"><Icon name={n.icon} size={20} /></div>
