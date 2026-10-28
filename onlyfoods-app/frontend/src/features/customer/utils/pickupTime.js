@@ -19,7 +19,7 @@ export const getPickupRange = ({ nowTime, openTime, closeTime, storeOpenTime, st
   const closes = [closeTime, storeCloseTime].map((v) => toMinutes(v)).filter((v) => v !== null);
   const open = opens.length ? Math.max(...opens) : 0;
   const close = closes.length ? Math.min(...closes) : 24 * 60 - 1;
-  return { earliest: Math.max(now, open), latest: close };
+  return { earliest: Math.max(now, open), earliestOpen: open, latest: close };
 };
 
 // ชั่วโมงที่ยังมีนาทีให้เลือกอย่างน้อย 1 นาที (ชั่วโมงที่ผ่านไปแล้วจะไม่แสดง)
