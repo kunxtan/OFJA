@@ -22,7 +22,7 @@ from services import (add_top_up, assert_slip_not_reused, is_duplicate_key, redu
 from shapes import ORDER_SELECT, attach_items, order_people, redact_order_contacts, shape_order
 from suspension import assert_not_suspended
 from utils import (STORE_OPEN, STORE_PAUSED, bangkok_now, clean_text, contract_active, foodcourt_is_open,
-                   parse_pickup_time, queue_label, save_image, store_open_state)
+                   parse_pickup_time, queue_label, save_image, store_hours, store_open_state, time_to_hhmm)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -198,6 +198,15 @@ def _create_order(data: CreateOrderSchema, user: dict, db, key: Optional[str], f
                 raise DomainError(400, f"ร้าน '{store['StoreName']}' หยุดรับออเดอร์ชั่วคราว กรุณาลองใหม่ภายหลัง")
             if open_state != STORE_OPEN:
                 raise DomainError(400, f"ร้าน '{store['StoreName']}' ปิดทำการอยู่ขณะนี้")
+            if pickup:
+                # เวลานัดรับต้องอยู่ในเวลาเปิด–ปิดของร้าน (utils.store_hours = เวลาร้านที่ตัดให้อยู่ในเวลาศูนย์อาหารแล้ว)
+                # ไม่เช็กแค่ฝั่งหน้าจอ เพราะส่ง API ตรงๆ ก็นัดเวลาที่ร้านปิดได้
+                open_min, close_min = store_hours(store, fc)
+                pickup_min = pickup.hour * 60 + pickup.minute
+                if not (open_min <= pickup_min <= close_min):
+                    raise DomainError(400, f"เวลารับอาหารต้องอยู่ในเวลาเปิดของร้าน '{store['StoreName']}' "
+                                           f"({time_to_hhmm(open_min)}–{time_to_hhmm(close_min)} น.) "
+                                           "กรุณาเลือกเวลาใหม่ หรือกด \"รับทันที\"")
 
             total, rows, lines = _price_items(cur, data.store_id, data.items)
             if total <= 0:

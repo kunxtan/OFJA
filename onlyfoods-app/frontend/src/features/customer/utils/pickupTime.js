@@ -1,5 +1,5 @@
 // ตัวช่วยเลือกเวลารับอาหารแบบ "ชั่วโมง + นาที"
-// กติกา: เลือกได้ทุกเลข ห้ามย้อนอดีต และต้องอยู่ในเวลาเปิด–ปิดของศูนย์อาหาร
+// กติกา: เลือกได้ทุกเลข ห้ามย้อนอดีต และต้องอยู่ในเวลาเปิด–ปิดของทั้งศูนย์อาหารและร้านค้า
 // ทุกฟังก์ชันคิดเป็น "นาทีของวัน" (00:00 = 0, 12:30 = 750, 23:59 = 1439)
 
 export const pad2 = (n) => String(n).padStart(2, "0");
@@ -11,11 +11,15 @@ export const toMinutes = (hhmm) => {
 };
 
 // ช่วงที่เลือกได้: ตั้งแต่ "ตอนนี้ (หรือเวลาเปิด ถ้าเปิดทีหลัง)" ถึง "เวลาปิด"
-export const getPickupRange = ({ nowTime, openTime, closeTime }) => {
+// เวลาเปิด-ปิดมี 2 ชั้น คือ ศูนย์อาหาร (openTime/closeTime) และร้านค้า (storeOpenTime/storeCloseTime)
+// ใช้ช่วงที่แคบที่สุดของทั้งสองชั้น = เปิดช้าที่สุด และ ปิดเร็วที่สุด (ไม่ส่งค่าร้านมา = ใช้เวลาศูนย์อาหารอย่างเดียว)
+export const getPickupRange = ({ nowTime, openTime, closeTime, storeOpenTime, storeCloseTime }) => {
   const now = toMinutes(nowTime) ?? 0;
-  const open = toMinutes(openTime);
-  const close = toMinutes(closeTime);
-  return { earliest: Math.max(now, open ?? 0), latest: close ?? 24 * 60 - 1 };
+  const opens = [openTime, storeOpenTime].map((v) => toMinutes(v)).filter((v) => v !== null);
+  const closes = [closeTime, storeCloseTime].map((v) => toMinutes(v)).filter((v) => v !== null);
+  const open = opens.length ? Math.max(...opens) : 0;
+  const close = closes.length ? Math.min(...closes) : 24 * 60 - 1;
+  return { earliest: Math.max(now, open), latest: close };
 };
 
 // ชั่วโมงที่ยังมีนาทีให้เลือกอย่างน้อย 1 นาที (ชั่วโมงที่ผ่านไปแล้วจะไม่แสดง)
@@ -27,3 +31,6 @@ export const isPickupMinuteDisabled = (hour, minute, range) => {
   const t = Number(hour) * 60 + Number(minute);
   return t < range.earliest || t > range.latest;
 };
+
+// เลือกชั่วโมงแล้วแต่ยังไม่เลือกนาที = เลือกเวลาไม่ครบ (ต้องเลือกนาทีให้ครบ หรือกด "รับทันที")
+export const isPickupIncomplete = (hour, minute) => (hour !== "") !== (minute !== "");

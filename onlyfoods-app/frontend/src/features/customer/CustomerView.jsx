@@ -6,7 +6,7 @@ import { newRequestKey, applyServerPrices } from "../../lib/requestKey";
 import { createCartRow, getNotifKey, getOrderStatusLabel, getOutOfStockItem, previewLateArrival, summarizeRefunds } from "./utils/orders";
 import { addProductToCart, countCartDishes, decreaseRowQty, increaseRowQty, splitOneFromRow, sumCart } from "./utils/cart";
 import { formatBangkokTime, getCurrentDateTimeForBackend, getCurrentTimeFormatted, secondsUntil } from "./utils/time";
-import { getPickupHours, getPickupRange, isPickupMinuteDisabled, pad2, toMinutes } from "./utils/pickupTime";
+import { getPickupHours, getPickupRange, isPickupIncomplete, isPickupMinuteDisabled, pad2, toMinutes } from "./utils/pickupTime";
 import { COLORS, MAX_FILE_SIZE } from "./constants";
 import { buildQueueSchedule, canEstimateOrder, countOrderDishes, formatPickupRange, formatScheduledPickupRange, isImmediatePickup, kitchenBuffer, orderStatusKey, scheduledWindowMinutes } from "./utils/queueEstimate";
 import { avatarStyle, cardStyle, containerStyle, headerStyle, heroStyle, pageStyle, profileStyle, searchStyle } from "./styles";
@@ -917,6 +917,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const handleProceedToPayment = async () => {
     if (suspension) return customAlert("บัญชีของคุณถูกระงับการสั่งอาหาร", `เหตุผล: ${suspension.Reason}`, "warning");
     if (!checkFoodCourtOrderTime()) return;
+    if (isPickupIncomplete(pickupHour, pickupMinute)) {
+      return customAlert("เลือกเวลารับอาหารไม่ครบ", "กรุณาเลือกทั้งชั่วโมงและนาที หรือกด \"รับทันที\"", "warning");
+    }
     if (isPickupInPast()) {
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
     }
@@ -1145,6 +1148,11 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const submitOrder = async () => {
     if (isSubmittingOrder) return;
     if (!checkFoodCourtOrderTime()) return;
+    if (isPickupIncomplete(pickupHour, pickupMinute)) {
+      setIsPaymentModalOpen(false);
+      setIsCartOpen(true);
+      return customAlert("เลือกเวลารับอาหารไม่ครบ", "กรุณาเลือกทั้งชั่วโมงและนาที หรือกด \"รับทันที\"", "warning");
+    }
     if (isPickupInPast()) {
       setIsPaymentModalOpen(false);
       setIsCartOpen(true);
@@ -2370,8 +2378,8 @@ export default function CustomerView({ user, apiBase, onLogout }) {
                     )}
                   </div>
                 ) : pickupHour !== "" ? (
-                  <div style={{ marginTop: "8px", fontSize: "11px", color: COLORS.gray }}>
-                    เลือกนาทีให้ครบเพื่อนัดเวลา หรือกด "รับทันที"
+                  <div style={{ marginTop: "8px", fontSize: "12px", fontWeight: "700", color: COLORS.red }}>
+                    ⚠ ต้องเลือกนาทีให้ครบเพื่อนัดเวลา หรือกด "รับทันที" จึงจะชำระเงินได้
                   </div>
                 ) : cart.length > 0 ? (
                   <div
@@ -2409,14 +2417,14 @@ export default function CustomerView({ user, apiBase, onLogout }) {
 
                 <button 
                   onClick={handleProceedToPayment} 
-                  disabled={Boolean(suspension) || !isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen}
+                  disabled={checkoutDisabled}
                   style={{
                     width: "100%", padding: "15px", marginTop: "15px", border: "none", borderRadius: "15px", 
-                    background: (suspension || !isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "#CCCCCC" : COLORS.orange, 
-                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: (suspension || !isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen) ? "not-allowed" : "pointer", fontFamily: "inherit" 
+                    background: checkoutDisabled ? "#CCCCCC" : COLORS.orange, 
+                    color: COLORS.white, fontSize: "16px", fontWeight: "900", cursor: checkoutDisabled ? "not-allowed" : "pointer", fontFamily: "inherit" 
                   }}
                 >
-                  {suspension ? "บัญชีของคุณถูกระงับการสั่งอาหาร" : cartStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !cartStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : "ชำระเงิน"}
+                  {suspension ? "บัญชีของคุณถูกระงับการสั่งอาหาร" : cartStore.IsSuspended ? "ร้านค้านี้ถูกระงับการจำหน่าย" : !cartStore.IsOpen ? "ร้านค้านี้ปิดให้บริการชั่วคราว" : !isFoodCourtOpen ? "ศูนย์อาหารปิดให้บริการชั่วคราว" : pickupIncomplete ? "เลือกนาทีให้ครบ หรือกดรับทันที" : "ชำระเงิน"}
                 </button>
               </div>
             </>
@@ -2430,6 +2438,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     nowTime: formatBangkokTime(new Date()),
     openTime: foodCourtOpenTime,
     closeTime: foodCourtCloseTime,
+    // เวลาเปิด-ปิดของร้านที่อยู่ในตะกร้า (backend ส่งมาเป็นเวลาที่ใช้จริง ตัดให้อยู่ในเวลาศูนย์อาหารแล้ว)
+    storeOpenTime: cartStore.OpenTime,
+    storeCloseTime: cartStore.CloseTime,
   });
   const pickupHourOptions = getPickupHours(pickupRange);
 
@@ -2447,6 +2458,9 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       setPickupMinute("");
     }
   };
+
+  const pickupIncomplete = isPickupIncomplete(pickupHour, pickupMinute);
+  const checkoutDisabled = Boolean(suspension) || !isFoodCourtOpen || cartStore.IsSuspended || !cartStore.IsOpen || pickupIncomplete;
 
   const cartDishCount = countCartDishes(cart);
   const cartSchedule = cartDishCount ? buildQueueSchedule(queueEstimateOrders, cartDishCount) : null;
