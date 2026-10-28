@@ -906,6 +906,17 @@ export default function CustomerView({ user, apiBase, onLogout }) {
   const isPickupInPast = () =>
     Boolean(pickupTime) && toMinutes(pickupTime) < toMinutes(formatBangkokTime(new Date()));
 
+  // เวลานัดรับต้องอยู่ในเวลาเปิด–ปิดของศูนย์อาหารและร้าน (เช็กซ้ำตอนกดสั่ง เผื่อหน้าจอค้างข้ามเวลาปิด)
+  const isPickupOutOfHours = () => {
+    if (!pickupTime) return false;
+    const t = toMinutes(pickupTime);
+    return t < pickupRange.earliestOpen || t > pickupRange.latest;
+  };
+  const alertStoreClosed = () => {
+    fetchStores();
+    return customAlert("ร้านปิดให้บริการแล้ว", "ร้านนี้ไม่ได้อยู่ในเวลาเปิดทำการ ไม่สามารถสั่งอาหารได้ในขณะนี้", "error");
+  };
+
   useEffect(() => { orderRequestKeyRef.current = null; }, [cart, pickupTime, paymentMethod]);
 
   // M5: ราคาเมนูอาจเปลี่ยนหลังใส่ตะกร้า -> ถามยอดจริงก่อนแสดง QR (ไม่งั้นลูกค้าโอนผิดยอด)
@@ -923,6 +934,10 @@ export default function CustomerView({ user, apiBase, onLogout }) {
     if (isPickupInPast()) {
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
     }
+    if (isPickupOutOfHours()) {
+      return customAlert("เวลารับอาหารอยู่นอกเวลาเปิดร้าน", "กรุณาเลือกเวลารับภายในเวลาเปิด–ปิดของร้าน หรือกด \"รับทันที\"", "warning");
+    }
+    if (!cartStore.IsOpen) return alertStoreClosed();
     if (cart.length === 0) return customAlert("กรุณาเลือกอาหารลงตะกร้าก่อนสั่งซื้อ", "", "error");
     if (!cartStoreId) return customAlert("กรุณาเลือกร้านอาหาร", "", "error");
     try {
@@ -933,6 +948,7 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       });
       const quote = await res.json().catch(() => ({}));
       if (!res.ok) return customAlert(quote.detail || "ตรวจสอบราคาไม่สำเร็จ", "", "error");
+      if (quote.store_open === false) return alertStoreClosed();
       if (Math.abs(Number(quote.total) - totalAmount) > 0.001) return priceChanged(quote.items, quote.total);
     } catch {
       return customAlert("เชื่อมต่อระบบไม่สำเร็จ กรุณาลองใหม่", "", "error");
@@ -1157,6 +1173,13 @@ export default function CustomerView({ user, apiBase, onLogout }) {
       setIsPaymentModalOpen(false);
       setIsCartOpen(true);
       return customAlert("เวลารับอาหารที่เลือกผ่านไปแล้ว", "กรุณาเลือกเวลารับใหม่ หรือกด \"รับทันที\"", "warning");
+    }
+    if (isPickupOutOfHours() || !cartStore.IsOpen) {
+      setIsPaymentModalOpen(false);
+      setIsCartOpen(true);
+      return cartStore.IsOpen
+        ? customAlert("เวลารับอาหารอยู่นอกเวลาเปิดร้าน", "กรุณาเลือกเวลารับภายในเวลาเปิด–ปิดของร้าน หรือกด \"รับทันที\"", "warning")
+        : alertStoreClosed();
     }
 
     if (!slipFile || !slipPreview) {
